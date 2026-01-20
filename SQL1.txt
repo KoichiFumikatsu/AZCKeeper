@@ -357,3 +357,24 @@ CREATE TABLE IF NOT EXISTS keeper_audit_log (
     FOREIGN KEY (device_id) REFERENCES keeper_devices(id)
     ON DELETE SET NULL
 ) ENGINE=InnoDB;
+-- Tabla para controlar bloqueos activos
+CREATE TABLE IF NOT EXISTS keeper_device_locks (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  device_id BIGINT NOT NULL,
+  user_id BIGINT NOT NULL,
+  locked_by_admin_id BIGINT NULL,
+  lock_reason VARCHAR(500) NULL,
+  locked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  unlocked_at TIMESTAMP NULL,
+  unlock_pin_hash CHAR(64) NULL, -- Hash del PIN de desbloqueo
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (id),
+  KEY ix_device_locks_device (device_id, is_active),
+  KEY ix_device_locks_user (user_id, is_active),
+  CONSTRAINT fk_device_locks_device
+    FOREIGN KEY (device_id) REFERENCES keeper_devices(id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_device_locks_user
+    FOREIGN KEY (user_id) REFERENCES keeper_users(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB;

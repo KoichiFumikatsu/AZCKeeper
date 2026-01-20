@@ -44,7 +44,7 @@ if ($endpoint === '') $endpoint = '/';
 $routes = [
   'GET' => [
     '/health' => [Keeper\Endpoints\Health::class, 'handle'],
-    '/client/activity-day' => [Keeper\Endpoints\ActivityDay::class, 'handleGet'], // NUEVO
+    '/client/activity-day' => [Keeper\Endpoints\ActivityDay::class, 'handleGet'], 
     '/client/version', [Keeper\Endpoints\ClientVersion::class, 'handle'],
   ],
   'POST' => [
@@ -53,6 +53,8 @@ $routes = [
     '/client/activity-day' => [Keeper\Endpoints\ActivityDay::class, 'handle'],
     '/client/window-episode' => [Keeper\Endpoints\WindowEpisode::class, 'handle'],
     '/client/event' => [Keeper\Endpoints\EventIngest::class, 'handle'],
+    '/client/device-lock/status' => [Keeper\Endpoints\DeviceLock::class, 'getStatus'],
+    '/client/device-lock/unlock', [Keeper\Endpoints\DeviceLock::class, 'tryUnlock'],
   ],
 ];
 

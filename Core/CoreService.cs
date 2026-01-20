@@ -267,7 +267,6 @@ namespace AZCKeeper_Cliente.Core
                     return;
                 }
 
-                // 🔥 NUEVO: Sincronizar tiempo con servidor
                 if (!string.IsNullOrWhiteSpace(hs.Response.ServerTimeUtc))
                 {
                     TimeSync.UpdateFromServer(hs.Response.ServerTimeUtc);
@@ -291,6 +290,46 @@ namespace AZCKeeper_Cliente.Core
                         Startup.StartupManager.EnableStartup();
                     else
                         Startup.StartupManager.DisableStartup();
+                }
+                if (effective.Blocking != null && effective.Blocking.EnableDeviceLock)
+                {
+                    LocalLogger.Warn("CoreService: política de bloqueo detectada. Verificando estado...");
+                    CheckDeviceLockStatus();
+                }
+                if (effective.Blocking != null)
+                {
+                    var blocking = _configManager.CurrentConfig.Blocking ?? new ConfigManager.BlockingConfig();
+
+                    blocking.EnableDeviceLock = effective.Blocking.EnableDeviceLock;
+                    blocking.LockMessage = effective.Blocking.LockMessage ?? blocking.LockMessage;
+                    blocking.AllowUnlockWithPin = effective.Blocking.AllowUnlockWithPin;
+
+                    // Hashear PIN si viene del servidor (no guardarlo en texto plano)
+                    if (!string.IsNullOrWhiteSpace(effective.Blocking.UnlockPin))
+                    {
+                        blocking.UnlockPinHash = System.Security.Cryptography.SHA256.HashData(
+                            System.Text.Encoding.UTF8.GetBytes(effective.Blocking.UnlockPin)
+                        ).Aggregate("", (s, b) => s + b.ToString("x2"));
+                    }
+
+                    _configManager.CurrentConfig.Blocking = blocking;
+
+                    // Aplicar bloqueo si está activado
+                    if (blocking.EnableDeviceLock && _keyBlocker != null)
+                    {
+                        LocalLogger.Warn("CoreService: política de bloqueo activa. Activando KeyBlocker...");
+
+                        // Ejecutar en thread de UI
+                        System.Windows.Forms.Application.OpenForms[0]?.Invoke(new Action(() =>
+                        {
+                            _keyBlocker.ActivateLock(blocking.LockMessage, blocking.AllowUnlockWithPin);
+                        }));
+                    }
+                    else if (!blocking.EnableDeviceLock && _keyBlocker != null)
+                    {
+                        // Desbloquear si estaba bloqueado
+                        _keyBlocker.DeactivateLock();
+                    }
                 }
 
                 if (effective.Updates != null)
@@ -316,8 +355,6 @@ namespace AZCKeeper_Cliente.Core
                     }
                 }
 
-                _configManager.Save();
-                _configManager.ApplyLoggingConfiguration();
                 if (effective.Logging != null)
                 {
                     var logging = _configManager.CurrentConfig.Logging ?? new ConfigManager.LoggingConfig();
@@ -499,7 +536,7 @@ namespace AZCKeeper_Cliente.Core
             // -------------------- Hooks / Blocking / Updates / Debug --------------------
             if (modulesConfig.EnableKeyboardHook) _keyboardHook = new KeyboardHook();
             if (modulesConfig.EnableMouseHook) _mouseHook = new MouseHook();
-            if (modulesConfig.EnableBlocking) _keyBlocker = new KeyBlocker();
+            if (modulesConfig.EnableBlocking) _keyBlocker = new KeyBlocker(_apiClient);
             // ✅ CORRECTO
             if (modulesConfig.EnableUpdateManager)
             {
@@ -520,7 +557,18 @@ namespace AZCKeeper_Cliente.Core
                 }
             }
         }
-
+        private async void CheckDeviceLockStatus()
+        {
+            try
+            {
+                var response = await _apiClient.PostAsync("client/device-lock/status", new { });
+                // Parsear y activar bloqueo si locked=true
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error al verificar estado de bloqueo.");
+            }
+        }
         private void TryResumeTodayActivityFromServer()
         {
             try

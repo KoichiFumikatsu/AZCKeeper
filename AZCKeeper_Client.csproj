@@ -9,45 +9,43 @@
 		<Platforms>AnyCPU;x64</Platforms>
 	</PropertyGroup>
 
-	<!-- ✅ CONFIGURACIÓN CONDICIONAL: Solo para PUBLISH -->
 	<PropertyGroup Condition="'$(Configuration)' == 'Release'">
 		<PublishTrimmed>false</PublishTrimmed>
 		<PublishReadyToRun>true</PublishReadyToRun>
-		<TrimMode>partial</TrimMode>
 	</PropertyGroup>
 
 	<ItemGroup>
 		<PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
 	</ItemGroup>
 
-	<ItemGroup>
-		<!-- ✅ PROTEGER SQLite y JSON del trimming -->
-		<TrimmerRootAssembly Include="System.Data.SQLite" />
-		<TrimmerRootAssembly Include="System.Text.Json" />
-	</ItemGroup>
-
-	<ItemGroup>
-		<!-- Referencia al proyecto Updater -->
-		<ProjectReference Include="..\AZCKeeperUpdater\AZCKeeperUpdater.csproj">
-			<ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-		</ProjectReference>
-	</ItemGroup>
-
-	<!-- Copiar Updater después de publicar -->
-	<Target Name="CopyUpdaterAfterPublish" AfterTargets="Publish">
+	<!-- ✅ NUEVO: Copiar updater SI existe (el script lo compila antes) -->
+	<Target Name="CopyUpdaterIfExists" AfterTargets="Publish">
 		<PropertyGroup>
-			<UpdaterSourcePath>..\AZCKeeperUpdater\bin\$(Configuration)\net8.0-windows\win-x64\publish\AZCKeeperUpdater.exe</UpdaterSourcePath>
+			<!-- Buscar el updater en diferentes ubicaciones posibles -->
+			<UpdaterPath1>..\AZCKeeperUpdater\bin\$(Configuration)\net8.0-windows\win-x64\publish\AZCKeeperUpdater.exe</UpdaterPath1>
+			<UpdaterPath2>..\build\updater\AZCKeeperUpdater.exe</UpdaterPath2>
 		</PropertyGroup>
 
-		<Message Importance="high" Text="Buscando Updater en: $(UpdaterSourcePath)" />
-
+		<!-- Intentar copiar desde path 1 -->
 		<Copy
-		  SourceFiles="$(UpdaterSourcePath)"
+		  SourceFiles="$(UpdaterPath1)"
 		  DestinationFolder="$(PublishDir)"
-		  Condition="Exists('$(UpdaterSourcePath)')"
+		  Condition="Exists('$(UpdaterPath1)')"
+		  ContinueOnError="true"
     />
 
-		<Warning Text="Updater no encontrado. Compila AZCKeeperUpdater primero." Condition="!Exists('$(UpdaterSourcePath)')" />
+		<!-- Intentar copiar desde path 2 (si el script ya lo compiló) -->
+		<Copy
+		  SourceFiles="$(UpdaterPath2)"
+		  DestinationFolder="$(PublishDir)"
+		  Condition="Exists('$(UpdaterPath2)')"
+		  ContinueOnError="true"
+    />
+
+		<Message Importance="high" Text="Buscando Updater en: $(UpdaterPath1)" />
+		<Message Importance="high" Text="Buscando Updater en: $(UpdaterPath2)" />
+		<Warning Text="Updater no encontrado. Ejecuta build-release.bat para incluirlo."
+				 Condition="!Exists('$(UpdaterPath1)') AND !Exists('$(UpdaterPath2)')" />
 	</Target>
 
 </Project>

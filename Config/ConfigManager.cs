@@ -215,6 +215,13 @@ namespace AZCKeeper_Cliente.Config
                 DeviceId = null, // Se generará posteriormente en EnsureDeviceId.
                 ApiBaseUrl = "http://localhost/AZCKeeper/AZCKeeper_Client/Web/public/index.php/api/", // Placeholder para la API real.
                 ApiAuthToken = null,
+                Blocking = new BlockingConfig
+                {
+                    EnableDeviceLock = false,
+                    LockMessage = "Este equipo ha sido bloqueado.\n\nContacta al administrador para desbloquearlo.",
+                    AllowUnlockWithPin = true,
+                    UnlockPinHash = null
+                },
                 Startup = new StartupConfig
                 {
                     EnableAutoStartup = true,
@@ -299,6 +306,7 @@ namespace AZCKeeper_Cliente.Config
             public ModulesConfig Modules { get; set; }
             public StartupConfig Startup { get; set; }     
             public UpdatesConfig Updates { get; set; }
+            public BlockingConfig Blocking { get; set; }
         }
         /// <summary>
         /// Configuración de inicio automático.
@@ -329,6 +337,16 @@ namespace AZCKeeper_Cliente.Config
             public bool EnableFileLogging { get; set; }
             public bool EnableDiscordLogging { get; set; }
             public string DiscordWebhookUrl { get; set; }
+        }
+        /// /// <summary>
+        /// Configuración de bloqueo remoto de dispositivo.
+        /// </summary>
+        internal class BlockingConfig
+        {
+            public bool EnableDeviceLock { get; set; } = false;
+            public string LockMessage { get; set; } = "Este equipo ha sido bloqueado.\n\nContacta al administrador.";
+            public bool AllowUnlockWithPin { get; set; } = true;
+            public string UnlockPinHash { get; set; } = null; // Hash SHA256 del PIN
         }
 
         /// <summary>

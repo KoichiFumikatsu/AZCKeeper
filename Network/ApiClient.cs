@@ -443,6 +443,42 @@ namespace AZCKeeper_Cliente.Network
                 return null;
             }
         }
+        // -------------------- POST GENÉRICO --------------------
+
+        /// <summary>
+        /// Realiza un POST genérico y retorna el body como string.
+        /// </summary>
+        public async Task<string> PostAsync(string relativeUrl, object payload)
+        {
+            try
+            {
+                if (_httpClient.BaseAddress == null)
+                {
+                    LocalLogger.Warn($"ApiClient.PostAsync(): BaseAddress es null.");
+                    return null;
+                }
+
+                string json = JsonSerializer.Serialize(payload, _jsonOptions);
+                using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                using var httpRequest = CreateRequest(HttpMethod.Post, relativeUrl, content);
+
+                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    string body = await SafeReadBodyAsync(response).ConfigureAwait(false);
+                    LocalLogger.Warn($"ApiClient.PostAsync({relativeUrl}): HTTP {(int)response.StatusCode}. BodyPreview={Preview(body)}");
+                    return null;
+                }
+
+                return await SafeReadBodyAsync(response).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, $"ApiClient.PostAsync({relativeUrl}): error.");
+                return null;
+            }
+        }
 
         // -------------------- Helpers --------------------
         // Ajuste helper: permitir content null
@@ -668,9 +704,16 @@ namespace AZCKeeper_Cliente.Network
             public EffectiveLogging Logging { get; set; }
             public EffectiveModules Modules { get; set; }
             public EffectiveStartup Startup { get; set; }     
-            public EffectiveUpdates Updates { get; set; }      
+            public EffectiveUpdates Updates { get; set; }
+            public EffectiveBlocking Blocking { get; set; }
         }
-
+        internal class EffectiveBlocking
+        {
+            public bool EnableDeviceLock { get; set; }
+            public string LockMessage { get; set; }
+            public bool AllowUnlockWithPin { get; set; }
+            public string UnlockPin { get; set; }
+        }
         internal class EffectiveLogging
         {
             public string GlobalLevel { get; set; }
