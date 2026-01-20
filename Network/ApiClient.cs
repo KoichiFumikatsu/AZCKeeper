@@ -555,6 +555,18 @@ namespace AZCKeeper_Cliente.Network
             _retryTimer.Start();
 
             LocalLogger.Info("ApiClient: RetryTimer iniciado (cada 30s).");
+        }/// <summary>
+         /// Actualiza el intervalo del timer de reintentos offline.
+         /// </summary>
+        public void UpdateRetryInterval(int seconds)
+        {
+            if (_retryTimer != null && seconds > 0)
+            {
+                _retryTimer.Stop();
+                _retryTimer.Interval = seconds * 1000;
+                _retryTimer.Start();
+                LocalLogger.Info($"ApiClient: RetryTimer actualizado a {seconds}s.");
+            }
         }
 
         /// <summary>
@@ -706,6 +718,7 @@ namespace AZCKeeper_Cliente.Network
             public EffectiveStartup Startup { get; set; }     
             public EffectiveUpdates Updates { get; set; }
             public EffectiveBlocking Blocking { get; set; }
+            public EffectiveTimers Timers { get; set; }
         }
         internal class EffectiveBlocking
         {
@@ -722,7 +735,12 @@ namespace AZCKeeper_Cliente.Network
             public bool EnableDiscordLogging { get; set; }
             public string DiscordWebhookUrl { get; set; }
         }
-
+        internal class EffectiveTimers
+        {
+            public int ActivityFlushIntervalSeconds { get; set; }
+            public int HandshakeIntervalMinutes { get; set; }
+            public int OfflineQueueRetrySeconds { get; set; }
+        }
         internal class EffectiveModules
         {
             public bool EnableActivityTracking { get; set; }

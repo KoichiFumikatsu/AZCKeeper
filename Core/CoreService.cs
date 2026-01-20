@@ -36,6 +36,8 @@ namespace AZCKeeper_Cliente.Core
         private int _activitySamplesCount; 
         private DateTime _lastFlushDayLocalDate = default;
 
+        private System.Timers.Timer _handshakeTimer;
+        private DateTime _lastHandshakeTime = DateTime.MinValue;
 
         public void Initialize()
         {
@@ -105,7 +107,7 @@ namespace AZCKeeper_Cliente.Core
 
                 // 3) Flush periódico
                 StartActivityFlushTimer();
-
+                StartHandshakeTimer();
                 if (_debugWindow != null && !_debugWindow.IsDisposed)
                 {
                     try { _debugWindow.Show(); }
@@ -137,6 +139,8 @@ namespace AZCKeeper_Cliente.Core
                 FinalFlushBeforeShutdown();
                 StopActivityFlushTimer();
 
+                _handshakeTimer?.Stop();
+                _handshakeTimer?.Dispose();
                 _activityTracker?.Stop();
                 _windowTracker?.Stop();
                 _keyboardHook?.Stop();
@@ -219,6 +223,38 @@ namespace AZCKeeper_Cliente.Core
             };
         }
 
+        private void StartHandshakeTimer()
+        {
+            try
+            {
+                if (_handshakeTimer != null) return;
+
+                int intervalMinutes = _configManager.CurrentConfig.Timers?.HandshakeIntervalMinutes ?? 5;
+
+                _handshakeTimer = new System.Timers.Timer(intervalMinutes * 60_000);
+                _handshakeTimer.AutoReset = true;
+                _handshakeTimer.Elapsed += (s, e) =>
+                {
+                    try
+                    {
+                        LocalLogger.Info("CoreService: ejecutando handshake periódico...");
+                        PerformHandshake();
+                        _lastHandshakeTime = DateTime.Now;
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Error(ex, "CoreService: error en handshake periódico.");
+                    }
+                };
+                _handshakeTimer.Start();
+                LocalLogger.Info($"CoreService: HandshakeTimer iniciado (cada {intervalMinutes}min).");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error al iniciar HandshakeTimer.");
+            }
+        }
+
         private void PerformHandshake()
         {
             try
@@ -296,41 +332,41 @@ namespace AZCKeeper_Cliente.Core
                     LocalLogger.Warn("CoreService: política de bloqueo detectada. Verificando estado...");
                     CheckDeviceLockStatus();
                 }
+                // -------------------- Blocking --------------------
                 if (effective.Blocking != null)
                 {
                     var blocking = _configManager.CurrentConfig.Blocking ?? new ConfigManager.BlockingConfig();
 
+                    bool wasLocked = blocking.EnableDeviceLock;
                     blocking.EnableDeviceLock = effective.Blocking.EnableDeviceLock;
                     blocking.LockMessage = effective.Blocking.LockMessage ?? blocking.LockMessage;
                     blocking.AllowUnlockWithPin = effective.Blocking.AllowUnlockWithPin;
 
-                    // Hashear PIN si viene del servidor (no guardarlo en texto plano)
                     if (!string.IsNullOrWhiteSpace(effective.Blocking.UnlockPin))
                     {
-                        blocking.UnlockPinHash = System.Security.Cryptography.SHA256.HashData(
-                            System.Text.Encoding.UTF8.GetBytes(effective.Blocking.UnlockPin)
-                        ).Aggregate("", (s, b) => s + b.ToString("x2"));
+                        using (var sha256 = System.Security.Cryptography.SHA256.Create())
+                        {
+                            var hash = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(effective.Blocking.UnlockPin));
+                            blocking.UnlockPinHash = BitConverter.ToString(hash).Replace("-", "").ToLower();
+                        }
                     }
 
                     _configManager.CurrentConfig.Blocking = blocking;
 
-                    // Aplicar bloqueo si está activado
-                    if (blocking.EnableDeviceLock && _keyBlocker != null)
+                    // Aplicar bloqueo si cambió de false a true
+                    if (!wasLocked && blocking.EnableDeviceLock && _keyBlocker != null)
                     {
-                        LocalLogger.Warn("CoreService: política de bloqueo activa. Activando KeyBlocker...");
-
-                        // Ejecutar en thread de UI
-                        System.Windows.Forms.Application.OpenForms[0]?.Invoke(new Action(() =>
-                        {
-                            _keyBlocker.ActivateLock(blocking.LockMessage, blocking.AllowUnlockWithPin);
-                        }));
+                        LocalLogger.Warn("CoreService: BLOQUEANDO dispositivo por política remota...");
+                        _keyBlocker.ActivateLock(blocking.LockMessage, blocking.AllowUnlockWithPin);
                     }
-                    else if (!blocking.EnableDeviceLock && _keyBlocker != null)
+                    else if (wasLocked && !blocking.EnableDeviceLock && _keyBlocker != null)
                     {
-                        // Desbloquear si estaba bloqueado
+                        LocalLogger.Info("CoreService: DESBLOQUEANDO dispositivo por política remota...");
                         _keyBlocker.DeactivateLock();
                     }
                 }
+
+                _configManager.Save();
 
                 if (effective.Updates != null)
                 {
@@ -404,7 +440,31 @@ namespace AZCKeeper_Cliente.Core
 
                     _configManager.CurrentConfig.Modules = modules;
                 }
+                // -------------------- Timers --------------------
+                if (effective.Timers != null)
+                {
+                    var timers = _configManager.CurrentConfig.Timers ?? new ConfigManager.TimersConfig();
 
+                    timers.ActivityFlushIntervalSeconds = effective.Timers.ActivityFlushIntervalSeconds > 0
+                        ? effective.Timers.ActivityFlushIntervalSeconds
+                        : 6;
+
+                    timers.HandshakeIntervalMinutes = effective.Timers.HandshakeIntervalMinutes > 0
+                        ? effective.Timers.HandshakeIntervalMinutes
+                        : 5;
+
+                    timers.OfflineQueueRetrySeconds = effective.Timers.OfflineQueueRetrySeconds > 0
+                        ? effective.Timers.OfflineQueueRetrySeconds
+                        : 30;
+
+                    _configManager.CurrentConfig.Timers = timers;
+
+                    // Aplicar cambios inmediatamente
+                    ApplyTimerChanges(timers);
+                }
+
+                _configManager.Save();
+                _configManager.ApplyLoggingConfiguration();
                 _configManager.Save();
                 _configManager.ApplyLoggingConfiguration();
 
@@ -415,7 +475,40 @@ namespace AZCKeeper_Cliente.Core
                 LocalLogger.Error(ex, "CoreService.PerformHandshake(): error. Se continúa con config local.");
             }
         }
+        private void ApplyTimerChanges(ConfigManager.TimersConfig timers)
+        {
+            try
+            {
+                // Reiniciar ActivityFlush con nuevo intervalo
+                if (_activityFlushTimer != null)
+                {
+                    _activityFlushTimer.Stop();
+                    _activityFlushTimer.Interval = timers.ActivityFlushIntervalSeconds * 1000;
+                    _activityFlushTimer.Start();
+                    LocalLogger.Info($"CoreService: ActivityFlush actualizado a {timers.ActivityFlushIntervalSeconds}s");
+                }
 
+                // Reiniciar Handshake con nuevo intervalo
+                if (_handshakeTimer != null)
+                {
+                    _handshakeTimer.Stop();
+                    _handshakeTimer.Interval = timers.HandshakeIntervalMinutes * 60_000;
+                    _handshakeTimer.Start();
+                    LocalLogger.Info($"CoreService: Handshake actualizado a {timers.HandshakeIntervalMinutes}min");
+                }
+
+                // Actualizar OfflineQueue retry
+                if (_apiClient != null)
+                {
+                    _apiClient.UpdateRetryInterval(timers.OfflineQueueRetrySeconds);
+                    LocalLogger.Info($"CoreService: OfflineQueue retry actualizado a {timers.OfflineQueueRetrySeconds}s");
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService.ApplyTimerChanges(): error.");
+            }
+        }
         private void InitializeModules()
         {
             var modulesConfig = _configManager.CurrentConfig.Modules;
@@ -553,7 +646,7 @@ namespace AZCKeeper_Cliente.Core
                 }
                 else
                 {
-                    _debugWindow = new DebugWindowForm(_activityTracker, _windowTracker);
+                    _debugWindow = new DebugWindowForm(_activityTracker, _windowTracker, () => _lastHandshakeTime);
                 }
             }
         }
@@ -618,10 +711,11 @@ namespace AZCKeeper_Cliente.Core
             {
                 if (_activityTracker == null) return;
                 if (_apiClient == null) return;
-
                 if (_activityFlushTimer != null) return;
 
-                _activityFlushTimer = new System.Timers.Timer(6_000);
+                int intervalSeconds = _configManager.CurrentConfig.Timers?.ActivityFlushIntervalSeconds ?? 6;
+
+                _activityFlushTimer = new System.Timers.Timer(intervalSeconds * 1000);
                 _activityFlushTimer.AutoReset = true;
                 _activityFlushTimer.Elapsed += (s, e) =>
                 {
@@ -629,11 +723,11 @@ namespace AZCKeeper_Cliente.Core
                     {
                         if (_authManager == null || !_authManager.HasToken)
                             return;
+
                         var snap = _activityTracker.GetCurrentDaySnapshot();
                         var dayLocal = snap.DayLocalDate;
-                        var nowLocal = TimeSync.Now; // ← Cambiar de DateTime.Now
+                        var nowLocal = DateTime.Now;
 
-                        // reset por cambio de día (evita que el día nuevo herede samples/firstEvent)
                         if (_lastFlushDayLocalDate != dayLocal)
                         {
                             _lastFlushDayLocalDate = dayLocal;
@@ -670,13 +764,14 @@ namespace AZCKeeper_Cliente.Core
                 };
 
                 _activityFlushTimer.Start();
-                LocalLogger.Info("CoreService: ActivityFlushTimer iniciado (cada 6s).");
+                LocalLogger.Info($"CoreService: ActivityFlushTimer iniciado (cada {intervalSeconds}s).");
             }
             catch (Exception ex)
             {
                 LocalLogger.Error(ex, "CoreService: error al iniciar ActivityFlushTimer.");
             }
         }
+
         /// <summary>
         /// Envía snapshot final de actividad antes de cerrar.
         /// Llamar en Stop() para evitar pérdida de datos.
@@ -758,11 +853,14 @@ namespace AZCKeeper_Cliente.Core
         private readonly Label _lblWindowInfo;
         private readonly Label _lblCallTime;
         private readonly Label _lblQueueStatus;
+        private readonly Label _lblHandshake; 
+        private readonly Func<DateTime> _getLastHandshake;
 
-        public DebugWindowForm(ActivityTracker activityTracker, WindowTracker windowTracker)
+        public DebugWindowForm(ActivityTracker activityTracker, WindowTracker windowTracker, Func<DateTime> getLastHandshake)
         {
             _activityTracker = activityTracker ?? throw new ArgumentNullException(nameof(activityTracker));
-            _windowTracker = windowTracker;
+            _windowTracker = windowTracker; 
+            _getLastHandshake = getLastHandshake;
 
             Text = "AZCKeeper - Debug Activity";
             StartPosition = FormStartPosition.CenterScreen;
@@ -788,6 +886,7 @@ namespace AZCKeeper_Cliente.Core
             _lblWindowInfo = CreateLabel();
             _lblCallTime = CreateLabel();
             _lblQueueStatus = CreateLabel();
+            _lblHandshake = CreateLabel();
 
             table.Controls.Add(_lblStartTime, 0, 0);
             table.Controls.Add(_lblCurrentDate, 0, 1);
@@ -798,6 +897,7 @@ namespace AZCKeeper_Cliente.Core
             table.Controls.Add(_lblWindowInfo, 0, 6);
             table.Controls.Add(_lblCallTime, 0, 7);
             table.Controls.Add(_lblQueueStatus, 0, 8); // Después de _lblCallTime
+            table.Controls.Add(_lblHandshake, 0, 9);
 
             Controls.Add(table);
 
@@ -825,6 +925,7 @@ namespace AZCKeeper_Cliente.Core
             try
             {
                 var nowLocal = DateTime.Now;
+                var lastHs = _getLastHandshake();
 
                 DateTime start = _activityTracker.StartLocalTime;
                 _lblStartTime.Text = start == default
@@ -870,6 +971,13 @@ namespace AZCKeeper_Cliente.Core
                     _lblQueueStatus.Text = pending > 0
                         ? $"⚠️ Cola offline: {pending} items pendientes"
                         : "✅ Cola offline: vacía";
+                }
+                if (lastHs == DateTime.MinValue)
+                    _lblHandshake.Text = "Último handshake: Nunca";
+                else
+                {
+                    var elapsed = (DateTime.Now - lastHs).TotalSeconds;
+                    _lblHandshake.Text = $"Último handshake: {lastHs:HH:mm:ss} (hace {elapsed:F0}s)";
                 }
             }
             catch

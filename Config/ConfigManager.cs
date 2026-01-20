@@ -242,6 +242,12 @@ namespace AZCKeeper_Cliente.Config
                     EnableDiscordLogging = false,
                     DiscordWebhookUrl = null
                 },
+                Timers = new TimersConfig
+                {
+                    ActivityFlushIntervalSeconds = 6,
+                    HandshakeIntervalMinutes = 5,
+                    OfflineQueueRetrySeconds = 30
+                },
                 Modules = new ModulesConfig
                 {
                     EnableActivityTracking = true,
@@ -307,6 +313,7 @@ namespace AZCKeeper_Cliente.Config
             public StartupConfig Startup { get; set; }     
             public UpdatesConfig Updates { get; set; }
             public BlockingConfig Blocking { get; set; }
+            public TimersConfig Timers { get; set; }
         }
         /// <summary>
         /// Configuración de inicio automático.
@@ -316,7 +323,15 @@ namespace AZCKeeper_Cliente.Config
             public bool EnableAutoStartup { get; set; } = true;
             public bool StartMinimized { get; set; } = false;
         }
-
+        /// <summary>
+        /// Configuración de intervalos de timers del sistema.
+        /// </summary>
+        internal class TimersConfig
+        {
+            public int ActivityFlushIntervalSeconds { get; set; } = 6;
+            public int HandshakeIntervalMinutes { get; set; } = 5;
+            public int OfflineQueueRetrySeconds { get; set; } = 30;
+        }
         /// <summary>
         /// Configuración de actualizaciones automáticas.
         /// </summary>
