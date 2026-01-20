@@ -27,13 +27,30 @@ class Http
 
     public static function bearerToken(): ?string
     {
-        $h = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+        // 1) Intenta Authorization estándar
+        $h = $_SERVER['HTTP_AUTHORIZATION'] 
+             ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] 
+             ?? null;
+        
+        // 2) Fallback: Apache con apache_request_headers()
+        if (!$h && function_exists('apache_request_headers')) {
+            $headers = apache_request_headers();
+            $h = $headers['Authorization'] ?? $headers['authorization'] ?? null;
+        }
+        
+        // 3) Si Authorization no llegó, usar header custom
+        if (!$h && isset($_SERVER['HTTP_X_AUTH_TOKEN'])) {
+            return $_SERVER['HTTP_X_AUTH_TOKEN'];
+        }
+        
         if (!$h) return null;
-
+     
+        // Parse Bearer si vino como Authorization
         if (preg_match('/Bearer\s+(.+)/i', $h, $m)) {
             $t = trim($m[1]);
             return $t !== '' ? $t : null;
         }
+        
         return null;
     }
 

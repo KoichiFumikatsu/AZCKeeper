@@ -392,11 +392,17 @@ namespace AZCKeeper_Cliente.Network
             if (content != null) request.Content = content;
 
             if (!string.IsNullOrWhiteSpace(_authManager.AuthToken))
+            {
+                // Enviar token en AMBOS lugares para máxima compatibilidad
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _authManager.AuthToken);
+
+                // Header custom que Apache SIEMPRE pasa (fallback)
+                request.Headers.Add("X-Auth-Token", _authManager.AuthToken);
+            }
 
             return request;
         }
-       
+
 
         private static async Task<string> SafeReadBodyAsync(HttpResponseMessage response)
         {

@@ -76,22 +76,18 @@ class ActivityDay
                samples_count, first_event_at, last_event_at, payload_json,
                created_at, updated_at)
             VALUES
-              (:uid, :did, :day, :tz,
-               :a, :i, :c,
-               :samples, NOW(), NOW(), CAST(:payload AS JSON),
-               NOW(), NOW())
+              (:uid, :did, :day, :tz, :a, :i, :c, :samples, NOW(), NOW(), :payload, NOW(), NOW())
             ON DUPLICATE KEY UPDATE
               tz_offset_minutes = VALUES(tz_offset_minutes),
               active_seconds = GREATEST(active_seconds, VALUES(active_seconds)),
-              idle_seconds   = GREATEST(idle_seconds,   VALUES(idle_seconds)),
-              call_seconds   = GREATEST(call_seconds,   VALUES(call_seconds)),
-              samples_count  = samples_count + :samples_inc,
-              first_event_at = IF(first_event_at IS NULL, VALUES(first_event_at), first_event_at),
+              idle_seconds   = GREATEST(idle_seconds, VALUES(idle_seconds)),
+              call_seconds   = GREATEST(call_seconds, VALUES(call_seconds)),
+              samples_count  = samples_count + VALUES(samples_count),
               last_event_at  = VALUES(last_event_at),
               payload_json   = VALUES(payload_json),
               updated_at     = NOW()
         ");
-
+         
         $st->execute([
             'uid' => $userId,
             'did' => $deviceId,
@@ -101,8 +97,7 @@ class ActivityDay
             'i'   => $idle,
             'c'   => $call,
             'samples' => $samples,
-            'samples_inc' => $samples,
-            'payload' => $payloadJson,
+            'payload' => $payloadJson
         ]);
 
         Http::json(200, [
