@@ -57,59 +57,50 @@ class ClientLogin
             if (!$emp || (string)$emp['password'] !== (string)$password) {
                 Http::json(401, ['ok' => false, 'error' => 'Invalid credentials']);
             }
-
-            // display_name armado desde columnas reales
+             
+            // ✅ LEGACY VÁLIDO: ahora migrar a keeper_users con hash
+             
             $displayName = trim(implode(' ', array_filter([
-                $emp['first_Name'] ?? '',
-                $emp['second_Name'] ?? '',
-                $emp['first_LastName'] ?? '',
-                $emp['second_LastName'] ?? ''
+                $emp['first_Name'] ?? '', $emp['second_Name'] ?? '',
+                $emp['first_LastName'] ?? '', $emp['second_LastName'] ?? ''
             ])));
-
+             
             $email = $emp['mail'] ?: ($emp['personal_mail'] ?? null);
-
-            // 2) Asegurar keeper_user (upsert)
-            // NOTA: esto asume que keeper_users tiene estas columnas.
-            // Si tus columnas difieren, ajusto con tu SHOW CREATE TABLE keeper_users.
+             
+            // 2) Asegurar keeper_user CON password_hash
             $keeperUserId = self::ensureKeeperUser($pdo, [
                 'legacy_employee_id' => (int)$emp['legacy_employee_id'],
-                'legacy_cc' => (string)$emp['cc'],
-                'display_name' => $displayName !== '' ? $displayName : (string)$emp['cc'],
+                'display_name' => $displayName ?: (string)$emp['cc'],
                 'email' => $email,
-                'role' => $emp['role'] ?? null,
-                'supervisor_legacy_id' => $emp['supervisor_id'] ?? null,
-                'area_legacy_id' => $emp['area_id'] ?? null,
-                'position_legacy' => $emp['position'] ?? null,
-                'company_legacy' => $emp['company'] ?? null,
+                'password' => $password  // ← PASAR PASSWORD PARA HASHEAR
             ]);
-
-            // 3) (Opcional) device: si keeper_devices existe con device_guid UNIQUE
+             
+            // 3) Device
             $keeperDeviceId = null;
             if ($deviceGuid) {
-                $keeperDeviceId = self::ensureKeeperDevice($pdo, $keeperUserId, (string)$deviceGuid, $deviceName);
+                $keeperDeviceId = self::ensureKeeperDevice($pdo, $keeperUserId, $deviceGuid, $deviceName);
             }
-
-            // 4) Emitir token plano + guardar hash en keeper_sessions.token_hash
-            $tokenPlain = bin2hex(random_bytes(32)); // 64 chars
-            $tokenHash  = Http::sha256Hex($tokenPlain); // 64 chars -> token_hash
-
+             
+            // 4) Token (sin expiración para persistencia permanente)
+            $tokenPlain = bin2hex(random_bytes(32));
+            $tokenHash = hash('sha256', $tokenPlain);
+             
             $stmt = $pdo->prepare("
                 INSERT INTO keeper_sessions
-                    (user_id, device_id, token_hash, issued_at, expires_at, revoked_at, ip, user_agent)
-                VALUES
-                    (:user_id, :device_id, :token_hash, NOW(), NULL, NULL, :ip, :ua)
+                  (user_id, device_id, token_hash, issued_at, expires_at, ip, user_agent)
+                VALUES (:uid, :did, :hash, NOW(), NULL, :ip, :ua)
             ");
             $stmt->execute([
-                'user_id'    => $keeperUserId,
-                'device_id'  => $keeperDeviceId,
-                'token_hash' => $tokenHash,
-                'ip'         => $_SERVER['REMOTE_ADDR'] ?? null,
-                'ua'         => $_SERVER['HTTP_USER_AGENT'] ?? null,
+                'uid' => $keeperUserId,
+                'did' => $keeperDeviceId,
+                'hash' => $tokenHash,
+                'ip' => $_SERVER['REMOTE_ADDR'] ?? null,
+                'ua' => $_SERVER['HTTP_USER_AGENT'] ?? null
             ]);
-
+             
             Http::json(200, [
                 'ok' => true,
-                'token' => $tokenPlain,          // token plano al cliente (Bearer)
+                'token' => $tokenPlain,
                 'userId' => $keeperUserId,
                 'deviceId' => $keeperDeviceId,
                 'expiresAtUtc' => null
@@ -126,33 +117,34 @@ class ClientLogin
 
     private static function ensureKeeperUser(\PDO $pdo, array $u): int
     {
-        // Esto necesita alineación con tu keeper_users real.
-        // Si NO coincide, no improviso: me pasas SHOW CREATE TABLE keeper_users y lo ajusto exacto.
-        //
-        // Intento primero por legacy_employee_id
-        $stmt = $pdo->prepare("SELECT id FROM keeper_users WHERE legacy_employee_id = :x LIMIT 1");
+        $stmt = $pdo->prepare("SELECT id, password_hash FROM keeper_users WHERE legacy_employee_id = :x LIMIT 1");
         $stmt->execute(['x' => $u['legacy_employee_id']]);
         $row = $stmt->fetch();
-        if ($row) return (int)$row['id'];
-
+        
+        $passwordHash = password_hash($u['password'], PASSWORD_BCRYPT);
+        
+        if ($row) {
+            // Usuario existe: actualizar hash si cambió password
+            if (!$row['password_hash'] || !password_verify($u['password'], $row['password_hash'])) {
+                $upd = $pdo->prepare("UPDATE keeper_users SET password_hash=:h, updated_at=NOW() WHERE id=:id");
+                $upd->execute(['h' => $passwordHash, 'id' => $row['id']]);
+            }
+            return (int)$row['id'];
+        }
+        
+        // Crear nuevo
         $stmt = $pdo->prepare("
             INSERT INTO keeper_users
-              (legacy_employee_id, legacy_cc, display_name, email, role, supervisor_legacy_id, area_legacy_id, position_legacy, company_legacy, active, created_at, updated_at)
-            VALUES
-              (:legacy_employee_id, :legacy_cc, :display_name, :email, :role, :supervisor_legacy_id, :area_legacy_id, :position_legacy, :company_legacy, 1, NOW(), NOW())
+              (legacy_employee_id, display_name, email, password_hash, status, created_at)
+            VALUES (:lid, :dn, :em, :ph, 'active', NOW())
         ");
         $stmt->execute([
-            'legacy_employee_id' => $u['legacy_employee_id'],
-            'legacy_cc' => $u['legacy_cc'],
-            'display_name' => $u['display_name'],
-            'email' => $u['email'],
-            'role' => $u['role'],
-            'supervisor_legacy_id' => $u['supervisor_legacy_id'],
-            'area_legacy_id' => $u['area_legacy_id'],
-            'position_legacy' => $u['position_legacy'],
-            'company_legacy' => $u['company_legacy'],
+            'lid' => $u['legacy_employee_id'],
+            'dn' => $u['display_name'],
+            'em' => $u['email'],
+            'ph' => $passwordHash
         ]);
-
+        
         return (int)$pdo->lastInsertId();
     }
 
