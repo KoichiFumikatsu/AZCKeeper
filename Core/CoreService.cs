@@ -72,8 +72,15 @@ namespace AZCKeeper_Cliente.Core
                 LocalLogger.Error(ex, "CoreService.Initialize(): error.");
                 throw;
             }
+
+            Microsoft.Win32.SystemEvents.SessionEnding += OnSessionEnding;
         }
 
+        private void OnSessionEnding(object sender, Microsoft.Win32.SessionEndingEventArgs e)
+        {
+            LocalLogger.Warn($"CoreService: Windows cerrando sesión ({e.Reason}). Flush final...");
+            FinalFlushBeforeShutdown();
+        }
         public void Start()
         {
             LocalLogger.Info("CoreService.Start(): iniciando.");
@@ -116,10 +123,13 @@ namespace AZCKeeper_Cliente.Core
 
         public void Stop()
         {
+            Microsoft.Win32.SystemEvents.SessionEnding -= OnSessionEnding;
             LocalLogger.Info("CoreService.Stop(): deteniendo.");
 
             try
-            {
+            {        
+                // 🔥 FLUSH FINAL ANTES DE DETENER TRACKERS
+                FinalFlushBeforeShutdown();
                 StopActivityFlushTimer();
 
                 _activityTracker?.Stop();
@@ -548,7 +558,56 @@ namespace AZCKeeper_Cliente.Core
                 LocalLogger.Error(ex, "CoreService: error al iniciar ActivityFlushTimer.");
             }
         }
+        /// <summary>
+        /// Envía snapshot final de actividad antes de cerrar.
+        /// Llamar en Stop() para evitar pérdida de datos.
+        /// </summary>
+        private void FinalFlushBeforeShutdown()
+        {
+            try
+            {
+                LocalLogger.Info("CoreService.FinalFlushBeforeShutdown(): enviando datos finales...");
 
+                if (_authManager == null || !_authManager.HasToken)
+                {
+                    LocalLogger.Warn("CoreService.FinalFlushBeforeShutdown(): sin token, no se envía.");
+                    return;
+                }
+
+                if (_activityTracker == null || _apiClient == null)
+                {
+                    LocalLogger.Warn("CoreService.FinalFlushBeforeShutdown(): tracker o apiClient null.");
+                    return;
+                }
+
+                var snap = _activityTracker.GetCurrentDaySnapshot();
+                var nowLocal = DateTime.Now;
+
+                int tzOffsetMinutes = (int)TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow).TotalMinutes;
+
+                var payload = new ApiClient.ActivityDayPayload
+                {
+                    DeviceId = _configManager.CurrentConfig.DeviceId,
+                    DayDate = snap.DayLocalDate.ToString("yyyy-MM-dd"),
+                    TzOffsetMinutes = tzOffsetMinutes,
+                    ActiveSeconds = snap.ActiveSeconds,
+                    IdleSeconds = snap.InactiveSeconds,
+                    CallSeconds = _windowTracker?.CallSessionSeconds ?? 0,
+                    SamplesCount = _activitySamplesCount,
+                    FirstEventAt = _activityFirstEventLocal?.ToString("yyyy-MM-dd HH:mm:ss"),
+                    LastEventAt = nowLocal.ToString("yyyy-MM-dd HH:mm:ss")
+                };
+
+                // Envío SINCRÓNICO (blocking) para garantizar que llegue antes de cerrar
+                _apiClient.SendActivityDayAsync(payload).GetAwaiter().GetResult();
+
+                LocalLogger.Info("CoreService.FinalFlushBeforeShutdown(): datos enviados correctamente.");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService.FinalFlushBeforeShutdown(): error al enviar flush final.");
+            }
+        }
         private void StopActivityFlushTimer()
         {
             try

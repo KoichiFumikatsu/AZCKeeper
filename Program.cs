@@ -1,4 +1,4 @@
-using System;
+ï»¿using System;
 using System.Threading;
 using System.Windows.Forms;
 using AZCKeeper_Cliente.Core;
@@ -7,12 +7,12 @@ using AZCKeeper_Cliente.Logging;
 namespace AZCKeeper_Cliente
 {
     /// <summary>
-    /// Punto de entrada principal de la aplicación AZC Keeper Cliente.
+    /// Punto de entrada principal de la aplicaciÃ³n AZC Keeper Cliente.
     /// 
     /// Responsabilidades:
     /// - Configurar el manejo global de excepciones.
-    /// - Garantizar que sólo exista una instancia del cliente (Mutex).
-    /// - Inicializar el núcleo (CoreService).
+    /// - Garantizar que sÃ³lo exista una instancia del cliente (Mutex).
+    /// - Inicializar el nÃºcleo (CoreService).
     /// - Mantener un ApplicationContext "invisible" para que la app
     ///   corra en segundo plano sin ventanas principales.
     /// </summary>
@@ -25,7 +25,7 @@ namespace AZCKeeper_Cliente
         private const string SingleInstanceMutexName = "AZCKeeper_Cliente_SingleInstance";
 
         /// <summary>
-        /// Método Main: arranque de la aplicación Windows.
+        /// MÃ©todo Main: arranque de la aplicaciÃ³n Windows.
         /// </summary>
         [STAThread]
         private static void Main()
@@ -34,14 +34,19 @@ namespace AZCKeeper_Cliente
             // cualquier error inesperado.
             AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
             Application.ThreadException += Application_ThreadException;
-
-            // Mutex para asegurar que sólo haya una instancia del cliente.
+            // ðŸ”¥ NUEVO: Capturar cierre de aplicaciÃ³n (Ctrl+C, Task Manager, etc)
+            AppDomain.CurrentDomain.ProcessExit += (s, e) =>
+            {
+                LocalLogger.Info("Program: ProcessExit detectado. Ejecutando flush final...");
+                // coreService.Stop() se llamarÃ¡ automÃ¡ticamente al salir del using
+            };
+            // Mutex para asegurar que sÃ³lo haya una instancia del cliente.
             using (var mutex = new Mutex(initiallyOwned: true, name: SingleInstanceMutexName, createdNew: out bool isNewInstance))
             {
                 if (!isNewInstance)
                 {
                     // Ya existe otra instancia: registramos y salimos.
-                    LocalLogger.Warn("Se detectó una instancia previa de AZCKeeper_Cliente. Se aborta el arranque de la nueva instancia.");
+                    LocalLogger.Warn("Se detectÃ³ una instancia previa de AZCKeeper_Cliente. Se aborta el arranque de la nueva instancia.");
                     return;
                 }
 
@@ -50,28 +55,28 @@ namespace AZCKeeper_Cliente
                     Application.EnableVisualStyles();
                     Application.SetCompatibleTextRenderingDefault(false);
 
-                    // Núcleo de la aplicación.
+                    // NÃºcleo de la aplicaciÃ³n.
                     var coreService = new CoreService();
 
-                    // Secuencia de inicialización del núcleo (config, logger, API, módulos, etc.).
+                    // Secuencia de inicializaciÃ³n del nÃºcleo (config, logger, API, mÃ³dulos, etc.).
                     coreService.Initialize();
 
-                    // Arranque de módulos (timers, trackers, etc.).
+                    // Arranque de mÃ³dulos (timers, trackers, etc.).
                     coreService.Start();
 
-                    // ApplicationContext mínimo sin formularios principales visibles.
+                    // ApplicationContext mÃ­nimo sin formularios principales visibles.
                     using (var context = new ApplicationContext())
                     {
                         Application.Run(context);
                     }
 
-                    // Al salir del loop de mensajes, detenemos ordenadamente los módulos.
+                    // Al salir del loop de mensajes, detenemos ordenadamente los mÃ³dulos.
                     coreService.Stop();
                 }
                 catch (Exception ex)
                 {
-                    // Cualquier excepción no manejada en Main se registra aquí.
-                    LocalLogger.Error(ex, "Error crítico durante el arranque/ejecución de la aplicación en Main().");
+                    // Cualquier excepciÃ³n no manejada en Main se registra aquÃ­.
+                    LocalLogger.Error(ex, "Error crÃ­tico durante el arranque/ejecuciÃ³n de la aplicaciÃ³n en Main().");
                 }
             }
         }
@@ -81,7 +86,7 @@ namespace AZCKeeper_Cliente
         /// </summary>
         private static void Application_ThreadException(object sender, System.Threading.ThreadExceptionEventArgs e)
         {
-            LocalLogger.Error(e.Exception, "Excepción no controlada en hilo de Windows Forms (Application.ThreadException).");
+            LocalLogger.Error(e.Exception, "ExcepciÃ³n no controlada en hilo de Windows Forms (Application.ThreadException).");
         }
 
         /// <summary>
@@ -91,11 +96,11 @@ namespace AZCKeeper_Cliente
         {
             if (e.ExceptionObject is Exception ex)
             {
-                LocalLogger.Error(ex, "Excepción no controlada en AppDomain (CurrentDomain.UnhandledException).");
+                LocalLogger.Error(ex, "ExcepciÃ³n no controlada en AppDomain (CurrentDomain.UnhandledException).");
             }
             else
             {
-                LocalLogger.Error("Se produjo una excepción no controlada en AppDomain, pero no se pudo castear a Exception.");
+                LocalLogger.Error("Se produjo una excepciÃ³n no controlada en AppDomain, pero no se pudo castear a Exception.");
             }
         }
     }
