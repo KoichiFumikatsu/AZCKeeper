@@ -215,6 +215,18 @@ namespace AZCKeeper_Cliente.Config
                 DeviceId = null, // Se generará posteriormente en EnsureDeviceId.
                 ApiBaseUrl = "http://localhost/AZCKeeper/AZCKeeper_Client/Web/public/index.php/api/", // Placeholder para la API real.
                 ApiAuthToken = null,
+                Startup = new StartupConfig
+                {
+                    EnableAutoStartup = true,
+                    StartMinimized = false
+                },
+                Updates = new UpdatesConfig
+                {
+                    EnableAutoUpdate = true,
+                    CheckIntervalMinutes = 60,
+                    AutoDownload = false,
+                    AllowBetaVersions = false
+                },
                 Logging = new LoggingConfig
                 {
                     GlobalLevel = "INFO",
@@ -285,8 +297,28 @@ namespace AZCKeeper_Cliente.Config
             public string ApiAuthToken { get; set; }
             public LoggingConfig Logging { get; set; }
             public ModulesConfig Modules { get; set; }
+            public StartupConfig Startup { get; set; }     
+            public UpdatesConfig Updates { get; set; }
+        }
+        /// <summary>
+        /// Configuración de inicio automático.
+        /// </summary>
+        internal class StartupConfig
+        {
+            public bool EnableAutoStartup { get; set; } = true;
+            public bool StartMinimized { get; set; } = false;
         }
 
+        /// <summary>
+        /// Configuración de actualizaciones automáticas.
+        /// </summary>
+        internal class UpdatesConfig
+        {
+            public bool EnableAutoUpdate { get; set; } = true;
+            public int CheckIntervalMinutes { get; set; } = 60;
+            public bool AutoDownload { get; set; } = false;
+            public bool AllowBetaVersions { get; set; } = false;
+        }
         /// <summary>
         /// Configuración de logging: niveles y destinos.
         /// </summary>

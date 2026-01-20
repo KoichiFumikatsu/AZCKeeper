@@ -6,6 +6,7 @@ using AZCKeeper_Cliente.Blocking;
 using AZCKeeper_Cliente.Config;
 using AZCKeeper_Cliente.Logging;
 using AZCKeeper_Cliente.Network;
+using AZCKeeper_Cliente.Startup;
 using AZCKeeper_Cliente.Tracking;
 using AZCKeeper_Cliente.Update;
 
@@ -64,6 +65,11 @@ namespace AZCKeeper_Cliente.Core
                 PerformHandshake();
 
                 InitializeModules();
+                // Habilitar startup automático
+                if (!StartupManager.IsEnabled())
+                {
+                    StartupManager.EnableStartup();
+                }
 
                 LocalLogger.Info("CoreService.Initialize(): OK.");
             }
@@ -271,7 +277,47 @@ namespace AZCKeeper_Cliente.Core
 
                 if (!string.IsNullOrWhiteSpace(effective.ApiBaseUrl))
                     _configManager.CurrentConfig.ApiBaseUrl = effective.ApiBaseUrl;
+                if (effective.Startup != null)
+                {
+                    var startup = _configManager.CurrentConfig.Startup ?? new ConfigManager.StartupConfig();
 
+                    startup.EnableAutoStartup = effective.Startup.EnableAutoStartup;
+                    startup.StartMinimized = effective.Startup.StartMinimized;
+
+                    _configManager.CurrentConfig.Startup = startup;
+
+                    // Aplicar cambio inmediatamente
+                    if (startup.EnableAutoStartup)
+                        Startup.StartupManager.EnableStartup();
+                    else
+                        Startup.StartupManager.DisableStartup();
+                }
+
+                if (effective.Updates != null)
+                {
+                    var updates = _configManager.CurrentConfig.Updates ?? new ConfigManager.UpdatesConfig();
+
+                    updates.EnableAutoUpdate = effective.Updates.EnableAutoUpdate;
+                    updates.CheckIntervalMinutes = effective.Updates.CheckIntervalMinutes;
+                    updates.AutoDownload = effective.Updates.AutoDownload;
+                    updates.AllowBetaVersions = effective.Updates.AllowBetaVersions;
+
+                    _configManager.CurrentConfig.Updates = updates;
+
+                    // Reiniciar UpdateManager si cambió configuración
+                    if (_updateManager != null)
+                    {
+                        _updateManager.Stop();
+                        if (updates.EnableAutoUpdate)
+                        {
+                            _updateManager.UpdateInterval(updates.CheckIntervalMinutes);
+                            _updateManager.Start();
+                        }
+                    }
+                }
+
+                _configManager.Save();
+                _configManager.ApplyLoggingConfiguration();
                 if (effective.Logging != null)
                 {
                     var logging = _configManager.CurrentConfig.Logging ?? new ConfigManager.LoggingConfig();
@@ -336,6 +382,8 @@ namespace AZCKeeper_Cliente.Core
         private void InitializeModules()
         {
             var modulesConfig = _configManager.CurrentConfig.Modules;
+            var startupConfig = _configManager.CurrentConfig.Startup;
+            var updatesConfig = _configManager.CurrentConfig.Updates;
 
             if (modulesConfig == null)
             {
@@ -436,11 +484,29 @@ namespace AZCKeeper_Cliente.Core
                 _activityTracker.ActivityOverrideMaxIdleSeconds = maxIdle;
             }
 
+            // -------------------- Startup --------------------
+            if (startupConfig != null && startupConfig.EnableAutoStartup)
+            {
+                if (!Startup.StartupManager.IsEnabled())
+                    Startup.StartupManager.EnableStartup();
+            }
+
+            // -------------------- UpdateManager --------------------
+            if (updatesConfig != null && updatesConfig.EnableAutoUpdate)
+            {
+                _updateManager = new UpdateManager(_configManager, _apiClient, updatesConfig.CheckIntervalMinutes);
+            }
             // -------------------- Hooks / Blocking / Updates / Debug --------------------
             if (modulesConfig.EnableKeyboardHook) _keyboardHook = new KeyboardHook();
             if (modulesConfig.EnableMouseHook) _mouseHook = new MouseHook();
             if (modulesConfig.EnableBlocking) _keyBlocker = new KeyBlocker();
-            if (modulesConfig.EnableUpdateManager) _updateManager = new UpdateManager();
+            // ✅ CORRECTO
+            if (modulesConfig.EnableUpdateManager)
+            {
+                int intervalMinutes = updatesConfig?.CheckIntervalMinutes ?? 60;
+
+                _updateManager = new UpdateManager(_configManager, _apiClient, intervalMinutes);
+            }
 
             if (modulesConfig.EnableDebugWindow)
             {

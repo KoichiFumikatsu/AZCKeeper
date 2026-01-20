@@ -280,8 +280,6 @@ namespace AZCKeeper_Cliente.Network
         // Si tu backend lo dejó como POST /client/activity-day/get,
         // cambia a HttpMethod.Post y manda JSON { deviceId, dayDate }.
 
-
-        // -------------------- ACTIVITY DAY (GET / RESUME) --------------------
         public async Task<ActivityDayGetResult> GetActivityDayAsync(string deviceId, string dayDate)
         {
             var result = new ActivityDayGetResult();
@@ -411,6 +409,40 @@ namespace AZCKeeper_Cliente.Network
             }
         }
 
+        // -------------------- GET GENÉRICO --------------------
+
+        /// <summary>
+        /// Realiza un GET genérico y retorna el body como string.
+        /// Útil para endpoints simples como /client/version.
+        /// </summary>
+        public async Task<string> GetAsync(string relativeUrl)
+        {
+            try
+            {
+                if (_httpClient.BaseAddress == null)
+                {
+                    LocalLogger.Warn($"ApiClient.GetAsync(): BaseAddress es null.");
+                    return null;
+                }
+
+                using var httpRequest = CreateRequest(HttpMethod.Get, relativeUrl, content: null);
+                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    string body = await SafeReadBodyAsync(response).ConfigureAwait(false);
+                    LocalLogger.Warn($"ApiClient.GetAsync({relativeUrl}): HTTP {(int)response.StatusCode}. BodyPreview={Preview(body)}");
+                    return null;
+                }
+
+                return await SafeReadBodyAsync(response).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, $"ApiClient.GetAsync({relativeUrl}): error.");
+                return null;
+            }
+        }
 
         // -------------------- Helpers --------------------
         // Ajuste helper: permitir content null
@@ -635,6 +667,8 @@ namespace AZCKeeper_Cliente.Network
             public string ApiBaseUrl { get; set; }
             public EffectiveLogging Logging { get; set; }
             public EffectiveModules Modules { get; set; }
+            public EffectiveStartup Startup { get; set; }     
+            public EffectiveUpdates Updates { get; set; }      
         }
 
         internal class EffectiveLogging
@@ -668,6 +702,20 @@ namespace AZCKeeper_Cliente.Network
             public string[] CallProcessKeywords { get; set; }
             public string[] CallTitleKeywords { get; set; }
         }
+        internal class EffectiveStartup
+        {
+            public bool EnableAutoStartup { get; set; }
+            public bool StartMinimized { get; set; }
+        }
+
+        internal class EffectiveUpdates
+        {
+            public bool EnableAutoUpdate { get; set; }
+            public int CheckIntervalMinutes { get; set; }
+            public bool AutoDownload { get; set; }
+            public bool AllowBetaVersions { get; set; }
+        }
+
 
         internal class HandshakeResult
         {

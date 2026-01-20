@@ -1,14 +1,53 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-    <PropertyGroup>
-    <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
-    <Nullable>enable</Nullable>
-    <UseWindowsForms>true</UseWindowsForms>
-    <ImplicitUsings>enable</ImplicitUsings>
-    </PropertyGroup>
-    <ItemGroup>
-	    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
-    </ItemGroup>
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net8.0-windows</TargetFramework>
+		<Nullable>disable</Nullable>
+		<UseWindowsForms>true</UseWindowsForms>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Platforms>AnyCPU;x64</Platforms>
+	</PropertyGroup>
+
+	<!-- ✅ CONFIGURACIÓN CONDICIONAL: Solo para PUBLISH -->
+	<PropertyGroup Condition="'$(Configuration)' == 'Release'">
+		<PublishTrimmed>false</PublishTrimmed>
+		<PublishReadyToRun>true</PublishReadyToRun>
+		<TrimMode>partial</TrimMode>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- ✅ PROTEGER SQLite y JSON del trimming -->
+		<TrimmerRootAssembly Include="System.Data.SQLite" />
+		<TrimmerRootAssembly Include="System.Text.Json" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- Referencia al proyecto Updater -->
+		<ProjectReference Include="..\AZCKeeperUpdater\AZCKeeperUpdater.csproj">
+			<ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+		</ProjectReference>
+	</ItemGroup>
+
+	<!-- Copiar Updater después de publicar -->
+	<Target Name="CopyUpdaterAfterPublish" AfterTargets="Publish">
+		<PropertyGroup>
+			<UpdaterSourcePath>..\AZCKeeperUpdater\bin\$(Configuration)\net8.0-windows\win-x64\publish\AZCKeeperUpdater.exe</UpdaterSourcePath>
+		</PropertyGroup>
+
+		<Message Importance="high" Text="Buscando Updater en: $(UpdaterSourcePath)" />
+
+		<Copy
+		  SourceFiles="$(UpdaterSourcePath)"
+		  DestinationFolder="$(PublishDir)"
+		  Condition="Exists('$(UpdaterSourcePath)')"
+    />
+
+		<Warning Text="Updater no encontrado. Compila AZCKeeperUpdater primero." Condition="!Exists('$(UpdaterSourcePath)')" />
+	</Target>
 
 </Project>

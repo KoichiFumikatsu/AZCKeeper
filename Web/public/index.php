@@ -45,6 +45,7 @@ $routes = [
   'GET' => [
     '/health' => [Keeper\Endpoints\Health::class, 'handle'],
     '/client/activity-day' => [Keeper\Endpoints\ActivityDay::class, 'handleGet'], // NUEVO
+    '/client/version', [Keeper\Endpoints\ClientVersion::class, 'handle'],
   ],
   'POST' => [
     '/client/handshake' => [Keeper\Endpoints\ClientHandshake::class, 'handle'],

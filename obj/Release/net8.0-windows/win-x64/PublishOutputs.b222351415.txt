@@ -1,0 +1,7 @@
+C:\xampp\htdocs\build\AZCKeeper\AZCKeeper_Client.exe
+C:\xampp\htdocs\build\AZCKeeper\AZCKeeper_Client.dll
+C:\xampp\htdocs\build\AZCKeeper\AZCKeeper_Client.deps.json
+C:\xampp\htdocs\build\AZCKeeper\AZCKeeper_Client.runtimeconfig.json
+C:\xampp\htdocs\build\AZCKeeper\AZCKeeper_Client.pdb
+C:\xampp\htdocs\build\AZCKeeper\System.Data.SQLite.dll
+C:\xampp\htdocs\build\AZCKeeper\SQLite.Interop.dll
