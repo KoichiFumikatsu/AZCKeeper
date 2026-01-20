@@ -27,7 +27,11 @@ class WindowEpisode
             Http::json(400, ['ok' => false, 'error' => 'Missing required fields']);
         }
  
-        // Parse timestamps (cliente envía "yyyy-MM-dd HH:mm:ss")
+        // 🔥 VALIDACIÓN: Sanitizar strings potencialmente peligrosos
+        $processName = self::sanitizeString($processName, 190);
+        $windowTitle = self::sanitizeString($windowTitle, 512);
+ 
+        // Parse timestamps
         $startDt = \DateTime::createFromFormat('Y-m-d H:i:s', $startLocalTime);
         $endDt   = \DateTime::createFromFormat('Y-m-d H:i:s', $endLocalTime);
  
@@ -35,8 +39,18 @@ class WindowEpisode
             Http::json(400, ['ok' => false, 'error' => 'Invalid datetime format (YYYY-MM-DD HH:MM:SS)']);
         }
  
-        $dayDate = $startDt->format('Y-m-d');
+        // 🔥 VALIDACIÓN: timestamps lógicos
+        if ($endDt <= $startDt) {
+            Http::json(400, ['ok' => false, 'error' => 'End time must be after start time']);
+        }
+ 
+        // 🔥 VALIDACIÓN: duración razonable (máximo 24 horas)
         $duration = max(0, (int)round((float)$durationSec));
+        if ($duration > 86400) {
+            Http::json(400, ['ok' => false, 'error' => 'Duration too long (max 24h)']);
+        }
+ 
+        $dayDate = $startDt->format('Y-m-d');
  
         $pdo = Db::pdo();
  
@@ -59,31 +73,54 @@ class WindowEpisode
             Http::json(403, ['ok' => false, 'error' => 'Device revoked']);
         }
  
-        // Insertar episodio
-        $st = $pdo->prepare("
-            INSERT INTO keeper_window_episode
-              (user_id, device_id, start_at, end_at, duration_seconds,
-               process_name, window_title, is_in_call, day_date, created_at)
-            VALUES
-              (:uid, :did, :start, :end, :dur,
-               :proc, :title, :call, :day, NOW())
-        ");
+        // 🔥 PROTECCIÓN: usar try-catch para INSERT
+        try {
+            $st = $pdo->prepare("
+                INSERT INTO keeper_window_episode
+                  (user_id, device_id, start_at, end_at, duration_seconds,
+                   process_name, window_title, is_in_call, day_date, created_at)
+                VALUES
+                  (:uid, :did, :start, :end, :dur, :proc, :title, :call, :day, NOW())
+            ");
  
-        $st->execute([
-            'uid'   => $userId,
-            'did'   => $deviceId,
-            'start' => $startDt->format('Y-m-d H:i:s'),
-            'end'   => $endDt->format('Y-m-d H:i:s'),
-            'dur'   => $duration,
-            'proc'  => substr($processName ?? '', 0, 190),
-            'title' => substr($windowTitle ?? '', 0, 512),
-            'call'  => $isCallApp ? 1 : 0,
-            'day'   => $dayDate
-        ]);
+            $st->execute([
+                'uid'   => $userId,
+                'did'   => $deviceId,
+                'start' => $startDt->format('Y-m-d H:i:s'),
+                'end'   => $endDt->format('Y-m-d H:i:s'),
+                'dur'   => $duration,
+                'proc'  => $processName,
+                'title' => $windowTitle,
+                'call'  => $isCallApp ? 1 : 0,
+                'day'   => $dayDate
+            ]);
  
-        Http::json(200, [
-            'ok' => true,
-            'episodeId' => (int)$pdo->lastInsertId()
-        ]);
+            Http::json(200, [
+                'ok' => true,
+                'episodeId' => (int)$pdo->lastInsertId()
+            ]);
+        } catch (\PDOException $e) {
+            // Log error pero no exponer detalles al cliente
+            error_log("WindowEpisode INSERT error: " . $e->getMessage());
+            Http::json(500, ['ok' => false, 'error' => 'Database insert failed']);
+        }
+    }
+ 
+    /**
+     * Sanitiza y trunca strings para prevenir inyecciones y datos corruptos
+     */
+    private static function sanitizeString(?string $str, int $maxLen): string
+    {
+        if ($str === null) return '';
+        
+        // Remover caracteres de control excepto tabs/newlines
+        $str = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $str);
+        
+        // Truncar a longitud máxima (UTF-8 safe)
+        if (mb_strlen($str, 'UTF-8') > $maxLen) {
+            $str = mb_substr($str, 0, $maxLen, 'UTF-8');
+        }
+        
+        return $str;
     }
 }

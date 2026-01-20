@@ -67,8 +67,26 @@ class ActivityDay
             Http::json(403, ['ok'=>false,'error'=>'Device revoked']);
         }
 
+        // Línea 70: Validar y sanitizar JSON
         $payloadJson = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
+         
+        // 🔥 VALIDACIÓN: verificar que se codificó correctamente
+        if ($payloadJson === false || json_last_error() !== JSON_ERROR_NONE) {
+            Http::json(500, ['ok'=>false,'error'=>'Failed to encode payload JSON: ' . json_last_error_msg()]);
+        }
+         
+        // 🔥 LÍMITE DE TAMAÑO: prevenir payloads gigantes (64KB límite)
+        if (strlen($payloadJson) > 65536) {
+            LocalLogger::warn("ActivityDay: payload muy grande (" . strlen($payloadJson) . " bytes). Truncando...");
+            $payloadJson = substr($payloadJson, 0, 65536);
+        }
+         
+        // 🔥 VALIDAR QUE ES JSON VÁLIDO: decodificar para verificar
+        $decoded = json_decode($payloadJson, true);
+        if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
+            Http::json(500, ['ok'=>false,'error'=>'Malformed JSON payload: ' . json_last_error_msg()]);
+        }
+         
         $st = $pdo->prepare("
             INSERT INTO keeper_activity_day
               (user_id, device_id, day_date, tz_offset_minutes,
@@ -88,18 +106,25 @@ class ActivityDay
               updated_at     = NOW()
         ");
          
-        $st->execute([
-            'uid' => $userId,
-            'did' => $deviceId,
-            'day' => $dayDate,
-            'tz'  => $tzOff,
-            'a'   => $active,
-            'i'   => $idle,
-            'c'   => $call,
-            'samples' => $samples,
-            'payload' => $payloadJson
-        ]);
-
+        try {
+            $st->execute([
+                'uid' => $userId,
+                'did' => $deviceId,
+                'day' => $dayDate,
+                'tz'  => $tzOff,
+                'a'   => $active,
+                'i'   => $idle,
+                'c'   => $call,
+                'samples' => $samples,
+                'payload' => $payloadJson
+            ]);
+        } catch (\PDOException $e) {
+            // 🔥 CATCH específico para errores de JSON en MySQL
+            if (strpos($e->getMessage(), 'Invalid JSON') !== false) {
+                Http::json(500, ['ok'=>false,'error'=>'MySQL rejected JSON payload']);
+            }
+            throw $e; // Re-lanzar otros errores
+        }
         Http::json(200, [
             'ok' => true,
             'userId' => $userId,

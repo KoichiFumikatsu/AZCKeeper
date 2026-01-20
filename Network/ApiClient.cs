@@ -23,6 +23,8 @@ namespace AZCKeeper_Cliente.Network
         private readonly ConfigManager _configManager;
         private readonly AuthManager _authManager;
         private readonly HttpClient _httpClient;
+        private readonly OfflineQueue _offlineQueue;
+        private System.Timers.Timer _retryTimer;
 
         private readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
         {
@@ -34,6 +36,7 @@ namespace AZCKeeper_Cliente.Network
         {
             _configManager = configManager ?? throw new ArgumentNullException(nameof(configManager));
             _authManager = authManager ?? throw new ArgumentNullException(nameof(authManager));
+            _offlineQueue = new OfflineQueue(); // ← AÑADIR
 
             _httpClient = new HttpClient();
 
@@ -55,6 +58,7 @@ namespace AZCKeeper_Cliente.Network
 
             string version = _configManager.CurrentConfig?.Version ?? "0.0.0.0";
             _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"AZCKeeper-Cliente/{version}");
+            StartRetryTimer();
         }
 
         // -------------------- LOGIN --------------------
@@ -220,7 +224,7 @@ namespace AZCKeeper_Cliente.Network
 
         // -------------------- ACTIVITY DAY (UPSERT) --------------------
 
-        public async Task SendActivityDayAsync(ActivityDayPayload payload)
+        public async Task SendActivityDayAsync(ActivityDayPayload payload, bool fromQueue = false)
         {
             if (payload == null) throw new ArgumentNullException(nameof(payload));
 
@@ -229,6 +233,7 @@ namespace AZCKeeper_Cliente.Network
                 if (_httpClient.BaseAddress == null)
                 {
                     LocalLogger.Warn("ApiClient.SendActivityDayAsync(): BaseAddress es null.");
+                    if (!fromQueue) _offlineQueue.Enqueue("client/activity-day", payload);
                     return;
                 }
 
@@ -243,16 +248,28 @@ namespace AZCKeeper_Cliente.Network
                 if (!response.IsSuccessStatusCode)
                 {
                     string body = await SafeReadBodyAsync(response).ConfigureAwait(false);
-                    LocalLogger.Warn($"ApiClient.SendActivityDayAsync(): HTTP {(int)response.StatusCode} {response.ReasonPhrase}. BodyPreview={Preview(body)}");
+                    LocalLogger.Warn($"ApiClient.SendActivityDayAsync(): HTTP {(int)response.StatusCode}. BodyPreview={Preview(body)}");
+
+                    // Solo encolar si no viene de la cola (evitar loop infinito)
+                    if (!fromQueue) _offlineQueue.Enqueue("client/activity-day", payload);
                     return;
                 }
 
-                // Evitar ruido: INFO está bien por ahora para pruebas
                 LocalLogger.Info($"ApiClient.SendActivityDayAsync(): activity-day enviado. DayDate={payload.DayDate}");
+            }
+            catch (HttpRequestException ex)
+            {
+                // Error de red: encolar (log limpio sin stack trace completo)
+                string errorMsg = ex.InnerException?.Message ?? ex.Message;
+                LocalLogger.Warn($"ApiClient.SendActivityDayAsync(): red caída. Encolando... Error: {errorMsg}");
+
+                if (!fromQueue) _offlineQueue.Enqueue("client/activity-day", payload);
             }
             catch (Exception ex)
             {
-                LocalLogger.Error(ex, $"ApiClient.SendActivityDayAsync(): error al enviar activity-day DayDate={payload.DayDate}.");
+                // Otros errores: log completo
+                LocalLogger.Error(ex, $"ApiClient.SendActivityDayAsync(): error inesperado. DayDate={payload.DayDate}");
+                if (!fromQueue) _offlineQueue.Enqueue("client/activity-day", payload);
             }
         }
 
@@ -351,7 +368,7 @@ namespace AZCKeeper_Cliente.Network
 
         // -------------------- WINDOW EPISODE --------------------
 
-        public async Task SendWindowEpisodeAsync(WindowEpisodePayload payload)
+        public async Task SendWindowEpisodeAsync(WindowEpisodePayload payload, bool fromQueue = false)
         {
             if (payload == null) throw new ArgumentNullException(nameof(payload));
 
@@ -360,6 +377,7 @@ namespace AZCKeeper_Cliente.Network
                 if (_httpClient.BaseAddress == null)
                 {
                     LocalLogger.Warn("ApiClient.SendWindowEpisodeAsync(): BaseAddress es null.");
+                    if (!fromQueue) _offlineQueue.Enqueue("client/window-episode", payload);
                     return;
                 }
 
@@ -374,15 +392,25 @@ namespace AZCKeeper_Cliente.Network
                 if (!response.IsSuccessStatusCode)
                 {
                     string body = await SafeReadBodyAsync(response).ConfigureAwait(false);
-                    LocalLogger.Warn($"ApiClient.SendWindowEpisodeAsync(): HTTP {(int)response.StatusCode} {response.ReasonPhrase}. BodyPreview={Preview(body)}");
+                    LocalLogger.Warn($"ApiClient.SendWindowEpisodeAsync(): HTTP {(int)response.StatusCode}. BodyPreview={Preview(body)}");
+                    if (!fromQueue) _offlineQueue.Enqueue("client/window-episode", payload);
                     return;
                 }
             }
+            catch (HttpRequestException ex)
+            {
+                string errorMsg = ex.InnerException?.Message ?? ex.Message;
+                LocalLogger.Warn($"ApiClient.SendWindowEpisodeAsync(): red caída. Encolando... Error: {errorMsg}");
+
+                if (!fromQueue) _offlineQueue.Enqueue("client/window-episode", payload);
+            }
             catch (Exception ex)
             {
-                LocalLogger.Error(ex, "ApiClient.SendWindowEpisodeAsync(): error.");
+                LocalLogger.Error(ex, "ApiClient.SendWindowEpisodeAsync(): error inesperado.");
+                if (!fromQueue) _offlineQueue.Enqueue("client/window-episode", payload);
             }
         }
+
 
         // -------------------- Helpers --------------------
         // Ajuste helper: permitir content null
@@ -448,6 +476,81 @@ namespace AZCKeeper_Cliente.Network
             return t.Substring(0, maxLen) + "...";
         }
 
+        /// <summary>
+        /// Inicia timer para procesar cola offline cada 30 segundos.
+        /// </summary>
+        private void StartRetryTimer()
+        {
+            _retryTimer = new System.Timers.Timer(30_000); // 30s
+            _retryTimer.AutoReset = true;
+            _retryTimer.Elapsed += async (s, e) => await ProcessOfflineQueueAsync();
+            _retryTimer.Start();
+
+            LocalLogger.Info("ApiClient: RetryTimer iniciado (cada 30s).");
+        }
+
+        /// <summary>
+        /// Procesa items pendientes de la cola offline.
+        /// </summary>
+        public async Task ProcessOfflineQueueAsync()
+        {
+            try
+            {
+                var pending = _offlineQueue.GetPendingItems(10); // Procesar 10 por lote
+                if (pending.Count == 0) return;
+
+                LocalLogger.Info($"ApiClient: procesando {pending.Count} items de cola offline...");
+
+                foreach (var item in pending)
+                {
+                    try
+                    {
+                        bool success = false;
+
+                        if (item.Endpoint == "client/activity-day")
+                        {
+                            var payload = JsonSerializer.Deserialize<ActivityDayPayload>(item.PayloadJson, _jsonOptions);
+                            if (payload != null)
+                            {
+                                await SendActivityDayAsync(payload, fromQueue: true);
+                                success = true;
+                            }
+                        }
+                        else if (item.Endpoint == "client/window-episode")
+                        {
+                            var payload = JsonSerializer.Deserialize<WindowEpisodePayload>(item.PayloadJson, _jsonOptions);
+                            if (payload != null)
+                            {
+                                await SendWindowEpisodeAsync(payload, fromQueue: true);
+                                success = true;
+                            }
+                        }
+
+                        if (success)
+                        {
+                            _offlineQueue.MarkAsSent(item.Id);
+                            LocalLogger.Info($"ApiClient: item {item.Id} reenviado exitosamente.");
+                        }
+                        else
+                        {
+                            _offlineQueue.MarkAsRetried(item.Id, "Deserialización falló");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _offlineQueue.MarkAsRetried(item.Id, ex.Message);
+                        LocalLogger.Warn($"ApiClient: retry falló para item {item.Id}: {ex.Message}");
+                    }
+                }
+
+                // Limpiar dead letters
+                _offlineQueue.CleanupDeadLetters();
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "ApiClient.ProcessOfflineQueueAsync(): error general.");
+            }
+        }
         // -------------------- MODELOS --------------------
 
         // Modelos GET
@@ -601,4 +704,6 @@ namespace AZCKeeper_Cliente.Network
         }
 
     }
+
+
 }

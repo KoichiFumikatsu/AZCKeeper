@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Runtime.InteropServices;
+using AZCKeeper_Cliente.Core;
 using AZCKeeper_Cliente.Logging;
 
 namespace AZCKeeper_Cliente.Tracking
@@ -143,8 +144,9 @@ namespace AZCKeeper_Cliente.Tracking
                 _sessionActiveSeconds = 0;
                 _sessionInactiveSeconds = 0;
 
-                _lastSampleUtc = DateTime.UtcNow;
-                _startLocalTime = DateTime.Now;
+                _lastSampleUtc = TimeSync.UtcNow;
+                _startLocalTime = TimeSync.Now;
+
 
                 _timer = new System.Timers.Timer(_intervalSeconds * 1000.0);
                 _timer.AutoReset = true;
@@ -173,7 +175,7 @@ namespace AZCKeeper_Cliente.Tracking
         {
             try
             {
-                DateTime nowUtc = DateTime.UtcNow;
+                DateTime nowUtc = TimeSync.UtcNow;
                 DateTime nowLocal = nowUtc.ToLocalTime();
 
                 DateTime lastSampleUtc;

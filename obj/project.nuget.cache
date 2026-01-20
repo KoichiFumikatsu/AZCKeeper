@@ -1,8 +1,11 @@
 {
   "version": 2,
-  "dgSpecHash": "G9NYpoSkt8I=",
+  "dgSpecHash": "nqyfAgloxnA=",
   "success": true,
   "projectFilePath": "C:\\xampp\\htdocs\\AZCKEEPER\\AZCKeeper_Client\\AZCKeeper_Client.csproj",
-  "expectedPackageFiles": [],
+  "expectedPackageFiles": [
+    "C:\\Users\\AZC\\.nuget\\packages\\stub.system.data.sqlite.core.netstandard\\1.0.118\\stub.system.data.sqlite.core.netstandard.1.0.118.nupkg.sha512",
+    "C:\\Users\\AZC\\.nuget\\packages\\system.data.sqlite.core\\1.0.118\\system.data.sqlite.core.1.0.118.nupkg.sha512"
+  ],
   "logs": []
 }

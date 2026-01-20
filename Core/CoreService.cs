@@ -120,7 +120,6 @@ namespace AZCKeeper_Cliente.Core
             }
         }
 
-
         public void Stop()
         {
             Microsoft.Win32.SystemEvents.SessionEnding -= OnSessionEnding;
@@ -260,6 +259,12 @@ namespace AZCKeeper_Cliente.Core
                 {
                     LocalLogger.Warn($"CoreService.PerformHandshake(): no aplicado. Status={hs.StatusCode?.ToString() ?? "null"}, NonJson={hs.IsNonJsonResponse}, BodyPreview={hs.BodyPreview}");
                     return;
+                }
+
+                // 🔥 NUEVO: Sincronizar tiempo con servidor
+                if (!string.IsNullOrWhiteSpace(hs.Response.ServerTimeUtc))
+                {
+                    TimeSync.UpdateFromServer(hs.Response.ServerTimeUtc);
                 }
 
                 var effective = hs.Response.EffectiveConfig;
@@ -512,7 +517,7 @@ namespace AZCKeeper_Cliente.Core
                             return;
                         var snap = _activityTracker.GetCurrentDaySnapshot();
                         var dayLocal = snap.DayLocalDate;
-                        var nowLocal = DateTime.Now;
+                        var nowLocal = TimeSync.Now; // ← Cambiar de DateTime.Now
 
                         // reset por cambio de día (evita que el día nuevo herede samples/firstEvent)
                         if (_lastFlushDayLocalDate != dayLocal)
@@ -638,6 +643,7 @@ namespace AZCKeeper_Cliente.Core
         private readonly Label _lblDayInactive;
         private readonly Label _lblWindowInfo;
         private readonly Label _lblCallTime;
+        private readonly Label _lblQueueStatus;
 
         public DebugWindowForm(ActivityTracker activityTracker, WindowTracker windowTracker)
         {
@@ -667,6 +673,7 @@ namespace AZCKeeper_Cliente.Core
             _lblDayInactive = CreateLabel();
             _lblWindowInfo = CreateLabel();
             _lblCallTime = CreateLabel();
+            _lblQueueStatus = CreateLabel();
 
             table.Controls.Add(_lblStartTime, 0, 0);
             table.Controls.Add(_lblCurrentDate, 0, 1);
@@ -676,6 +683,7 @@ namespace AZCKeeper_Cliente.Core
             table.Controls.Add(_lblDayInactive, 0, 5);
             table.Controls.Add(_lblWindowInfo, 0, 6);
             table.Controls.Add(_lblCallTime, 0, 7);
+            table.Controls.Add(_lblQueueStatus, 0, 8); // Después de _lblCallTime
 
             Controls.Add(table);
 
@@ -740,6 +748,14 @@ namespace AZCKeeper_Cliente.Core
                 {
                     _lblWindowInfo.Text = "Ventana activa: (WindowTracker deshabilitado)";
                     _lblCallTime.Text = "Sesión - Tiempo en apps de llamada: (no aplica)";
+                }
+                // NUEVO: mostrar estado de cola offline
+                if (_activityTracker != null)
+                {
+                    int pending = 0; // Necesitarás pasar OfflineQueue al DebugWindow
+                    _lblQueueStatus.Text = pending > 0
+                        ? $"⚠️ Cola offline: {pending} items pendientes"
+                        : "✅ Cola offline: vacía";
                 }
             }
             catch

@@ -13,3 +13,10 @@ C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\obj\Debug\net8.0-windows\AZCKeeper_Cl
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\obj\Debug\net8.0-windows\AZCKeeper_Client.genruntimeconfig.cache
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\obj\Debug\net8.0-windows\ref\AZCKeeper_Client.dll
 C:\xampp\htdocs\AZCKEEPER\AZCKeeper_Client\obj\Debug\net8.0-windows\AZCKeeper_Client.sourcelink.json
+C:\xampp\htdocs\AZCKEEPER\AZCKeeper_Client\bin\Debug\net8.0-windows\System.Data.SQLite.dll
+C:\xampp\htdocs\AZCKEEPER\AZCKeeper_Client\bin\Debug\net8.0-windows\runtimes\linux-x64\native\SQLite.Interop.dll
+C:\xampp\htdocs\AZCKEEPER\AZCKeeper_Client\bin\Debug\net8.0-windows\runtimes\osx-x64\native\SQLite.Interop.dll
+C:\xampp\htdocs\AZCKEEPER\AZCKeeper_Client\bin\Debug\net8.0-windows\runtimes\win-x64\native\SQLite.Interop.dll
+C:\xampp\htdocs\AZCKEEPER\AZCKeeper_Client\bin\Debug\net8.0-windows\runtimes\win-x86\native\SQLite.Interop.dll
+C:\xampp\htdocs\AZCKEEPER\AZCKeeper_Client\obj\Debug\net8.0-windows\AZCKeeper_Client.csproj.AssemblyReference.cache
+C:\xampp\htdocs\AZCKEEPER\AZCKeeper_Client\obj\Debug\net8.0-windows\AZCKeepe.4EC4A4CE.Up2Date
