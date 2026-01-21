@@ -12,7 +12,8 @@ $globalPolicy = $pdo->query("
 ")->fetch(PDO::FETCH_ASSOC);
  
 // Configuración por defecto
-$defaultConfig = [
+$defaultConfig = [    
+    'apiBaseUrl' => 'http://localhost/AZCKeeper/AZCKeeper_Client/Web/public/index.php/api/', 
     'logging' => [
         'globalLevel' => 'Info',
         'clientOverrideLevel' => null,
@@ -76,6 +77,7 @@ function getConfig($array, $key, $default = null) {
 // PROCESAR FORMULARIO
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $newConfig = [
+        'apiBaseUrl' => trim($_POST['api_base_url'] ?? $config['apiBaseUrl']), 
         'logging' => [
             'globalLevel' => $_POST['log_level'] ?? 'Info',
             'clientOverrideLevel' => $_POST['log_override'] ?: null,
@@ -189,7 +191,21 @@ $affectedUsers = $pdo->query("
         <?php endif; ?>
  
         <form method="POST">
-            
+            <!-- API BASE URL -->
+            <div style="background: #e3f2fd; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem; border-left: 4px solid #2196f3;">
+                <h3 style="margin-bottom: 1rem;">🌐 Endpoint de API</h3>
+                <div>
+                    <label style="display: block; margin-bottom: 0.5rem; font-weight: bold;">URL Base de la API:</label>
+                    <input type="text" name="api_base_url" 
+                           value="<?= htmlspecialchars($config['apiBaseUrl'] ?? 'http://localhost/keeper/public/index.php/api/') ?>" 
+                           style="width: 100%; padding: 0.6rem; border: 1px solid #ddd; border-radius: 4px; font-family: monospace;"
+                           placeholder="https://tudominio.com/keeper/public/index.php/api/"
+                           required>
+                    <small style="color: #666; display: block; margin-top: 0.5rem;">
+                        ⚠️ Incluir <code>/api/</code> al final. Ejemplo: <code>https://ejemplo.com/keeper/public/index.php/api/</code>
+                    </small>
+                </div>
+            </div>
             <!-- ========== LOGGING ========== -->
             <div class="config-section">
                 <h3>📋 Configuración de Logs</h3>
@@ -438,6 +454,23 @@ $affectedUsers = $pdo->query("
                 <button type="submit" class="btn btn-primary" style="font-size: 1.3rem; padding: 1.2rem 3rem;">
                     💾 GUARDAR POLÍTICA GLOBAL
                 </button>
+                <button type="button" onclick="forceHandshake()" class="btn btn-primary" style="font-size: 1.3rem; padding: 1.2rem 3rem;">
+                    🔄 Forzar Actualización Inmediata
+                </button>
+ 
+                <script>
+                async function forceHandshake() {
+                    if (!confirm('¿Forzar actualización en todos los clientes conectados?')) return;
+                    
+                    const response = await fetch('/keeper/public/index.php/api/client/force-handshake', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    
+                    const data = await response.json();
+                    alert(data.message || 'Actualización forzada');
+                }
+                </script>
             </div>
         </form>
     </div>
