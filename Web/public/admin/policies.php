@@ -115,7 +115,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'enableDeviceLock' => isset($_POST['blocking_enable']),
             'lockMessage' => $_POST['blocking_message'] ?? 'Bloqueado',
             'allowUnlockWithPin' => isset($_POST['blocking_allow_pin']),
-            'unlockPin' => $_POST['blocking_pin'] ?: null
+            // IMPORTANTE: si blocking_pin viene vacío, mantener el anterior
+            'unlockPin' => !empty($_POST['blocking_pin']) ? $_POST['blocking_pin'] : ($config['blocking']['unlockPin'] ?? null)
         ],
         'timers' => [
             'activityFlushIntervalSeconds' => (int)($_POST['timer_flush'] ?? 6),
@@ -385,7 +386,13 @@ $affectedUsers = $pdo->query("
                 <div class="alert alert-warning" style="margin-bottom: 1.5rem; padding: 1rem; background: #fff3cd; border-left: 4px solid #ffc107;">
                     ⚠️ <strong>NOTA:</strong> Esta configuración NO bloquea equipos. Solo establece los valores por defecto. Para bloquear, usa la configuración por usuario.
                 </div>
- 
+
+                <div class="form-row">
+                    <label>Habilitar bloqueo remoto (global):</label>
+                    <input type="checkbox" name="blocking_enable" <?= getConfig($config['blocking'], 'enableDeviceLock', false) ? 'checked' : '' ?>>
+                    <small>Si está activo, bloquea TODOS los equipos con la política global</small>
+                </div>
+
                 <div class="form-row">
                     <label>Mensaje de bloqueo:</label>
                     <textarea name="blocking_message" rows="3"><?= htmlspecialchars(getConfig($config['blocking'], 'lockMessage', '')) ?></textarea>
@@ -399,8 +406,8 @@ $affectedUsers = $pdo->query("
  
                 <div class="form-row">
                     <label>PIN por defecto:</label>
-                    <input type="text" name="blocking_pin" placeholder="Dejar vacío para no cambiar">
-                    <small>PIN que usará IT para desbloquear equipos</small>
+                    <input type="text" name="blocking_pin" value="<?= htmlspecialchars(getConfig($config['blocking'], 'unlockPin', '')) ?>" placeholder="Cambiar PIN aquí">
+                    <small>PIN que usará IT para desbloquear equipos (se guarda con hash en BD)</small>
                 </div>
             </div>
  

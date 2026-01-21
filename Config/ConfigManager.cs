@@ -361,7 +361,8 @@ namespace AZCKeeper_Cliente.Config
             public bool EnableDeviceLock { get; set; } = false;
             public string LockMessage { get; set; } = "Este equipo ha sido bloqueado.\n\nContacta al administrador.";
             public bool AllowUnlockWithPin { get; set; } = true;
-            public string UnlockPinHash { get; set; } = null; // Hash SHA256 del PIN
+            public string UnlockPin { get; set; } = null; // PIN en texto plano
+            public string UnlockPinHash { get; set; } = null; // Hash SHA256 del PIN (deprecated, para compatibilidad)
         }
 
         /// <summary>

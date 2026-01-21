@@ -44,12 +44,27 @@ namespace AZCKeeper_Cliente.Tracking
         private double _seedDayInactiveSeconds;
         private DateTime _seedDayLocalDate;
 
+        private double _seedDayWorkActiveSeconds;
+        private double _seedDayWorkIdleSeconds;
+        private double _seedDayLunchActiveSeconds;
+        private double _seedDayLunchIdleSeconds;
+        private double _seedDayAfterHoursActiveSeconds;
+        private double _seedDayAfterHoursIdleSeconds;
+
         // -------------------- Configuración base --------------------
         private readonly double _intervalSeconds;
         private readonly double _inactivityThresholdSeconds;
 
         // -------------------- Timer interno --------------------
         private System.Timers.Timer _timer;
+
+        // Categorización de tiempo
+        private double _currentDayWorkActiveSeconds;
+        private double _currentDayWorkIdleSeconds;
+        private double _currentDayLunchActiveSeconds;
+        private double _currentDayLunchIdleSeconds;
+        private double _currentDayAfterHoursActiveSeconds;
+        private double _currentDayAfterHoursIdleSeconds;
 
         // -------------------- Estado interno --------------------
         private DateTime _lastSampleUtc;
@@ -60,6 +75,8 @@ namespace AZCKeeper_Cliente.Tracking
         private double _sessionInactiveSeconds;
         private DateTime _startLocalTime;
 
+        internal WorkSchedule WorkSchedule { get; set; } = new WorkSchedule();
+
         // -------------------- Exposición de métricas --------------------
         internal DateTime StartLocalTime { get { lock (_lock) return _startLocalTime; } }
         internal DateTime CurrentDayLocalDate { get { lock (_lock) return _currentDayLocalDate; } }
@@ -67,6 +84,14 @@ namespace AZCKeeper_Cliente.Tracking
         internal double CurrentDayInactiveSeconds { get { lock (_lock) return _currentDayInactiveSeconds; } }
         internal double SessionActiveSeconds { get { lock (_lock) return _sessionActiveSeconds; } }
         internal double SessionInactiveSeconds { get { lock (_lock) return _sessionInactiveSeconds; } }
+
+        // Propiedades públicas para acceso desde CoreService
+        internal double CurrentDayWorkActiveSeconds { get { lock (_lock) return _currentDayWorkActiveSeconds; } }
+        internal double CurrentDayWorkIdleSeconds { get { lock (_lock) return _currentDayWorkIdleSeconds; } }
+        internal double CurrentDayLunchActiveSeconds { get { lock (_lock) return _currentDayLunchActiveSeconds; } }
+        internal double CurrentDayLunchIdleSeconds { get { lock (_lock) return _currentDayLunchIdleSeconds; } }
+        internal double CurrentDayAfterHoursActiveSeconds { get { lock (_lock) return _currentDayAfterHoursActiveSeconds; } }
+        internal double CurrentDayAfterHoursIdleSeconds { get { lock (_lock) return _currentDayAfterHoursIdleSeconds; } }
 
         // -------------------- Integración: callback de cierre de día --------------------
         public Action<DateTime, double, double> OnDayClosed { get; set; }
@@ -86,7 +111,10 @@ namespace AZCKeeper_Cliente.Tracking
         /// - Ideal: llamar antes de Start().
         /// - Si se llama después de Start(), igual aplica (si es el mismo día).
         /// </summary>
-        public void SeedDayTotals(DateTime dayLocalDate, double activeSeconds, double inactiveSeconds)
+        public void SeedDayTotals(DateTime dayLocalDate, double activeSeconds, double inactiveSeconds,
+            double workActive = 0, double workIdle = 0,
+            double lunchActive = 0, double lunchIdle = 0,
+            double afterActive = 0, double afterIdle = 0)
         {
             if (activeSeconds < 0) activeSeconds = 0;
             if (inactiveSeconds < 0) inactiveSeconds = 0;
@@ -96,6 +124,12 @@ namespace AZCKeeper_Cliente.Tracking
                 _seedDayLocalDate = dayLocalDate.Date;
                 _seedDayActiveSeconds = activeSeconds;
                 _seedDayInactiveSeconds = inactiveSeconds;
+                _seedDayWorkActiveSeconds = workActive;
+                _seedDayWorkIdleSeconds = workIdle;
+                _seedDayLunchActiveSeconds = lunchActive;
+                _seedDayLunchIdleSeconds = lunchIdle;
+                _seedDayAfterHoursActiveSeconds = afterActive;
+                _seedDayAfterHoursIdleSeconds = afterIdle;
                 _hasSeedForToday = true;
 
                 // Si el tracker ya está en marcha y el día coincide, aplicar inmediatamente.
@@ -103,6 +137,13 @@ namespace AZCKeeper_Cliente.Tracking
                 {
                     _currentDayActiveSeconds = Math.Max(_currentDayActiveSeconds, _seedDayActiveSeconds);
                     _currentDayInactiveSeconds = Math.Max(_currentDayInactiveSeconds, _seedDayInactiveSeconds);
+
+                    _currentDayWorkActiveSeconds = Math.Max(_currentDayWorkActiveSeconds, workActive);
+                    _currentDayWorkIdleSeconds = Math.Max(_currentDayWorkIdleSeconds, workIdle);
+                    _currentDayLunchActiveSeconds = Math.Max(_currentDayLunchActiveSeconds, lunchActive);
+                    _currentDayLunchIdleSeconds = Math.Max(_currentDayLunchIdleSeconds, lunchIdle);
+                    _currentDayAfterHoursActiveSeconds = Math.Max(_currentDayAfterHoursActiveSeconds, afterActive);
+                    _currentDayAfterHoursIdleSeconds = Math.Max(_currentDayAfterHoursIdleSeconds, afterIdle);
 
                     LocalLogger.Info($"ActivityTracker.SeedDayTotals(): seed aplicado en caliente. Day={_seedDayLocalDate:yyyy-MM-dd} Active={_currentDayActiveSeconds:F0}s Inactive={_currentDayInactiveSeconds:F0}s");
                 }
@@ -133,8 +174,15 @@ namespace AZCKeeper_Cliente.Tracking
                 {
                     _currentDayActiveSeconds = Math.Max(_currentDayActiveSeconds, _seedDayActiveSeconds);
                     _currentDayInactiveSeconds = Math.Max(_currentDayInactiveSeconds, _seedDayInactiveSeconds);
+                    _currentDayWorkActiveSeconds = Math.Max(_currentDayWorkActiveSeconds, _seedDayWorkActiveSeconds);
+                    _currentDayWorkIdleSeconds = Math.Max(_currentDayWorkIdleSeconds, _seedDayWorkIdleSeconds);
+                    _currentDayLunchActiveSeconds = Math.Max(_currentDayLunchActiveSeconds, _seedDayLunchActiveSeconds);
+                    _currentDayLunchIdleSeconds = Math.Max(_currentDayLunchIdleSeconds, _seedDayLunchIdleSeconds);
+                    _currentDayAfterHoursActiveSeconds = Math.Max(_currentDayAfterHoursActiveSeconds, _seedDayAfterHoursActiveSeconds);
+                    _currentDayAfterHoursIdleSeconds = Math.Max(_currentDayAfterHoursIdleSeconds, _seedDayAfterHoursIdleSeconds);
 
-                    LocalLogger.Info($"ActivityTracker.Start(): seed aplicado. Active={_currentDayActiveSeconds:F0}s Inactive={_currentDayInactiveSeconds:F0}s");
+                    LocalLogger.Info($"ActivityTracker.Start(): seed aplicado. Active={_currentDayActiveSeconds:F0}s Inactive={_currentDayInactiveSeconds:F0}s " +
+                    $"Work={_currentDayWorkActiveSeconds:F0}s Lunch={_currentDayLunchActiveSeconds:F0}s After={_currentDayAfterHoursActiveSeconds:F0}s");
                 }
                 else if (_hasSeedForToday)
                 {
@@ -253,46 +301,41 @@ namespace AZCKeeper_Cliente.Tracking
                 LocalLogger.Error(ex, "ActivityTracker.Timer_Elapsed(): error durante el cálculo de actividad.");
             }
         }
-        public (DateTime DayLocalDate, double ActiveSeconds, double InactiveSeconds) GetCurrentDaySnapshot()
+        public (DateTime DayLocalDate, double ActiveSeconds, double InactiveSeconds,
+                double WorkActive, double WorkIdle,
+                double LunchActive, double LunchIdle,
+                double AfterActive, double AfterIdle) GetCurrentDaySnapshot()
         {
             lock (_lock)
             {
-                return (_currentDayLocalDate, _currentDayActiveSeconds, _currentDayInactiveSeconds);
+                return (
+                    _currentDayLocalDate,
+                    _currentDayActiveSeconds,
+                    _currentDayInactiveSeconds,
+                    _currentDayWorkActiveSeconds,
+                    _currentDayWorkIdleSeconds,
+                    _currentDayLunchActiveSeconds,
+                    _currentDayLunchIdleSeconds,
+                    _currentDayAfterHoursActiveSeconds,
+                    _currentDayAfterHoursIdleSeconds
+                );
             }
         }
 
         private void AccumulateInterval(DateTime dayLocalDate, double deltaSeconds, bool isActive)
         {
-            lock (_lock)
-            {
-                if (dayLocalDate != _currentDayLocalDate)
-                {
-                    // Cerrar el anterior fuera del lock para evitar bloquear callback
-                    var toClose = _currentDayLocalDate;
-                    // liberamos lock y cerramos
-                    // pero necesitamos salir del lock aquí
-                    // -> hacemos cierre fuera del lock con patrón sencillo:
-                }
-            }
-
-            // Para permitir cierre sin deadlocks:
             if (dayLocalDate != CurrentDayLocalDate)
             {
                 CloseCurrentDay(CurrentDayLocalDate);
-
                 lock (_lock)
                 {
                     _currentDayLocalDate = dayLocalDate;
-                    _currentDayActiveSeconds = 0;
-                    _currentDayInactiveSeconds = 0;
-
-                    if (_hasSeedForToday && _seedDayLocalDate == _currentDayLocalDate)
-                    {
-                        _currentDayActiveSeconds = Math.Max(_currentDayActiveSeconds, _seedDayActiveSeconds);
-                        _currentDayInactiveSeconds = Math.Max(_currentDayInactiveSeconds, _seedDayInactiveSeconds);
-                    }
+                    ResetDayCounters();
                 }
             }
+
+            // Determinar categoría de tiempo
+            TimeCategory category = WorkSchedule.GetTimeCategory(DateTime.Now);
 
             lock (_lock)
             {
@@ -300,15 +343,51 @@ namespace AZCKeeper_Cliente.Tracking
                 {
                     _currentDayActiveSeconds += deltaSeconds;
                     _sessionActiveSeconds += deltaSeconds;
+
+                    switch (category)
+                    {
+                        case TimeCategory.WorkHours:
+                            _currentDayWorkActiveSeconds += deltaSeconds;
+                            break;
+                        case TimeCategory.LunchTime:
+                            _currentDayLunchActiveSeconds += deltaSeconds;
+                            break;
+                        case TimeCategory.AfterHours:
+                            _currentDayAfterHoursActiveSeconds += deltaSeconds;
+                            break;
+                    }
                 }
                 else
                 {
                     _currentDayInactiveSeconds += deltaSeconds;
                     _sessionInactiveSeconds += deltaSeconds;
+
+                    switch (category)
+                    {
+                        case TimeCategory.WorkHours:
+                            _currentDayWorkIdleSeconds += deltaSeconds;
+                            break;
+                        case TimeCategory.LunchTime:
+                            _currentDayLunchIdleSeconds += deltaSeconds;
+                            break;
+                        case TimeCategory.AfterHours:
+                            _currentDayAfterHoursIdleSeconds += deltaSeconds;
+                            break;
+                    }
                 }
             }
         }
-
+        private void ResetDayCounters()
+        {
+            _currentDayActiveSeconds = 0;
+            _currentDayInactiveSeconds = 0;
+            _currentDayWorkActiveSeconds = 0;
+            _currentDayWorkIdleSeconds = 0;
+            _currentDayLunchActiveSeconds = 0;
+            _currentDayLunchIdleSeconds = 0;
+            _currentDayAfterHoursActiveSeconds = 0;
+            _currentDayAfterHoursIdleSeconds = 0;
+        }
         private void SplitIntervalAcrossDayBoundary(DateTime lastLocal, DateTime nowLocal, double totalDeltaSeconds, bool isActive)
         {
             DateTime oldDate = lastLocal.Date;

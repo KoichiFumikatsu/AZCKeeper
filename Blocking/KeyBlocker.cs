@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Threading;
 using System.Windows.Forms;
 using AZCKeeper_Cliente.Logging;
@@ -11,124 +12,138 @@ namespace AZCKeeper_Cliente.Blocking
 {
     internal class KeyBlocker
     {
-        private List<LockScreenForm> _lockForms = new List<LockScreenForm>();
+        private readonly List<LockFormContainer> _lockForms = new List<LockFormContainer>();
+        private readonly object _sync = new object();
         private readonly ApiClient _apiClient;
         private LowLevelKeyboardHook _keyboardHook;
-        private Thread _lockThread;
-        private bool _isLocking = false;
+        private int _isActive = 0; // use as atomic flag
 
         public KeyBlocker(ApiClient apiClient)
         {
             _apiClient = apiClient;
         }
 
-        public void ActivateLock(string reason, bool allowUnlock)
+        public void ActivateLock(string reason, bool allowUnlock, string unlockPin = null)
         {
+            if (System.Threading.Volatile.Read(ref _isActive) == 1)
+            {
+                LocalLogger.Warn("KeyBlocker: ya hay un bloqueo activo.");
+                return;
+            }
+
             try
             {
-                if (_isLocking)
+                LocalLogger.Warn($"KeyBlocker: activando bloqueo. Motivo: {reason}");
+
+                if (System.Threading.Interlocked.Exchange(ref _isActive, 1) == 1)
                 {
                     LocalLogger.Warn("KeyBlocker: ya hay un bloqueo activo.");
                     return;
                 }
 
-                LocalLogger.Warn($"KeyBlocker: activando bloqueo en todas las pantallas. Motivo: {reason}");
-                _isLocking = true;
-
-                // Hook de teclado en thread principal
+                // Hook de teclado
                 _keyboardHook = new LowLevelKeyboardHook();
                 _keyboardHook.Install();
 
-                // Crear formularios en thread separado para evitar bloqueo
-                _lockThread = new Thread(() =>
+                // Crear formulario para cada pantalla en su propio hilo STA
+                foreach (Screen screen in Screen.AllScreens)
                 {
-                    try
+                    var container = new LockFormContainer();
+
+                    ThreadStart ts = () =>
                     {
-                        foreach (var screen in Screen.AllScreens)
+                        try
                         {
-                            var lockForm = new LockScreenForm(reason, allowUnlock, _apiClient);
-                            lockForm.StartPosition = FormStartPosition.Manual;
-                            lockForm.Location = screen.Bounds.Location;
-                            lockForm.Size = screen.Bounds.Size;
-                            lockForm.OnUnlockSuccess += () =>
+                            var lf = new LockScreenForm(reason, allowUnlock, apiClient: _apiClient, screen: screen, unlockPin: unlockPin);
+                            lf.OnUnlockSuccess += () =>
                             {
-                                _isLocking = false;
+                                // Cuando se desbloquea en uno, cerrar todos
                                 DeactivateLock();
                             };
 
-                            // Mostrar sin bloquear el thread
-                            lockForm.Show();
-                            _lockForms.Add(lockForm);
+                            container.Form = lf;
+                            container.Ready.Set();
+
+                            Application.Run(lf);
                         }
+                        catch (Exception ex)
+                        {
+                            LocalLogger.Error(ex, "LockScreen thread error");
+                        }
+                    };
 
-                        // Mantener el thread vivo para que los forms funcionen
-                        Application.Run();
-                    }
-                    catch (Exception ex)
+                    var thread = new System.Threading.Thread(ts);
+                    thread.SetApartmentState(System.Threading.ApartmentState.STA);
+                    thread.IsBackground = true;
+                    container.Thread = thread;
+                    thread.Start();
+
+                    // Esperar a que el form esté creado antes de continuar
+                    container.Ready.Wait(5000);
+
+                    lock (_sync)
                     {
-                        LocalLogger.Error(ex, "KeyBlocker: error en thread de bloqueo.");
+                        _lockForms.Add(container);
                     }
-                });
+                }
 
-                _lockThread.SetApartmentState(ApartmentState.STA);
-                _lockThread.IsBackground = false;
-                _lockThread.Start();
+                LocalLogger.Info($"KeyBlocker: {_lockForms.Count} pantallas bloqueadas.");
             }
             catch (Exception ex)
             {
                 LocalLogger.Error(ex, "KeyBlocker.ActivateLock(): error.");
-                _isLocking = false;
+                System.Threading.Interlocked.Exchange(ref _isActive, 0);
             }
+        }
+
+        public bool IsLocked()
+        {
+            return System.Threading.Volatile.Read(ref _isActive) == 1;
         }
 
         public void DeactivateLock()
         {
+            if (System.Threading.Interlocked.Exchange(ref _isActive, 0) == 0) return;
+
             try
             {
                 LocalLogger.Info("KeyBlocker: desactivando bloqueo.");
-                _isLocking = false;
 
                 _keyboardHook?.Uninstall();
                 _keyboardHook = null;
 
-                // Cerrar formularios de forma segura
-                foreach (var form in _lockForms.ToArray())
+                List<LockFormContainer> copy;
+                lock (_sync)
+                {
+                    copy = new List<LockFormContainer>(_lockForms);
+                    _lockForms.Clear();
+                }
+
+                foreach (var c in copy)
                 {
                     try
                     {
-                        if (form != null && !form.IsDisposed)
+                        if (c?.Form != null && !c.Form.IsDisposed && c.Form.IsHandleCreated)
                         {
-                            if (form.InvokeRequired)
+                            try
                             {
-                                form.Invoke(new Action(() =>
-                                {
-                                    form.Close();
-                                    form.Dispose();
-                                }));
+                                c.Form.BeginInvoke(new Action(() => c.Form.ForceClose()));
                             }
-                            else
+                            catch
                             {
-                                form.Close();
-                                form.Dispose();
+                                // ignore
                             }
+                        }
+                        else
+                        {
+                            // si el form no está creado, intentar abortar el hilo gracilmente
+                            try { if (c?.Thread != null && c.Thread.IsAlive) c.Thread.Join(200); } catch { }
                         }
                     }
                     catch (Exception ex)
                     {
                         LocalLogger.Error(ex, "KeyBlocker: error al cerrar form.");
                     }
-                }
-                _lockForms.Clear();
-
-                // Terminar thread
-                if (_lockThread != null && _lockThread.IsAlive)
-                {
-                    try
-                    {
-                        _lockThread.Abort();
-                    }
-                    catch { }
-                    _lockThread = null;
                 }
             }
             catch (Exception ex)
@@ -138,168 +153,220 @@ namespace AZCKeeper_Cliente.Blocking
         }
     }
 
+    internal class LockFormContainer
+    {
+        public LockScreenForm Form;
+        public System.Threading.Thread Thread;
+        public System.Threading.ManualResetEventSlim Ready = new System.Threading.ManualResetEventSlim(false);
+    }
+
     internal class LockScreenForm : Form
     {
         private readonly string _reason;
         private readonly bool _allowUnlock;
         private readonly ApiClient _apiClient;
+        private readonly Screen _screen;
+        private readonly string _unlockPin; // PIN guardado en config.json
         private TextBox _txtPin;
         private Button _btnUnlock;
         private Label _lblStatus;
-        private System.Windows.Forms.Timer _topMostTimer;
+        private bool _canClose = false;
 
         public event Action OnUnlockSuccess;
 
-        public LockScreenForm(string reason, bool allowUnlock, ApiClient apiClient)
+        public LockScreenForm(string reason, bool allowUnlock, ApiClient apiClient, Screen screen, string unlockPin = null)
         {
             _reason = reason;
             _allowUnlock = allowUnlock;
             _apiClient = apiClient;
+            _screen = screen;
+            _unlockPin = unlockPin; // PIN desde config.json para validación local
 
-            InitializeUI();
-
-            // Timer para mantener siempre encima
-            _topMostTimer = new System.Windows.Forms.Timer { Interval = 200 };
-            _topMostTimer.Tick += (s, e) =>
-            {
-                if (!TopMost) TopMost = true;
-                BringToFront();
-            };
-            _topMostTimer.Start();
+            InitializeComponent();
+            SetupUI();
         }
 
-        private void InitializeUI()
+        private void InitializeComponent()
         {
+            SuspendLayout();
+
+            // Configuración básica del form
             FormBorderStyle = FormBorderStyle.None;
-            WindowState = FormWindowState.Maximized;
-            TopMost = true;
+            StartPosition = FormStartPosition.Manual;
             BackColor = Color.FromArgb(20, 20, 30);
             ControlBox = false;
             ShowInTaskbar = false;
+            TopMost = true;
             KeyPreview = true;
 
-            var panel = new Panel
-            {
-                Size = new Size(500, 400),
-                BackColor = Color.FromArgb(30, 30, 40),
-                BorderStyle = BorderStyle.FixedSingle
-            };
-            panel.Location = new Point((Width - panel.Width) / 2, (Height - panel.Height) / 2);
+            // Posicionar en la pantalla específica
+            Bounds = _screen.Bounds;
 
-            var lblIcon = new Label
+            ResumeLayout(false);
+        }
+
+        private void SetupUI()
+        {
+            // Determinar si es pantalla principal (para mostrar el panel)
+            bool isPrimary = _screen.Primary;
+
+            if (isPrimary)
+            {
+                // Solo en pantalla principal mostramos el panel de desbloqueo
+                Panel panel = CreateUnlockPanel();
+                Controls.Add(panel);
+
+                // Centrar panel
+                panel.Left = (Width - panel.Width) / 2;
+                panel.Top = (Height - panel.Height) / 2;
+            }
+            else
+            {
+                // En pantallas secundarias solo mensaje
+                Label lblSecondary = new Label
+                {
+                    Text = "🔒\n\nEQUIPO BLOQUEADO",
+                    Font = new Font("Segoe UI", 28F, FontStyle.Bold),
+                    ForeColor = Color.White,
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    Dock = DockStyle.Fill
+                };
+                Controls.Add(lblSecondary);
+            }
+        }
+
+        private Panel CreateUnlockPanel()
+        {
+            Panel panel = new Panel
+            {
+                Width = 550,
+                Height = 450,
+                BackColor = Color.FromArgb(35, 35, 45)
+            };
+
+            // Icono
+            Label lblIcon = new Label
             {
                 Text = "🔒",
-                Font = new Font("Segoe UI Emoji", 48F, FontStyle.Bold),
-                ForeColor = Color.FromArgb(220, 50, 50),
-                AutoSize = true
+                Font = new Font("Segoe UI Emoji", 60F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(231, 76, 60),
+                AutoSize = true,
+                Location = new Point(215, 40)
             };
-            lblIcon.Location = new Point((panel.Width - 100) / 2, 30);
+            panel.Controls.Add(lblIcon);
 
-            var lblTitle = new Label
+            // Título
+            Label lblTitle = new Label
             {
                 Text = "EQUIPO BLOQUEADO",
-                Font = new Font("Segoe UI", 20F, FontStyle.Bold),
+                Font = new Font("Segoe UI", 22F, FontStyle.Bold),
                 ForeColor = Color.White,
-                Width = 450,
-                TextAlign = ContentAlignment.MiddleCenter
+                Width = 500,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Location = new Point(25, 140)
             };
-            lblTitle.Location = new Point((panel.Width - lblTitle.Width) / 2, 120);
+            panel.Controls.Add(lblTitle);
 
-            var lblReason = new Label
+            // Razón
+            Label lblReason = new Label
             {
                 Text = _reason,
                 Font = new Font("Segoe UI", 11F),
-                ForeColor = Color.LightGray,
-                Width = 450,
-                Height = 100,
-                TextAlign = ContentAlignment.MiddleCenter
+                ForeColor = Color.FromArgb(189, 195, 199),
+                Width = 500,
+                Height = 80,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Location = new Point(25, 200)
             };
-            lblReason.Location = new Point((panel.Width - lblReason.Width) / 2, 170);
-
-            panel.Controls.Add(lblIcon);
-            panel.Controls.Add(lblTitle);
             panel.Controls.Add(lblReason);
 
             if (_allowUnlock)
             {
-                var lblPin = new Label
+                // Label PIN
+                Label lblPin = new Label
                 {
                     Text = "PIN de IT:",
-                    Font = new Font("Segoe UI", 11F),
+                    Font = new Font("Segoe UI", 11F, FontStyle.Bold),
                     ForeColor = Color.White,
-                    AutoSize = true
+                    AutoSize = true,
+                    Location = new Point(100, 305)
                 };
-                lblPin.Location = new Point(80, 280);
+                panel.Controls.Add(lblPin);
 
+                // TextBox PIN
                 _txtPin = new TextBox
                 {
-                    Font = new Font("Consolas", 13F),
+                    Font = new Font("Consolas", 14F),
                     Width = 200,
                     UseSystemPasswordChar = true,
-                    BackColor = Color.FromArgb(40, 40, 50),
+                    BackColor = Color.FromArgb(52, 73, 94),
                     ForeColor = Color.White,
-                    BorderStyle = BorderStyle.FixedSingle
+                    BorderStyle = BorderStyle.FixedSingle,
+                    TextAlign = HorizontalAlignment.Center,
+                    Location = new Point(200, 302)
                 };
-                _txtPin.Location = new Point(180, 278);
-                _txtPin.KeyPress += (s, e) =>
+                _txtPin.KeyDown += (s, e) =>
                 {
-                    if (e.KeyChar == (char)Keys.Enter)
+                    if (e.KeyCode == Keys.Enter)
                     {
                         e.Handled = true;
+                        e.SuppressKeyPress = true;
                         TryUnlock();
                     }
                 };
+                panel.Controls.Add(_txtPin);
 
+                // Botón desbloquear
                 _btnUnlock = new Button
                 {
-                    Text = "Desbloquear",
+                    Text = "🔓 Desbloquear",
                     Font = new Font("Segoe UI", 11F, FontStyle.Bold),
-                    Width = 140,
+                    Width = 200,
                     Height = 40,
-                    BackColor = Color.FromArgb(50, 120, 200),
+                    BackColor = Color.FromArgb(52, 152, 219),
                     ForeColor = Color.White,
-                    FlatStyle = FlatStyle.Flat
+                    FlatStyle = FlatStyle.Flat,
+                    Location = new Point(175, 350)
                 };
                 _btnUnlock.FlatAppearance.BorderSize = 0;
-                _btnUnlock.Location = new Point((panel.Width - _btnUnlock.Width) / 2, 320);
                 _btnUnlock.Click += (s, e) => TryUnlock();
+                panel.Controls.Add(_btnUnlock);
 
+                // Status
                 _lblStatus = new Label
                 {
                     Text = "",
-                    Font = new Font("Segoe UI", 9F),
-                    ForeColor = Color.FromArgb(220, 50, 50),
-                    Width = 450,
-                    Height = 25,
-                    TextAlign = ContentAlignment.MiddleCenter
+                    Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                    ForeColor = Color.FromArgb(231, 76, 60),
+                    Width = 500,
+                    Height = 30,
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    Location = new Point(25, 405)
                 };
-                _lblStatus.Location = new Point((panel.Width - _lblStatus.Width) / 2, 370);
-
-                panel.Controls.Add(lblPin);
-                panel.Controls.Add(_txtPin);
-                panel.Controls.Add(_btnUnlock);
                 panel.Controls.Add(_lblStatus);
             }
             else
             {
-                var lblNoUnlock = new Label
+                Label lblNoUnlock = new Label
                 {
-                    Text = "Este equipo no puede ser desbloqueado.\nContacta al administrador de IT.",
-                    Font = new Font("Segoe UI", 10F),
-                    ForeColor = Color.FromArgb(220, 50, 50),
-                    Width = 450,
-                    Height = 60,
-                    TextAlign = ContentAlignment.MiddleCenter
+                    Text = "Este equipo no puede ser desbloqueado.\n\nContacta al administrador de IT.",
+                    Font = new Font("Segoe UI", 11F, FontStyle.Bold),
+                    ForeColor = Color.FromArgb(231, 76, 60),
+                    Width = 500,
+                    Height = 80,
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    Location = new Point(25, 320)
                 };
-                lblNoUnlock.Location = new Point((panel.Width - lblNoUnlock.Width) / 2, 300);
                 panel.Controls.Add(lblNoUnlock);
             }
 
-            Controls.Add(panel);
+            return panel;
         }
 
         private async void TryUnlock()
         {
+            if (_txtPin == null) return;
+
             string pin = _txtPin.Text.Trim();
             if (string.IsNullOrEmpty(pin))
             {
@@ -310,63 +377,78 @@ namespace AZCKeeper_Cliente.Blocking
             _btnUnlock.Enabled = false;
             _txtPin.Enabled = false;
             _lblStatus.Text = "⏳ Verificando...";
-            _lblStatus.ForeColor = Color.Yellow;
+            _lblStatus.ForeColor = Color.FromArgb(241, 196, 15);
 
             try
             {
-                var response = await _apiClient.PostAsync("client/device-lock/unlock", new { Pin = pin });
-
-                if (response != null && response.Contains("\"ok\":true"))
+                // Validación LOCAL: comparar con PIN en config.json
+                LocalLogger.Info($"TryUnlock: Validando. PIN recibido='{pin}', PIN guardado='{(_unlockPin ?? "NULL")}'");
+                
+                if (!string.IsNullOrEmpty(_unlockPin) && pin == _unlockPin)
                 {
-                    _lblStatus.Text = "✓ Desbloqueado correctamente";
-                    _lblStatus.ForeColor = Color.LightGreen;
-                    await System.Threading.Tasks.Task.Delay(1000);
+                    // PIN correcto localmente
+                    LocalLogger.Info("TryUnlock: PIN validado correctamente");
+                    _lblStatus.Text = "✅ Desbloqueado";
+                    _lblStatus.ForeColor = Color.FromArgb(46, 204, 113);
+                    await System.Threading.Tasks.Task.Delay(500);
 
-                    _topMostTimer?.Stop();
+                    // Notificar al servidor (sin validar respuesta)
+                    try
+                    {
+                        await _apiClient.PostAsync("client/device-lock/unlock", new { Pin = pin });
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Warn("No se pudo notificar al servidor, pero desbloqueando localmente: " + ex.Message);
+                    }
+
                     OnUnlockSuccess?.Invoke();
                 }
                 else
                 {
-                    _lblStatus.Text = "✗ PIN incorrecto";
-                    _lblStatus.ForeColor = Color.FromArgb(220, 50, 50);
+                    // PIN incorrecto
+                    LocalLogger.Warn($"TryUnlock: PIN incorrecto. Recibido='{pin}', Guardado='{(_unlockPin ?? "NULL")}'");
+                    _lblStatus.Text = "❌ PIN incorrecto";
+                    _lblStatus.ForeColor = Color.FromArgb(231, 76, 60);
                     _txtPin.Clear();
-                    _txtPin.Focus();
                     _btnUnlock.Enabled = true;
                     _txtPin.Enabled = true;
+                    _txtPin.Focus();
                 }
             }
             catch (Exception ex)
             {
-                _lblStatus.Text = "⚠️ Error de conexión con servidor";
-                _lblStatus.ForeColor = Color.Orange;
+                _lblStatus.Text = "⚠️ Error de validación";
+                _lblStatus.ForeColor = Color.FromArgb(230, 126, 34);
                 LocalLogger.Error(ex, "LockScreenForm.TryUnlock(): error.");
                 _btnUnlock.Enabled = true;
                 _txtPin.Enabled = true;
             }
         }
 
+        public void ForceClose()
+        {
+            _canClose = true;
+            Close();
+        }
+
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (e.CloseReason == CloseReason.UserClosing)
+            if (!_canClose && e.CloseReason == CloseReason.UserClosing)
             {
                 e.Cancel = true;
-            }
-            else
-            {
-                _topMostTimer?.Stop();
-                _topMostTimer?.Dispose();
             }
             base.OnFormClosing(e);
         }
 
-        // Bloquear Alt+F4
-        protected override void OnKeyDown(KeyEventArgs e)
+        protected override void OnShown(EventArgs e)
         {
-            if (e.Alt && e.KeyCode == Keys.F4)
+            base.OnShown(e);
+            Activate();
+            if (_txtPin != null)
             {
-                e.Handled = true;
+                _txtPin.Focus();
             }
-            base.OnKeyDown(e);
         }
     }
 
@@ -374,6 +456,7 @@ namespace AZCKeeper_Cliente.Blocking
     {
         private const int WH_KEYBOARD_LL = 13;
         private const int WM_KEYDOWN = 0x0100;
+        private const int WM_SYSKEYDOWN = 0x0104;
         private IntPtr _hookID = IntPtr.Zero;
         private LowLevelKeyboardProc _proc;
         private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
@@ -382,6 +465,7 @@ namespace AZCKeeper_Cliente.Blocking
         {
             _proc = HookCallback;
             _hookID = SetHook(_proc);
+            LocalLogger.Info("KeyboardHook: instalado.");
         }
 
         public void Uninstall()
@@ -390,31 +474,61 @@ namespace AZCKeeper_Cliente.Blocking
             {
                 UnhookWindowsHookEx(_hookID);
                 _hookID = IntPtr.Zero;
+                LocalLogger.Info("KeyboardHook: desinstalado.");
             }
         }
 
         private IntPtr SetHook(LowLevelKeyboardProc proc)
         {
-            using (var curProcess = System.Diagnostics.Process.GetCurrentProcess())
-            using (var curModule = curProcess.MainModule)
+            try
             {
-                return SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(curModule.ModuleName), 0);
+                using (var curProcess = System.Diagnostics.Process.GetCurrentProcess())
+                using (var curModule = curProcess.MainModule)
+                {
+                    if (curModule != null)
+                        return SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(curModule.ModuleName), 0);
+                }
             }
+            catch (Exception ex)
+            {
+                LocalLogger.Warn("KeyboardHook: falló obtener MainModule, intentando fallback.");
+            }
+
+            // Fallback: intentar con hMod = IntPtr.Zero
+            return SetWindowsHookEx(WH_KEYBOARD_LL, proc, IntPtr.Zero, 0);
         }
+
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
 
         private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
-            if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
+            try
             {
-                int vkCode = Marshal.ReadInt32(lParam);
-
-                // Solo bloquear teclas específicas del sistema
-                if (vkCode == (int)Keys.LWin || vkCode == (int)Keys.RWin ||  // Windows key
-                    vkCode == (int)Keys.F4)                                    // Alt+F4 (se maneja combinado)
+                if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN))
                 {
-                    return (IntPtr)1; // Bloquear
+                    int vkCode = Marshal.ReadInt32(lParam);
+
+                    // Bloquear teclas de Windows siempre
+                    if (vkCode == (int)Keys.LWin || vkCode == (int)Keys.RWin)
+                    {
+                        return (IntPtr)1;
+                    }
+
+                    // Para Tab solo bloquear si Alt está presionado (Alt+Tab)
+                    if (vkCode == (int)Keys.Tab)
+                    {
+                        bool altDown = (GetAsyncKeyState((int)Keys.Menu) & 0x8000) != 0;
+                        if (altDown)
+                            return (IntPtr)1;
+                    }
                 }
             }
+            catch
+            {
+                // no romper hook en caso de error
+            }
+
             return CallNextHookEx(_hookID, nCode, wParam, lParam);
         }
 

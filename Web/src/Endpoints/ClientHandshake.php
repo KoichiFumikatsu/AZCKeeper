@@ -53,8 +53,12 @@ class ClientHandshake {
     $global = PolicyRepo::getActiveGlobal($pdo);
     if (!$global) Http::json(500, ['ok' => false, 'error' => 'No active global policy']);
 
+    error_log("ClientHandshake: Global policy from DB: " . $global['policy_json']);
+    
     $effective = json_decode($global['policy_json'], true);
     if (!is_array($effective)) $effective = [];
+
+    error_log("ClientHandshake: Effective blocking section: " . json_encode($effective['blocking'] ?? 'NOT SET'));
 
     $appliedScope = 'global';
     $appliedId = (int)$global['id'];
