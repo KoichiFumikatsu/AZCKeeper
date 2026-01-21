@@ -94,6 +94,7 @@ namespace AZCKeeper_Cliente.Core
 
             try
             {
+                PerformHandshake();
                 // 1) Retomar ANTES de iniciar ActivityTracker (tu SeedDayTotals lo exige)
                 TryResumeTodayActivityFromServer();
 
