@@ -42,29 +42,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'lock') {
         $reason = $_POST['reason'] ?? 'Bloqueado por administrador';
         $pin = $_POST['pin'] ?? '123456';
-        $pinHash = hash('sha256', $pin);
         
-        $stmt = $pdo->prepare("
-            INSERT INTO keeper_device_locks 
-            (device_id, user_id, lock_reason, unlock_pin_hash, is_active)
-            VALUES (?, ?, ?, ?, 1)
-        ");
-        $stmt->execute([$deviceId, $device['user_id'], $reason, $pinHash]);
-        
-        header('Location: device-detail.php?id=' . $deviceId . '&msg=locked');
-        exit;
+        // Validar que el dispositivo tiene user_id
+        if (empty($device['user_id'])) {
+            $error = 'El dispositivo no tiene usuario asociado.';
+        } else {
+            try {
+                // Guardar PIN en texto plano directamente (sin hashing)
+                $stmt = $pdo->prepare("
+                    INSERT INTO keeper_device_locks 
+                    (device_id, user_id, lock_reason, unlock_pin_hash, is_active)
+                    VALUES (?, ?, ?, ?, 1)
+                ");
+                $result = $stmt->execute([$deviceId, $device['user_id'], $reason, $pin]);
+                
+                if ($result) {
+                    header('Location: device-detail.php?id=' . $deviceId . '&msg=locked');
+                    exit;
+                } else {
+                    $error = 'Error al insertar bloqueo: ' . implode(', ', $stmt->errorInfo());
+                }
+            } catch (Exception $e) {
+                $error = 'Error: ' . $e->getMessage();
+            }
+        }
     }
     
     if ($action === 'unlock') {
-        $stmt = $pdo->prepare("
-            UPDATE keeper_device_locks 
-            SET is_active = 0, unlocked_at = NOW()
-            WHERE device_id = ? AND is_active = 1
-        ");
-        $stmt->execute([$deviceId]);
-        
-        header('Location: device-detail.php?id=' . $deviceId . '&msg=unlocked');
-        exit;
+        try {
+            $stmt = $pdo->prepare("
+                UPDATE keeper_device_locks 
+                SET is_active = 0, unlocked_at = NOW()
+                WHERE device_id = ? AND is_active = 1
+            ");
+            $result = $stmt->execute([$deviceId]);
+            
+            if ($result) {
+                header('Location: device-detail.php?id=' . $deviceId . '&msg=unlocked');
+                exit;
+            } else {
+                $error = 'Error al desbloquear: ' . implode(', ', $stmt->errorInfo());
+            }
+        } catch (Exception $e) {
+            $error = 'Error: ' . $e->getMessage();
+        }
     }
     
     if ($action === 'update_policy') {

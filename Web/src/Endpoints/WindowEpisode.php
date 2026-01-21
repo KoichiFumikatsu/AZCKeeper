@@ -74,15 +74,16 @@ class WindowEpisode
         }
  
         // 🔥 PROTECCIÓN: usar try-catch para INSERT
+        
         try {
             $st = $pdo->prepare("
                 INSERT INTO keeper_window_episode
                   (user_id, device_id, start_at, end_at, duration_seconds,
-                   process_name, window_title, is_in_call, day_date, created_at)
+                   process_name, app_name, window_title, is_in_call, call_app_hint, day_date, created_at)
                 VALUES
-                  (:uid, :did, :start, :end, :dur, :proc, :title, :call, :day, NOW())
+                  (:uid, :did, :start, :end, :dur, :proc, :app, :title, :call, :hint, :day, NOW())
             ");
- 
+         
             $st->execute([
                 'uid'   => $userId,
                 'did'   => $deviceId,
@@ -90,19 +91,20 @@ class WindowEpisode
                 'end'   => $endDt->format('Y-m-d H:i:s'),
                 'dur'   => $duration,
                 'proc'  => $processName,
+                'app'   => $processName, // Usar mismo valor o NULL
                 'title' => $windowTitle,
                 'call'  => $isCallApp ? 1 : 0,
+                'hint'  => $isCallApp ? $processName : null, // Si es llamada, guardar proceso
                 'day'   => $dayDate
             ]);
- 
+
             Http::json(200, [
                 'ok' => true,
                 'episodeId' => (int)$pdo->lastInsertId()
             ]);
         } catch (\PDOException $e) {
-            // Log error pero no exponer detalles al cliente
             error_log("WindowEpisode INSERT error: " . $e->getMessage());
-            Http::json(500, ['ok' => false, 'error' => 'Database insert failed']);
+            Http::json(500, ['ok' => false, 'error' => 'Database insert failed', 'detail' => $e->getMessage()]);
         }
     }
  

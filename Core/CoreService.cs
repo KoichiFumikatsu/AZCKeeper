@@ -30,7 +30,6 @@ namespace AZCKeeper_Cliente.Core
         private DebugWindowForm _debugWindow;
         private LoginForm _loginForm;
 
-        // Envío periódico de actividad (no esperar hasta OnDayClosed)
         private System.Timers.Timer _activityFlushTimer;
         private DateTime? _activityFirstEventLocal;
         private int _activitySamplesCount; 
@@ -341,28 +340,39 @@ namespace AZCKeeper_Cliente.Core
                     blocking.EnableDeviceLock = effective.Blocking.EnableDeviceLock;
                     blocking.LockMessage = effective.Blocking.LockMessage ?? blocking.LockMessage;
                     blocking.AllowUnlockWithPin = effective.Blocking.AllowUnlockWithPin;
+                    blocking.UnlockPin = effective.Blocking.UnlockPin ?? null;
 
-                    if (!string.IsNullOrWhiteSpace(effective.Blocking.UnlockPin))
-                    {
-                        using (var sha256 = System.Security.Cryptography.SHA256.Create())
-                        {
-                            var hash = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(effective.Blocking.UnlockPin));
-                            blocking.UnlockPinHash = BitConverter.ToString(hash).Replace("-", "").ToLower();
-                        }
-                    }
+                    LocalLogger.Info($"CoreService: Blocking recibido. EnableDeviceLock={blocking.EnableDeviceLock}, UnlockPin='{(blocking.UnlockPin ?? "NULL")}'");
 
                     _configManager.CurrentConfig.Blocking = blocking;
+                    _configManager.Save();
+                    LocalLogger.Info($"CoreService: Blocking guardado en config.json. UnlockPin='{(blocking.UnlockPin ?? "NULL")}'");
 
-                    // Aplicar bloqueo si cambió de false a true
+                    // Aplicar bloqueo: cambio de false→true
                     if (!wasLocked && blocking.EnableDeviceLock && _keyBlocker != null)
                     {
-                        LocalLogger.Warn("CoreService: BLOQUEANDO dispositivo por política remota...");
-                        _keyBlocker.ActivateLock(blocking.LockMessage, blocking.AllowUnlockWithPin);
+                        LocalLogger.Warn($"CoreService: BLOQUEANDO dispositivo. PIN='{(blocking.UnlockPin ?? "NULL")}'");
+                        _keyBlocker.ActivateLock(blocking.LockMessage, blocking.AllowUnlockWithPin, blocking.UnlockPin);
                     }
+                    // Aplicar desbloqueo: cambio de true→false
                     else if (wasLocked && !blocking.EnableDeviceLock && _keyBlocker != null)
                     {
                         LocalLogger.Info("CoreService: DESBLOQUEANDO dispositivo por política remota...");
                         _keyBlocker.DeactivateLock();
+                    }
+                    // Si sigue bloqueado: verificar que esté REALMENTE activo (caso de reinicio)
+                    else if (blocking.EnableDeviceLock && _keyBlocker != null)
+                    {
+                        if (!_keyBlocker.IsLocked())
+                        {
+                            // El bloqueo debería estar activo pero no lo está (caso reinicio)
+                            LocalLogger.Warn($"CoreService: REACTIVANDO bloqueo post-reinicio. PIN='{(blocking.UnlockPin ?? "NULL")}'");
+                            _keyBlocker.ActivateLock(blocking.LockMessage, blocking.AllowUnlockWithPin, blocking.UnlockPin);
+                        }
+                        else
+                        {
+                            LocalLogger.Info("CoreService: Dispositivo ya está bloqueado, manteniendo estado.");
+                        }
                     }
                 }
 
@@ -547,7 +557,13 @@ namespace AZCKeeper_Cliente.Core
                             CallSeconds = _windowTracker?.CallSessionSeconds ?? 0,
                             SamplesCount = _activitySamplesCount,
                             FirstEventAt = _activityFirstEventLocal?.ToString("yyyy-MM-dd HH:mm:ss"),
-                            LastEventAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+                            // Categorías de tiempo
+                            WorkHoursActiveSeconds = _activityTracker.CurrentDayWorkActiveSeconds,
+                            WorkHoursIdleSeconds = _activityTracker.CurrentDayWorkIdleSeconds,
+                            LunchActiveSeconds = _activityTracker.CurrentDayLunchActiveSeconds,
+                            LunchIdleSeconds = _activityTracker.CurrentDayLunchIdleSeconds,
+                            AfterHoursActiveSeconds = _activityTracker.CurrentDayAfterHoursActiveSeconds,
+                            AfterHoursIdleSeconds = _activityTracker.CurrentDayAfterHoursIdleSeconds
                         };
 
                         _ = _apiClient.SendActivityDayAsync(payload);
@@ -691,13 +707,24 @@ namespace AZCKeeper_Cliente.Core
                     return;
                 }
 
-                _activityTracker.SeedDayTotals(DateTime.Now.Date, res.Response.ActiveSeconds, res.Response.IdleSeconds);
+                _activityTracker.SeedDayTotals(
+                    DateTime.Now.Date,
+                    res.Response.ActiveSeconds,
+                    res.Response.IdleSeconds,
+                    res.Response.WorkHoursActiveSeconds,
+                    res.Response.WorkHoursIdleSeconds,
+                    res.Response.LunchActiveSeconds,
+                    res.Response.LunchIdleSeconds,
+                    res.Response.AfterHoursActiveSeconds,
+                    res.Response.AfterHoursIdleSeconds
+                );
 
                 // Para flush
                 _activityFirstEventLocal = DateTime.Now; // o parsear res.Response.FirstEventAt si quieres
                 _activitySamplesCount = res.Response.SamplesCount;
 
-                LocalLogger.Info($"CoreService: retomar OK dayDate={res.Response.DayDate} active={res.Response.ActiveSeconds}s idle={res.Response.IdleSeconds}s samples={res.Response.SamplesCount}");
+                LocalLogger.Info($"CoreService: retomar OK dayDate={today} active={res.Response.ActiveSeconds}s idle={res.Response.IdleSeconds}s " +
+                       $"work={res.Response.WorkHoursActiveSeconds}s lunch={res.Response.LunchActiveSeconds}s after={res.Response.AfterHoursActiveSeconds}s samples={res.Response.SamplesCount}");
             }
             catch (Exception ex)
             {
@@ -752,7 +779,13 @@ namespace AZCKeeper_Cliente.Core
                             CallSeconds = _windowTracker?.CallSessionSeconds ?? 0,
                             SamplesCount = _activitySamplesCount,
                             FirstEventAt = _activityFirstEventLocal?.ToString("yyyy-MM-dd HH:mm:ss"),
-                            LastEventAt = nowLocal.ToString("yyyy-MM-dd HH:mm:ss")
+                            LastEventAt = nowLocal.ToString("yyyy-MM-dd HH:mm:ss"),
+                            WorkHoursActiveSeconds = snap.WorkActive,
+                            WorkHoursIdleSeconds = snap.WorkIdle,
+                            LunchActiveSeconds = snap.LunchActive,
+                            LunchIdleSeconds = snap.LunchIdle,
+                            AfterHoursActiveSeconds = snap.AfterActive,
+                            AfterHoursIdleSeconds = snap.AfterIdle
                         };
 
                         _ = _apiClient.SendActivityDayAsync(payload);
@@ -855,7 +888,9 @@ namespace AZCKeeper_Cliente.Core
         private readonly Label _lblQueueStatus;
         private readonly Label _lblHandshake; 
         private readonly Func<DateTime> _getLastHandshake;
-
+        private readonly Label _lblWorkTime;
+        private readonly Label _lblLunchTime;
+        private readonly Label _lblAfterHoursTime;
         public DebugWindowForm(ActivityTracker activityTracker, WindowTracker windowTracker, Func<DateTime> getLastHandshake)
         {
             _activityTracker = activityTracker ?? throw new ArgumentNullException(nameof(activityTracker));
@@ -864,7 +899,7 @@ namespace AZCKeeper_Cliente.Core
 
             Text = "AZCKeeper - Debug Activity";
             StartPosition = FormStartPosition.CenterScreen;
-            Size = new Size(720, 340);
+            Size = new Size(900, 480); // Era 720x340, ahora más grande
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
 
@@ -887,6 +922,9 @@ namespace AZCKeeper_Cliente.Core
             _lblCallTime = CreateLabel();
             _lblQueueStatus = CreateLabel();
             _lblHandshake = CreateLabel();
+            _lblWorkTime = CreateLabel();
+            _lblLunchTime = CreateLabel();
+            _lblAfterHoursTime = CreateLabel();
 
             table.Controls.Add(_lblStartTime, 0, 0);
             table.Controls.Add(_lblCurrentDate, 0, 1);
@@ -896,8 +934,13 @@ namespace AZCKeeper_Cliente.Core
             table.Controls.Add(_lblDayInactive, 0, 5);
             table.Controls.Add(_lblWindowInfo, 0, 6);
             table.Controls.Add(_lblCallTime, 0, 7);
-            table.Controls.Add(_lblQueueStatus, 0, 8); // Después de _lblCallTime
-            table.Controls.Add(_lblHandshake, 0, 9);
+            table.Controls.Add(_lblQueueStatus, 0, 8); 
+            table.Controls.Add(_lblHandshake, 0, 9); 
+            table.Controls.Add(_lblWorkTime, 0, 10);
+            table.Controls.Add(_lblLunchTime, 0, 11);
+            table.Controls.Add(_lblAfterHoursTime, 0, 12);
+
+            table.RowCount = 13; // Era 9, ahora 12
 
             Controls.Add(table);
 
@@ -925,7 +968,6 @@ namespace AZCKeeper_Cliente.Core
             try
             {
                 var nowLocal = DateTime.Now;
-                var lastHs = _getLastHandshake();
 
                 DateTime start = _activityTracker.StartLocalTime;
                 _lblStartTime.Text = start == default
@@ -964,14 +1006,9 @@ namespace AZCKeeper_Cliente.Core
                     _lblWindowInfo.Text = "Ventana activa: (WindowTracker deshabilitado)";
                     _lblCallTime.Text = "Sesión - Tiempo en apps de llamada: (no aplica)";
                 }
-                // NUEVO: mostrar estado de cola offline
-                if (_activityTracker != null)
-                {
-                    int pending = 0; // Necesitarás pasar OfflineQueue al DebugWindow
-                    _lblQueueStatus.Text = pending > 0
-                        ? $"⚠️ Cola offline: {pending} items pendientes"
-                        : "✅ Cola offline: vacía";
-                }
+
+                // Handshake
+                var lastHs = _getLastHandshake();
                 if (lastHs == DateTime.MinValue)
                     _lblHandshake.Text = "Último handshake: Nunca";
                 else
@@ -979,6 +1016,42 @@ namespace AZCKeeper_Cliente.Core
                     var elapsed = (DateTime.Now - lastHs).TotalSeconds;
                     _lblHandshake.Text = $"Último handshake: {lastHs:HH:mm:ss} (hace {elapsed:F0}s)";
                 }
+
+                // ==================== CATEGORÍAS DE TIEMPO ====================
+
+                // Determinar categoría actual
+                var currentCategory = _activityTracker.WorkSchedule.GetTimeCategory(nowLocal);
+                string categoryIndicator = currentCategory switch
+                {
+                    Tracking.TimeCategory.WorkHours => "🟢 HORARIO LABORAL",
+                    Tracking.TimeCategory.LunchTime => "🟡 HORA DE ALMUERZO",
+                    Tracking.TimeCategory.AfterHours => "🔴 FUERA DE HORARIO",
+                    _ => "⚪ DESCONOCIDO"
+                };
+
+                // Work Hours
+                double workTotal = _activityTracker.CurrentDayWorkActiveSeconds + _activityTracker.CurrentDayWorkIdleSeconds;
+                string workPercent = workTotal > 0
+                    ? $"({(_activityTracker.CurrentDayWorkActiveSeconds / workTotal * 100):F1}% activo)"
+                    : "";
+                _lblWorkTime.Text = $"🟢 Horario laboral (7am-7pm): {FormatSeconds(_activityTracker.CurrentDayWorkActiveSeconds)} activo / {FormatSeconds(_activityTracker.CurrentDayWorkIdleSeconds)} inactivo {workPercent}";
+
+                // Lunch Time
+                double lunchTotal = _activityTracker.CurrentDayLunchActiveSeconds + _activityTracker.CurrentDayLunchIdleSeconds;
+                string lunchPercent = lunchTotal > 0
+                    ? $"({(_activityTracker.CurrentDayLunchActiveSeconds / lunchTotal * 100):F1}% activo)"
+                    : "";
+                _lblLunchTime.Text = $"🟡 Hora de almuerzo (12pm-1pm): {FormatSeconds(_activityTracker.CurrentDayLunchActiveSeconds)} activo / {FormatSeconds(_activityTracker.CurrentDayLunchIdleSeconds)} inactivo {lunchPercent}";
+
+                // After Hours
+                double afterTotal = _activityTracker.CurrentDayAfterHoursActiveSeconds + _activityTracker.CurrentDayAfterHoursIdleSeconds;
+                string afterPercent = afterTotal > 0
+                    ? $"({(_activityTracker.CurrentDayAfterHoursActiveSeconds / afterTotal * 100):F1}% activo)"
+                    : "";
+                _lblAfterHoursTime.Text = $"🔴 Fuera de horario: {FormatSeconds(_activityTracker.CurrentDayAfterHoursActiveSeconds)} activo / {FormatSeconds(_activityTracker.CurrentDayAfterHoursIdleSeconds)} inactivo {afterPercent}";
+
+                // Actualizar título del form con categoría actual
+                Text = $"AZCKeeper - Debug Activity";
             }
             catch
             {

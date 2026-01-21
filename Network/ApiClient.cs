@@ -365,7 +365,19 @@ namespace AZCKeeper_Cliente.Network
         }
 
         // -------------------- WINDOW EPISODE --------------------
+        private static string SanitizeString(string input, int maxLength)
+        {
+            if (string.IsNullOrEmpty(input)) return input;
 
+            // Remover caracteres problemáticos (emojis, control chars)
+            string cleaned = System.Text.RegularExpressions.Regex.Replace(input, @"[^\u0020-\u007E\u00A0-\uFFFF]", "");
+
+            // Truncar
+            if (cleaned.Length > maxLength)
+                cleaned = cleaned.Substring(0, maxLength);
+
+            return cleaned;
+        }
         public async Task SendWindowEpisodeAsync(WindowEpisodePayload payload, bool fromQueue = false)
         {
             if (payload == null) throw new ArgumentNullException(nameof(payload));
@@ -380,6 +392,9 @@ namespace AZCKeeper_Cliente.Network
                 }
 
                 const string url = "client/window-episode";
+
+                payload.ProcessName = SanitizeString(payload.ProcessName, 190);
+                payload.WindowTitle = SanitizeString(payload.WindowTitle, 500);
 
                 string json = JsonSerializer.Serialize(payload, _jsonOptions);
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -647,6 +662,14 @@ namespace AZCKeeper_Cliente.Network
             public string FirstEventAt { get; set; }
             public string LastEventAt { get; set; }
             public string Error { get; set; }
+
+            // Categorías
+            public double WorkHoursActiveSeconds { get; set; }
+            public double WorkHoursIdleSeconds { get; set; }
+            public double LunchActiveSeconds { get; set; }
+            public double LunchIdleSeconds { get; set; }
+            public double AfterHoursActiveSeconds { get; set; }
+            public double AfterHoursIdleSeconds { get; set; }
         }
 
         internal class ActivityDayGetResult
@@ -810,6 +833,14 @@ namespace AZCKeeper_Cliente.Network
             public int SamplesCount { get; set; }
             public string FirstEventAt { get; set; }     // "yyyy-MM-dd HH:mm:ss" opcional
             public string LastEventAt { get; set; }      // "yyyy-MM-dd HH:mm:ss" opcional
+
+            // NUEVOS CAMPOS
+            public double WorkHoursActiveSeconds { get; set; }
+            public double WorkHoursIdleSeconds { get; set; }
+            public double LunchActiveSeconds { get; set; }
+            public double LunchIdleSeconds { get; set; }
+            public double AfterHoursActiveSeconds { get; set; }
+            public double AfterHoursIdleSeconds { get; set; }
         }
 
     }
