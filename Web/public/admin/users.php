@@ -7,8 +7,8 @@ $pdo = Keeper\Db::pdo();
 $users = $pdo->query("
     SELECT 
         u.id, 
+        u.cc,
         u.display_name, 
-        u.legacy_employee_id,
         u.email,
         u.status,
         COUNT(DISTINCT d.id) as device_count,
@@ -44,7 +44,7 @@ $users = $pdo->query("
         <table class="data-table">
             <thead>
                 <tr>
-                    <th>Empleado ID</th>
+                    <th>CC (Cédula)</th>
                     <th>Nombre</th>
                     <th>Email</th>
                     <th>Dispositivos</th>
@@ -56,7 +56,7 @@ $users = $pdo->query("
             <tbody>
                 <?php foreach ($users as $user): ?>
                 <tr>
-                    <td><?= htmlspecialchars($user['legacy_employee_id']) ?></td>
+                    <td><strong><?= htmlspecialchars($user['cc'] ?? 'N/A') ?></strong></td>
                     <td><?= htmlspecialchars($user['display_name']) ?></td>
                     <td><?= htmlspecialchars($user['email'] ?? 'N/A') ?></td>
                     <td><?= $user['device_count'] ?> equipo(s)</td>
@@ -69,8 +69,11 @@ $users = $pdo->query("
                         <?php endif; ?>
                     </td>
                     <td>
-                        <a href="user-config.php?id=<?= $user['id'] ?>" class="btn btn-sm btn-primary">
-                            ⚙️ Configurar
+                        <a href="user-dashboard.php?id=<?= $user['id'] ?>" class="btn btn-sm btn-primary" title="Ver Dashboard">
+                            📊 Dashboard
+                        </a>
+                        <a href="user-config.php?id=<?= $user['id'] ?>" class="btn btn-sm btn-secondary" title="Configurar Política">
+                            ⚙️ Política
                         </a>
                     </td>
                 </tr>
