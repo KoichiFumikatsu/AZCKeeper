@@ -70,9 +70,10 @@ class ClientLogin
             // 2) Asegurar keeper_user CON password_hash
             $keeperUserId = self::ensureKeeperUser($pdo, [
                 'legacy_employee_id' => (int)$emp['legacy_employee_id'],
+                'cc' => $emp['cc'],  // ← AÑADIR
                 'display_name' => $displayName ?: (string)$emp['cc'],
                 'email' => $email,
-                'password' => $password  // ← PASAR PASSWORD PARA HASHEAR
+                'password' => $password
             ]);
              
             // 3) Device
@@ -124,22 +125,26 @@ class ClientLogin
         $passwordHash = password_hash($u['password'], PASSWORD_BCRYPT);
         
         if ($row) {
-            // Usuario existe: actualizar hash si cambió password
+            // Usuario existe: actualizar hash si cambió password + actualizar CC
             if (!$row['password_hash'] || !password_verify($u['password'], $row['password_hash'])) {
-                $upd = $pdo->prepare("UPDATE keeper_users SET password_hash=:h, updated_at=NOW() WHERE id=:id");
-                $upd->execute(['h' => $passwordHash, 'id' => $row['id']]);
+                $upd = $pdo->prepare("UPDATE keeper_users SET password_hash=:h, cc=:cc, updated_at=NOW() WHERE id=:id");
+                $upd->execute([
+                    'h' => $passwordHash, 
+                    'cc' => $u['cc'],  
+                    'id' => $row['id']
+                ]);
             }
             return (int)$row['id'];
         }
         
-        // Crear nuevo
         $stmt = $pdo->prepare("
-            INSERT INTO keeper_users
-              (legacy_employee_id, display_name, email, password_hash, status, created_at)
-            VALUES (:lid, :dn, :em, :ph, 'active', NOW())
-        ");
+                INSERT INTO keeper_users
+                  (legacy_employee_id, cc, display_name, email, password_hash, status, created_at)
+                VALUES (:lid, :cc, :dn, :em, :ph, 'active', NOW())
+            ");
         $stmt->execute([
             'lid' => $u['legacy_employee_id'],
+            'cc' => $u['cc'],  // ← AÑADIR
             'dn' => $u['display_name'],
             'em' => $u['email'],
             'ph' => $passwordHash

@@ -7,7 +7,7 @@ if (!$userId) die('User ID requerido');
 $pdo = Keeper\Db::pdo();
  
 // Obtener usuario
-$user = $pdo->prepare("SELECT * FROM keeper_users WHERE id = ?");
+$user = $pdo->prepare("SELECT id, cc, display_name, email, status FROM keeper_users WHERE id = ?");
 $user->execute([$userId]);
 $user = $user->fetch(PDO::FETCH_ASSOC);
 if (!$user) die('Usuario no encontrado');
@@ -170,8 +170,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         <div class="info-card" style="background: white; padding: 1.5rem; border-radius: 8px; margin-bottom: 1rem;">
             <h3 style="margin-bottom: 1rem; color: #3498db;">Información del Usuario</h3>
+            <p><strong>CC (Cédula):</strong> <?= htmlspecialchars($user['cc'] ?? 'N/A') ?></p>
             <p><strong>Nombre:</strong> <?= htmlspecialchars($user['display_name']) ?></p>
-            <p><strong>Employee ID:</strong> <?= htmlspecialchars($user['legacy_employee_id']) ?></p>
             <p><strong>Email:</strong> <?= htmlspecialchars($user['email'] ?? 'N/A') ?></p>
             
             <div class="device-list">
