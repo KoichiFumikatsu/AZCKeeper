@@ -1,5 +1,4 @@
 C:\xampp\htdocs\AZCKeeper\build\package\AZCKeeper_Client.exe
-C:\xampp\htdocs\AZCKeeper\build\package\AZCKeeperUpdater.runtimeconfig.json
 C:\xampp\htdocs\AZCKeeper\build\package\AZCKeeper_Client.deps.json
 C:\xampp\htdocs\AZCKeeper\build\package\AZCKeeper_Client.runtimeconfig.json
 C:\xampp\htdocs\AZCKeeper\build\package\AZCKeeper_Client.pdb

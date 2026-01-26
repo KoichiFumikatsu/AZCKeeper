@@ -213,7 +213,7 @@ namespace AZCKeeper_Cliente.Config
             {
                 Version = "3.0.0.0",
                 DeviceId = null, // Se generará posteriormente en EnsureDeviceId.
-                ApiBaseUrl = "http://localhost/AZCKeeper/AZCKeeper_Client/Web/public/index.php/api/", // Placeholder para la API real.
+                ApiBaseUrl = "https://inventario.azc.com.co/keeper/public/index.php/api/", // Placeholder para la API real.
                 ApiAuthToken = null,
                 Blocking = new BlockingConfig
                 {
@@ -245,20 +245,20 @@ namespace AZCKeeper_Cliente.Config
                 Timers = new TimersConfig
                 {
                     ActivityFlushIntervalSeconds = 6,
-                    HandshakeIntervalMinutes = 5,
+                    HandshakeIntervalMinutes = 1,
                     OfflineQueueRetrySeconds = 30
                 },
                 Modules = new ModulesConfig
                 {
                     EnableActivityTracking = true,
-                    EnableWindowTracking = false,
-                    EnableProcessTracking = false,
+                    EnableWindowTracking = true,
+                    EnableProcessTracking = true,
                     EnableBlocking = false,
                     EnableKeyboardHook = false,
                     EnableMouseHook = false,
-                    EnableUpdateManager = false,
+                    EnableUpdateManager = true,
                     EnableDebugWindow = false,
-                    EnableCallTracking = false,
+                    EnableCallTracking = true,
                     CallProcessKeywords = new[]
                     {
                         "zoom", "teams", "skype", "meet", "webex", "3cx", "zoiper", "softphone"

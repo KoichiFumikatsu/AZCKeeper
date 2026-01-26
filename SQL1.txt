@@ -1,1 +1,316 @@
-AZCKeeper_Client/Web/public/admin/policies.php
+/* ===========================================================
+   AZCKeeper - DDL listo para copiar/pegar en otra DB (MySQL)
+   - Ordenado por dependencias FK
+   - Conserva todos los índices/unique tal como los enviaste
+   - Sin AUTO_INCREMENT=xxx al final (innecesario para migración)
+   =========================================================== */
+
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- ===========================================================
+-- 1) keeper_users (BASE)
+-- ===========================================================
+CREATE TABLE IF NOT EXISTS `keeper_users` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `legacy_employee_id` int NOT NULL,
+  `cc` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `email` varchar(190) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `display_name` varchar(190) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `status` enum('active','inactive','locked') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'active',
+  `password_hash` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_keeper_users_legacy` (`legacy_employee_id`),
+  UNIQUE KEY `uk_keeper_users_cc` (`cc`),
+  KEY `ix_keeper_users_email` (`email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ===========================================================
+-- 2) keeper_devices (DEPENDE DE keeper_users)
+-- ===========================================================
+CREATE TABLE IF NOT EXISTS `keeper_devices` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint NOT NULL,
+  `device_guid` char(36) COLLATE utf8mb4_general_ci NOT NULL,
+  `device_name` varchar(190) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `serial_hint` varchar(190) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `status` enum('active','revoked') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'active',
+  `last_seen_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_keeper_devices_guid` (`device_guid`),
+  KEY `ix_keeper_devices_user` (`user_id`),
+  KEY `ix_keeper_devices_last_seen` (`last_seen_at`),
+  CONSTRAINT `fk_keeper_devices_user`
+    FOREIGN KEY (`user_id`) REFERENCES `keeper_users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ===========================================================
+-- 3) keeper_sessions (DEPENDE DE users/devices)
+-- ===========================================================
+CREATE TABLE IF NOT EXISTS `keeper_sessions` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint NOT NULL,
+  `device_id` bigint DEFAULT NULL,
+  `token_hash` char(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `refresh_hash` char(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `issued_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `expires_at` timestamp NULL DEFAULT NULL,
+  `revoked_at` timestamp NULL DEFAULT NULL,
+  `ip` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `user_agent` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_keeper_sessions_tokenhash` (`token_hash`),
+  KEY `ix_keeper_sessions_user` (`user_id`),
+  KEY `ix_keeper_sessions_device` (`device_id`),
+  KEY `ix_keeper_sessions_expires` (`expires_at`),
+  CONSTRAINT `fk_keeper_sessions_device`
+    FOREIGN KEY (`device_id`) REFERENCES `keeper_devices` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_keeper_sessions_user`
+    FOREIGN KEY (`user_id`) REFERENCES `keeper_users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ===========================================================
+-- 4) keeper_module_catalog (SIN FKs)
+-- ===========================================================
+CREATE TABLE IF NOT EXISTS `keeper_module_catalog` (
+  `module_code` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `name` varchar(190) COLLATE utf8mb4_general_ci NOT NULL,
+  `default_enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `config_schema_json` json DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`module_code`),
+  KEY `ix_keeper_module_active` (`active`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ===========================================================
+-- 5) keeper_policy_assignments (DEPENDE DE users/devices)
+-- ===========================================================
+CREATE TABLE IF NOT EXISTS `keeper_policy_assignments` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `scope` enum('global','user','device') COLLATE utf8mb4_general_ci NOT NULL,
+  `user_id` bigint DEFAULT NULL,
+  `device_id` bigint DEFAULT NULL,
+  `version` int NOT NULL DEFAULT '1',
+  `priority` int NOT NULL DEFAULT '100',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `policy_json` json NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `ix_keeper_policy_scope_active` (`scope`,`is_active`,`priority`),
+  KEY `ix_keeper_policy_user_active` (`user_id`,`is_active`,`priority`),
+  KEY `ix_keeper_policy_device_active` (`device_id`,`is_active`,`priority`),
+  CONSTRAINT `fk_keeper_policy_device`
+    FOREIGN KEY (`device_id`) REFERENCES `keeper_devices` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_keeper_policy_user`
+    FOREIGN KEY (`user_id`) REFERENCES `keeper_users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `ck_keeper_policy_scope`
+    CHECK ((((`scope` = _utf8mb4'global') and (`user_id` is null) and (`device_id` is null)) or ((`scope` = _utf8mb4'user') and (`user_id` is not null) and (`device_id` is null)) or ((`scope` = _utf8mb4'device') and (`device_id` is not null))))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ===========================================================
+-- 6) keeper_handshake_log (DEPENDE DE users/devices)
+-- ===========================================================
+CREATE TABLE IF NOT EXISTS `keeper_handshake_log` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint NOT NULL,
+  `device_id` bigint NOT NULL,
+  `client_version` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `request_json` json DEFAULT NULL,
+  `response_json` json DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `ix_keeper_handshake_user` (`user_id`,`created_at`),
+  KEY `ix_keeper_handshake_device` (`device_id`,`created_at`),
+  CONSTRAINT `fk_keeper_handshake_device`
+    FOREIGN KEY (`device_id`) REFERENCES `keeper_devices` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_keeper_handshake_user`
+    FOREIGN KEY (`user_id`) REFERENCES `keeper_users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ===========================================================
+-- 7) keeper_work_schedules (DEPENDE DE users) - collation original
+-- ===========================================================
+CREATE TABLE IF NOT EXISTS `keeper_work_schedules` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint DEFAULT NULL,
+  `work_start_time` time DEFAULT '07:00:00',
+  `work_end_time` time DEFAULT '19:00:00',
+  `lunch_start_time` time DEFAULT '12:00:00',
+  `lunch_end_time` time DEFAULT '13:00:00',
+  `timezone` varchar(50) DEFAULT 'America/Bogota',
+  `is_active` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_user_schedule` (`user_id`,`is_active`),
+  CONSTRAINT `keeper_work_schedules_ibfk_1`
+    FOREIGN KEY (`user_id`) REFERENCES `keeper_users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ===========================================================
+-- 8) keeper_activity_day (DEPENDE DE users/devices) - conserva ambos UNIQUE
+-- ===========================================================
+CREATE TABLE IF NOT EXISTS `keeper_activity_day` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint NOT NULL,
+  `device_id` bigint NOT NULL,
+  `day_date` date NOT NULL,
+  `tz_offset_minutes` smallint NOT NULL DEFAULT '-300',
+  `active_seconds` int NOT NULL DEFAULT '0',
+  `work_hours_active_seconds` decimal(12,3) DEFAULT '0.000',
+  `work_hours_idle_seconds` decimal(12,3) DEFAULT '0.000',
+  `lunch_active_seconds` decimal(12,3) DEFAULT '0.000',
+  `lunch_idle_seconds` decimal(12,3) DEFAULT '0.000',
+  `after_hours_active_seconds` decimal(12,3) DEFAULT '0.000',
+  `after_hours_idle_seconds` decimal(12,3) DEFAULT '0.000',
+  `idle_seconds` int NOT NULL DEFAULT '0',
+  `call_seconds` int NOT NULL DEFAULT '0',
+  `samples_count` int NOT NULL DEFAULT '0',
+  `first_event_at` datetime DEFAULT NULL,
+  `last_event_at` datetime DEFAULT NULL,
+  `payload_json` json DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_keeper_activity_unique` (`user_id`,`device_id`,`day_date`),
+  UNIQUE KEY `uq_activity_day` (`user_id`,`device_id`,`day_date`),
+  KEY `ix_keeper_activity_day` (`day_date`),
+  KEY `ix_keeper_activity_user_day` (`user_id`,`day_date`),
+  KEY `fk_keeper_activity_device` (`device_id`),
+  CONSTRAINT `fk_keeper_activity_device`
+    FOREIGN KEY (`device_id`) REFERENCES `keeper_devices` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_keeper_activity_user`
+    FOREIGN KEY (`user_id`) REFERENCES `keeper_users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ===========================================================
+-- 9) keeper_daily_metrics (DEPENDE DE users/devices)
+-- ===========================================================
+CREATE TABLE IF NOT EXISTS `keeper_daily_metrics` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint NOT NULL,
+  `device_id` bigint NOT NULL,
+  `day_date` date NOT NULL,
+  `metric_key` varchar(120) COLLATE utf8mb4_general_ci NOT NULL,
+  `metric_value` bigint NOT NULL DEFAULT '0',
+  `meta_json` json DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_keeper_daily_metrics_unique` (`user_id`,`device_id`,`day_date`,`metric_key`),
+  KEY `ix_keeper_daily_metrics_user_day` (`user_id`,`day_date`),
+  KEY `ix_keeper_daily_metrics_key_day` (`metric_key`,`day_date`),
+  KEY `fk_keeper_daily_metrics_device` (`device_id`),
+  CONSTRAINT `fk_keeper_daily_metrics_device`
+    FOREIGN KEY (`device_id`) REFERENCES `keeper_devices` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_keeper_daily_metrics_user`
+    FOREIGN KEY (`user_id`) REFERENCES `keeper_users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ===========================================================
+-- 10) keeper_events (DEPENDE DE users/devices)
+-- ===========================================================
+CREATE TABLE IF NOT EXISTS `keeper_events` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint NOT NULL,
+  `device_id` bigint NOT NULL,
+  `module_code` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `event_type` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `start_at` datetime DEFAULT NULL,
+  `end_at` datetime DEFAULT NULL,
+  `duration_seconds` int DEFAULT NULL,
+  `numeric_1` bigint DEFAULT NULL,
+  `numeric_2` bigint DEFAULT NULL,
+  `numeric_3` bigint DEFAULT NULL,
+  `numeric_4` bigint DEFAULT NULL,
+  `text_1` varchar(190) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `text_2` varchar(190) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `payload_json` json DEFAULT NULL,
+  `day_date` date NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `ix_keeper_events_user_day` (`user_id`,`day_date`),
+  KEY `ix_keeper_events_device_day` (`device_id`,`day_date`),
+  KEY `ix_keeper_events_type` (`event_type`,`day_date`),
+  KEY `ix_keeper_events_module` (`module_code`,`day_date`),
+  CONSTRAINT `fk_keeper_events_device`
+    FOREIGN KEY (`device_id`) REFERENCES `keeper_devices` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_keeper_events_user`
+    FOREIGN KEY (`user_id`) REFERENCES `keeper_users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ===========================================================
+-- 11) keeper_audit_log (DEPENDE DE users/devices, SET NULL)
+-- ===========================================================
+CREATE TABLE IF NOT EXISTS `keeper_audit_log` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint DEFAULT NULL,
+  `device_id` bigint DEFAULT NULL,
+  `event_type` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `message` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `meta_json` json DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `ix_keeper_audit_user` (`user_id`,`created_at`),
+  KEY `ix_keeper_audit_device` (`device_id`,`created_at`),
+  KEY `ix_keeper_audit_type` (`event_type`,`created_at`),
+  CONSTRAINT `fk_keeper_audit_device`
+    FOREIGN KEY (`device_id`) REFERENCES `keeper_devices` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_keeper_audit_user`
+    FOREIGN KEY (`user_id`) REFERENCES `keeper_users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ===========================================================
+-- 12) keeper_window_episode (DEPENDE DE users/devices) - collation original
+-- ===========================================================
+CREATE TABLE IF NOT EXISTS `keeper_window_episode` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint NOT NULL,
+  `device_id` bigint NOT NULL,
+  `start_at` datetime NOT NULL,
+  `end_at` datetime NOT NULL,
+  `duration_seconds` int NOT NULL,
+  `process_name` varchar(190) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `app_name` varchar(190) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `window_title` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `is_in_call` tinyint(1) NOT NULL DEFAULT '0',
+  `call_app_hint` varchar(190) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `day_date` date NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `ix_keeper_we_user_day` (`user_id`,`day_date`),
+  KEY `ix_keeper_we_device_day` (`device_id`,`day_date`),
+  KEY `ix_keeper_we_start` (`start_at`),
+  KEY `ix_keeper_we_process` (`process_name`),
+  CONSTRAINT `fk_keeper_we_device`
+    FOREIGN KEY (`device_id`) REFERENCES `keeper_devices` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_keeper_we_user`
+    FOREIGN KEY (`user_id`) REFERENCES `keeper_users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===========================================================
+-- 13) keeper_device_locks (DEPENDE DE users/devices)
+-- ===========================================================
+CREATE TABLE IF NOT EXISTS `keeper_device_locks` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `device_id` bigint NOT NULL,
+  `user_id` bigint NOT NULL,
+  `locked_by_admin_id` bigint DEFAULT NULL,
+  `lock_reason` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `locked_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `unlocked_at` timestamp NULL DEFAULT NULL,
+  `unlock_pin_hash` char(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  PRIMARY KEY (`id`),
+  KEY `ix_device_locks_device` (`device_id`,`is_active`),
+  KEY `ix_device_locks_user` (`user_id`,`is_active`),
+  CONSTRAINT `fk_device_locks_device`
+    FOREIGN KEY (`device_id`) REFERENCES `keeper_devices` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_device_locks_user`
+    FOREIGN KEY (`user_id`) REFERENCES `keeper_users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+SET FOREIGN_KEY_CHECKS = 1;
