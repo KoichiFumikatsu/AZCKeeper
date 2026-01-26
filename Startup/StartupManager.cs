@@ -15,7 +15,7 @@ namespace AZCKeeper_Cliente.Startup
             try
             {
                 // ✅ USAR RUTA EN APPDATA en lugar de Process.MainModule.FileName
-                string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
                 string exePath = Path.Combine(appDataPath, "AZCKeeper", "app", "AZCKeeper_Client.exe");
 
                 // Si aún no está en AppData, usar la ruta actual (primera vez)
@@ -74,7 +74,7 @@ namespace AZCKeeper_Cliente.Startup
         /// </summary>
         public static string GetInstallPath()
         {
-            string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             return Path.Combine(appDataPath, "AZCKeeper", "app");
         }
     }

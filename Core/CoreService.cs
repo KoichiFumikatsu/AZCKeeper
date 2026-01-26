@@ -254,7 +254,6 @@ namespace AZCKeeper_Cliente.Core
                 LocalLogger.Error(ex, "CoreService: error al iniciar HandshakeTimer.");
             }
         }
-
         private void PerformHandshake()
         {
             try
@@ -474,8 +473,6 @@ namespace AZCKeeper_Cliente.Core
                     ApplyTimerChanges(timers);
                 }
 
-                _configManager.Save();
-                _configManager.ApplyLoggingConfiguration();
                 _configManager.Save();
                 _configManager.ApplyLoggingConfiguration();
 

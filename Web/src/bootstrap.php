@@ -21,9 +21,12 @@ require_once __DIR__ . '/Repos/LegacyAuthRepo.php';
 require_once __DIR__ . '/Endpoints/Health.php';
 require_once __DIR__ . '/Endpoints/ClientHandshake.php';
 require_once __DIR__ . '/Endpoints/ClientLogin.php';
+require_once __DIR__ . '/Endpoints/ClientVersion.php';
 require_once __DIR__ . '/Endpoints/ActivityDay.php';
 require_once __DIR__ . '/Endpoints/WindowEpisode.php';
 require_once __DIR__ . '/Endpoints/EventIngest.php';
+require_once __DIR__ . '/Endpoints/ForceHandshake.php';
+require_once __DIR__ . '/Endpoints/DeviceLock.php';
 
 // Load .env
 Config::loadEnv(__DIR__ . '/../.env');

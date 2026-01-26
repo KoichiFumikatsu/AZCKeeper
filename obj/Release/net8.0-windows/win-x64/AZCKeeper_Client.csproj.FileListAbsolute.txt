@@ -17,9 +17,6 @@ C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\obj\Release\net8.0-windows\win-x64\re
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\obj\Release\net8.0-windows\win-x64\AZCKeeper_Client.pdb
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\obj\Release\net8.0-windows\win-x64\AZCKeeper_Client.genruntimeconfig.cache
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\obj\Release\net8.0-windows\win-x64\ref\AZCKeeper_Client.dll
-C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\AZCKeeperUpdater.deps.json
-C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\AZCKeeperUpdater.runtimeconfig.json
-C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\AZCKeeperUpdater.exe
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\Microsoft.CSharp.dll
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\Microsoft.VisualBasic.Core.dll
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\Microsoft.Win32.Primitives.dll
