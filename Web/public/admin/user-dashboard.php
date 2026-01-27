@@ -73,6 +73,7 @@ $dailyActivity = $pdo->query("
         SUM(idle_seconds) as idle,
         SUM(work_hours_active_seconds) as work_active,
         SUM(lunch_active_seconds) as lunch_active,
+        SUM(lunch_idle_seconds) as lunch_idle,
         SUM(after_hours_active_seconds) as after_active,
         SUM(call_seconds) as call_time
     FROM keeper_activity_day
@@ -423,7 +424,7 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
                     <td><?= formatSeconds($day['active']) ?></td>
                     <td><?= formatSeconds($day['idle']) ?></td>
                     <td><?= formatSeconds($day['work_active']) ?></td>
-                    <td><?= formatSeconds($day['lunch_active']) ?></td>
+                    <td><?= formatSeconds($day['lunch_idle']) ?></td>
                     <td><?= formatSeconds($day['after_active']) ?></td>
                     <td><?= formatSeconds($day['call_time']) ?></td>
                 </tr>
@@ -482,7 +483,7 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
             data: [
                 { value: <?= round($summary['work_active'] / 3600, 2) ?>, name: 'Laboral Activo' },
                 { value: <?= round($summary['work_idle'] / 3600, 2) ?>, name: 'Laboral Inactivo' },
-                { value: <?= round($summary['lunch_active'] / 3600, 2) ?>, name: 'Almuerzo' },
+                { value: <?= round($summary['lunch_idle'] / 3600, 2) ?>, name: 'Almuerzo' },
                 { value: <?= round($summary['after_active'] / 3600, 2) ?>, name: 'Fuera de horario' }
             ],
             emphasis: { itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0, 0, 0, 0.5)' }}
@@ -498,7 +499,7 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
         yAxis: { type: 'value', name: 'Horas' },
         series: [
             { name: 'Laboral', type: 'bar', stack: 'total', data: <?= json_encode(array_map(fn($d) => round($d['work_active']/3600, 2), array_reverse($dailyActivity))) ?> },
-            { name: 'Almuerzo', type: 'bar', stack: 'total', data: <?= json_encode(array_map(fn($d) => round($d['lunch_active']/3600, 2), array_reverse($dailyActivity))) ?> },
+            { name: 'Almuerzo', type: 'bar', stack: 'total', data: <?= json_encode(array_map(fn($d) => round($d['lunch_idle']/3600, 2), array_reverse($dailyActivity))) ?> },
             { name: 'Fuera horario', type: 'bar', stack: 'total', data: <?= json_encode(array_map(fn($d) => round($d['after_active']/3600, 2), array_reverse($dailyActivity))) ?> },
             { name: 'Llamadas', type: 'line', data: <?= json_encode(array_map(fn($d) => round($d['call_time']/3600, 2), array_reverse($dailyActivity))) ?> }
         ]
