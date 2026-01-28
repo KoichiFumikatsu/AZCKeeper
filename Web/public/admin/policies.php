@@ -13,7 +13,7 @@ $globalPolicy = $pdo->query("
  
 // Configuración por defecto
 $defaultConfig = [    
-    'apiBaseUrl' => 'http://localhost/AZCKeeper/AZCKeeper_Client/Web/public/index.php/api/', 
+    'apiBaseUrl' => 'https://inventario.azc.com.co/keeper/public/index.php/api/', 
     'logging' => [
         'globalLevel' => 'Info',
         'clientOverrideLevel' => null,
@@ -24,18 +24,19 @@ $defaultConfig = [
     'modules' => [
         'enableActivityTracking' => true,
         'enableWindowTracking' => true,
-        'enableProcessTracking' => false,
         'enableBlocking' => false,
-        'enableKeyboardHook' => false,
-        'enableMouseHook' => false,
         'enableUpdateManager' => true,
-        'enableDebugWindow' => false,
-        'enableCallTracking' => false,
+        'enableDebugWindow' => true,
+    ],
+    'Activity' => [
+        'ActivityIntervalSeconds' => 1,
+        'ActivityinactivityThresholdSeconds' => 600
         'countCallsAsActive' => false,
         'callActiveMaxIdleSeconds' => 1800,
-        'activityIntervalSeconds' => 1,
-        'activityInactivityThresholdSeconds' => 15,
-        'windowTrackingIntervalSeconds' => 2,
+    ],
+    'Window' => [
+        'windowTrackingIntervalSeconds' => 5
+        'enableCallTracking' => false,
         'callProcessKeywords' => ['zoom', 'teams', 'skype', 'meet', 'webex'],
         'callTitleKeywords' => ['meeting', 'call', 'reunión', 'llamada']
     ],
@@ -56,8 +57,8 @@ $defaultConfig = [
         'unlockPin' => null
     ],
     'timers' => [
-        'activityFlushIntervalSeconds' => 6,
-        'handshakeIntervalMinutes' => 5,
+        'activityFlushIntervalSeconds' => 30,
+        'handshakeIntervalMinutes' => 1,
         'offlineQueueRetrySeconds' => 30
     ]
 ];
@@ -88,18 +89,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'modules' => [
             'enableActivityTracking' => isset($_POST['mod_activity']),
             'enableWindowTracking' => isset($_POST['mod_window']),
-            'enableProcessTracking' => isset($_POST['mod_process']),
             'enableBlocking' => isset($_POST['mod_blocking']),
-            'enableKeyboardHook' => isset($_POST['mod_keyboard']),
-            'enableMouseHook' => isset($_POST['mod_mouse']),
             'enableUpdateManager' => isset($_POST['mod_updates']),
             'enableDebugWindow' => isset($_POST['mod_debug']),
-            'enableCallTracking' => isset($_POST['mod_call_tracking']),
+        ],
+        'Activity' => [
+            'ActivityIntervalSeconds' => (float)($_POST['activity_interval'] ?? 1),
+            'ActivityinactivityThresholdSeconds' => (float)($_POST['activity_threshold'] ?? 600),
             'countCallsAsActive' => isset($_POST['mod_count_calls']),
             'callActiveMaxIdleSeconds' => (float)($_POST['call_max_idle'] ?? 1800),
-            'activityIntervalSeconds' => (float)($_POST['activity_interval'] ?? 1),
-            'activityInactivityThresholdSeconds' => (float)($_POST['activity_threshold'] ?? 15),
-            'windowTrackingIntervalSeconds' => (float)($_POST['window_interval'] ?? 2),
+        ],
+        'Window' => [
+            'windowTrackingIntervalSeconds' => (float)($_POST['window_interval'] ?? 5),
+            'enableCallTracking' => isset($_POST['mod_call_tracking']),
             'callProcessKeywords' => array_filter(array_map('trim', explode(',', $_POST['call_processes'] ?? ''))),
             'callTitleKeywords' => array_filter(array_map('trim', explode(',', $_POST['call_titles'] ?? '')))
         ],

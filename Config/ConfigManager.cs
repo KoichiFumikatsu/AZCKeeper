@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using AZCKeeper_Cliente.Logging;
@@ -202,8 +203,32 @@ namespace AZCKeeper_Cliente.Config
                 LocalLogger.ConfigureWebhook(logConfig.DiscordWebhookUrl);
             }
         }
-
+    
         /// <summary>
+        /// Convierte un texto ("INFO", "WARN", etc.) en un valor LogLevel.
+        /// </summary>
+        private LocalLogger.LogLevel ParseLogLevel(string levelString, LocalLogger.LogLevel defaultLevel)
+        {
+            if (string.IsNullOrWhiteSpace(levelString))
+                return defaultLevel;
+
+            switch (levelString.Trim().ToUpperInvariant())
+            {
+                case "NONE":
+                    return LocalLogger.LogLevel.None;
+                case "ERROR":
+                    return LocalLogger.LogLevel.Error;
+                case "WARN":
+                case "WARNING":
+                    return LocalLogger.LogLevel.Warn;
+                case "INFO":
+                    return LocalLogger.LogLevel.Info;
+                default:
+                    LocalLogger.Warn($"ConfigManager.ParseLogLevel(): nivel desconocido '{levelString}'. Se usa valor por defecto {defaultLevel}.");
+                    return defaultLevel;
+            }
+        }
+    /// <summary>
         /// Crea una configuración por defecto cuando no existe archivo
         /// o no se puede deserializar la configuración.
         /// </summary>
@@ -212,9 +237,43 @@ namespace AZCKeeper_Cliente.Config
             var config = new ClientConfig
             {
                 Version = "3.0.0.0",
-                DeviceId = null, // Se generará posteriormente en EnsureDeviceId.
-                ApiBaseUrl = "https://inventario.azc.com.co/keeper/public/index.php/api/", // Placeholder para la API real.
+                DeviceId = null,
+                ApiBaseUrl = "https://inventario.azc.com.co/keeper/public/index.php/api/",
                 ApiAuthToken = null,
+                //Flags para Habilitar desactivar módulos.
+                Modules = new ModulesConfig
+                {
+                    EnableActivityTracking = true,
+                    EnableWindowTracking = true,
+                    EnableProcessTracking = true,
+                    EnableBlocking = false,
+                    EnableKeyboardHook = false,
+                    EnableMouseHook = false,
+                    EnableUpdateManager = true,
+                    EnableDebugWindow = false,
+
+                },
+                //Configuracion especifica por Modulo (Separada)
+                Activity = new ActivityConfig
+                {
+                    ActivityIntervalSeconds = 1.0,
+                    ActivityInactivityThresholdSeconds = 15.0,
+                    CountCallsAsActive = true,
+                    CallActiveMaxIdleSeconds = 1800.0
+                },
+                Window = new WindowConfig
+                {
+                    WindowIntervalSeconds = 1.0,
+                    EnableCallTracking = true,
+                    CallProcessKeywords = new[]
+                    {
+                        "zoom", "teams", "skype", "meet", "webex", "3cx", "zoiper", "softphone"
+                    },
+                    CallTitleKeywords = new[]
+                    {
+                        "meeting", "reunión", "llamada", "videollamada", "call", "zoom meeting"
+                    }
+                },
                 Blocking = new BlockingConfig
                 {
                     EnableDeviceLock = false,
@@ -247,55 +306,9 @@ namespace AZCKeeper_Cliente.Config
                     ActivityFlushIntervalSeconds = 6,
                     HandshakeIntervalMinutes = 1,
                     OfflineQueueRetrySeconds = 30
-                },
-                Modules = new ModulesConfig
-                {
-                    EnableActivityTracking = true,
-                    EnableWindowTracking = true,
-                    EnableProcessTracking = true,
-                    EnableBlocking = false,
-                    EnableKeyboardHook = false,
-                    EnableMouseHook = false,
-                    EnableUpdateManager = true,
-                    EnableDebugWindow = false,
-                    EnableCallTracking = true,
-                    CallProcessKeywords = new[]
-                    {
-                        "zoom", "teams", "skype", "meet", "webex", "3cx", "zoiper", "softphone"
-                    },
-                                    CallTitleKeywords = new[]
-                    {
-                        "meeting", "reunión", "llamada", "videollamada", "call", "zoom meeting"
-                    }
                 }
             };
-
             return config;
-        }
-
-        /// <summary>
-        /// Convierte un texto ("INFO", "WARN", etc.) en un valor LogLevel.
-        /// </summary>
-        private LocalLogger.LogLevel ParseLogLevel(string levelString, LocalLogger.LogLevel defaultLevel)
-        {
-            if (string.IsNullOrWhiteSpace(levelString))
-                return defaultLevel;
-
-            switch (levelString.Trim().ToUpperInvariant())
-            {
-                case "NONE":
-                    return LocalLogger.LogLevel.None;
-                case "ERROR":
-                    return LocalLogger.LogLevel.Error;
-                case "WARN":
-                case "WARNING":
-                    return LocalLogger.LogLevel.Warn;
-                case "INFO":
-                    return LocalLogger.LogLevel.Info;
-                default:
-                    LocalLogger.Warn($"ConfigManager.ParseLogLevel(): nivel desconocido '{levelString}'. Se usa valor por defecto {defaultLevel}.");
-                    return defaultLevel;
-            }
         }
 
         /// <summary>
@@ -308,12 +321,60 @@ namespace AZCKeeper_Cliente.Config
             public string DeviceId { get; set; }
             public string ApiBaseUrl { get; set; }
             public string ApiAuthToken { get; set; }
-            public LoggingConfig Logging { get; set; }
             public ModulesConfig Modules { get; set; }
-            public StartupConfig Startup { get; set; }     
-            public UpdatesConfig Updates { get; set; }
+            public ActivityConfig Activity { get; set; }
+            public WindowConfig Window { get; set; }
             public BlockingConfig Blocking { get; set; }
+            public StartupConfig Startup { get; set; }   
+            public UpdatesConfig Updates { get; set; } 
+            public LoggingConfig Logging { get; set; } 
             public TimersConfig Timers { get; set; }
+        }
+        /// <summary>
+        /// Configuración de módulos: flags para activar/desactivar
+        /// los distintos componentes de tracking o bloqueo.
+        /// </summary>
+        internal class ModulesConfig
+        {
+            public bool EnableActivityTracking { get; set; }
+            public bool EnableWindowTracking { get; set; }
+            public bool EnableProcessTracking { get; set; }
+            public bool EnableBlocking { get; set; }
+            public bool EnableUpdateManager { get; set; }
+            public bool EnableDebugWindow { get; set; }
+            public bool EnableKeyboardHook { get; set; }
+            public bool EnableMouseHook { get; set; }
+        }
+        /// /// <summary>
+        /// Configuración de tiempo de Acividad del usuario.
+        /// </summary>
+        internal class ActivityConfig
+        {
+            public double ActivityIntervalSeconds { get; set; } = 1.0;
+            public double ActivityInactivityThresholdSeconds { get; set; } = 600.0;
+            public bool CountCallsAsActive { get; set; } = true;
+            public double CallActiveMaxIdleSeconds { get; set; } = 1800.0;
+        }
+        /// /// <summary>
+        /// Configuración de ventanas activas y llamadas.
+        /// </summary>
+        internal class WindowConfig
+        {
+            public double WindowIntervalSeconds { get; set; } = 1.0;
+            public bool EnableCallTracking { get; set; } = true;
+            public string[] CallProcessKeywords { get; set; }
+            public string[] CallTitleKeywords { get; set; }
+        }
+        /// /// <summary>
+        /// Configuración de bloqueo remoto de dispositivo.
+        /// </summary>
+        internal class BlockingConfig
+        {
+            public bool EnableDeviceLock { get; set; } = false;
+            public string LockMessage { get; set; } = "Este equipo ha sido bloqueado.\n\nContacta al administrador.";
+            public bool AllowUnlockWithPin { get; set; } = true;
+            public string UnlockPin { get; set; } = null; // PIN en texto plano
+            public string UnlockPinHash { get; set; } = null; // Hash SHA256 del PIN (deprecated, para compatibilidad)
         }
         /// <summary>
         /// Configuración de inicio automático.
@@ -322,15 +383,6 @@ namespace AZCKeeper_Cliente.Config
         {
             public bool EnableAutoStartup { get; set; } = true;
             public bool StartMinimized { get; set; } = false;
-        }
-        /// <summary>
-        /// Configuración de intervalos de timers del sistema.
-        /// </summary>
-        internal class TimersConfig
-        {
-            public int ActivityFlushIntervalSeconds { get; set; } = 6;
-            public int HandshakeIntervalMinutes { get; set; } = 5;
-            public int OfflineQueueRetrySeconds { get; set; } = 30;
         }
         /// <summary>
         /// Configuración de actualizaciones automáticas.
@@ -353,73 +405,15 @@ namespace AZCKeeper_Cliente.Config
             public bool EnableDiscordLogging { get; set; }
             public string DiscordWebhookUrl { get; set; }
         }
-        /// /// <summary>
-        /// Configuración de bloqueo remoto de dispositivo.
-        /// </summary>
-        internal class BlockingConfig
-        {
-            public bool EnableDeviceLock { get; set; } = false;
-            public string LockMessage { get; set; } = "Este equipo ha sido bloqueado.\n\nContacta al administrador.";
-            public bool AllowUnlockWithPin { get; set; } = true;
-            public string UnlockPin { get; set; } = null; // PIN en texto plano
-            public string UnlockPinHash { get; set; } = null; // Hash SHA256 del PIN (deprecated, para compatibilidad)
-        }
-
         /// <summary>
-        /// Configuración de módulos: flags para activar/desactivar
-        /// los distintos componentes de tracking o bloqueo.
+        /// Configuración de intervalos de timers del sistema.
         /// </summary>
-        internal class ModulesConfig
+        internal class TimersConfig
         {
-            public bool EnableActivityTracking { get; set; }
-            public bool EnableWindowTracking { get; set; }
-            public bool EnableProcessTracking { get; set; }
-            public bool EnableBlocking { get; set; }
-            public bool EnableKeyboardHook { get; set; }
-            public bool EnableMouseHook { get; set; }
-            public bool EnableUpdateManager { get; set; }
-            public bool EnableDebugWindow { get; set; }
-            public bool CountCallsAsActive { get; set; } = true;
-
-            // Máximo idle permitido para considerar "en llamada" como activo (segundos).
-            // 1800 = 30 minutos (default).
-            public double CallActiveMaxIdleSeconds { get; set; } = 1800.0;
-
-            /// <summary>
-            /// Intervalo de muestreo para ActivityTracker, en segundos.
-            /// Si no se establece (0), se usará valor por defecto (1s).
-            /// </summary>
-            public double ActivityIntervalSeconds { get; set; } = 1.0;
-
-            /// <summary>
-            /// Umbral de inactividad, en segundos. Si el idle es mayor o igual,
-            /// se considera tiempo inactivo. Por defecto, 15s.
-            /// </summary>
-            public double ActivityInactivityThresholdSeconds { get; set; } = 15.0;
-
-            /// <summary>
-            /// Intervalo de muestreo para WindowTracker, en segundos.
-            /// Por defecto, 1s.
-            /// </summary>
-            public double WindowTrackingIntervalSeconds { get; set; } = 1.0;
-
-
-            /// <summary>
-            /// Habilita el tracking específico de aplicaciones de llamada (VoIP / video).
-            /// </summary>
-            public bool EnableCallTracking { get; set; } = false;
-
-            /// <summary>
-            /// Palabras clave (subcadenas) para detectar procesos de apps de llamada.
-            /// Ejemplo: "zoom", "teams", "skype", "3cx", "zoiper".
-            /// </summary>
-            public string[] CallProcessKeywords { get; set; }
-
-            /// <summary>
-            /// Palabras clave (subcadenas) para detectar títulos de ventanas de llamada.
-            /// Ejemplo: "meeting", "call", "llamada", "videollamada".
-            /// </summary>
-            public string[] CallTitleKeywords { get; set; }
+            public int ActivityFlushIntervalSeconds { get; set; } = 6;
+            public int HandshakeIntervalMinutes { get; set; } = 5;
+            public int OfflineQueueRetrySeconds { get; set; } = 30;
         }
+
     }
 }
