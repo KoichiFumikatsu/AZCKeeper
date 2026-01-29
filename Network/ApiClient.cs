@@ -738,37 +738,10 @@ namespace AZCKeeper_Cliente.Network
             public string ApiBaseUrl { get; set; }
             public EffectiveLogging Logging { get; set; }
             public EffectiveModules Modules { get; set; }
-            public EffectiveActivity Activity { get; set; }
-            public EffectiveWindow Window { get; set; }
-            public EffectiveBlocking Blocking { get; set; }
             public EffectiveStartup Startup { get; set; }     
             public EffectiveUpdates Updates { get; set; }
+            public EffectiveBlocking Blocking { get; set; }
             public EffectiveTimers Timers { get; set; }
-        }
-        internal class EffectiveModules
-        {
-            public bool EnableActivityTracking { get; set; }
-            public bool EnableWindowTracking { get; set; }
-            public bool EnableProcessTracking { get; set; }
-            public bool EnableBlocking { get; set; }
-            public bool EnableKeyboardHook { get; set; }
-            public bool EnableMouseHook { get; set; }
-            public bool EnableUpdateManager { get; set; }
-            public bool EnableDebugWindow { get; set; }
-        }
-        internal class EffectiveActivity
-        {
-            public double ActivityIntervalSeconds { get; set; }
-            public double ActivityInactivityThresholdSeconds { get; set; }
-            public bool CountCallsAsActive { get; set; }
-            public double CallActiveMaxIdleSeconds { get; set; }
-        }
-        internal class EffectiveWindow
-        {
-            public double WindowIntervalSeconds { get; set; }
-            public bool EnableCallTracking { get; set; }
-            public string[] CallProcessKeywords { get; set; }
-            public string[] CallTitleKeywords { get; set; }
         }
         internal class EffectiveBlocking
         {
@@ -776,18 +749,6 @@ namespace AZCKeeper_Cliente.Network
             public string LockMessage { get; set; }
             public bool AllowUnlockWithPin { get; set; }
             public string UnlockPin { get; set; }
-        }
-        internal class EffectiveStartup
-        {
-            public bool EnableAutoStartup { get; set; }
-            public bool StartMinimized { get; set; }
-        }
-        internal class EffectiveUpdates
-        {
-            public bool EnableAutoUpdate { get; set; }
-            public int CheckIntervalMinutes { get; set; }
-            public bool AutoDownload { get; set; }
-            public bool AllowBetaVersions { get; set; }
         }
         internal class EffectiveLogging
         {
@@ -803,6 +764,43 @@ namespace AZCKeeper_Cliente.Network
             public int HandshakeIntervalMinutes { get; set; }
             public int OfflineQueueRetrySeconds { get; set; }
         }
+        internal class EffectiveModules
+        {
+            public bool EnableActivityTracking { get; set; }
+            public bool EnableWindowTracking { get; set; }
+            public bool EnableProcessTracking { get; set; }
+            public bool EnableBlocking { get; set; }
+            public bool EnableKeyboardHook { get; set; }
+            public bool EnableMouseHook { get; set; }
+            public bool EnableUpdateManager { get; set; }
+            public bool EnableDebugWindow { get; set; }
+
+            public bool CountCallsAsActive { get; set; }
+            public double CallActiveMaxIdleSeconds { get; set; }
+
+            public double ActivityIntervalSeconds { get; set; }
+            public double ActivityInactivityThresholdSeconds { get; set; }
+            public double WindowTrackingIntervalSeconds { get; set; }
+
+            public bool EnableCallTracking { get; set; }
+            public string[] CallProcessKeywords { get; set; }
+            public string[] CallTitleKeywords { get; set; }
+        }
+        internal class EffectiveStartup
+        {
+            public bool EnableAutoStartup { get; set; }
+            public bool StartMinimized { get; set; }
+        }
+
+        internal class EffectiveUpdates
+        {
+            public bool EnableAutoUpdate { get; set; }
+            public int CheckIntervalMinutes { get; set; }
+            public bool AutoDownload { get; set; }
+            public bool AllowBetaVersions { get; set; }
+        }
+
+
         internal class HandshakeResult
         {
             public bool IsSuccess { get; set; }
@@ -812,6 +810,7 @@ namespace AZCKeeper_Cliente.Network
             public string BodyPreview { get; set; }
             public HandshakeResponse Response { get; set; }
         }
+
         internal class WindowEpisodePayload
         {
             public string DeviceId { get; set; }
@@ -822,6 +821,7 @@ namespace AZCKeeper_Cliente.Network
             public string WindowTitle { get; set; }
             public bool IsCallApp { get; set; }
         }
+
         internal class ActivityDayPayload
         {
             public string DeviceId { get; set; }
