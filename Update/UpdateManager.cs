@@ -112,7 +112,6 @@ namespace AZCKeeper_Cliente.Update
                 LocalLogger.Error(ex, "UpdateManager: error al verificar actualizaciones.");
             }
         }
-
         private async Task DownloadAndInstallAsync(string url, string version)
         {
             _isDownloading = true;
@@ -121,7 +120,7 @@ namespace AZCKeeper_Cliente.Update
             {
                 LocalLogger.Info($"UpdateManager: descargando actualización desde {url}...");
 
-                // Usar APPDATA en lugar de TEMP
+                // ✅ USAR APPDATA en lugar de TEMP
                 string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 string updateDir = Path.Combine(appDataPath, "AZCKeeper", "Updates");
 
@@ -151,7 +150,6 @@ namespace AZCKeeper_Cliente.Update
                 if (!File.Exists(updaterPath))
                 {
                     LocalLogger.Error("UpdateManager: updater no encontrado en el paquete de actualización.");
-                    _isDownloading = false;
                     return;
                 }
 
@@ -167,15 +165,6 @@ namespace AZCKeeper_Cliente.Update
                     WorkingDirectory = updateDir
                 };
 
-                // =====================================================
-                // FIX: Actualizar versión en config ANTES de reiniciar
-                // Esto previene el bucle infinito de actualizaciones
-                // =====================================================
-                string oldVersion = _config.CurrentConfig.Version;
-                _config.CurrentConfig.Version = version;
-                _config.Save();
-                LocalLogger.Info($"UpdateManager: versión actualizada en config de {oldVersion} a {version}");
-
                 LocalLogger.Info("UpdateManager: lanzando updater. El cliente se cerrará...");
                 System.Diagnostics.Process.Start(psi);
 
@@ -189,8 +178,7 @@ namespace AZCKeeper_Cliente.Update
                 _isDownloading = false;
             }
         }
-
-        private class VersionResponse
+        class VersionResponse
         {
             public bool Ok { get; set; }
             public string LatestVersion { get; set; }

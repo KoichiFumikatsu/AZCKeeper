@@ -9,24 +9,23 @@ using AZCKeeper_Cliente.Network;
 using AZCKeeper_Cliente.Startup;
 using AZCKeeper_Cliente.Tracking;
 using AZCKeeper_Cliente.Update;
-using static AZCKeeper_Cliente.Config.ConfigManager;
 
 namespace AZCKeeper_Cliente.Core
 {
     internal class CoreService
     {
+        private ConfigManager _configManager;
         private AuthManager _authManager;
         private ApiClient _apiClient;
 
-        private ConfigManager _configManager;
         private ActivityTracker _activityTracker;
         private WindowTracker _windowTracker;
-        private KeyBlocker _keyBlocker;
-        private UpdateManager _updateManager;
 
         private KeyboardHook _keyboardHook;
         private MouseHook _mouseHook;
 
+        private KeyBlocker _keyBlocker;
+        private UpdateManager _updateManager;
 
         private DebugWindowForm _debugWindow;
         private LoginForm _loginForm;
@@ -83,6 +82,7 @@ namespace AZCKeeper_Cliente.Core
 
             Microsoft.Win32.SystemEvents.SessionEnding += OnSessionEnding;
         }
+
         private void OnSessionEnding(object sender, Microsoft.Win32.SessionEndingEventArgs e)
         {
             LocalLogger.Warn($"CoreService: Windows cerrando sesión ({e.Reason}). Flush final...");
@@ -127,6 +127,7 @@ namespace AZCKeeper_Cliente.Core
                 LocalLogger.Error(ex, "CoreService.Start(): error.");
             }
         }
+
         public void Stop()
         {
             Microsoft.Win32.SystemEvents.SessionEnding -= OnSessionEnding;
@@ -173,6 +174,7 @@ namespace AZCKeeper_Cliente.Core
                 LocalLogger.Error(ex, "CoreService.Stop(): error.");
             }
         }
+
         private void PrepareLoginUi()
         {
             _loginForm = new AZCKeeper_Cliente.Auth.LoginForm();
@@ -220,6 +222,7 @@ namespace AZCKeeper_Cliente.Core
                 }
             };
         }
+
         private void StartHandshakeTimer()
         {
             try
@@ -428,41 +431,25 @@ namespace AZCKeeper_Cliente.Core
                     modules.EnableUpdateManager = effective.Modules.EnableUpdateManager;
                     modules.EnableDebugWindow = effective.Modules.EnableDebugWindow;
 
+                    modules.CountCallsAsActive = effective.Modules.CountCallsAsActive;
+                    if (effective.Modules.CallActiveMaxIdleSeconds > 0)
+                        modules.CallActiveMaxIdleSeconds = effective.Modules.CallActiveMaxIdleSeconds;
+
+                    if (effective.Modules.ActivityIntervalSeconds > 0)
+                        modules.ActivityIntervalSeconds = effective.Modules.ActivityIntervalSeconds;
+
+                    if (effective.Modules.ActivityInactivityThresholdSeconds > 0)
+                        modules.ActivityInactivityThresholdSeconds = effective.Modules.ActivityInactivityThresholdSeconds;
+
+                    if (effective.Modules.WindowTrackingIntervalSeconds > 0)
+                        modules.WindowTrackingIntervalSeconds = effective.Modules.WindowTrackingIntervalSeconds;
+
+                    modules.EnableCallTracking = effective.Modules.EnableCallTracking;
+                    modules.CallProcessKeywords = effective.Modules.CallProcessKeywords ?? modules.CallProcessKeywords;
+                    modules.CallTitleKeywords = effective.Modules.CallTitleKeywords ?? modules.CallTitleKeywords;
+
                     _configManager.CurrentConfig.Modules = modules;
-
-                    // Aplicar cambios inmediatamente a módulo Activity ya iniciados 
-                    var activity = _configManager.CurrentConfig.Activity ?? new ConfigManager.ActivityConfig();
-
-                    if (effective.Activity != null)
-                    {
-                        if (effective.Activity.ActivityIntervalSeconds > 0)
-                            activity.ActivityIntervalSeconds = effective.Activity.ActivityIntervalSeconds;
-
-                        if (effective.Activity.ActivityInactivityThresholdSeconds > 0)
-                            activity.ActivityInactivityThresholdSeconds = effective.Activity.ActivityInactivityThresholdSeconds;
-
-                        activity.CountCallsAsActive = effective.Activity.CountCallsAsActive;
-
-                        if (effective.Activity.CallActiveMaxIdleSeconds > 0)
-                            activity.CallActiveMaxIdleSeconds = effective.Activity.CallActiveMaxIdleSeconds;
-                    }
-                    _configManager.CurrentConfig.Activity = activity;
-
-                    // Aplicar cambios inmediatamente a módulo Window ya iniciados
-                    var windows = _configManager.CurrentConfig.Window ?? new ConfigManager.WindowConfig();
-
-                    if (effective.Window != null)
-                    {
-                        if (effective.Window.WindowIntervalSeconds > 0)
-                            windows.WindowIntervalSeconds = effective.Window.WindowIntervalSeconds;
-
-                        windows.EnableCallTracking = effective.Window.EnableCallTracking;
-                        windows.CallProcessKeywords = effective.Window.CallProcessKeywords ?? windows.CallProcessKeywords;
-                        windows.CallTitleKeywords = effective.Window.CallTitleKeywords ?? windows.CallTitleKeywords;
-                    }
-                    _configManager.CurrentConfig.Window = windows;
                 }
-
                 // -------------------- Timers --------------------
                 if (effective.Timers != null)
                 {
@@ -532,23 +519,21 @@ namespace AZCKeeper_Cliente.Core
         }
         private void InitializeModules()
         {
-            // Cargar configuración de módulos
-            var activityConfig = _configManager.CurrentConfig.Activity;
-            var windowsConfig = _configManager.CurrentConfig.Window;
             var modulesConfig = _configManager.CurrentConfig.Modules;
             var startupConfig = _configManager.CurrentConfig.Startup;
             var updatesConfig = _configManager.CurrentConfig.Updates;
-            // Validar configuración básica de módulos 
+
             if (modulesConfig == null)
             {
                 LocalLogger.Warn("CoreService.InitializeModules(): ModulesConfig null.");
                 return;
             }
+
             // -------------------- ActivityTracker --------------------
             if (modulesConfig.EnableActivityTracking)
             {
-                double activityInterval = activityConfig.ActivityIntervalSeconds > 0 ? activityConfig.ActivityIntervalSeconds : 1.0;
-                double inactivityThreshold = activityConfig.ActivityInactivityThresholdSeconds > 0 ? activityConfig.ActivityInactivityThresholdSeconds : 15.0;
+                double activityInterval = modulesConfig.ActivityIntervalSeconds > 0 ? modulesConfig.ActivityIntervalSeconds : 1.0;
+                double inactivityThreshold = modulesConfig.ActivityInactivityThresholdSeconds > 0 ? modulesConfig.ActivityInactivityThresholdSeconds : 15.0;
 
                 _activityTracker = new ActivityTracker(activityInterval, inactivityThreshold);
 
@@ -587,13 +572,15 @@ namespace AZCKeeper_Cliente.Core
                     }
                 };
             }
+
             // -------------------- WindowTracker --------------------
             if (modulesConfig.EnableWindowTracking)
             {
-                double windowInterval = windowsConfig.WindowIntervalSeconds > 0 ? windowsConfig.WindowIntervalSeconds : 2.0;
-                bool enableCallTracking = windowsConfig.EnableCallTracking;
-                var callProcKeywords = windowsConfig.CallProcessKeywords ?? Array.Empty<string>();
-                var callTitleKeywords = windowsConfig.CallTitleKeywords ?? Array.Empty<string>();
+                double windowInterval = modulesConfig.WindowTrackingIntervalSeconds > 0 ? modulesConfig.WindowTrackingIntervalSeconds : 2.0;
+
+                bool enableCallTracking = modulesConfig.EnableCallTracking;
+                var callProcKeywords = modulesConfig.CallProcessKeywords ?? Array.Empty<string>();
+                var callTitleKeywords = modulesConfig.CallTitleKeywords ?? Array.Empty<string>();
 
                 _windowTracker = new WindowTracker(windowInterval, enableCallTracking, callProcKeywords, callTitleKeywords);
 
@@ -625,50 +612,46 @@ namespace AZCKeeper_Cliente.Core
                     // intencionalmente vacío para evitar ruido
                 };
             }
+
+            // -------------------- Override de actividad por llamada --------------------
+            if (_activityTracker != null)
+            {
+                bool countCallsAsActive = modulesConfig.CountCallsAsActive;
+
+                _activityTracker.ActivityOverridePredicate = () =>
+                    countCallsAsActive &&
+                    _windowTracker != null &&
+                    _windowTracker.CallTrackingEnabled &&
+                    _windowTracker.IsInCallNow;
+
+                double maxIdle = modulesConfig.CallActiveMaxIdleSeconds > 0 ? modulesConfig.CallActiveMaxIdleSeconds : 1800.0;
+                _activityTracker.ActivityOverrideMaxIdleSeconds = maxIdle;
+            }
+
             // -------------------- Startup --------------------
             if (startupConfig != null && startupConfig.EnableAutoStartup)
             {
                 if (!Startup.StartupManager.IsEnabled())
                     Startup.StartupManager.EnableStartup();
             }
+
             // -------------------- UpdateManager --------------------
-            try
+            if (updatesConfig != null && updatesConfig.EnableAutoUpdate)
             {
-                if (modulesConfig.EnableUpdateManager)
-                {
-                    int intervalMinutes = updatesConfig?.CheckIntervalMinutes ?? 60;
-                    if (_updateManager == null)
-                    {
-                        _updateManager = new UpdateManager(_configManager, _apiClient, intervalMinutes);
-                        _updateManager.Start();
-                        LocalLogger.Info("CoreService.InitializeModules(): UpdateManager iniciado cada {intervalMinutes}Mins.");
-                    }
-                    else
-                    {
-                        _updateManager.Stop();
-                        _updateManager.UpdateInterval(intervalMinutes);
-                        _updateManager.Start();
-                        LocalLogger.Info("CoreService.InitializeModules(): UpdateManager reiniciado cada {intervalMinutes}Mins.");
-                    }
-                }
-                else
-                {
-                    if (_updateManager != null)
-                    {
-                        _updateManager.Stop();
-                        _updateManager = null;
-                        LocalLogger.Info("CoreService.InitializeModules(): UpdateManager detenido por configuración.");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LocalLogger.Error(ex, "CoreService.InitializeModules(): error al reiniciar UpdateManager.");
+                _updateManager = new UpdateManager(_configManager, _apiClient, updatesConfig.CheckIntervalMinutes);
             }
             // -------------------- Hooks / Blocking / Updates / Debug --------------------
             if (modulesConfig.EnableKeyboardHook) _keyboardHook = new KeyboardHook();
             if (modulesConfig.EnableMouseHook) _mouseHook = new MouseHook();
             if (modulesConfig.EnableBlocking) _keyBlocker = new KeyBlocker(_apiClient);
+            // ✅ CORRECTO
+            if (modulesConfig.EnableUpdateManager)
+            {
+                int intervalMinutes = updatesConfig?.CheckIntervalMinutes ?? 60;
+
+                _updateManager = new UpdateManager(_configManager, _apiClient, intervalMinutes);
+            }
+
             if (modulesConfig.EnableDebugWindow)
             {
                 if (_activityTracker == null)
@@ -679,20 +662,6 @@ namespace AZCKeeper_Cliente.Core
                 {
                     _debugWindow = new DebugWindowForm(_activityTracker, _windowTracker, () => _lastHandshakeTime);
                 }
-            }
-            // -------------------- Override de actividad por llamada --------------------
-            if (_activityTracker != null)
-            {
-                bool countCallsAsActive = activityConfig.CountCallsAsActive;
-
-                _activityTracker.ActivityOverridePredicate = () =>
-                    countCallsAsActive &&
-                    _windowTracker != null &&
-                    _windowTracker.CallTrackingEnabled &&
-                    _windowTracker.IsInCallNow;
-
-                double maxIdle = activityConfig.CallActiveMaxIdleSeconds > 0 ? activityConfig.CallActiveMaxIdleSeconds : 1800.0;
-                _activityTracker.ActivityOverrideMaxIdleSeconds = maxIdle;
             }
         }
         private async void CheckDeviceLockStatus()
