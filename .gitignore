@@ -1,2 +1,9 @@
 node_modules/
 .env
+
+# .NET build artifacts
+bin/
+obj/
+*.user
+*.suo
+*.cache
