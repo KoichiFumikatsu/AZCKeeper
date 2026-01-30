@@ -191,31 +191,21 @@ namespace AZCKeeper_Cliente.Update
                         
                         long sizeKB = new FileInfo(zipPath).Length / 1024;
                         LocalLogger.Info($"UpdateManager: descarga completada exitosamente ({sizeKB}KB).");
-                        
-                        // Reset download error counter on success
-                        if (_consecutiveDownloadErrors > 0)
-                        {
-                            LocalLogger.Info($"UpdateManager: descarga exitosa después de {_consecutiveDownloadErrors} errores previos.");
-                            _consecutiveDownloadErrors = 0;
-                        }
                     }
                 }
                 catch (HttpRequestException httpEx)
                 {
-                    _consecutiveDownloadErrors++;
-                    LocalLogger.Error(httpEx, $"UpdateManager: error de red al descargar actualización. URL: {url}. Errores consecutivos: {_consecutiveDownloadErrors}/{MaxConsecutiveErrors}");
+                    LocalLogger.Error(httpEx, $"UpdateManager: error de red al descargar actualización. URL: {url}. Errores consecutivos: {_consecutiveDownloadErrors + 1}/{MaxConsecutiveErrors}");
                     throw;
                 }
                 catch (TaskCanceledException timeoutEx)
                 {
-                    _consecutiveDownloadErrors++;
-                    LocalLogger.Error(timeoutEx, $"UpdateManager: timeout al descargar actualización (>5min). URL: {url}. Errores consecutivos: {_consecutiveDownloadErrors}/{MaxConsecutiveErrors}");
+                    LocalLogger.Error(timeoutEx, $"UpdateManager: timeout al descargar actualización (>5min). URL: {url}. Errores consecutivos: {_consecutiveDownloadErrors + 1}/{MaxConsecutiveErrors}");
                     throw;
                 }
                 catch (IOException ioEx)
                 {
-                    _consecutiveDownloadErrors++;
-                    LocalLogger.Error(ioEx, $"UpdateManager: error de I/O al guardar actualización en {zipPath}. Errores consecutivos: {_consecutiveDownloadErrors}/{MaxConsecutiveErrors}");
+                    LocalLogger.Error(ioEx, $"UpdateManager: error de I/O al guardar actualización en {zipPath}. Errores consecutivos: {_consecutiveDownloadErrors + 1}/{MaxConsecutiveErrors}");
                     throw;
                 }
 
@@ -238,9 +228,8 @@ namespace AZCKeeper_Cliente.Update
                     string updaterPath = Path.Combine(extractPath, "AZCKeeperUpdater.exe");
                     if (!File.Exists(updaterPath))
                     {
-                        LocalLogger.Error($"UpdateManager: ERROR CRÍTICO - updater no encontrado en {updaterPath}. El paquete de actualización está corrupto o incompleto.");
-                        _consecutiveDownloadErrors++;
-                        return;
+                        LocalLogger.Error($"UpdateManager: updater no encontrado en {updaterPath}. El paquete de actualización está corrupto o incompleto.");
+                        throw new FileNotFoundException($"Updater no encontrado en {updaterPath}");
                     }
 
                     LocalLogger.Info($"UpdateManager: updater verificado en {updaterPath}");
@@ -264,34 +253,37 @@ namespace AZCKeeper_Cliente.Update
                         var process = System.Diagnostics.Process.Start(psi);
                         if (process == null)
                         {
-                            LocalLogger.Error("UpdateManager: ERROR CRÍTICO - no se pudo iniciar el proceso updater (retornó null).");
-                            _consecutiveDownloadErrors++;
-                            return;
+                            LocalLogger.Error("UpdateManager: no se pudo iniciar el proceso updater (retornó null).");
+                            throw new InvalidOperationException("Process.Start retornó null");
                         }
                         
                         LocalLogger.Info($"UpdateManager: updater lanzado exitosamente (PID: {process.Id}). El cliente se cerrará en 1 segundo...");
+                        
+                        // Reset download error counter on complete success
+                        if (_consecutiveDownloadErrors > 0)
+                        {
+                            LocalLogger.Info($"UpdateManager: actualización exitosa después de {_consecutiveDownloadErrors} errores previos.");
+                            _consecutiveDownloadErrors = 0;
+                        }
                         
                         // Cerrar aplicación para permitir actualización
                         await Task.Delay(1000);
                         System.Windows.Forms.Application.Exit();
                     }
-                    catch (System.ComponentModel.Win32Exception win32Ex)
+                    catch (Win32Exception win32Ex)
                     {
-                        _consecutiveDownloadErrors++;
-                        LocalLogger.Error(win32Ex, $"UpdateManager: error Win32 al lanzar updater. Puede ser problema de permisos o archivo corrupto. Errores consecutivos: {_consecutiveDownloadErrors}/{MaxConsecutiveErrors}");
+                        LocalLogger.Error(win32Ex, $"UpdateManager: error Win32 al lanzar updater. Puede ser problema de permisos o archivo corrupto. Errores consecutivos: {_consecutiveDownloadErrors + 1}/{MaxConsecutiveErrors}");
                         throw;
                     }
                 }
                 catch (InvalidDataException zipEx)
                 {
-                    _consecutiveDownloadErrors++;
-                    LocalLogger.Error(zipEx, $"UpdateManager: archivo ZIP corrupto o inválido en {zipPath}. Errores consecutivos: {_consecutiveDownloadErrors}/{MaxConsecutiveErrors}");
+                    LocalLogger.Error(zipEx, $"UpdateManager: archivo ZIP corrupto o inválido en {zipPath}. Errores consecutivos: {_consecutiveDownloadErrors + 1}/{MaxConsecutiveErrors}");
                     throw;
                 }
                 catch (UnauthorizedAccessException accessEx)
                 {
-                    _consecutiveDownloadErrors++;
-                    LocalLogger.Error(accessEx, $"UpdateManager: acceso denegado al extraer/ejecutar actualización. Puede requerir permisos de administrador. Errores consecutivos: {_consecutiveDownloadErrors}/{MaxConsecutiveErrors}");
+                    LocalLogger.Error(accessEx, $"UpdateManager: acceso denegado al extraer/ejecutar actualización. Puede requerir permisos de administrador. Errores consecutivos: {_consecutiveDownloadErrors + 1}/{MaxConsecutiveErrors}");
                     throw;
                 }
             }
