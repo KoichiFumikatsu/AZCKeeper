@@ -11,6 +11,13 @@ using AZCKeeper_Cliente.Network;
 
 namespace AZCKeeper_Cliente.Update
 {
+    /// <summary>
+    /// UpdateManager verifica y descarga actualizaciones del cliente.
+    /// Comunicación:
+    /// - CoreService lo inicia/detiene según configuración.
+    /// - ApiClient se usa para consultar /client/version.
+    /// - ConfigManager aporta versión actual y flags de Updates.
+    /// </summary>
     internal class UpdateManager
     {
         private System.Timers.Timer _timer;
@@ -19,6 +26,9 @@ namespace AZCKeeper_Cliente.Update
         private int _intervalMinutes;
         private bool _isDownloading = false;
 
+        /// <summary>
+        /// Crea el manager con config, ApiClient y el intervalo en minutos.
+        /// </summary>
         public UpdateManager(ConfigManager config, ApiClient apiClient, int intervalMinutes)
         {
             _config = config;
@@ -26,6 +36,9 @@ namespace AZCKeeper_Cliente.Update
             _intervalMinutes = intervalMinutes;
         }
 
+        /// <summary>
+        /// Inicia el timer de chequeo y ejecuta una verificación inmediata.
+        /// </summary>
         public void Start()
         {
             _timer = new System.Timers.Timer(_intervalMinutes * 60_000);
@@ -38,12 +51,18 @@ namespace AZCKeeper_Cliente.Update
             LocalLogger.Info($"UpdateManager: iniciado (verifica cada {_intervalMinutes}min).");
         }
 
+        /// <summary>
+        /// Detiene el timer de actualización.
+        /// </summary>
         public void Stop()
         {
             _timer?.Stop();
             _timer?.Dispose();
         }
 
+        /// <summary>
+        /// Actualiza el intervalo de chequeo en minutos.
+        /// </summary>
         public void UpdateInterval(int minutes)
         {
             _intervalMinutes = minutes;
@@ -54,6 +73,9 @@ namespace AZCKeeper_Cliente.Update
             }
         }
 
+        /// <summary>
+        /// Consulta endpoint de versión y decide si descargar/instalar.
+        /// </summary>
         private async Task CheckForUpdatesAsync()
         {
             if (_isDownloading) return;
@@ -112,6 +134,9 @@ namespace AZCKeeper_Cliente.Update
                 LocalLogger.Error(ex, "UpdateManager: error al verificar actualizaciones.");
             }
         }
+        /// <summary>
+        /// Descarga el paquete ZIP, extrae y lanza el updater externo.
+        /// </summary>
         private async Task DownloadAndInstallAsync(string url, string version)
         {
             _isDownloading = true;
@@ -178,6 +203,9 @@ namespace AZCKeeper_Cliente.Update
                 _isDownloading = false;
             }
         }
+        /// <summary>
+        /// DTO de respuesta para /client/version.
+        /// </summary>
         class VersionResponse
         {
             public bool Ok { get; set; }

@@ -5,11 +5,20 @@ using AZCKeeper_Cliente.Logging;
 
 namespace AZCKeeper_Cliente.Startup
 {
+    /// <summary>
+    /// Maneja el inicio automático del cliente vía registro de Windows.
+    /// Comunicación:
+    /// - CoreService lo usa al aplicar políticas de startup desde handshake.
+    /// - ConfigManager guarda flags que deciden si se habilita/deshabilita.
+    /// </summary>
     internal class StartupManager
     {
         private const string AppName = "AZCKeeper_Cliente";
         private const string RegistryPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
 
+        /// <summary>
+        /// Habilita inicio automático en HKCU\...\Run.
+        /// </summary>
         public static void EnableStartup()
         {
             try
@@ -37,6 +46,9 @@ namespace AZCKeeper_Cliente.Startup
             }
         }
 
+        /// <summary>
+        /// Deshabilita inicio automático removiendo la clave del registro.
+        /// </summary>
         public static void DisableStartup()
         {
             try
@@ -54,6 +66,9 @@ namespace AZCKeeper_Cliente.Startup
             }
         }
 
+        /// <summary>
+        /// Indica si el inicio automático está habilitado en el registro.
+        /// </summary>
         public static bool IsEnabled()
         {
             try

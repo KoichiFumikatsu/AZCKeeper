@@ -10,6 +10,10 @@ namespace AZCKeeper_Cliente.Network
     /// <summary>
     /// Cola persistente offline usando SQLite para almacenar requests fallidos.
     /// Permite retry automático cuando la conexión se recupere.
+    ///
+    /// Comunicación:
+    /// - ApiClient encola cuando falla el envío y luego reintenta con timer.
+    /// - CoreService ajusta el intervalo de reintento vía ApiClient.UpdateRetryInterval().
     /// </summary>
     internal class OfflineQueue
     {
@@ -249,6 +253,9 @@ namespace AZCKeeper_Cliente.Network
             }
         }
 
+        /// <summary>
+        /// Item de cola con endpoint, payload serializado y contador de reintentos.
+        /// </summary>
         internal class QueueItem
         {
             public long Id { get; set; }

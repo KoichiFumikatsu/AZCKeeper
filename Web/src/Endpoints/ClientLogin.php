@@ -108,11 +108,21 @@ class ClientLogin
             ]);
         }
         catch (\Throwable $e) {
-            Http::json(500, [
+            // Log completo para debugging interno
+            error_log("ClientLogin error: " . $e->getMessage() . " | " . $e->getTraceAsString());
+            
+            $response = [
                 'ok' => false,
-                'error' => 'Server error',
-                'detail' => $e->getMessage()
-            ]);
+                'error' => 'Server error'
+            ];
+            
+            // Solo exponer detalles si DEBUG está habilitado
+            if (\Keeper\Config::get('DEBUG', 'false') === 'true') {
+                $response['detail'] = $e->getMessage();
+                $response['trace'] = $e->getTraceAsString();
+            }
+            
+            Http::json(500, $response);
         }
     }
 

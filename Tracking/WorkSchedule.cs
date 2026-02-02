@@ -2,6 +2,9 @@
 
 namespace AZCKeeper_Cliente.Tracking
 {
+    /// <summary>
+    /// Categorías de tiempo usadas para clasificar actividad diaria.
+    /// </summary>
     internal enum TimeCategory
     {
         WorkHours,
@@ -9,6 +12,12 @@ namespace AZCKeeper_Cliente.Tracking
         AfterHours
     }
 
+    /// <summary>
+    /// Define el horario laboral y de almuerzo para categorizar actividad.
+    /// Comunicación:
+    /// - ActivityTracker usa GetTimeCategory() para acumular métricas por categoría.
+    /// - DebugWindowForm muestra estas métricas en UI.
+    /// </summary>
     internal class WorkSchedule
     {
         public TimeSpan WorkStart { get; set; } = new TimeSpan(7, 0, 0);  // 7:00 AM
@@ -16,6 +25,9 @@ namespace AZCKeeper_Cliente.Tracking
         public TimeSpan LunchStart { get; set; } = new TimeSpan(12, 0, 0); // 12:00 PM
         public TimeSpan LunchEnd { get; set; } = new TimeSpan(13, 0, 0);   // 1:00 PM
 
+        /// <summary>
+        /// Devuelve la categoría de tiempo según la hora local.
+        /// </summary>
         public TimeCategory GetTimeCategory(DateTime localTime)
         {
             TimeSpan time = localTime.TimeOfDay;

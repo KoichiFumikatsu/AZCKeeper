@@ -12,32 +12,55 @@ using AZCKeeper_Cliente.Update;
 
 namespace AZCKeeper_Cliente.Core
 {
+    /// <summary>
+    /// CoreService:
+    /// Orquesta el ciclo de vida del cliente: configuración, autenticación, handshake,
+    /// inicialización de módulos (tracking, blocking, updates) y timers de sincronización.
+    ///
+    /// Comunicación principal:
+    /// - ConfigManager: lee/escribe config.json y aplica logging.
+    /// - AuthManager: carga/guarda token y valida sesión.
+    /// - ApiClient: handshake, login, envío de actividad y ventanas.
+    /// - ActivityTracker/WindowTracker: producen eventos y snapshots locales.
+    /// - StartupManager/UpdateManager/KeyBlocker: acciones del sistema.
+    /// </summary>
     internal class CoreService
     {
-        private ConfigManager _configManager;
-        private AuthManager _authManager;
-        private ApiClient _apiClient;
+        // --- Servicios base ---
+        private ConfigManager _configManager; // config.json, logging, device id
+        private AuthManager _authManager;     // token en memoria/disco
+        private ApiClient _apiClient;         // HTTP hacia backend
 
-        private ActivityTracker _activityTracker;
-        private WindowTracker _windowTracker;
+        // --- Tracking ---
+        private ActivityTracker _activityTracker; // actividad/idle por día
+        private WindowTracker _windowTracker;     // procesos/ventanas y llamadas
 
-        private KeyboardHook _keyboardHook;
-        private MouseHook _mouseHook;
+        // --- Hooks ---
+        private KeyboardHook _keyboardHook; // detección de actividad teclado
+        private MouseHook _mouseHook;       // detección de actividad mouse
 
-        private KeyBlocker _keyBlocker;
-        private UpdateManager _updateManager;
+        // --- Control/updates ---
+        private KeyBlocker _keyBlocker;        // bloqueo por política
+        private UpdateManager _updateManager;  // actualización automática
 
-        private DebugWindowForm _debugWindow;
-        private LoginForm _loginForm;
+        // --- UI ---
+        private DebugWindowForm _debugWindow; // ventana de diagnóstico
+        private LoginForm _loginForm;         // UI de login
 
-        private System.Timers.Timer _activityFlushTimer;
-        private DateTime? _activityFirstEventLocal;
-        private int _activitySamplesCount; 
-        private DateTime _lastFlushDayLocalDate = default;
+        // --- Timers/flush ---
+        private System.Timers.Timer _activityFlushTimer; // envío periódico activity-day
+        private DateTime? _activityFirstEventLocal;      // primera muestra del día
+        private int _activitySamplesCount;               // muestras enviadas
+        private DateTime _lastFlushDayLocalDate = default; // corte de día local
 
-        private System.Timers.Timer _handshakeTimer;
-        private DateTime _lastHandshakeTime = DateTime.MinValue;
+        private System.Timers.Timer _handshakeTimer; // handshake periódico
+        private DateTime _lastHandshakeTime = DateTime.MinValue; // último handshake ok
+        private bool _hasSuccessfulHandshake = false; // flag para primer handshake exitoso
 
+        /// <summary>
+        /// Inicializa servicios base, carga config/token, crea ApiClient y módulos.
+        /// También prepara UI de login si no hay token.
+        /// </summary>
         public void Initialize()
         {
             try
@@ -83,11 +106,17 @@ namespace AZCKeeper_Cliente.Core
             Microsoft.Win32.SystemEvents.SessionEnding += OnSessionEnding;
         }
 
+        /// <summary>
+        /// Handler de cierre de sesión Windows: dispara flush final.
+        /// </summary>
         private void OnSessionEnding(object sender, Microsoft.Win32.SessionEndingEventArgs e)
         {
             LocalLogger.Warn($"CoreService: Windows cerrando sesión ({e.Reason}). Flush final...");
             FinalFlushBeforeShutdown();
         }
+        /// <summary>
+        /// Inicia trackers, timers y UI; realiza handshake y retoma actividad del día.
+        /// </summary>
         public void Start()
         {
             LocalLogger.Info("CoreService.Start(): iniciando.");
@@ -128,6 +157,9 @@ namespace AZCKeeper_Cliente.Core
             }
         }
 
+        /// <summary>
+        /// Detiene trackers/timers/UI y fuerza flush final.
+        /// </summary>
         public void Stop()
         {
             Microsoft.Win32.SystemEvents.SessionEnding -= OnSessionEnding;
@@ -135,7 +167,7 @@ namespace AZCKeeper_Cliente.Core
 
             try
             {        
-                // 🔥 FLUSH FINAL ANTES DE DETENER TRACKERS
+                // FLUSH FINAL ANTES DE DETENER TRACKERS
                 FinalFlushBeforeShutdown();
                 StopActivityFlushTimer();
 
@@ -175,6 +207,10 @@ namespace AZCKeeper_Cliente.Core
             }
         }
 
+        /// <summary>
+        /// Prepara formulario de login y flujo de autenticación.
+        /// Comunica con ApiClient.SendLoginAsync y actualiza AuthManager/Config.
+        /// </summary>
         private void PrepareLoginUi()
         {
             _loginForm = new AZCKeeper_Cliente.Auth.LoginForm();
@@ -223,6 +259,9 @@ namespace AZCKeeper_Cliente.Core
             };
         }
 
+        /// <summary>
+        /// Inicia handshake periódico para refrescar config y políticas.
+        /// </summary>
         private void StartHandshakeTimer()
         {
             try
@@ -254,6 +293,10 @@ namespace AZCKeeper_Cliente.Core
                 LocalLogger.Error(ex, "CoreService: error al iniciar HandshakeTimer.");
             }
         }
+        /// <summary>
+        /// Ejecuta handshake con backend y aplica effectiveConfig local.
+        /// Puede habilitar/deshabilitar módulos y políticas en caliente.
+        /// </summary>
         private void PerformHandshake()
         {
             try
@@ -476,6 +519,14 @@ namespace AZCKeeper_Cliente.Core
                 _configManager.Save();
                 _configManager.ApplyLoggingConfiguration();
 
+                // Si es el primer handshake exitoso después del inicio, intentar resumir actividad
+                if (!_hasSuccessfulHandshake)
+                {
+                    _hasSuccessfulHandshake = true;
+                    LocalLogger.Info("CoreService.PerformHandshake(): primer handshake exitoso. Intentando resumir actividad del día...");
+                    TryResumeTodayActivityFromServer();
+                }
+
                 LocalLogger.Info("CoreService.PerformHandshake(): configuración aplicada desde effectiveConfig.");
             }
             catch (Exception ex)
@@ -483,6 +534,9 @@ namespace AZCKeeper_Cliente.Core
                 LocalLogger.Error(ex, "CoreService.PerformHandshake(): error. Se continúa con config local.");
             }
         }
+        /// <summary>
+        /// Aplica cambios de intervalos (flush, handshake, offline queue).
+        /// </summary>
         private void ApplyTimerChanges(ConfigManager.TimersConfig timers)
         {
             try
@@ -517,6 +571,10 @@ namespace AZCKeeper_Cliente.Core
                 LocalLogger.Error(ex, "CoreService.ApplyTimerChanges(): error.");
             }
         }
+        /// <summary>
+        /// Inicializa módulos según configuración (tracking, hooks, blocking, updates).
+        /// Conecta callbacks para enviar eventos a ApiClient.
+        /// </summary>
         private void InitializeModules()
         {
             var modulesConfig = _configManager.CurrentConfig.Modules;
@@ -664,6 +722,9 @@ namespace AZCKeeper_Cliente.Core
                 }
             }
         }
+        /// <summary>
+        /// Consulta estado de bloqueo remoto y aplica si corresponde.
+        /// </summary>
         private async void CheckDeviceLockStatus()
         {
             try
@@ -676,6 +737,9 @@ namespace AZCKeeper_Cliente.Core
                 LocalLogger.Error(ex, "CoreService: error al verificar estado de bloqueo.");
             }
         }
+        /// <summary>
+        /// Si existe registro del día en backend, rehidrata contadores locales.
+        /// </summary>
         private void TryResumeTodayActivityFromServer()
         {
             try
@@ -721,15 +785,18 @@ namespace AZCKeeper_Cliente.Core
                 _activityFirstEventLocal = DateTime.Now; // o parsear res.Response.FirstEventAt si quieres
                 _activitySamplesCount = res.Response.SamplesCount;
 
-                LocalLogger.Info($"CoreService: retomar OK dayDate={today} active={res.Response.ActiveSeconds}s idle={res.Response.IdleSeconds}s " +
+                LocalLogger.Info($"CoreService: ✅ Seed aplicado exitosamente. dayDate={today} active={res.Response.ActiveSeconds}s idle={res.Response.IdleSeconds}s " +
                        $"work={res.Response.WorkHoursActiveSeconds}s lunch={res.Response.LunchActiveSeconds}s after={res.Response.AfterHoursActiveSeconds}s samples={res.Response.SamplesCount}");
             }
             catch (Exception ex)
             {
-                LocalLogger.Error(ex, "CoreService: error al retomar actividad del día desde backend.");
+                LocalLogger.Warn($"CoreService: ⚠️ No se pudo retomar actividad del día (posible inicio sin internet). Error: {ex.Message}");
             }
         }
 
+        /// <summary>
+        /// Inicia envío periódico de snapshot activity-day.
+        /// </summary>
         private void StartActivityFlushTimer()
         {
             try
@@ -840,7 +907,13 @@ namespace AZCKeeper_Cliente.Core
                     CallSeconds = _windowTracker?.CallSessionSeconds ?? 0,
                     SamplesCount = _activitySamplesCount,
                     FirstEventAt = _activityFirstEventLocal?.ToString("yyyy-MM-dd HH:mm:ss"),
-                    LastEventAt = nowLocal.ToString("yyyy-MM-dd HH:mm:ss")
+                    LastEventAt = nowLocal.ToString("yyyy-MM-dd HH:mm:ss"),
+                    WorkHoursActiveSeconds = snap.WorkActive,
+                    WorkHoursIdleSeconds = snap.WorkIdle,
+                    LunchActiveSeconds = snap.LunchActive,
+                    LunchIdleSeconds = snap.LunchIdle,
+                    AfterHoursActiveSeconds = snap.AfterActive,
+                    AfterHoursIdleSeconds = snap.AfterIdle
                 };
 
                 // Envío SINCRÓNICO (blocking) para garantizar que llegue antes de cerrar
@@ -853,6 +926,9 @@ namespace AZCKeeper_Cliente.Core
                 LocalLogger.Error(ex, "CoreService.FinalFlushBeforeShutdown(): error al enviar flush final.");
             }
         }
+        /// <summary>
+        /// Detiene el timer de flush de actividad.
+        /// </summary>
         private void StopActivityFlushTimer()
         {
             try
@@ -869,6 +945,11 @@ namespace AZCKeeper_Cliente.Core
         }
     }
 
+    /// <summary>
+    /// DebugWindowForm:
+    /// UI de diagnóstico en tiempo real para activity/window tracking.
+    /// Lee datos de ActivityTracker/WindowTracker y muestra categorías de tiempo.
+    /// </summary>
     internal class DebugWindowForm : Form
     {
         private readonly ActivityTracker _activityTracker;
@@ -889,6 +970,9 @@ namespace AZCKeeper_Cliente.Core
         private readonly Label _lblWorkTime;
         private readonly Label _lblLunchTime;
         private readonly Label _lblAfterHoursTime;
+        /// <summary>
+        /// Crea ventana de debug con referencias a trackers y función de último handshake.
+        /// </summary>
         public DebugWindowForm(ActivityTracker activityTracker, WindowTracker windowTracker, Func<DateTime> getLastHandshake)
         {
             _activityTracker = activityTracker ?? throw new ArgumentNullException(nameof(activityTracker));
@@ -949,6 +1033,9 @@ namespace AZCKeeper_Cliente.Core
             UpdateLabels();
         }
 
+        /// <summary>
+        /// Helper de UI: crea labels con estilo estándar.
+        /// </summary>
         private Label CreateLabel()
         {
             return new Label
@@ -959,8 +1046,14 @@ namespace AZCKeeper_Cliente.Core
             };
         }
 
+        /// <summary>
+        /// Tick del timer UI: refresca etiquetas.
+        /// </summary>
         private void UiTimer_Tick(object sender, EventArgs e) => UpdateLabels();
 
+        /// <summary>
+        /// Actualiza todas las etiquetas con métricas actuales de tracking.
+        /// </summary>
         private void UpdateLabels()
         {
             try
@@ -1017,8 +1110,8 @@ namespace AZCKeeper_Cliente.Core
 
                 // ==================== CATEGORÍAS DE TIEMPO ====================
 
-                // Determinar categoría actual
-                var currentCategory = _activityTracker.WorkSchedule.GetTimeCategory(nowLocal);
+                // Determinar categoría actual (validación defensiva)
+                var currentCategory = _activityTracker.WorkSchedule?.GetTimeCategory(nowLocal) ?? Tracking.TimeCategory.AfterHours;
                 string categoryIndicator = currentCategory switch
                 {
                     Tracking.TimeCategory.WorkHours => "🟢 HORARIO LABORAL",
@@ -1051,12 +1144,16 @@ namespace AZCKeeper_Cliente.Core
                 // Actualizar título del form con categoría actual
                 Text = $"AZCKeeper - Debug Activity";
             }
-            catch
+            catch (Exception ex)
             {
-                // no romper UI
+                // No romper UI pero loguear el error
+                LocalLogger.Warn($"DebugWindowForm.UpdateLabels(): error al actualizar UI. {ex.Message}");
             }
         }
 
+        /// <summary>
+        /// Formatea segundos como HH:mm:ss.
+        /// </summary>
         private static string FormatSeconds(double seconds)
         {
             if (seconds < 0) seconds = 0;
@@ -1064,6 +1161,9 @@ namespace AZCKeeper_Cliente.Core
             return $"{(int)ts.TotalHours:00}:{ts.Minutes:00}:{ts.Seconds:00}";
         }
 
+        /// <summary>
+        /// Libera recursos del timer UI al cerrar el formulario.
+        /// </summary>
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
             _uiTimer.Stop();

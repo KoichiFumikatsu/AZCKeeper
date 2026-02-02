@@ -7,7 +7,7 @@ namespace AZCKeeper_Cliente.Config
 {
     /// <summary>
     /// Gestiona la configuración local del cliente AZC Keeper.
-    /// 
+    ///
     /// Responsabilidades:
     /// - Cargar y guardar el archivo de configuración (client_config.json)
     ///   en una carpeta de datos de aplicación.
@@ -18,6 +18,11 @@ namespace AZCKeeper_Cliente.Config
     ///   - Parámetros de logging.
     ///   - Flags de módulos.
     /// - Aplicar la configuración de logging a LocalLogger.
+    ///
+    /// Comunicación:
+    /// - CoreService usa ConfigManager para cargar/guardar config y aplicar logging.
+    /// - ApiClient consume ApiBaseUrl/Version desde CurrentConfig.
+    /// - UpdateManager/StartupManager leen flags desde CurrentConfig.
     /// </summary>
     internal class ConfigManager
     {
@@ -353,7 +358,7 @@ namespace AZCKeeper_Cliente.Config
             public bool EnableDiscordLogging { get; set; }
             public string DiscordWebhookUrl { get; set; }
         }
-        /// /// <summary>
+        /// <summary>
         /// Configuración de bloqueo remoto de dispositivo.
         /// </summary>
         internal class BlockingConfig
@@ -395,7 +400,7 @@ namespace AZCKeeper_Cliente.Config
             /// Umbral de inactividad, en segundos. Si el idle es mayor o igual,
             /// se considera tiempo inactivo. Por defecto, 15s.
             /// </summary>
-            public double ActivityInactivityThresholdSeconds { get; set; } = 15.0;
+            public double ActivityInactivityThresholdSeconds { get; set; } = 600.0;
 
             /// <summary>
             /// Intervalo de muestreo para WindowTracker, en segundos.

@@ -16,20 +16,23 @@ namespace AZCKeeper_Cliente.Auth
     /// - Cargar token al iniciar (TryLoadTokenFromDisk).
     /// - Limpiar token (logout / invalidación).
     ///
+    /// Comunicación / flujo:
+    /// - CoreService crea e inicializa AuthManager (Initialize) y lo usa en login/logout.
+    /// - ApiClient lo consume para adjuntar el Bearer en peticiones (CreateRequest).
+    ///   Si no hay token, las llamadas autenticadas fallan o retornan 401/403.
+    ///
     /// Seguridad:
     /// - Nunca loguea el token completo (solo preview).
     /// - DPAPI CurrentUser: el archivo solo se puede descifrar en el mismo usuario Windows.
     ///
-    /// Notas:
-    /// - Si la persistencia falla, NO rompe el cliente: sigue operando solo en memoria.
     /// </summary>
     internal class AuthManager
     {
-        private const string AppFolderName = "AZCKeeper";
-        private const string AuthFolderName = "Auth";
-        private const string TokenFileName = "auth_token.bin";
+        private const string AppFolderName = "AZCKeeper"; // AppData\Roaming\AZCKeeper
+        private const string AuthFolderName = "Auth";     // subcarpeta para secretos locales
+        private const string TokenFileName = "auth_token.bin"; // archivo binario cifrado
 
-        private string _authToken;
+        private string _authToken; // Token en memoria (fuente para Authorization: Bearer)
 
         /// <summary>
         /// Token actual (Bearer).
@@ -109,7 +112,6 @@ namespace AZCKeeper_Cliente.Auth
             }
             catch (Exception ex)
             {
-                // No romper arranque: operar sin token.
                 LocalLogger.Error(ex, "AuthManager.TryLoadTokenFromDisk(): error al cargar/descifrar token. Se continuará sin token.");
                 return false;
             }
@@ -118,9 +120,6 @@ namespace AZCKeeper_Cliente.Auth
         /// <summary>
         /// Limpia el token en memoria y opcionalmente borra el archivo en disco.
         ///
-        /// Uso esperado:
-        /// - Logout
-        /// - Backend invalida token (401/403) y queremos forzar re-login.
         /// </summary>
         public void ClearToken(bool deleteFromDisk = true)
         {
@@ -200,12 +199,18 @@ namespace AZCKeeper_Cliente.Auth
                 Directory.CreateDirectory(folder);
         }
 
+        /// <summary>
+        /// Devuelve la ruta AppData\Roaming\AZCKeeper\Auth.
+        /// </summary>
         private static string GetAuthFolderPath()
         {
             string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             return Path.Combine(appData, AppFolderName, AuthFolderName);
         }
 
+        /// <summary>
+        /// Devuelve la ruta completa del archivo de token cifrado.
+        /// </summary>
         private static string GetTokenFilePath()
         {
             return Path.Combine(GetAuthFolderPath(), TokenFileName);

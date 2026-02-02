@@ -20,9 +20,16 @@ namespace AZCKeeper_Cliente.Tracking
     /// - UI en tiempo real (DebugWindow).
     /// - ActivityTracker pueda considerar "en llamada" como activo (no-away).
     /// - BD sin ruido (solo cambios).
+    /// Comunicación:
+    /// - CoreService consume OnEpisodeClosed para enviar a ApiClient.
+    /// - DebugWindowForm lee métricas en tiempo real (CallSessionSeconds, IsInCallNow).
+    /// - ActivityTracker puede usar IsInCallNow para override de actividad.
     /// </summary>
     internal class WindowTracker
     {
+        /// <summary>
+        /// Episodio de ventana (unidad persistente para backend).
+        /// </summary>
         internal class WindowEpisode
         {
             public DateTime StartLocalTime { get; set; }
@@ -84,6 +91,9 @@ namespace AZCKeeper_Cliente.Tracking
         /// </summary>
         internal double CallSessionSeconds => _callSessionSeconds;
 
+        /// <summary>
+        /// Crea tracker de ventanas y parámetros de detección de llamadas.
+        /// </summary>
         public WindowTracker(
             double intervalSeconds,
             bool enableCallTracking,
@@ -96,6 +106,9 @@ namespace AZCKeeper_Cliente.Tracking
             _callTitleKeywords = callTitleKeywords ?? Array.Empty<string>();
         }
 
+        /// <summary>
+        /// Inicia el muestreo periódico de ventana activa.
+        /// </summary>
         public void Start()
         {
             if (_timer != null)
@@ -119,6 +132,9 @@ namespace AZCKeeper_Cliente.Tracking
             _timer.Start();
         }
 
+        /// <summary>
+        /// Detiene el muestreo y hace flush del episodio actual.
+        /// </summary>
         public void Stop()
         {
             if (_timer == null)
@@ -145,6 +161,9 @@ namespace AZCKeeper_Cliente.Tracking
             _timer = null;
         }
 
+        /// <summary>
+        /// Tick del timer: detecta cambios de ventana y genera episodios.
+        /// </summary>
         private void Timer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
             try
@@ -200,6 +219,9 @@ namespace AZCKeeper_Cliente.Tracking
         /// Acumula segundos de llamada en tiempo real si la ventana actual es llamada.
         /// No genera ruido (no dispara eventos).
         /// </summary>
+        /// <summary>
+        /// Acumula segundos en apps de llamada mientras la ventana actual esté activa.
+        /// </summary>
         private void UpdateRealtimeCallSeconds(DateTime nowLocal)
         {
             if (!_enableCallTracking)
@@ -224,6 +246,9 @@ namespace AZCKeeper_Cliente.Tracking
             _lastCallRealtimeUpdateLocalTime = nowLocal;
         }
 
+        /// <summary>
+        /// Cierra el episodio anterior y abre uno nuevo con la ventana actual.
+        /// </summary>
         private void CloseEpisodeAndStartNew(DateTime nowLocal, string newProcess, string newTitle)
         {
             // Antes de cerrar, si el episodio anterior era llamada:
@@ -247,6 +272,9 @@ namespace AZCKeeper_Cliente.Tracking
             OnWindowSnapshot?.Invoke(nowLocal, newProcess, newTitle);
         }
 
+        /// <summary>
+        /// Cierra el episodio actual si existe (para no perder datos al detener).
+        /// </summary>
         private void FlushCurrentEpisode(DateTime endLocalTime)
         {
             if (_currentEpisodeStartLocalTime == DateTime.MinValue)
@@ -262,6 +290,9 @@ namespace AZCKeeper_Cliente.Tracking
             _currentIsCallApp = false;
         }
 
+        /// <summary>
+        /// Construye episodio válido (duration &gt; 0).
+        /// </summary>
         private static WindowEpisode BuildEpisode(DateTime start, DateTime end, string process, string title, bool isCall)
         {
             if (start == DateTime.MinValue)
@@ -282,6 +313,9 @@ namespace AZCKeeper_Cliente.Tracking
             };
         }
 
+        /// <summary>
+        /// Determina si una ventana/proceso coincide con keywords de llamada.
+        /// </summary>
         private bool IsCallApplication(string processName, string windowTitle)
         {
             string proc = processName?.ToLowerInvariant() ?? string.Empty;

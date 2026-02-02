@@ -17,14 +17,19 @@ namespace AZCKeeper_Cliente.Network
     /// - handshake: { ok, serverTimeUtc, policyApplied, effectiveConfig }
     /// - activity-day: Bearer + payload con DayDate + IdleSeconds (etc.)
     /// - activity-day (get): para retomar el día si ya existe registro en BD
+    ///
+    /// Comunicación:
+    /// - CoreService usa ApiClient para login/handshake y envío de actividad/ventanas.
+    /// - AuthManager provee token Bearer, adjuntado por CreateRequest().
+    /// - ConfigManager aporta ApiBaseUrl y versión de cliente.
     /// </summary>
     internal class ApiClient
     {
-        private readonly ConfigManager _configManager;
-        private readonly AuthManager _authManager;
-        private readonly HttpClient _httpClient;
-        private readonly OfflineQueue _offlineQueue;
-        private System.Timers.Timer _retryTimer;
+        private readonly ConfigManager _configManager; // base URL, versión, config general
+        private readonly AuthManager _authManager;     // token para Authorization
+        private readonly HttpClient _httpClient;       // cliente HTTP reutilizable
+        private readonly OfflineQueue _offlineQueue;   // cola persistente de reintentos
+        private System.Timers.Timer _retryTimer;       // timer para reintentar cola offline
 
         private readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
         {
@@ -32,6 +37,9 @@ namespace AZCKeeper_Cliente.Network
             PropertyNameCaseInsensitive = true
         };
 
+        /// <summary>
+        /// Constructor. Inicializa HttpClient, base URL y timer de reintento offline.
+        /// </summary>
         public ApiClient(ConfigManager configManager, AuthManager authManager)
         {
             _configManager = configManager ?? throw new ArgumentNullException(nameof(configManager));
@@ -63,6 +71,9 @@ namespace AZCKeeper_Cliente.Network
 
         // -------------------- LOGIN --------------------
 
+        /// <summary>
+        /// Envía login (sin Bearer) y retorna token si es válido.
+        /// </summary>
         public async Task<LoginResult> SendLoginAsync(LoginRequest request)
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
@@ -133,6 +144,9 @@ namespace AZCKeeper_Cliente.Network
 
         // -------------------- HANDSHAKE --------------------
 
+        /// <summary>
+        /// Envía handshake autenticado y recibe effectiveConfig/políticas.
+        /// </summary>
         public async Task<HandshakeResult> SendHandshakeAsync(HandshakeRequest request)
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
@@ -224,6 +238,9 @@ namespace AZCKeeper_Cliente.Network
 
         // -------------------- ACTIVITY DAY (UPSERT) --------------------
 
+        /// <summary>
+        /// Envía snapshot de actividad del día (con reintento offline si falla).
+        /// </summary>
         public async Task SendActivityDayAsync(ActivityDayPayload payload, bool fromQueue = false)
         {
             if (payload == null) throw new ArgumentNullException(nameof(payload));
@@ -280,6 +297,9 @@ namespace AZCKeeper_Cliente.Network
         // Si tu backend lo dejó como POST /client/activity-day/get,
         // cambia a HttpMethod.Post y manda JSON { deviceId, dayDate }.
 
+        /// <summary>
+        /// Obtiene activity-day del backend para reanudar contadores locales.
+        /// </summary>
         public async Task<ActivityDayGetResult> GetActivityDayAsync(string deviceId, string dayDate)
         {
             var result = new ActivityDayGetResult();
@@ -365,6 +385,9 @@ namespace AZCKeeper_Cliente.Network
         }
 
         // -------------------- WINDOW EPISODE --------------------
+        /// <summary>
+        /// Limpia texto de ventana/proceso (remueve caracteres no soportados y trunca).
+        /// </summary>
         private static string SanitizeString(string input, int maxLength)
         {
             if (string.IsNullOrEmpty(input)) return input;
@@ -378,6 +401,9 @@ namespace AZCKeeper_Cliente.Network
 
             return cleaned;
         }
+        /// <summary>
+        /// Envía un episodio de ventana (con reintento offline si falla).
+        /// </summary>
         public async Task SendWindowEpisodeAsync(WindowEpisodePayload payload, bool fromQueue = false)
         {
             if (payload == null) throw new ArgumentNullException(nameof(payload));
@@ -497,6 +523,9 @@ namespace AZCKeeper_Cliente.Network
 
         // -------------------- Helpers --------------------
         // Ajuste helper: permitir content null
+        /// <summary>
+        /// Crea una request con Authorization Bearer y header fallback X-Auth-Token.
+        /// </summary>
         private HttpRequestMessage CreateRequest(HttpMethod method, string relativeUrl, HttpContent content)
         {
             var request = new HttpRequestMessage(method, relativeUrl);
@@ -515,6 +544,9 @@ namespace AZCKeeper_Cliente.Network
         }
 
 
+        /// <summary>
+        /// Lee body de forma segura (retorna string vacío ante errores).
+        /// </summary>
         private static async Task<string> SafeReadBodyAsync(HttpResponseMessage response)
         {
             try
@@ -528,6 +560,9 @@ namespace AZCKeeper_Cliente.Network
             }
         }
 
+        /// <summary>
+        /// Heurística simple para validar respuesta JSON.
+        /// </summary>
         private static bool LooksLikeJson(HttpResponseMessage response, string body)
         {
             try
@@ -551,6 +586,9 @@ namespace AZCKeeper_Cliente.Network
             }
         }
 
+        /// <summary>
+        /// Genera un preview corto de body para logs.
+        /// </summary>
         private static string Preview(string body, int maxLen = 140)
         {
             if (string.IsNullOrWhiteSpace(body)) return "(empty)";
@@ -570,9 +608,11 @@ namespace AZCKeeper_Cliente.Network
             _retryTimer.Start();
 
             LocalLogger.Info("ApiClient: RetryTimer iniciado (cada 30s).");
-        }/// <summary>
-         /// Actualiza el intervalo del timer de reintentos offline.
-         /// </summary>
+        }
+
+        /// <summary>
+        /// Actualiza el intervalo del timer de reintentos offline.
+        /// </summary>
         public void UpdateRetryInterval(int seconds)
         {
             if (_retryTimer != null && seconds > 0)
@@ -648,7 +688,9 @@ namespace AZCKeeper_Cliente.Network
         }
         // -------------------- MODELOS --------------------
 
-        // Modelos GET
+        /// <summary>
+        /// Respuesta de GET activity-day (resume de contadores del día).
+        /// </summary>
         internal class ActivityDayGetResponse
         {
             public bool Ok { get; set; }
@@ -672,6 +714,9 @@ namespace AZCKeeper_Cliente.Network
             public double AfterHoursIdleSeconds { get; set; }
         }
 
+        /// <summary>
+        /// Resultado de GET activity-day con metadata de estado.
+        /// </summary>
         internal class ActivityDayGetResult
         {
             public bool IsSuccess { get; set; }
@@ -682,14 +727,20 @@ namespace AZCKeeper_Cliente.Network
             public string Error { get; set; }
             public ActivityDayGetResponse Response { get; set; }
         }
+        /// <summary>
+        /// Payload de login para /client/login.
+        /// </summary>
         internal class LoginRequest
         {
-            public string Username { get; set; }   // CC
-            public string Password { get; set; }   // legacy plain (como definiste)
-            public string DeviceId { get; set; }   // device guid (string)
+            public string Username { get; set; }   
+            public string Password { get; set; }   
+            public string DeviceId { get; set; }   
             public string DeviceName { get; set; }
         }
 
+        /// <summary>
+        /// Respuesta de login del backend.
+        /// </summary>
         internal class LoginResponse
         {
             public bool Ok { get; set; }
@@ -700,6 +751,9 @@ namespace AZCKeeper_Cliente.Network
             public string Error { get; set; }
         }
 
+        /// <summary>
+        /// Resultado de login con status/preview y response parseado.
+        /// </summary>
         internal class LoginResult
         {
             public bool IsSuccess { get; set; }
@@ -709,6 +763,9 @@ namespace AZCKeeper_Cliente.Network
             public LoginResponse Response { get; set; }
         }
 
+        /// <summary>
+        /// Payload de handshake para /client/handshake.
+        /// </summary>
         internal class HandshakeRequest
         {
             public string DeviceId { get; set; }
@@ -716,6 +773,9 @@ namespace AZCKeeper_Cliente.Network
             public string DeviceName { get; set; }
         }
 
+        /// <summary>
+        /// Respuesta de handshake con effectiveConfig y policy aplicada.
+        /// </summary>
         internal class HandshakeResponse
         {
             public bool Ok { get; set; }
@@ -725,6 +785,9 @@ namespace AZCKeeper_Cliente.Network
             public string Error { get; set; }
         }
 
+        /// <summary>
+        /// Información de política aplicada por el servidor.
+        /// </summary>
         internal class PolicyApplied
         {
             public string Scope { get; set; }
@@ -732,6 +795,9 @@ namespace AZCKeeper_Cliente.Network
             public int Version { get; set; }
         }
 
+        /// <summary>
+        /// Config efectiva enviada por backend (sobrescribe local).
+        /// </summary>
         internal class EffectiveConfig
         {
             public string Version { get; set; }
@@ -743,6 +809,9 @@ namespace AZCKeeper_Cliente.Network
             public EffectiveBlocking Blocking { get; set; }
             public EffectiveTimers Timers { get; set; }
         }
+        /// <summary>
+        /// Config efectiva de bloqueo remoto.
+        /// </summary>
         internal class EffectiveBlocking
         {
             public bool EnableDeviceLock { get; set; }
@@ -750,6 +819,9 @@ namespace AZCKeeper_Cliente.Network
             public bool AllowUnlockWithPin { get; set; }
             public string UnlockPin { get; set; }
         }
+        /// <summary>
+        /// Config efectiva de logging.
+        /// </summary>
         internal class EffectiveLogging
         {
             public string GlobalLevel { get; set; }
@@ -758,12 +830,18 @@ namespace AZCKeeper_Cliente.Network
             public bool EnableDiscordLogging { get; set; }
             public string DiscordWebhookUrl { get; set; }
         }
+        /// <summary>
+        /// Config efectiva de timers (flush/handshake/offline).
+        /// </summary>
         internal class EffectiveTimers
         {
             public int ActivityFlushIntervalSeconds { get; set; }
             public int HandshakeIntervalMinutes { get; set; }
             public int OfflineQueueRetrySeconds { get; set; }
         }
+        /// <summary>
+        /// Config efectiva de módulos habilitados.
+        /// </summary>
         internal class EffectiveModules
         {
             public bool EnableActivityTracking { get; set; }
@@ -786,12 +864,18 @@ namespace AZCKeeper_Cliente.Network
             public string[] CallProcessKeywords { get; set; }
             public string[] CallTitleKeywords { get; set; }
         }
+        /// <summary>
+        /// Config efectiva de startup automático.
+        /// </summary>
         internal class EffectiveStartup
         {
             public bool EnableAutoStartup { get; set; }
             public bool StartMinimized { get; set; }
         }
 
+        /// <summary>
+        /// Config efectiva de updates automáticos.
+        /// </summary>
         internal class EffectiveUpdates
         {
             public bool EnableAutoUpdate { get; set; }
@@ -801,6 +885,9 @@ namespace AZCKeeper_Cliente.Network
         }
 
 
+        /// <summary>
+        /// Resultado de handshake con flags de error y response parseado.
+        /// </summary>
         internal class HandshakeResult
         {
             public bool IsSuccess { get; set; }
@@ -811,6 +898,9 @@ namespace AZCKeeper_Cliente.Network
             public HandshakeResponse Response { get; set; }
         }
 
+        /// <summary>
+        /// Payload de episodio de ventana para /client/window-episode.
+        /// </summary>
         internal class WindowEpisodePayload
         {
             public string DeviceId { get; set; }
@@ -822,19 +912,20 @@ namespace AZCKeeper_Cliente.Network
             public bool IsCallApp { get; set; }
         }
 
+        /// <summary>
+        /// Payload de actividad diaria para /client/activity-day.
+        /// </summary>
         internal class ActivityDayPayload
         {
             public string DeviceId { get; set; }
-            public string DayDate { get; set; }          // YYYY-MM-DD
-            public int TzOffsetMinutes { get; set; }     // -300
+            public string DayDate { get; set; }          
+            public int TzOffsetMinutes { get; set; }    
             public double ActiveSeconds { get; set; }
             public double IdleSeconds { get; set; }
             public double CallSeconds { get; set; }
             public int SamplesCount { get; set; }
-            public string FirstEventAt { get; set; }     // "yyyy-MM-dd HH:mm:ss" opcional
-            public string LastEventAt { get; set; }      // "yyyy-MM-dd HH:mm:ss" opcional
-
-            // NUEVOS CAMPOS
+            public string FirstEventAt { get; set; }    
+            public string LastEventAt { get; set; }      
             public double WorkHoursActiveSeconds { get; set; }
             public double WorkHoursIdleSeconds { get; set; }
             public double LunchActiveSeconds { get; set; }
