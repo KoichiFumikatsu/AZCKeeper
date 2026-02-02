@@ -386,14 +386,15 @@ namespace AZCKeeper_Cliente.Network
 
         // -------------------- WINDOW EPISODE --------------------
         /// <summary>
-        /// Limpia texto de ventana/proceso (remueve caracteres no soportados y trunca).
+        /// Limpia texto de ventana/proceso (remueve solo caracteres de control, preserva Unicode válido).
         /// </summary>
         private static string SanitizeString(string input, int maxLength)
         {
             if (string.IsNullOrEmpty(input)) return input;
 
-            // Remover caracteres problemáticos (emojis, control chars)
-            string cleaned = System.Text.RegularExpressions.Regex.Replace(input, @"[^\u0020-\u007E\u00A0-\uFFFF]", "");
+            // Solo remover caracteres de control (0x00-0x1F, 0x7F-0x9F)
+            // Preserva emojis, caracteres Unicode válidos (chino, árabe, etc.)
+            string cleaned = System.Text.RegularExpressions.Regex.Replace(input, @"[\x00-\x1F\x7F-\x9F]", "");
 
             // Truncar
             if (cleaned.Length > maxLength)

@@ -38,9 +38,19 @@ namespace AZCKeeper_Cliente.Update
 
         /// <summary>
         /// Inicia el timer de chequeo y ejecuta una verificación inmediata.
+        /// Solo inicia si EnableAutoUpdate está activo.
         /// </summary>
         public void Start()
         {
+            var updatesConfig = _config.CurrentConfig.Updates;
+            
+            // Solo iniciar timer si EnableAutoUpdate está activo
+            if (updatesConfig == null || !updatesConfig.EnableAutoUpdate)
+            {
+                LocalLogger.Info("UpdateManager: creado pero no iniciado (EnableAutoUpdate=false). Modo manual.");
+                return;
+            }
+
             _timer = new System.Timers.Timer(_intervalMinutes * 60_000);
             _timer.Elapsed += async (s, e) => await CheckForUpdatesAsync();
             _timer.Start();
@@ -48,7 +58,8 @@ namespace AZCKeeper_Cliente.Update
             // Verificar inmediatamente al iniciar
             _ = CheckForUpdatesAsync();
 
-            LocalLogger.Info($"UpdateManager: iniciado (verifica cada {_intervalMinutes}min).");
+            string mode = updatesConfig.AutoDownload ? "automático" : "notificación";
+            LocalLogger.Info($"UpdateManager: iniciado (verifica cada {_intervalMinutes}min, modo {mode}).");
         }
 
         /// <summary>

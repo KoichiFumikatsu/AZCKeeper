@@ -90,14 +90,10 @@ class ActivityDay
             Http::json(500, ['ok'=>false,'error'=>'Failed to encode payload JSON: ' . json_last_error_msg()]);
         }
          
-        if (strlen($payloadJson) > 65536) {
-            error_log("ActivityDay: payload muy grande (" . strlen($payloadJson) . " bytes). Truncando...");
-            $payloadJson = substr($payloadJson, 0, 65536);
-        }
-         
-        $decoded = json_decode($payloadJson, true);
-        if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
-            Http::json(500, ['ok'=>false,'error'=>'Malformed JSON payload: ' . json_last_error_msg()]);
+        // Rechazar payloads excesivamente grandes (límite razonable: 16KB)
+        if (strlen($payloadJson) > 16384) {
+            error_log("ActivityDay: payload excede 16KB (" . strlen($payloadJson) . " bytes). Rechazando.");
+            Http::json(413, ['ok'=>false,'error'=>'Payload too large (max 16KB)']);
         }
          
         $st = $pdo->prepare("
