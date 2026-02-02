@@ -10,12 +10,16 @@ namespace AZCKeeper_Cliente.Logging
 {
     /// <summary>
     /// Logger central del cliente AZC Keeper.
-    /// 
+    ///
     /// Responsabilidades:
     /// - Definir niveles de log (None, Error, Warn, Info).
     /// - Controlar destinos de salida (archivo local, webhook).
     /// - Sanitizar información sensible (tokens, webhooks, headers) para evitar leaks.
     /// - Escribir mensajes de log sin lanzar excepciones hacia el exterior.
+    ///
+    /// Comunicación:
+    /// - ConfigManager aplica la configuración de logging (niveles y webhook).
+    /// - Todas las capas (Core/Network/Auth/Tracking) usan LocalLogger.* para diagnóstico.
     /// </summary>
     internal static class LocalLogger
     {
@@ -62,6 +66,9 @@ namespace AZCKeeper_Cliente.Logging
         // Límite defensivo para evitar mensajes enormes al webhook
         private const int WebhookMaxChars = 1500;
 
+        /// <summary>
+        /// Inicializa carpeta de logs en AppData y prepara el archivo del día.
+        /// </summary>
         static LocalLogger()
         {
             try
@@ -80,6 +87,9 @@ namespace AZCKeeper_Cliente.Logging
             }
         }
 
+        /// <summary>
+        /// Actualiza la ruta del archivo diario (YYYY-MM-DD.log).
+        /// </summary>
         private static void UpdateCurrentLogFilePath()
         {
             try
@@ -139,24 +149,36 @@ namespace AZCKeeper_Cliente.Logging
             return level <= effective;
         }
 
+        /// <summary>
+        /// Escribe un log de nivel INFO si está habilitado.
+        /// </summary>
         public static void Info(string message)
         {
             if (!ShouldLog(LogLevel.Info)) return;
             WriteLog(LogLevel.Info, message);
         }
 
+        /// <summary>
+        /// Escribe un log de nivel WARN si está habilitado.
+        /// </summary>
         public static void Warn(string message)
         {
             if (!ShouldLog(LogLevel.Warn)) return;
             WriteLog(LogLevel.Warn, message);
         }
 
+        /// <summary>
+        /// Escribe un log de nivel ERROR si está habilitado.
+        /// </summary>
         public static void Error(string message)
         {
             if (!ShouldLog(LogLevel.Error)) return;
             WriteLog(LogLevel.Error, message);
         }
 
+        /// <summary>
+        /// Escribe un log de error con excepción y contexto.
+        /// </summary>
         public static void Error(Exception exception, string contextMessage = null)
         {
             if (!ShouldLog(LogLevel.Error)) return;
@@ -182,6 +204,9 @@ namespace AZCKeeper_Cliente.Logging
             WriteLog(LogLevel.Error, sb.ToString());
         }
 
+        /// <summary>
+        /// Maneja la escritura de logs a archivo y webhook (si aplica).
+        /// </summary>
         private static void WriteLog(LogLevel level, string message)
         {
             try
@@ -218,6 +243,9 @@ namespace AZCKeeper_Cliente.Logging
             }
         }
 
+        /// <summary>
+        /// Sanitiza texto para ocultar tokens, passwords y webhooks.
+        /// </summary>
         private static string Sanitize(string text)
         {
             if (string.IsNullOrWhiteSpace(text))
@@ -238,6 +266,9 @@ namespace AZCKeeper_Cliente.Logging
             return s;
         }
 
+        /// <summary>
+        /// Envía log a webhook (Discord) de forma asíncrona.
+        /// </summary>
         private static async Task SendToWebhookAsync(LogLevel level, string safeMessage)
         {
             if (string.IsNullOrWhiteSpace(_webhookUrl))

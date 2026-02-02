@@ -10,6 +10,14 @@ using AZCKeeper_Cliente.Network;
 
 namespace AZCKeeper_Cliente.Blocking
 {
+    /// <summary>
+    /// KeyBlocker controla el bloqueo remoto de dispositivo mediante formularios fullscreen
+    /// y un hook de teclado de bajo nivel.
+    ///
+    /// Comunicación:
+    /// - CoreService lo activa/desactiva según políticas de handshake.
+    /// - ApiClient se usa para notificar unlock remoto.
+    /// </summary>
     internal class KeyBlocker
     {
         private readonly List<LockFormContainer> _lockForms = new List<LockFormContainer>();
@@ -18,11 +26,17 @@ namespace AZCKeeper_Cliente.Blocking
         private LowLevelKeyboardHook _keyboardHook;
         private int _isActive = 0; // use as atomic flag
 
+        /// <summary>
+        /// Crea el bloqueador con ApiClient para notificar desbloqueos.
+        /// </summary>
         public KeyBlocker(ApiClient apiClient)
         {
             _apiClient = apiClient;
         }
 
+        /// <summary>
+        /// Activa bloqueo en todas las pantallas (crea formularios fullscreen).
+        /// </summary>
         public void ActivateLock(string reason, bool allowUnlock, string unlockPin = null)
         {
             if (System.Threading.Volatile.Read(ref _isActive) == 1)
@@ -96,11 +110,17 @@ namespace AZCKeeper_Cliente.Blocking
             }
         }
 
+        /// <summary>
+        /// Indica si el bloqueo está activo.
+        /// </summary>
         public bool IsLocked()
         {
             return System.Threading.Volatile.Read(ref _isActive) == 1;
         }
 
+        /// <summary>
+        /// Desactiva bloqueo y cierra formularios.
+        /// </summary>
         public void DeactivateLock()
         {
             if (System.Threading.Interlocked.Exchange(ref _isActive, 0) == 0) return;
@@ -153,6 +173,9 @@ namespace AZCKeeper_Cliente.Blocking
         }
     }
 
+    /// <summary>
+    /// Contenedor para mantener formulario de bloqueo y su hilo STA.
+    /// </summary>
     internal class LockFormContainer
     {
         public LockScreenForm Form;
@@ -160,6 +183,9 @@ namespace AZCKeeper_Cliente.Blocking
         public System.Threading.ManualResetEventSlim Ready = new System.Threading.ManualResetEventSlim(false);
     }
 
+    /// <summary>
+    /// Formulario fullscreen que muestra el bloqueo y permite desbloqueo con PIN.
+    /// </summary>
     internal class LockScreenForm : Form
     {
         private readonly string _reason;
@@ -174,6 +200,9 @@ namespace AZCKeeper_Cliente.Blocking
 
         public event Action OnUnlockSuccess;
 
+        /// <summary>
+        /// Crea formulario de bloqueo para una pantalla específica.
+        /// </summary>
         public LockScreenForm(string reason, bool allowUnlock, ApiClient apiClient, Screen screen, string unlockPin = null)
         {
             _reason = reason;
@@ -186,6 +215,9 @@ namespace AZCKeeper_Cliente.Blocking
             SetupUI();
         }
 
+        /// <summary>
+        /// Configuración base del formulario (fullscreen, sin bordes).
+        /// </summary>
         private void InitializeComponent()
         {
             SuspendLayout();
@@ -205,6 +237,9 @@ namespace AZCKeeper_Cliente.Blocking
             ResumeLayout(false);
         }
 
+        /// <summary>
+        /// Construye UI de bloqueo según pantalla (principal/secundaria).
+        /// </summary>
         private void SetupUI()
         {
             // Determinar si es pantalla principal (para mostrar el panel)
@@ -235,6 +270,9 @@ namespace AZCKeeper_Cliente.Blocking
             }
         }
 
+        /// <summary>
+        /// Crea el panel central con PIN y estado de desbloqueo.
+        /// </summary>
         private Panel CreateUnlockPanel()
         {
             Panel panel = new Panel
@@ -363,6 +401,9 @@ namespace AZCKeeper_Cliente.Blocking
             return panel;
         }
 
+        /// <summary>
+        /// Intenta desbloquear comparando PIN local y notifica al servidor.
+        /// </summary>
         private async void TryUnlock()
         {
             if (_txtPin == null) return;
@@ -426,12 +467,18 @@ namespace AZCKeeper_Cliente.Blocking
             }
         }
 
+        /// <summary>
+        /// Fuerza el cierre del formulario (usado por KeyBlocker).
+        /// </summary>
         public void ForceClose()
         {
             _canClose = true;
             Close();
         }
 
+        /// <summary>
+        /// Evita cerrar por el usuario si el bloqueo sigue activo.
+        /// </summary>
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             if (!_canClose && e.CloseReason == CloseReason.UserClosing)
@@ -441,6 +488,9 @@ namespace AZCKeeper_Cliente.Blocking
             base.OnFormClosing(e);
         }
 
+        /// <summary>
+        /// Enfoca el PIN al mostrar el formulario.
+        /// </summary>
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
@@ -452,6 +502,9 @@ namespace AZCKeeper_Cliente.Blocking
         }
     }
 
+    /// <summary>
+    /// Hook de teclado de bajo nivel para bloquear combinaciones (Win/Alt+Tab).
+    /// </summary>
     internal class LowLevelKeyboardHook
     {
         private const int WH_KEYBOARD_LL = 13;
@@ -461,6 +514,9 @@ namespace AZCKeeper_Cliente.Blocking
         private LowLevelKeyboardProc _proc;
         private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
+        /// <summary>
+        /// Instala el hook global.
+        /// </summary>
         public void Install()
         {
             _proc = HookCallback;
@@ -468,6 +524,9 @@ namespace AZCKeeper_Cliente.Blocking
             LocalLogger.Info("KeyboardHook: instalado.");
         }
 
+        /// <summary>
+        /// Desinstala el hook global.
+        /// </summary>
         public void Uninstall()
         {
             if (_hookID != IntPtr.Zero)
@@ -478,6 +537,9 @@ namespace AZCKeeper_Cliente.Blocking
             }
         }
 
+        /// <summary>
+        /// Registra el hook con Win32 (fallback si MainModule no está disponible).
+        /// </summary>
         private IntPtr SetHook(LowLevelKeyboardProc proc)
         {
             try
@@ -501,6 +563,9 @@ namespace AZCKeeper_Cliente.Blocking
         [DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
 
+        /// <summary>
+        /// Callback del hook: bloquea Win y Alt+Tab.
+        /// </summary>
         private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
             try

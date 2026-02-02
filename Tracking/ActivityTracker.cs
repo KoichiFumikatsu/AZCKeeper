@@ -32,6 +32,9 @@ namespace AZCKeeper_Cliente.Tracking
     /// NUEVO:
     /// - SeedDayTotals(day, active, inactive):
     ///   permite retomar acumulados del día desde backend/BD.
+    /// Comunicación:
+    /// - CoreService inicia/detiene el tracker y consume snapshots para enviar a ApiClient.
+    /// - WindowTracker puede influir vía ActivityOverridePredicate (llamadas).
     /// </summary>
     internal class ActivityTracker
     {
@@ -100,7 +103,10 @@ namespace AZCKeeper_Cliente.Tracking
         public Func<bool> ActivityOverridePredicate { get; set; }
         public double ActivityOverrideMaxIdleSeconds { get; set; } = 300.0;
 
-        public ActivityTracker(double intervalSeconds, double inactivityThresholdSeconds = 15.0)
+        /// <summary>
+        /// Crea tracker con intervalo de muestreo y umbral de inactividad.
+        /// </summary>
+        public ActivityTracker(double intervalSeconds, double inactivityThresholdSeconds = 600.0)
         {
             _intervalSeconds = intervalSeconds;
             _inactivityThresholdSeconds = inactivityThresholdSeconds;
@@ -116,6 +122,20 @@ namespace AZCKeeper_Cliente.Tracking
             double lunchActive = 0, double lunchIdle = 0,
             double afterActive = 0, double afterIdle = 0)
         {
+            // Validar que no sea fecha futura (protección contra errores del servidor)
+            if (dayLocalDate.Date > DateTime.Now.Date)
+            {
+                LocalLogger.Warn($"ActivityTracker.SeedDayTotals(): ⚠️ Fecha futura rechazada. Seed={dayLocalDate:yyyy-MM-dd}, Hoy={DateTime.Now:yyyy-MM-dd}. Se ignora el seed.");
+                return;
+            }
+
+            // Validar que no sea demasiado antigua (más de 7 días)
+            if (dayLocalDate.Date < DateTime.Now.Date.AddDays(-7))
+            {
+                LocalLogger.Warn($"ActivityTracker.SeedDayTotals(): ⚠️ Fecha demasiado antigua rechazada. Seed={dayLocalDate:yyyy-MM-dd}, Hoy={DateTime.Now:yyyy-MM-dd}. Se ignora el seed.");
+                return;
+            }
+
             if (activeSeconds < 0) activeSeconds = 0;
             if (inactiveSeconds < 0) inactiveSeconds = 0;
 
@@ -135,17 +155,31 @@ namespace AZCKeeper_Cliente.Tracking
                 // Si el tracker ya está en marcha y el día coincide, aplicar inmediatamente.
                 if (_timer != null && _currentDayLocalDate == _seedDayLocalDate)
                 {
-                    _currentDayActiveSeconds = Math.Max(_currentDayActiveSeconds, _seedDayActiveSeconds);
-                    _currentDayInactiveSeconds = Math.Max(_currentDayInactiveSeconds, _seedDayInactiveSeconds);
+                    double prevActive = _currentDayActiveSeconds;
+                    double prevInactive = _currentDayInactiveSeconds;
 
-                    _currentDayWorkActiveSeconds = Math.Max(_currentDayWorkActiveSeconds, workActive);
-                    _currentDayWorkIdleSeconds = Math.Max(_currentDayWorkIdleSeconds, workIdle);
-                    _currentDayLunchActiveSeconds = Math.Max(_currentDayLunchActiveSeconds, lunchActive);
-                    _currentDayLunchIdleSeconds = Math.Max(_currentDayLunchIdleSeconds, lunchIdle);
-                    _currentDayAfterHoursActiveSeconds = Math.Max(_currentDayAfterHoursActiveSeconds, afterActive);
-                    _currentDayAfterHoursIdleSeconds = Math.Max(_currentDayAfterHoursIdleSeconds, afterIdle);
+                    // SUMA en lugar de Math.Max para no perder tiempo trabajado sin internet
+                    _currentDayActiveSeconds += _seedDayActiveSeconds;
+                    _currentDayInactiveSeconds += _seedDayInactiveSeconds;
 
-                    LocalLogger.Info($"ActivityTracker.SeedDayTotals(): seed aplicado en caliente. Day={_seedDayLocalDate:yyyy-MM-dd} Active={_currentDayActiveSeconds:F0}s Inactive={_currentDayInactiveSeconds:F0}s");
+                    _currentDayWorkActiveSeconds += workActive;
+                    _currentDayWorkIdleSeconds += workIdle;
+                    _currentDayLunchActiveSeconds += lunchActive;
+                    _currentDayLunchIdleSeconds += lunchIdle;
+                    _currentDayAfterHoursActiveSeconds += afterActive;
+                    _currentDayAfterHoursIdleSeconds += afterIdle;
+
+                    if (prevActive > 0 || prevInactive > 0)
+                    {
+                        LocalLogger.Info($"ActivityTracker.SeedDayTotals(): 🔄 Resincronización detectada. " +
+                            $"Local previo: {prevActive:F0}s activo, {prevInactive:F0}s inactivo | " +
+                            $"BD (seed): {_seedDayActiveSeconds:F0}s activo, {_seedDayInactiveSeconds:F0}s inactivo | " +
+                            $"Total acumulado: {_currentDayActiveSeconds:F0}s activo (suma de ambos)");
+                    }
+                    else
+                    {
+                        LocalLogger.Info($"ActivityTracker.SeedDayTotals(): seed aplicado en caliente. Day={_seedDayLocalDate:yyyy-MM-dd} Active={_currentDayActiveSeconds:F0}s Inactive={_currentDayInactiveSeconds:F0}s");
+                    }
                 }
                 else
                 {
@@ -154,6 +188,9 @@ namespace AZCKeeper_Cliente.Tracking
             }
         }
 
+        /// <summary>
+        /// Inicia el timer interno y comienza el muestreo de actividad.
+        /// </summary>
         public void Start()
         {
             lock (_lock)
@@ -169,17 +206,17 @@ namespace AZCKeeper_Cliente.Tracking
                 _currentDayActiveSeconds = 0;
                 _currentDayInactiveSeconds = 0;
 
-                // Aplicar seed si corresponde al mismo día
+                // Aplicar seed si corresponde al mismo día (SUMA para no perder tiempo local)
                 if (_hasSeedForToday && _seedDayLocalDate == _currentDayLocalDate)
                 {
-                    _currentDayActiveSeconds = Math.Max(_currentDayActiveSeconds, _seedDayActiveSeconds);
-                    _currentDayInactiveSeconds = Math.Max(_currentDayInactiveSeconds, _seedDayInactiveSeconds);
-                    _currentDayWorkActiveSeconds = Math.Max(_currentDayWorkActiveSeconds, _seedDayWorkActiveSeconds);
-                    _currentDayWorkIdleSeconds = Math.Max(_currentDayWorkIdleSeconds, _seedDayWorkIdleSeconds);
-                    _currentDayLunchActiveSeconds = Math.Max(_currentDayLunchActiveSeconds, _seedDayLunchActiveSeconds);
-                    _currentDayLunchIdleSeconds = Math.Max(_currentDayLunchIdleSeconds, _seedDayLunchIdleSeconds);
-                    _currentDayAfterHoursActiveSeconds = Math.Max(_currentDayAfterHoursActiveSeconds, _seedDayAfterHoursActiveSeconds);
-                    _currentDayAfterHoursIdleSeconds = Math.Max(_currentDayAfterHoursIdleSeconds, _seedDayAfterHoursIdleSeconds);
+                    _currentDayActiveSeconds += _seedDayActiveSeconds;
+                    _currentDayInactiveSeconds += _seedDayInactiveSeconds;
+                    _currentDayWorkActiveSeconds += _seedDayWorkActiveSeconds;
+                    _currentDayWorkIdleSeconds += _seedDayWorkIdleSeconds;
+                    _currentDayLunchActiveSeconds += _seedDayLunchActiveSeconds;
+                    _currentDayLunchIdleSeconds += _seedDayLunchIdleSeconds;
+                    _currentDayAfterHoursActiveSeconds += _seedDayAfterHoursActiveSeconds;
+                    _currentDayAfterHoursIdleSeconds += _seedDayAfterHoursIdleSeconds;
 
                     LocalLogger.Info($"ActivityTracker.Start(): seed aplicado. Active={_currentDayActiveSeconds:F0}s Inactive={_currentDayInactiveSeconds:F0}s " +
                     $"Work={_currentDayWorkActiveSeconds:F0}s Lunch={_currentDayLunchActiveSeconds:F0}s After={_currentDayAfterHoursActiveSeconds:F0}s");
@@ -203,6 +240,9 @@ namespace AZCKeeper_Cliente.Tracking
             }
         }
 
+        /// <summary>
+        /// Detiene el timer interno y el muestreo de actividad.
+        /// </summary>
         public void Stop()
         {
             lock (_lock)
@@ -219,6 +259,9 @@ namespace AZCKeeper_Cliente.Tracking
             }
         }
 
+        /// <summary>
+        /// Tick del timer: calcula delta, clasifica activo/inactivo y acumula.
+        /// </summary>
         private void Timer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
             try
@@ -301,6 +344,9 @@ namespace AZCKeeper_Cliente.Tracking
                 LocalLogger.Error(ex, "ActivityTracker.Timer_Elapsed(): error durante el cálculo de actividad.");
             }
         }
+        /// <summary>
+        /// Devuelve snapshot actual del día (incluye categorías de tiempo).
+        /// </summary>
         public (DateTime DayLocalDate, double ActiveSeconds, double InactiveSeconds,
                 double WorkActive, double WorkIdle,
                 double LunchActive, double LunchIdle,
@@ -322,6 +368,9 @@ namespace AZCKeeper_Cliente.Tracking
             }
         }
 
+        /// <summary>
+        /// Acumula segundos en día/categoría según estado activo.
+        /// </summary>
         private void AccumulateInterval(DateTime dayLocalDate, double deltaSeconds, bool isActive)
         {
             if (dayLocalDate != CurrentDayLocalDate)
@@ -377,6 +426,9 @@ namespace AZCKeeper_Cliente.Tracking
                 }
             }
         }
+        /// <summary>
+        /// Reinicia contadores diarios y categorías.
+        /// </summary>
         private void ResetDayCounters()
         {
             _currentDayActiveSeconds = 0;
@@ -388,6 +440,9 @@ namespace AZCKeeper_Cliente.Tracking
             _currentDayAfterHoursActiveSeconds = 0;
             _currentDayAfterHoursIdleSeconds = 0;
         }
+        /// <summary>
+        /// Divide un delta que cruza medianoche y aplica a cada día.
+        /// </summary>
         private void SplitIntervalAcrossDayBoundary(DateTime lastLocal, DateTime nowLocal, double totalDeltaSeconds, bool isActive)
         {
             DateTime oldDate = lastLocal.Date;
@@ -422,6 +477,9 @@ namespace AZCKeeper_Cliente.Tracking
                 AccumulateInterval(newDate, newPartSeconds, isActive);
         }
 
+        /// <summary>
+        /// Cierra el día actual y dispara OnDayClosed.
+        /// </summary>
         private void CloseCurrentDay(DateTime dayLocalDate)
         {
             double active;
@@ -457,6 +515,9 @@ namespace AZCKeeper_Cliente.Tracking
         [DllImport("user32.dll")]
         private static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
 
+        /// <summary>
+        /// Obtiene segundos desde el último input de usuario (Win32 GetLastInputInfo).
+        /// </summary>
         private static double GetIdleSeconds()
         {
             try

@@ -25,6 +25,11 @@ namespace AZCKeeper_Cliente
         private const string SingleInstanceMutexName = "AZCKeeper_Cliente_SingleInstance";
 
         /// <summary>
+        /// Referencia estática al CoreService para acceso desde ProcessExit.
+        /// </summary>
+        private static CoreService _coreService;
+
+        /// <summary>
         /// Método Main: arranque de la aplicación Windows.
         /// </summary>
         [STAThread]
@@ -38,7 +43,7 @@ namespace AZCKeeper_Cliente
             AppDomain.CurrentDomain.ProcessExit += (s, e) =>
             {
                 LocalLogger.Info("Program: ProcessExit detectado. Ejecutando flush final...");
-                // coreService.Stop() se llamará automáticamente al salir del using
+                _coreService?.Stop(); // Llama Stop() si coreService fue creado
             };
             // Mutex para asegurar que sólo haya una instancia del cliente.
             using (var mutex = new Mutex(initiallyOwned: true, name: SingleInstanceMutexName, createdNew: out bool isNewInstance))
@@ -56,13 +61,13 @@ namespace AZCKeeper_Cliente
                     Application.SetCompatibleTextRenderingDefault(false);
 
                     // Núcleo de la aplicación.
-                    var coreService = new CoreService();
+                    _coreService = new CoreService();
 
                     // Secuencia de inicialización del núcleo (config, logger, API, módulos, etc.).
-                    coreService.Initialize();
+                    _coreService.Initialize();
 
                     // Arranque de módulos (timers, trackers, etc.).
-                    coreService.Start();
+                    _coreService.Start();
 
                     // ApplicationContext mínimo sin formularios principales visibles.
                     using (var context = new ApplicationContext())
@@ -71,7 +76,7 @@ namespace AZCKeeper_Cliente
                     }
 
                     // Al salir del loop de mensajes, detenemos ordenadamente los módulos.
-                    coreService.Stop();
+                    _coreService.Stop();
                 }
                 catch (Exception ex)
                 {

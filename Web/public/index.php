@@ -44,8 +44,8 @@ if ($endpoint === '') $endpoint = '/';
 $routes = [
   'GET' => [
     '/health' => [Keeper\Endpoints\Health::class, 'handle'],
-    '/client/activity-day' => [Keeper\Endpoints\ActivityDay::class, 'handleGet'], 
-    '/client/version', [Keeper\Endpoints\ClientVersion::class, 'handle'],
+    '/client/activity-day' => [Keeper\Endpoints\ActivityDay::class, 'handleGet'],
+    '/client/version' => [Keeper\Endpoints\ClientVersion::class, 'handle'],
   ],
   'POST' => [
     '/client/handshake' => [Keeper\Endpoints\ClientHandshake::class, 'handle'],
@@ -54,7 +54,7 @@ $routes = [
     '/client/window-episode' => [Keeper\Endpoints\WindowEpisode::class, 'handle'],
     '/client/event' => [Keeper\Endpoints\EventIngest::class, 'handle'],
     '/client/device-lock/status' => [Keeper\Endpoints\DeviceLock::class, 'getStatus'],
-    '/client/device-lock/unlock', [Keeper\Endpoints\DeviceLock::class, 'tryUnlock'],
+    '/client/device-lock/unlock' => [Keeper\Endpoints\DeviceLock::class, 'tryUnlock'],
     '/client/force-handshake' => [Keeper\Endpoints\ForceHandshake::class, 'handle'],
   ],
 ];
