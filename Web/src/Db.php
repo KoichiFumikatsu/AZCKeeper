@@ -20,6 +20,10 @@ class Db {
       PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
       PDO::ATTR_EMULATE_PREPARES => false
     ]);
+    
+    // Forzar utf8mb4 en la conexión para evitar errores de collation
+    self::$pdo->exec("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
+    
     return self::$pdo;
   }
 }

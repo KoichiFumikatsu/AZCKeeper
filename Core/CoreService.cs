@@ -693,21 +693,17 @@ namespace AZCKeeper_Cliente.Core
                     Startup.StartupManager.EnableStartup();
             }
 
-            // -------------------- UpdateManager --------------------
-            if (updatesConfig != null && updatesConfig.EnableAutoUpdate)
-            {
-                _updateManager = new UpdateManager(_configManager, _apiClient, updatesConfig.CheckIntervalMinutes);
-            }
-            // -------------------- Hooks / Blocking / Updates / Debug --------------------
+            // -------------------- Hooks / Blocking / Debug --------------------
             if (modulesConfig.EnableKeyboardHook) _keyboardHook = new KeyboardHook();
             if (modulesConfig.EnableMouseHook) _mouseHook = new MouseHook();
             if (modulesConfig.EnableBlocking) _keyBlocker = new KeyBlocker(_apiClient);
-            // ✅ CORRECTO
+            
+            // -------------------- UpdateManager --------------------
             if (modulesConfig.EnableUpdateManager)
             {
                 int intervalMinutes = updatesConfig?.CheckIntervalMinutes ?? 60;
-
                 _updateManager = new UpdateManager(_configManager, _apiClient, intervalMinutes);
+                LocalLogger.Info("CoreService: UpdateManager creado.");
             }
 
             if (modulesConfig.EnableDebugWindow)
