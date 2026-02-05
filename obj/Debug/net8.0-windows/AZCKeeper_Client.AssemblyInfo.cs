@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("AZCKeeper_Client")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+81d37882abbafa25f2d7e2c0f7c29b5a08855c7d")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+96da139423d9b91a66f4b79dea903fa5106614af")]
 [assembly: System.Reflection.AssemblyProductAttribute("AZCKeeper_Client")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AZCKeeper_Client")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

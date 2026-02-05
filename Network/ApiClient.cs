@@ -861,8 +861,6 @@ namespace AZCKeeper_Cliente.Network
             public bool EnableWindowTracking { get; set; }
             public bool EnableProcessTracking { get; set; }
             public bool EnableBlocking { get; set; }
-            public bool EnableKeyboardHook { get; set; }
-            public bool EnableMouseHook { get; set; }
             public bool EnableUpdateManager { get; set; }
             public bool EnableDebugWindow { get; set; }
 
