@@ -28,6 +28,7 @@ $devices = $pdo->query("
             <a href="index.php">Dashboard</a>
             <a href="devices.php" class="active">Dispositivos</a>
             <a href="policies.php">Políticas</a>
+            <a href="releases.php">Releases</a>
         </div>
     </nav>
  

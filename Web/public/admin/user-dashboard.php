@@ -441,6 +441,7 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
             <a href="index.php">Dashboard</a>
             <a href="users.php">Usuarios</a>
             <a href="user-dashboard.php?id=<?= $userId ?>" class="active">Reporte</a>
+            <a href="releases.php">Releases</a>
         </div>
     </nav>
  

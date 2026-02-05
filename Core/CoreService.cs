@@ -42,6 +42,7 @@ namespace AZCKeeper_Cliente.Core
         // --- UI ---
         private DebugWindowForm _debugWindow; // ventana de diagnóstico
         private LoginForm _loginForm;         // UI de login
+        private readonly System.Threading.SynchronizationContext _uiContext; // Thread de UI
 
         // --- Timers/flush ---
         private System.Timers.Timer _activityFlushTimer; // envío periódico activity-day
@@ -52,6 +53,47 @@ namespace AZCKeeper_Cliente.Core
         private System.Timers.Timer _handshakeTimer; // handshake periódico
         private DateTime _lastHandshakeTime = DateTime.MinValue; // último handshake ok
         private bool _hasSuccessfulHandshake = false; // flag para primer handshake exitoso
+
+        /// <summary>
+        /// Constructor: captura el SynchronizationContext del thread de UI
+        /// </summary>
+        public CoreService()
+        {
+            _uiContext = System.Threading.SynchronizationContext.Current;
+        }
+
+        /// <summary>
+        /// Ejecuta una acción en el thread de UI de forma segura
+        /// </summary>
+        private void RunOnUiThread(Action action)
+        {
+            if (_uiContext != null)
+            {
+                _uiContext.Post(_ =>
+                {
+                    try
+                    {
+                        action();
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Error(ex, "CoreService.RunOnUiThread(): error ejecutando acción.");
+                    }
+                }, null);
+            }
+            else
+            {
+                // Fallback: ejecutar directamente si no hay context
+                try
+                {
+                    action();
+                }
+                catch (Exception ex)
+                {
+                    LocalLogger.Error(ex, "CoreService.RunOnUiThread(): error en fallback.");
+                }
+            }
+        }
 
         /// <summary>
         /// Inicializa servicios base, carga config/token, crea ApiClient y módulos.
@@ -132,10 +174,15 @@ namespace AZCKeeper_Cliente.Core
                 // 3) Flush periódico
                 StartActivityFlushTimer();
                 StartHandshakeTimer();
-                if (_debugWindow != null && !_debugWindow.IsDisposed)
+                
+                var debugWindowToShow = _debugWindow;
+                if (debugWindowToShow != null && !debugWindowToShow.IsDisposed)
                 {
-                    try { _debugWindow.Show(); }
-                    catch (Exception ex) { LocalLogger.Error(ex, "CoreService.Start(): error DebugWindow."); }
+                    RunOnUiThread(() =>
+                    {
+                        if (debugWindowToShow != null && !debugWindowToShow.IsDisposed)
+                            debugWindowToShow.Show();
+                    });
                 }
 
                 if (_loginForm != null && !_loginForm.IsDisposed)
@@ -484,6 +531,53 @@ namespace AZCKeeper_Cliente.Core
                     modules.CallTitleKeywords = effective.Modules.CallTitleKeywords ?? modules.CallTitleKeywords;
 
                     _configManager.CurrentConfig.Modules = modules;
+
+                    if (!modules.EnableDebugWindow)
+                    {
+                        var debugWindowToClose = _debugWindow;
+                        if (debugWindowToClose != null && !debugWindowToClose.IsDisposed)
+                        {
+                            RunOnUiThread(() =>
+                            {
+                                if (debugWindowToClose != null && !debugWindowToClose.IsDisposed)
+                                    debugWindowToClose.Close();
+                            });
+                        }
+
+                        _debugWindow = null;
+                    }
+                    else
+                    {
+                        if (_debugWindow == null || _debugWindow.IsDisposed)
+                        {
+                            if (_activityTracker == null)
+                            {
+                                LocalLogger.Warn("CoreService.PerformHandshake(): DebugWindow habilitado pero ActivityTracker no iniciado.");
+                            }
+                            else
+                            {
+                                RunOnUiThread(() =>
+                                {
+                                    if (_debugWindow == null || _debugWindow.IsDisposed)
+                                    {
+                                        _debugWindow = new DebugWindowForm(_activityTracker, _windowTracker, () => _lastHandshakeTime);
+                                        _debugWindow.Show();
+                                    }
+                                });
+                            }
+                        }
+                        else if (!_debugWindow.IsDisposed)
+                        {
+                            var debugWindowToShow = _debugWindow;
+                            RunOnUiThread(() =>
+                            {
+                                if (debugWindowToShow != null && !debugWindowToShow.IsDisposed && !debugWindowToShow.Visible)
+                                {
+                                    debugWindowToShow.Show();
+                                }
+                            });
+                        }
+                    }
                 }
                 // -------------------- Timers --------------------
                 if (effective.Timers != null)
@@ -714,7 +808,27 @@ namespace AZCKeeper_Cliente.Core
                 }
                 else
                 {
-                    _debugWindow = new DebugWindowForm(_activityTracker, _windowTracker, () => _lastHandshakeTime);
+                    try
+                    {
+                        // Crear ventana de debug en el thread de UI
+                        var openForms = System.Windows.Forms.Application.OpenForms;
+                        if (openForms.Count > 0 && openForms[0].InvokeRequired)
+                        {
+                            openForms[0].Invoke(new Action(() =>
+                            {
+                                _debugWindow = new DebugWindowForm(_activityTracker, _windowTracker, () => _lastHandshakeTime);
+                            }));
+                        }
+                        else
+                        {
+                            // Sin Forms o ya en thread UI
+                            _debugWindow = new DebugWindowForm(_activityTracker, _windowTracker, () => _lastHandshakeTime);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Error(ex, "CoreService.InitializeModules(): error creando DebugWindow.");
+                    }
                 }
             }
         }

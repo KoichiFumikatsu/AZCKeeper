@@ -2,23 +2,45 @@
 namespace Keeper\Endpoints;
  
 use Keeper\Http;
+use Keeper\Repos\ReleaseRepo;
  
 class ClientVersion
 {
     public static function handle(): void
-    {        
-        $latestVersion = '3.0.0.1';
-        $downloadUrl = 'https://github.com/KoichiFumikatsu/AZCKeeper/releases/download/v3.0.0.1/AZCKeeper_v3.0.0.1.zip';
+    {
+        // Check if client wants beta versions (from query param or JSON body)
+        $allowBeta = false;
         
-    Http::json(200, [
+        if (isset($_GET['allowBeta'])) {
+            $allowBeta = filter_var($_GET['allowBeta'], FILTER_VALIDATE_BOOLEAN);
+        } else {
+            $body = file_get_contents('php://input');
+            if ($body) {
+                $data = json_decode($body, true);
+                $allowBeta = $data['allowBetaVersions'] ?? false;
+            }
+        }
+        
+        // Get latest release from database
+        $release = ReleaseRepo::getLatestRelease($allowBeta);
+        
+        if (!$release) {
+            Http::json(500, [
+                'ok' => false,
+                'error' => 'No releases available'
+            ]);
+            return;
+        }
+        
+        Http::json(200, [
             'ok' => true,
-            'latestVersion' => $latestVersion,
-            'downloadUrl' => $downloadUrl,
-            'fileSize' => 0, 
-            'releaseNotes' => 'Ensayo de la nueva versión 3.0.0.1 con mejoras en estabilidad y rendimiento.',
-            'forceUpdate' => false,
-            'minimumVersion' => '3.0.0.0',
-            'releaseDate' => '2026-01-21'
+            'latestVersion' => $release['version'],
+            'downloadUrl' => $release['download_url'],
+            'fileSize' => (int)$release['file_size'], 
+            'releaseNotes' => $release['release_notes'] ?? '',
+            'forceUpdate' => (bool)$release['force_update'],
+            'minimumVersion' => $release['minimum_version'] ?? '3.0.0.0',
+            'releaseDate' => $release['release_date'] ?? date('Y-m-d')
         ]);
     }
 }

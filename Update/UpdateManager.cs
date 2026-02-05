@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Net.Http;
 using System.Text.Json;
 using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 using AZCKeeper_Cliente.Logging;
 using AZCKeeper_Cliente.Config;
@@ -25,6 +26,7 @@ namespace AZCKeeper_Cliente.Update
         private readonly ApiClient _apiClient;
         private int _intervalMinutes;
         private bool _isDownloading = false;
+        private readonly SemaphoreSlim _checkGate = new SemaphoreSlim(1, 1);
 
         /// <summary>
         /// Crea el manager con config, ApiClient y el intervalo en minutos.
@@ -51,6 +53,7 @@ namespace AZCKeeper_Cliente.Update
                 return;
             }
 
+            _intervalMinutes = Math.Max(1, _intervalMinutes);
             _timer = new System.Timers.Timer(_intervalMinutes * 60_000);
             _timer.Elapsed += async (s, e) => await CheckForUpdatesAsync();
             _timer.Start();
@@ -76,11 +79,11 @@ namespace AZCKeeper_Cliente.Update
         /// </summary>
         public void UpdateInterval(int minutes)
         {
-            _intervalMinutes = minutes;
+            _intervalMinutes = Math.Max(1, minutes);
             if (_timer != null)
             {
-                _timer.Interval = minutes * 60_000;
-                LocalLogger.Info($"UpdateManager: intervalo actualizado a {minutes}min.");
+                _timer.Interval = _intervalMinutes * 60_000;
+                LocalLogger.Info($"UpdateManager: intervalo actualizado a {_intervalMinutes}min.");
             }
         }
 
@@ -90,6 +93,7 @@ namespace AZCKeeper_Cliente.Update
         private async Task CheckForUpdatesAsync()
         {
             if (_isDownloading) return;
+            if (!await _checkGate.WaitAsync(0)) return;
 
             try
             {
@@ -143,6 +147,10 @@ namespace AZCKeeper_Cliente.Update
             catch (Exception ex)
             {
                 LocalLogger.Error(ex, "UpdateManager: error al verificar actualizaciones.");
+            }
+            finally
+            {
+                _checkGate.Release();
             }
         }
         /// <summary>
@@ -211,6 +219,9 @@ namespace AZCKeeper_Cliente.Update
             catch (Exception ex)
             {
                 LocalLogger.Error(ex, "UpdateManager: error al descargar/instalar actualización.");
+            }
+            finally
+            {
                 _isDownloading = false;
             }
         }

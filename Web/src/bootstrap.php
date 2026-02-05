@@ -18,6 +18,7 @@ require_once __DIR__ . '/Repos/HandshakeRepo.php';
 require_once __DIR__ . '/Repos/AuditRepo.php';
 require_once __DIR__ . '/Repos/UserRepo.php';
 require_once __DIR__ . '/Repos/LegacyAuthRepo.php';
+require_once __DIR__ . '/Repos/ReleaseRepo.php';
 
 // Endpoints
 require_once __DIR__ . '/Endpoints/Health.php';
