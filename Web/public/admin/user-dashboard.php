@@ -1,42 +1,47 @@
 <?php
 require_once __DIR__ . '/../../src/bootstrap.php';
+
+use Keeper\InputValidator;
  
-$userId = (int)($_GET['id'] ?? 0);
+$userId = InputValidator::validateInt($_GET['id'] ?? 0, 0, 1);
 if (!$userId) die('User ID requerido');
  
 $pdo = Keeper\Db::pdo();
  
-// Obtener usuario
+// Obtener usuario con prepared statement
 $user = $pdo->prepare("SELECT id, cc, display_name, email FROM keeper_users WHERE id = ?");
 $user->execute([$userId]);
 $user = $user->fetch(PDO::FETCH_ASSOC);
 if (!$user) die('Usuario no encontrado');
  
-// Filtros y paginación
-$dateFrom = $_GET['date_from'] ?? date('Y-m-01');
-$dateTo = $_GET['date_to'] ?? date('Y-m-d');
-$export = $_GET['export'] ?? null;
+// Filtros validados
+$dateFrom = InputValidator::validateDate($_GET['date_from'] ?? '', date('Y-m-01'));
+$dateTo = InputValidator::validateDate($_GET['date_to'] ?? '', date('Y-m-d'));
+$export = InputValidator::validateEnum($_GET['export'] ?? '', ['csv'], '');
  
-// Paginación
-$pageDays = max(1, (int)($_GET['page_days'] ?? 1));
-$pageWindows = max(1, (int)($_GET['page_windows'] ?? 1));
-$perPageDays = 31; // Mostrar hasta un mes
-$perPageWindows = 10; // 50 ventanas por página
+// Paginación validada
+$pageDays = InputValidator::validateInt($_GET['page_days'] ?? 1, 1, 1, 1000);
+$pageWindows = InputValidator::validateInt($_GET['page_windows'] ?? 1, 1, 1, 1000);
+$perPageDays = 31;
+$perPageWindows = 10;
  
 // Dispositivos del usuario
-$devices = $pdo->prepare("SELECT id, device_guid, device_name FROM keeper_devices WHERE user_id = ?");
-$devices->execute([$userId]);
-$devices = $devices->fetchAll(PDO::FETCH_ASSOC);
+$stmt = $pdo->prepare("SELECT id, device_guid, device_name FROM keeper_devices WHERE user_id = ?");
+$stmt->execute([$userId]);
+$devices = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $deviceIds = array_column($devices, 'id');
  
 if (empty($deviceIds)) {
-    $deviceIdsStr = '0';
+    $deviceIdsPlaceholders = '0';
+    $deviceIdsParams = [];
 } else {
-    $deviceIdsStr = implode(',', $deviceIds);
+    $deviceIds = InputValidator::validateIntArray($deviceIds);
+    $deviceIdsPlaceholders = implode(',', array_fill(0, count($deviceIds), '?'));
+    $deviceIdsParams = $deviceIds;
 }
  
 // ==================== RESUMEN GENERAL ====================
-$summary = $pdo->query("
+$stmt = $pdo->prepare("
     SELECT 
         SUM(active_seconds) as total_active,
         SUM(idle_seconds) as total_idle,
@@ -51,24 +56,28 @@ $summary = $pdo->query("
         COUNT(DISTINCT CASE WHEN is_workday = 1 THEN day_date END) as days_worked,
         COUNT(DISTINCT CASE WHEN is_workday = 0 THEN day_date END) as weekend_days
     FROM keeper_activity_day
-    WHERE user_id = {$userId}
-    AND device_id IN ({$deviceIdsStr})
-    AND day_date BETWEEN '{$dateFrom}' AND '{$dateTo}'
-")->fetch(PDO::FETCH_ASSOC);
+    WHERE user_id = ?
+    AND device_id IN ({$deviceIdsPlaceholders})
+    AND day_date BETWEEN ? AND ?
+");
+$stmt->execute(array_merge([$userId], $deviceIdsParams, [$dateFrom, $dateTo]));
+$summary = $stmt->fetch(PDO::FETCH_ASSOC);
  
 // ==================== ACTIVIDAD POR DÍA (CON PAGINACIÓN) ====================
-$totalDays = $pdo->query("
+$stmt = $pdo->prepare("
     SELECT COUNT(DISTINCT day_date) as total
     FROM keeper_activity_day
-    WHERE user_id = {$userId}
-    AND device_id IN ({$deviceIdsStr})
-    AND day_date BETWEEN '{$dateFrom}' AND '{$dateTo}'
-")->fetch()['total'];
+    WHERE user_id = ?
+    AND device_id IN ({$deviceIdsPlaceholders})
+    AND day_date BETWEEN ? AND ?
+");
+$stmt->execute(array_merge([$userId], $deviceIdsParams, [$dateFrom, $dateTo]));
+$totalDays = $stmt->fetch()['total'];
  
 $offsetDays = ($pageDays - 1) * $perPageDays;
 $totalPagesDays = ceil($totalDays / $perPageDays);
  
-$dailyActivity = $pdo->query("
+$stmt = $pdo->prepare("
     SELECT 
         day_date,
         is_workday,
@@ -81,44 +90,50 @@ $dailyActivity = $pdo->query("
         SUM(after_hours_active_seconds) as after_active,
         SUM(call_seconds) as call_time
     FROM keeper_activity_day
-    WHERE user_id = {$userId}
-    AND device_id IN ({$deviceIdsStr})
-    AND day_date BETWEEN '{$dateFrom}' AND '{$dateTo}'
+    WHERE user_id = ?
+    AND device_id IN ({$deviceIdsPlaceholders})
+    AND day_date BETWEEN ? AND ?
     GROUP BY day_date, is_workday
     ORDER BY day_date DESC
-    LIMIT {$perPageDays} OFFSET {$offsetDays}
-")->fetchAll(PDO::FETCH_ASSOC);
+    LIMIT ? OFFSET ?
+");
+$stmt->execute(array_merge([$userId], $deviceIdsParams, [$dateFrom, $dateTo, $perPageDays, $offsetDays]));
+$dailyActivity = $stmt->fetchAll(PDO::FETCH_ASSOC);
  
 // ==================== TOP VENTANAS ====================
-$topWindows = $pdo->query("
+$stmt = $pdo->prepare("
     SELECT 
         process_name,
         window_title,
         COUNT(*) as visit_count,
         SUM(duration_seconds) as total_duration
     FROM keeper_window_episode
-    WHERE user_id = {$userId}
-    AND device_id IN ({$deviceIdsStr})
-    AND day_date BETWEEN '{$dateFrom}' AND '{$dateTo}'
+    WHERE user_id = ?
+    AND device_id IN ({$deviceIdsPlaceholders})
+    AND day_date BETWEEN ? AND ?
     AND process_name IS NOT NULL
     GROUP BY process_name, window_title
     ORDER BY total_duration DESC
     LIMIT 50
-")->fetchAll(PDO::FETCH_ASSOC);
+");
+$stmt->execute(array_merge([$userId], $deviceIdsParams, [$dateFrom, $dateTo]));
+$topWindows = $stmt->fetchAll(PDO::FETCH_ASSOC);
  
 // ==================== VENTANAS RECIENTES (CON PAGINACIÓN) ====================
-$totalWindows = $pdo->query("
+$stmt = $pdo->prepare("
     SELECT COUNT(*) as total
     FROM keeper_window_episode
-    WHERE user_id = {$userId}
-    AND device_id IN ({$deviceIdsStr})
-    AND day_date BETWEEN '{$dateFrom}' AND '{$dateTo}'
-")->fetch()['total'];
+    WHERE user_id = ?
+    AND device_id IN ({$deviceIdsPlaceholders})
+    AND day_date BETWEEN ? AND ?
+");
+$stmt->execute(array_merge([$userId], $deviceIdsParams, [$dateFrom, $dateTo]));
+$totalWindows = $stmt->fetch()['total'];
  
 $offsetWindows = ($pageWindows - 1) * $perPageWindows;
 $totalPagesWindows = ceil($totalWindows / $perPageWindows);
  
-$recentWindows = $pdo->query("
+$stmt = $pdo->prepare("
     SELECT 
         process_name,
         window_title,
@@ -127,34 +142,40 @@ $recentWindows = $pdo->query("
         duration_seconds,
         is_in_call
     FROM keeper_window_episode
-    WHERE user_id = {$userId}
-    AND device_id IN ({$deviceIdsStr})
-    AND day_date BETWEEN '{$dateFrom}' AND '{$dateTo}'
+    WHERE user_id = ?
+    AND device_id IN ({$deviceIdsPlaceholders})
+    AND day_date BETWEEN ? AND ?
     ORDER BY start_at DESC
-    LIMIT {$perPageWindows} OFFSET {$offsetWindows}
-")->fetchAll(PDO::FETCH_ASSOC);
+    LIMIT ? OFFSET ?
+");
+$stmt->execute(array_merge([$userId], $deviceIdsParams, [$dateFrom, $dateTo, $perPageWindows, $offsetWindows]));
+$recentWindows = $stmt->fetchAll(PDO::FETCH_ASSOC);
  
 // ==================== EXPORTAR A CSV ====================
 if ($export === 'csv') {
     // Obtener TODOS los datos sin paginación para export
-    $allDailyActivity = $pdo->query("
+    $stmt = $pdo->prepare("
         SELECT day_date, SUM(active_seconds) as active, SUM(idle_seconds) as idle,
                SUM(work_hours_active_seconds) as work_active, SUM(work_hours_idle_seconds) as work_idle,
                SUM(lunch_active_seconds) as lunch_active, SUM(lunch_idle_seconds) as lunch_idle,
                SUM(after_hours_active_seconds) as after_active, SUM(call_seconds) as call_time
         FROM keeper_activity_day
-        WHERE user_id = {$userId} AND device_id IN ({$deviceIdsStr})
-        AND day_date BETWEEN '{$dateFrom}' AND '{$dateTo}'
+        WHERE user_id = ? AND device_id IN ({$deviceIdsPlaceholders})
+        AND day_date BETWEEN ? AND ?
         GROUP BY day_date ORDER BY day_date DESC
-    ")->fetchAll(PDO::FETCH_ASSOC);
+    ");
+    $stmt->execute(array_merge([$userId], $deviceIdsParams, [$dateFrom, $dateTo]));
+    $allDailyActivity = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    $allTopWindows = $pdo->query("
+    $stmt = $pdo->prepare("
         SELECT process_name, window_title, COUNT(*) as visit_count, SUM(duration_seconds) as total_duration
         FROM keeper_window_episode
-        WHERE user_id = {$userId} AND device_id IN ({$deviceIdsStr})
-        AND day_date BETWEEN '{$dateFrom}' AND '{$dateTo}' AND process_name IS NOT NULL
+        WHERE user_id = ? AND device_id IN ({$deviceIdsPlaceholders})
+        AND day_date BETWEEN ? AND ? AND process_name IS NOT NULL
         GROUP BY process_name, window_title ORDER BY total_duration DESC
-    ")->fetchAll(PDO::FETCH_ASSOC);
+    ");
+    $stmt->execute(array_merge([$userId], $deviceIdsParams, [$dateFrom, $dateTo]));
+    $allTopWindows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="reporte_' . $user['cc'] . '_' . $dateFrom . '_' . $dateTo . '.csv"');

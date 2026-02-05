@@ -182,7 +182,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <?php foreach ($devices as $dev): ?>
                         <div class="device-item">
                             🖥️ <?= htmlspecialchars($dev['device_name']) ?> 
-                            <small style="color: #666;">(Última vez: <?= $dev['last_seen_at'] ?>)</small>
+                            <small style="color: #666;">(Última vez: <?= htmlspecialchars($dev['last_seen_at']) ?>)</small>
                         </div>
                     <?php endforeach; ?>
                 <?php endif; ?>

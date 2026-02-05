@@ -1,5 +1,7 @@
 <?php
 require_once __DIR__ . '/../../src/bootstrap.php';
+
+use Keeper\InputValidator;
  
 $pdo = Keeper\Db::pdo();
  
@@ -76,14 +78,19 @@ function getConfig($array, $key, $default = null) {
  
 // PROCESAR FORMULARIO
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Validar inputs
+    $apiBaseUrl = filter_var(trim($_POST['api_base_url'] ?? ''), FILTER_VALIDATE_URL) ?: $config['apiBaseUrl'];
+    $logLevel = InputValidator::validateEnum($_POST['log_level'] ?? 'Info', ['Trace', 'Debug', 'Info', 'Warn', 'Error'], 'Info');
+    $logOverride = InputValidator::validateEnum($_POST['log_override'] ?? '', ['Trace', 'Debug', 'Info', 'Warn', 'Error', ''], '');
+    
     $newConfig = [
-        'apiBaseUrl' => trim($_POST['api_base_url'] ?? $config['apiBaseUrl']), 
+        'apiBaseUrl' => $apiBaseUrl,
         'logging' => [
-            'globalLevel' => $_POST['log_level'] ?? 'Info',
-            'clientOverrideLevel' => $_POST['log_override'] ?: null,
+            'globalLevel' => $logLevel,
+            'clientOverrideLevel' => $logOverride ?: null,
             'enableFileLogging' => isset($_POST['log_file']),
             'enableDiscordLogging' => isset($_POST['log_discord']),
-            'discordWebhookUrl' => $_POST['discord_webhook'] ?: null
+            'discordWebhookUrl' => filter_var($_POST['discord_webhook'] ?? '', FILTER_VALIDATE_URL) ?: null
         ],
         'modules' => [
             'enableActivityTracking' => isset($_POST['mod_activity']),
@@ -96,10 +103,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'enableDebugWindow' => isset($_POST['mod_debug']),
             'enableCallTracking' => isset($_POST['mod_call_tracking']),
             'countCallsAsActive' => isset($_POST['mod_count_calls']),
-            'callActiveMaxIdleSeconds' => (float)($_POST['call_max_idle'] ?? 1800),
-            'activityIntervalSeconds' => (float)($_POST['activity_interval'] ?? 1),
-            'activityInactivityThresholdSeconds' => (float)($_POST['activity_threshold'] ?? 15),
-            'windowTrackingIntervalSeconds' => (float)($_POST['window_interval'] ?? 2),
+            'callActiveMaxIdleSeconds' => InputValidator::validateInt($_POST['call_max_idle'] ?? 1800, 1800, 60, 86400),
+            'activityIntervalSeconds' => InputValidator::validateInt($_POST['activity_interval'] ?? 1, 1, 1, 60),
+            'activityInactivityThresholdSeconds' => InputValidator::validateInt($_POST['activity_threshold'] ?? 15, 15, 5, 3600),
+            'windowTrackingIntervalSeconds' => InputValidator::validateInt($_POST['window_interval'] ?? 2, 2, 1, 60),
             'callProcessKeywords' => array_filter(array_map('trim', explode(',', $_POST['call_processes'] ?? ''))),
             'callTitleKeywords' => array_filter(array_map('trim', explode(',', $_POST['call_titles'] ?? '')))
         ],
@@ -109,26 +116,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ],
         'updates' => [
             'enableAutoUpdate' => isset($_POST['updates_auto']),
-            'checkIntervalMinutes' => (int)($_POST['updates_interval'] ?? 60),
+            'checkIntervalMinutes' => InputValidator::validateInt($_POST['updates_interval'] ?? 60, 60, 5, 1440),
             'autoDownload' => isset($_POST['updates_auto_download']),
             'allowBetaVersions' => isset($_POST['updates_beta'])
         ],
         'blocking' => [
             'enableDeviceLock' => isset($_POST['blocking_enable']),
-            'lockMessage' => $_POST['blocking_message'] ?? 'Bloqueado',
+            'lockMessage' => substr(trim($_POST['blocking_message'] ?? 'Bloqueado'), 0, 500),
             'allowUnlockWithPin' => isset($_POST['blocking_allow_pin']),
-            // IMPORTANTE: si blocking_pin viene vacío, mantener el anterior
-            'unlockPin' => !empty($_POST['blocking_pin']) ? $_POST['blocking_pin'] : ($config['blocking']['unlockPin'] ?? null)
+            'unlockPin' => !empty($_POST['blocking_pin']) ? preg_replace('/[^0-9]/', '', $_POST['blocking_pin']) : ($config['blocking']['unlockPin'] ?? null)
         ],
         'timers' => [
-            'activityFlushIntervalSeconds' => (int)($_POST['timer_flush'] ?? 6),
-            'handshakeIntervalMinutes' => (int)($_POST['timer_handshake'] ?? 5),
-            'offlineQueueRetrySeconds' => (int)($_POST['timer_retry'] ?? 30)
+            'activityFlushIntervalSeconds' => InputValidator::validateInt($_POST['timer_flush'] ?? 6, 6, 1, 60),
+            'handshakeIntervalMinutes' => InputValidator::validateInt($_POST['timer_handshake'] ?? 5, 5, 1, 60),
+            'offlineQueueRetrySeconds' => InputValidator::validateInt($_POST['timer_retry'] ?? 30, 30, 5, 300)
         ]
     ];
     
-    // Desactivar políticas globales anteriores
-    $pdo->query("UPDATE keeper_policy_assignments SET is_active = 0 WHERE scope = 'global'");
+    // Desactivar políticas globales anteriores usando prepared statement
+    $stmt = $pdo->prepare("UPDATE keeper_policy_assignments SET is_active = 0 WHERE scope = ?");
+    $stmt->execute(['global']);
     
     // Crear nueva política global
     $stmt = $pdo->prepare("
@@ -142,7 +149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
  
-// Contar usuarios afectados
+// Contar usuarios afectados (query sin parámetros)
 $affectedUsers = $pdo->query("
     SELECT COUNT(*) as count FROM keeper_users u
     WHERE u.status = 'active' 

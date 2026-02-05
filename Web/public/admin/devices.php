@@ -2,7 +2,9 @@
 require_once __DIR__ . '/../../src/bootstrap.php';
 
 $pdo = Keeper\Db::pdo();
- $devices = $pdo->query("
+
+// Query sin parámetros externos - no vulnerable pero convertido por consistencia
+$devices = $pdo->query("
     SELECT 
         d.id, d.device_name, d.device_guid, d.status, d.last_seen_at,
         u.display_name, u.legacy_employee_id,
@@ -48,22 +50,21 @@ $pdo = Keeper\Db::pdo();
                 <tr class="<?= $device['is_locked'] ? 'row-locked' : '' ?>">
                     <td>
                         <?= htmlspecialchars($device['display_name']) ?>
-                        <small>(<?= $device['legacy_employee_id'] ?>)</small>
+                        <small>(<?= htmlspecialchars($device['legacy_employee_id']) ?>)</small>
                     </td>
                     <td><?= htmlspecialchars($device['device_name']) ?></td>
                     <td>
-                        <span class="badge badge-<?= $device['status'] ?>">
-                            <?= $device['status'] ?>
+                        <span class="badge badge-<?= htmlspecialchars($device['status']) ?>">
+                            <?= htmlspecialchars($device['status']) ?>
                         </span>
                     </td>
-                    <td><?= $device['last_seen_at'] ?></td>
+                    <td><?= htmlspecialchars($device['last_seen_at']) ?></td>
                     <td>
                         <?= $device['is_locked'] ? '🔒 Sí' : '✓ No' ?>
                     </td>
                     <td>
-                        <a href="device-detail.php?id=<?= $device['id'] ?>" class="btn btn-sm">
-                            Administrar
-                        </a>
+                        <!-- Administración de dispositivos individual eliminada -->
+                        <span class="badge badge-secondary">Info</span>
                     </td>
                 </tr>
                 <?php endforeach; ?>

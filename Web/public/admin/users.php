@@ -33,8 +33,8 @@ if (!tienePermiso($conn, $usuario_actual['id'], $usuario_actual['role'], $usuari
 */ 
  $pdo = Keeper\Db::pdo();
 
-// Listar usuarios con conteo de dispositivos
- $users = $pdo->query("
+// Listar usuarios con info de dispositivo actual
+$users = $pdo->query("
     SELECT 
         u.id, 
         u.cc,
@@ -43,7 +43,17 @@ if (!tienePermiso($conn, $usuario_actual['id'], $usuario_actual['role'], $usuari
         u.status,
         COUNT(DISTINCT d.id) as device_count,
         MAX(d.last_seen_at) as last_activity,
-        (SELECT COUNT(*) FROM keeper_policy_assignments WHERE scope='user' AND user_id=u.id AND is_active=1) as has_policy
+        (SELECT COUNT(*) FROM keeper_policy_assignments WHERE scope='user' AND user_id=u.id AND is_active=1) as has_policy,
+        -- Equipo actual (último activo)
+        (SELECT d2.device_name FROM keeper_devices d2 
+         WHERE d2.user_id = u.id AND d2.status = 'active' 
+         ORDER BY d2.last_seen_at DESC LIMIT 1) as current_device_name,
+        (SELECT d2.device_guid FROM keeper_devices d2 
+         WHERE d2.user_id = u.id AND d2.status = 'active' 
+         ORDER BY d2.last_seen_at DESC LIMIT 1) as current_device_guid,
+        (SELECT d2.last_seen_at FROM keeper_devices d2 
+         WHERE d2.user_id = u.id AND d2.status = 'active' 
+         ORDER BY d2.last_seen_at DESC LIMIT 1) as current_device_last_seen
     FROM keeper_users u
     LEFT JOIN keeper_devices d ON d.user_id = u.id
     WHERE u.status = 'active'
@@ -51,8 +61,26 @@ if (!tienePermiso($conn, $usuario_actual['id'], $usuario_actual['role'], $usuari
     ORDER BY u.display_name
 ")->fetchAll(PDO::FETCH_ASSOC);
 
+// Obtener historial de dispositivos por usuario (para tabla colapsable)
+$devicesHistory = [];
+$devicesStmt = $pdo->query("
+    SELECT 
+        user_id,
+        id,
+        device_name,
+        device_guid,
+        status,
+        last_seen_at,
+        created_at
+    FROM keeper_devices
+    ORDER BY user_id, last_seen_at DESC
+");
+foreach ($devicesStmt as $device) {
+    $devicesHistory[$device['user_id']][] = $device;
+}
+
 // ==================== ESTADÍSTICAS GLOBALES ====================
- $stats = $pdo->query("
+$stats = $pdo->query("
     SELECT 
         COUNT(DISTINCT u.id) as total_users,
         COUNT(DISTINCT d.id) as total_devices,
@@ -64,7 +92,7 @@ if (!tienePermiso($conn, $usuario_actual['id'], $usuario_actual['role'], $usuari
 ")->fetch(PDO::FETCH_ASSOC);
 
 // ==================== ACTIVIDAD AGREGADA ====================
- $activity = $pdo->query("
+$activity = $pdo->query("
     SELECT 
         SUM(active_seconds) as total_active,
         SUM(idle_seconds) as total_idle,
@@ -83,7 +111,7 @@ if (!tienePermiso($conn, $usuario_actual['id'], $usuario_actual['role'], $usuari
 ")->fetch(PDO::FETCH_ASSOC);
 
 // ==================== TOP USUARIOS ACTIVOS ====================
- $topUsers = $pdo->query("
+$topUsers = $pdo->query("
     SELECT 
         u.id,
         u.cc,
@@ -409,20 +437,20 @@ function formatHours($seconds) {
                             <!-- ESTADÍSTICAS GENERALES -->
                             <div class="dashboard-grid">
                                 <div class="stat-card">
-                                    <div class="stat-value"><?= $stats['total_users'] ?></div>
+                                    <div class="stat-value"><?= htmlspecialchars($stats['total_users']) ?></div>
                                     <div class="stat-label">Usuarios Activos</div>
                                 </div>
                                 <div class="stat-card">
 
-                                    <div class="stat-value"><?= $stats['total_devices'] ?></div>
+                                    <div class="stat-value"><?= htmlspecialchars($stats['total_devices']) ?></div>
                                     <div class="stat-label">Dispositivos Totales</div>
                                 </div>
                                 <div class="stat-card">
-                                    <div class="stat-value"><?= $stats['active_devices_24h'] ?></div>
+                                    <div class="stat-value"><?= htmlspecialchars($stats['active_devices_24h']) ?></div>
                                     <div class="stat-label">Activos (24h)</div>
                                 </div>
                                 <div class="stat-card">
-                                    <div class="stat-value"><?= $stats['custom_policies'] ?></div>
+                                    <div class="stat-value"><?= htmlspecialchars($stats['custom_policies']) ?></div>
                                     <div class="stat-label">Políticas Personalizadas</div>
                                 </div>
                             </div>
@@ -430,12 +458,12 @@ function formatHours($seconds) {
                             <!-- DÍAS DE ACTIVIDAD -->
                             <div class="dashboard-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
                                 <div class="stat-card">
-                                    <div class="stat-value" style="color: #27ae60;"><?= $activity['workdays'] ?></div>
+                                    <div class="stat-value" style="color: #27ae60;"><?= htmlspecialchars($activity['workdays']) ?></div>
                                     <div class="stat-label">Días Laborables</div>
                                 </div>
                                 <div class="stat-card">
                                     <div class="stat-value" style="color: #e67e22;">
-                                        <?= $activity['non_workdays'] ?>
+                                        <?= htmlspecialchars($activity['non_workdays']) ?>
                                         <?php if ($activity['non_workdays'] > 0): ?>
                                             <i class="bi bi-exclamation-triangle-fill" style="font-size: 0.7em;" title="Actividad en fin de semana"></i>
                                         <?php endif; ?>
@@ -443,7 +471,7 @@ function formatHours($seconds) {
                                     <div class="stat-label">Fines de Semana Trabajados</div>
                                 </div>
                                 <div class="stat-card">
-                                    <div class="stat-value" style="color: #3498db;"><?= $activity['total_days'] ?></div>
+                                    <div class="stat-value" style="color: #3498db;"><?= htmlspecialchars($activity['total_days']) ?></div>
                                     <div class="stat-label">Total Días Registrados</div>
                                 </div>
                             </div>
@@ -492,16 +520,16 @@ function formatHours($seconds) {
                                         <tbody>
                                             <?php foreach ($topUsers as $idx => $user): ?>
                                             <tr>
-                                                <td><strong><?= $idx + 1 ?></strong></td>
+                                                <td><strong><?= htmlspecialchars($idx + 1) ?></strong></td>
                                                 <td><?= htmlspecialchars($user['cc']) ?></td>
                                                 <td><?= htmlspecialchars($user['display_name']) ?></td>
                                                 <td>
-                                                    <span class="badge bg-success"><?= $user['days_worked'] ?></span>
+                                                    <span class="badge bg-success"><?= htmlspecialchars($user['days_worked']) ?></span>
                                                 </td>
                                                 <td>
                                                     <?php if ($user['weekend_days'] > 0): ?>
                                                         <span class="badge bg-warning text-dark" title="Trabajó en fin de semana">
-                                                            <?= $user['weekend_days'] ?> 
+                                                            <?= htmlspecialchars($user['weekend_days']) ?> 
                                                         </span>
                                                     <?php else: ?>
                                                         <span class="badge bg-secondary">0</span>
@@ -510,7 +538,7 @@ function formatHours($seconds) {
                                                 <td><?= formatSeconds($user['total_active']) ?></td>
                                                 <td><?= formatSeconds($user['work_active']) ?></td>
                                                 <td>
-                                                    <a href="user-dashboard.php?id=<?= $user['id'] ?>" class="btn btn-sm btn-primary"><i class="bi bi-bar-chart"></i> Dashboard</a>
+                                                    <a href="user-dashboard.php?id=<?= htmlspecialchars($user['id']) ?>" class="btn btn-sm btn-primary"><i class="bi bi-bar-chart"></i> Dashboard</a>
                                                 </td>
                                             </tr>
                                             <?php endforeach; ?>
@@ -540,7 +568,7 @@ function formatHours($seconds) {
                                         <th>CC (Cédula)</th>
                                         <th>Nombre</th>
                                         <th>Email</th>
-                                        <th>Dispositivos</th>
+                                        <th>Equipo Actual</th>
                                         <th>Última Actividad</th>
                                         <th>Política</th>
                                         <th>Acciones</th>
@@ -552,8 +580,21 @@ function formatHours($seconds) {
                                         <td><strong><?= htmlspecialchars($user['cc'] ?? 'N/A') ?></strong></td>
                                         <td><?= htmlspecialchars($user['display_name']) ?></td>
                                         <td><?= htmlspecialchars($user['email'] ?? 'N/A') ?></td>
-                                        <td><?= $user['device_count'] ?> equipo(s)</td>
-                                        <td><?= $user['last_activity'] ?? 'Nunca' ?></td>
+                                        <td>
+                                            <?php if ($user['current_device_name']): ?>
+                                                <div>
+                                                    <strong><?= htmlspecialchars($user['current_device_name']) ?></strong>
+                                                    <span class="badge bg-success ms-1">EN USO</span>
+                                                    <br>
+                                                    <small class="text-muted">
+                                                        GUID: <?= htmlspecialchars(substr($user['current_device_guid'], 0, 8)) ?>...
+                                                    </small>
+                                                </div>
+                                            <?php else: ?>
+                                                <span class="text-muted">Sin equipo registrado</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td><?= htmlspecialchars($user['current_device_last_seen'] ?? $user['last_activity'] ?? 'Nunca') ?></td>
                                         <td>
                                             <?php if ($user['has_policy']): ?>
                                                 <span class="badge bg-success">✓ Personalizada</span>
@@ -562,14 +603,83 @@ function formatHours($seconds) {
                                             <?php endif; ?>
                                         </td>
                                         <td>
-                                            <a href="user-config.php?id=<?= $user['id'] ?>" class="btn btn-sm btn-secondary" title="Configurar Política">
+                                            <a href="user-config.php?id=<?= htmlspecialchars($user['id']) ?>" class="btn btn-sm btn-secondary" title="Configurar Política">
                                                 <i class="bi bi-gear"></i> Política
                                             </a>
-                                            <a href="user-dashboard.php?id=<?= $user['id'] ?>" class="btn btn-sm btn-primary" title="Ver Dashboard">
+                                            <a href="user-dashboard.php?id=<?= htmlspecialchars($user['id']) ?>" class="btn btn-sm btn-primary" title="Ver Dashboard">
                                                 <i class="bi bi-bar-chart"></i> Dashboard
                                             </a>
+                                            <?php if ($user['device_count'] > 1): ?>
+                                                <button class="btn btn-sm btn-outline-secondary" type="button" 
+                                                        data-bs-toggle="collapse" 
+                                                        data-bs-target="#devices-history-<?= htmlspecialchars($user['id']) ?>"
+                                                        title="Ver historial de equipos">
+                                                    <i class="bi bi-clock-history"></i> Historial (<?= htmlspecialchars($user['device_count']) ?>)
+                                                </button>
+                                            <?php endif; ?>
                                         </td>
                                     </tr>
+                                    
+                                    <!-- Historial de dispositivos (colapsable) -->
+                                    <?php if (isset($devicesHistory[$user['id']]) && count($devicesHistory[$user['id']]) > 1): ?>
+                                    <tr>
+                                        <td colspan="7" class="p-0">
+                                            <div class="collapse" id="devices-history-<?= htmlspecialchars($user['id']) ?>">
+                                                <div class="card card-body bg-light m-2">
+                                                    <div class="d-flex justify-content-between align-items-center mb-3">
+                                                        <h6 class="mb-0">
+                                                            <i class="bi bi-clock-history"></i> 
+                                                            Historial de Equipos - <?= htmlspecialchars($user['display_name']) ?>
+                                                        </h6>
+                                                        <button class="btn btn-sm btn-outline-danger" type="button" 
+                                                                data-bs-toggle="collapse" 
+                                                                data-bs-target="#devices-history-<?= htmlspecialchars($user['id']) ?>"
+                                                                title="Cerrar historial">
+                                                            <i class="bi bi-x-lg"></i> Cerrar
+                                                        </button>
+                                                    </div>
+                                                    <table class="table table-sm table-bordered mb-0">
+                                                        <thead class="table-secondary">
+                                                            <tr>
+                                                                <th>Nombre</th>
+                                                                <th>GUID</th>
+                                                                <th>Estado</th>
+                                                                <th>Última Conexión</th>
+                                                                <th>Registrado</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            <?php foreach ($devicesHistory[$user['id']] as $idx => $device): ?>
+                                                            <tr class="<?= $idx === 0 ? 'table-success' : '' ?>">
+                                                                <td>
+                                                                    <?= htmlspecialchars($device['device_name']) ?>
+                                                                    <?php if ($idx === 0): ?>
+                                                                        <span class="badge bg-success ms-1">EN USO</span>
+                                                                    <?php elseif ($device['status'] === 'active'): ?>
+                                                                        <span class="badge bg-secondary ms-1">Inactivo</span>
+                                                                    <?php endif; ?>
+                                                                </td>
+                                                                <td><code class="<?= $idx === 0 ? 'fw-bold' : '' ?>"><?= htmlspecialchars($device['device_guid']) ?></code></td>
+                                                                <td>
+                                                                    <?php if ($idx === 0): ?>
+                                                                        <span class="badge bg-success">✓ Equipo Actual</span>
+                                                                    <?php elseif ($device['status'] === 'active'): ?>
+                                                                        <span class="badge bg-warning text-dark">Registrado</span>
+                                                                    <?php else: ?>
+                                                                        <span class="badge bg-danger">Revocado</span>
+                                                                    <?php endif; ?>
+                                                                </td>
+                                                                <td><?= htmlspecialchars($device['last_seen_at'] ?? 'Nunca') ?></td>
+                                                                <td><?= htmlspecialchars($device['created_at']) ?></td>
+                                                            </tr>
+                                                            <?php endforeach; ?>
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <?php endif; ?>
                                     <?php endforeach; ?>
                                 </tbody>
                             </table>
