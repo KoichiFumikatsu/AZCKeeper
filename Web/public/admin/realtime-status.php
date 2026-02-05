@@ -1,9 +1,11 @@
 <?php
 require_once __DIR__ . '/../../src/bootstrap.php';
 
+use Keeper\InputValidator;
+
 header('Content-Type: application/json; charset=utf-8');
 
-$userId = (int)($_GET['user_id'] ?? 0);
+$userId = InputValidator::validateInt($_GET['user_id'] ?? 0, 0, 1);
 if (!$userId) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'User ID requerido']);

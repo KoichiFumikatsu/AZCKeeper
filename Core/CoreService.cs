@@ -112,7 +112,8 @@ namespace AZCKeeper_Cliente.Core
         private void OnSessionEnding(object sender, Microsoft.Win32.SessionEndingEventArgs e)
         {
             LocalLogger.Warn($"CoreService: Windows cerrando sesión ({e.Reason}). Flush final...");
-            FinalFlushBeforeShutdown();
+            // En contexto de shutdown, bloqueamos para garantizar envío
+            FinalFlushBeforeShutdownAsync().Wait();
         }
         /// <summary>
         /// Inicia trackers, timers y UI; realiza handshake y retoma actividad del día.
@@ -168,7 +169,8 @@ namespace AZCKeeper_Cliente.Core
             try
             {        
                 // FLUSH FINAL ANTES DE DETENER TRACKERS
-                FinalFlushBeforeShutdown();
+                // En contexto de shutdown, bloqueamos para garantizar envío
+                FinalFlushBeforeShutdownAsync().Wait();
                 StopActivityFlushTimer();
 
                 _handshakeTimer?.Stop();
@@ -215,19 +217,19 @@ namespace AZCKeeper_Cliente.Core
         {
             _loginForm = new AZCKeeper_Cliente.Auth.LoginForm();
 
-            _loginForm.OnLoginSubmitted += (user, pass) =>
+            _loginForm.OnLoginSubmitted += async (user, pass) =>
             {
                 try
                 {
                     _loginForm.SetBusy(true, "Validando credenciales...");
 
-                    var login = _apiClient.SendLoginAsync(new ApiClient.LoginRequest
+                    var login = await _apiClient.SendLoginAsync(new ApiClient.LoginRequest
                     {
                         Username = user,
                         Password = pass,
                         DeviceId = _configManager.CurrentConfig.DeviceId,
                         DeviceName = Environment.MachineName
-                    }).GetAwaiter().GetResult();
+                    }).ConfigureAwait(false);
 
                     if (login == null || !login.IsSuccess || login.Response == null || string.IsNullOrWhiteSpace(login.Response.Token))
                     {
@@ -745,7 +747,7 @@ namespace AZCKeeper_Cliente.Core
         /// <summary>
         /// Si existe registro del día en backend, rehidrata contadores locales.
         /// </summary>
-        private void TryResumeTodayActivityFromServer()
+        private async void TryResumeTodayActivityFromServer()
         {
             try
             {
@@ -761,7 +763,7 @@ namespace AZCKeeper_Cliente.Core
                 string today = DateTime.Now.ToString("yyyy-MM-dd");
                 string deviceId = _configManager.CurrentConfig.DeviceId;
 
-                var res = _apiClient.GetActivityDayAsync(deviceId, today).GetAwaiter().GetResult();
+                var res = await _apiClient.GetActivityDayAsync(deviceId, today).ConfigureAwait(false);
                 if (res == null || !res.IsSuccess || res.Response == null)
                 {
                     LocalLogger.Warn($"CoreService: activity-day/get no exitoso. Err={res?.Error} Preview={res?.BodyPreview}");
@@ -880,7 +882,7 @@ namespace AZCKeeper_Cliente.Core
         /// Envía snapshot final de actividad antes de cerrar.
         /// Llamar en Stop() para evitar pérdida de datos.
         /// </summary>
-        private void FinalFlushBeforeShutdown()
+        private async Task FinalFlushBeforeShutdownAsync()
         {
             try
             {
@@ -923,8 +925,8 @@ namespace AZCKeeper_Cliente.Core
                     IsWorkday = snap.DayLocalDate.DayOfWeek != DayOfWeek.Saturday && snap.DayLocalDate.DayOfWeek != DayOfWeek.Sunday
                 };
 
-                // Envío SINCRÓNICO (blocking) para garantizar que llegue antes de cerrar
-                _apiClient.SendActivityDayAsync(payload).GetAwaiter().GetResult();
+                // Envío asíncrono con ConfigureAwait(false) para evitar deadlocks
+                await _apiClient.SendActivityDayAsync(payload).ConfigureAwait(false);
 
                 LocalLogger.Info("CoreService.FinalFlushBeforeShutdown(): datos enviados correctamente.");
             }
