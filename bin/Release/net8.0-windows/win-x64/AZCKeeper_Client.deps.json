@@ -7,7 +7,7 @@
   "targets": {
     ".NETCoreApp,Version=v8.0": {},
     ".NETCoreApp,Version=v8.0/win-x64": {
-      "AZCKeeper_Client/3.0.0.1": {
+      "AZCKeeper_Client/3.0.0.5": {
         "dependencies": {
           "System.Data.SQLite.Core": "1.0.118",
           "runtimepack.Microsoft.NETCore.App.Runtime.win-x64": "8.0.12",
@@ -983,7 +983,7 @@
     }
   },
   "libraries": {
-    "AZCKeeper_Client/3.0.0.1": {
+    "AZCKeeper_Client/3.0.0.5": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

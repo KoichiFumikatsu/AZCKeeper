@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO;
 using System.Text.Json;
+using System.Reflection;
 using AZCKeeper_Cliente.Logging;
 
 namespace AZCKeeper_Cliente.Config
@@ -105,12 +106,16 @@ namespace AZCKeeper_Cliente.Config
                     CurrentConfig = CreateDefaultConfig();
                     Save();
                 }
+
+                SyncVersionFromAssembly();
             }
             catch (Exception ex)
             {
                 LocalLogger.Error(ex, "ConfigManager.LoadOrCreate(): error al cargar/crear configuración local. Se usará configuración por defecto en memoria.");
 
                 CurrentConfig = CreateDefaultConfig();
+
+                SyncVersionFromAssembly();
 
                 try
                 {
@@ -120,6 +125,21 @@ namespace AZCKeeper_Cliente.Config
                 {
                     LocalLogger.Error(innerEx, "ConfigManager.LoadOrCreate(): error adicional al guardar configuración generada por defecto.");
                 }
+            }
+        }
+
+        private void SyncVersionFromAssembly()
+        {
+            if (CurrentConfig == null) return;
+
+            var asmVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString();
+            if (string.IsNullOrWhiteSpace(asmVersion)) return;
+
+            if (!string.Equals(CurrentConfig.Version, asmVersion, StringComparison.OrdinalIgnoreCase))
+            {
+                CurrentConfig.Version = asmVersion;
+                Save();
+                LocalLogger.Info($"ConfigManager: versión sincronizada desde ensamblado: {asmVersion}");
             }
         }
 

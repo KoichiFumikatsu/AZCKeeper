@@ -159,6 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <a href="index.php">Dashboard</a>
             <a href="users.php">Usuarios</a>
             <a href="user-config.php?id=<?= $userId ?>" class="active">Configurar</a>
+            <a href="releases.php">Releases</a>
         </div>
     </nav>
  

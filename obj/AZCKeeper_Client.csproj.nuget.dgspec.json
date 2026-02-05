@@ -5,7 +5,7 @@
   },
   "projects": {
     "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client\\AZCKeeper_Client.csproj": {
-      "version": "3.0.0.1",
+      "version": "3.0.0.5",
       "restore": {
         "projectUniqueName": "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client\\AZCKeeper_Client.csproj",
         "projectName": "AZCKeeper_Client",

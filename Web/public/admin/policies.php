@@ -180,6 +180,7 @@ $affectedUsers = $pdo->query("
             <a href="index.php">Dashboard</a>
             <a href="users.php">Usuarios</a>
             <a href="policies.php" class="active">Política Global</a>
+            <a href="releases.php">Releases</a>
         </div>
     </nav>
  
