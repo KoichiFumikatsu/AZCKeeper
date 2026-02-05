@@ -933,6 +933,7 @@ namespace AZCKeeper_Cliente.Network
             public double LunchIdleSeconds { get; set; }
             public double AfterHoursActiveSeconds { get; set; }
             public double AfterHoursIdleSeconds { get; set; }
+            public bool IsWorkday { get; set; } // true=lunes-viernes, false=sábado-domingo
         }
 
     }

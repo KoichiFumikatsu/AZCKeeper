@@ -7,10 +7,10 @@ class KeeperAuth {
     private $auth;
     private $functions;
     
-    public function __construct() {
-        $this->auth = new Auth();
-        $this->functions = new Functions();
-    }
+   // public function __construct() {
+    //    $this->auth = new Auth();
+    //    $this->functions = new Functions();
+   // }
     
     /**
      * Verificar que el usuario esté logueado y tenga permisos

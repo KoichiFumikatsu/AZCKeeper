@@ -76,6 +76,8 @@ if (!tienePermiso($conn, $usuario_actual['id'], $usuario_actual['role'], $usuari
         SUM(after_hours_idle_seconds) as after_idle,
         SUM(call_seconds) as total_call,
         COUNT(DISTINCT day_date) as total_days,
+        COUNT(DISTINCT CASE WHEN is_workday = 1 THEN day_date END) as workdays,
+        COUNT(DISTINCT CASE WHEN is_workday = 0 THEN day_date END) as non_workdays,
         COUNT(DISTINCT user_id) as users_with_activity
     FROM keeper_activity_day
 ")->fetch(PDO::FETCH_ASSOC);
@@ -88,7 +90,8 @@ if (!tienePermiso($conn, $usuario_actual['id'], $usuario_actual['role'], $usuari
         u.display_name,
         SUM(a.active_seconds) as total_active,
         SUM(a.work_hours_active_seconds) as work_active,
-        COUNT(DISTINCT a.day_date) as days_worked
+        COUNT(DISTINCT CASE WHEN a.is_workday = 1 THEN a.day_date END) as days_worked,
+        COUNT(DISTINCT CASE WHEN a.is_workday = 0 THEN a.day_date END) as weekend_days
     FROM keeper_users u
     INNER JOIN keeper_activity_day a ON a.user_id = u.id
     GROUP BY u.id
@@ -424,6 +427,27 @@ function formatHours($seconds) {
                                 </div>
                             </div>
 
+                            <!-- DÍAS DE ACTIVIDAD -->
+                            <div class="dashboard-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+                                <div class="stat-card">
+                                    <div class="stat-value" style="color: #27ae60;"><?= $activity['workdays'] ?></div>
+                                    <div class="stat-label">Días Laborables</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="stat-value" style="color: #e67e22;">
+                                        <?= $activity['non_workdays'] ?>
+                                        <?php if ($activity['non_workdays'] > 0): ?>
+                                            <i class="bi bi-exclamation-triangle-fill" style="font-size: 0.7em;" title="Actividad en fin de semana"></i>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="stat-label">Fines de Semana Trabajados</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="stat-value" style="color: #3498db;"><?= $activity['total_days'] ?></div>
+                                    <div class="stat-label">Total Días Registrados</div>
+                                </div>
+                            </div>
+
                             <!-- MÉTRICAS DE TIEMPO -->
                             <div class="dashboard-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
                                 <div class="stat-card">
@@ -458,7 +482,8 @@ function formatHours($seconds) {
                                                 <th>#</th>
                                                 <th>CC</th>
                                                 <th>Nombre</th>
-                                                <th>Días Trabajados</th>
+                                                <th>Días Laborados</th>
+                                                <th>Fines de Semana</th>
                                                 <th>Tiempo Total</th>
                                                 <th>Tiempo Laboral</th>
                                                 <th>Acciones</th>
@@ -470,7 +495,18 @@ function formatHours($seconds) {
                                                 <td><strong><?= $idx + 1 ?></strong></td>
                                                 <td><?= htmlspecialchars($user['cc']) ?></td>
                                                 <td><?= htmlspecialchars($user['display_name']) ?></td>
-                                                <td><?= $user['days_worked'] ?> días</td>
+                                                <td>
+                                                    <span class="badge bg-success"><?= $user['days_worked'] ?></span>
+                                                </td>
+                                                <td>
+                                                    <?php if ($user['weekend_days'] > 0): ?>
+                                                        <span class="badge bg-warning text-dark" title="Trabajó en fin de semana">
+                                                            <?= $user['weekend_days'] ?> 
+                                                        </span>
+                                                    <?php else: ?>
+                                                        <span class="badge bg-secondary">0</span>
+                                                    <?php endif; ?>
+                                                </td>
                                                 <td><?= formatSeconds($user['total_active']) ?></td>
                                                 <td><?= formatSeconds($user['work_active']) ?></td>
                                                 <td>

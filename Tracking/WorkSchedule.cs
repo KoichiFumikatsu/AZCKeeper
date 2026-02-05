@@ -27,9 +27,14 @@ namespace AZCKeeper_Cliente.Tracking
 
         /// <summary>
         /// Devuelve la categoría de tiempo según la hora local.
+        /// Fines de semana (sábado/domingo) siempre son AfterHours.
         /// </summary>
         public TimeCategory GetTimeCategory(DateTime localTime)
         {
+            // Fines de semana: siempre fuera de horario laboral
+            if (localTime.DayOfWeek == DayOfWeek.Saturday || localTime.DayOfWeek == DayOfWeek.Sunday)
+                return TimeCategory.AfterHours;
+
             TimeSpan time = localTime.TimeOfDay;
 
             // Lunch

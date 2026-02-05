@@ -619,7 +619,8 @@ namespace AZCKeeper_Cliente.Core
                             LunchActiveSeconds = _activityTracker.CurrentDayLunchActiveSeconds,
                             LunchIdleSeconds = _activityTracker.CurrentDayLunchIdleSeconds,
                             AfterHoursActiveSeconds = _activityTracker.CurrentDayAfterHoursActiveSeconds,
-                            AfterHoursIdleSeconds = _activityTracker.CurrentDayAfterHoursIdleSeconds
+                            AfterHoursIdleSeconds = _activityTracker.CurrentDayAfterHoursIdleSeconds,
+                            IsWorkday = day.DayOfWeek != DayOfWeek.Saturday && day.DayOfWeek != DayOfWeek.Sunday
                         };
 
                         _ = _apiClient.SendActivityDayAsync(payload);
@@ -646,6 +647,14 @@ namespace AZCKeeper_Cliente.Core
                 {
                     try
                     {
+                        // Validar que la duración sea >= 1 segundo para evitar errores de redondeo
+                        // al serializar sin milisegundos (backend espera YYYY-MM-DD HH:MM:SS)
+                        if (episode.DurationSeconds < 1.0)
+                        {
+                            LocalLogger.Info($"CoreService: episodio ignorado por duración <1s ({episode.DurationSeconds:F3}s): {episode.ProcessName}");
+                            return;
+                        }
+
                         var payload = new ApiClient.WindowEpisodePayload
                         {
                             DeviceId = _configManager.CurrentConfig.DeviceId,
@@ -846,7 +855,8 @@ namespace AZCKeeper_Cliente.Core
                             LunchActiveSeconds = snap.LunchActive,
                             LunchIdleSeconds = snap.LunchIdle,
                             AfterHoursActiveSeconds = snap.AfterActive,
-                            AfterHoursIdleSeconds = snap.AfterIdle
+                            AfterHoursIdleSeconds = snap.AfterIdle,
+                            IsWorkday = dayLocal.DayOfWeek != DayOfWeek.Saturday && dayLocal.DayOfWeek != DayOfWeek.Sunday
                         };
 
                         _ = _apiClient.SendActivityDayAsync(payload);
@@ -909,7 +919,8 @@ namespace AZCKeeper_Cliente.Core
                     LunchActiveSeconds = snap.LunchActive,
                     LunchIdleSeconds = snap.LunchIdle,
                     AfterHoursActiveSeconds = snap.AfterActive,
-                    AfterHoursIdleSeconds = snap.AfterIdle
+                    AfterHoursIdleSeconds = snap.AfterIdle,
+                    IsWorkday = snap.DayLocalDate.DayOfWeek != DayOfWeek.Saturday && snap.DayLocalDate.DayOfWeek != DayOfWeek.Sunday
                 };
 
                 // Envío SINCRÓNICO (blocking) para garantizar que llegue antes de cerrar
