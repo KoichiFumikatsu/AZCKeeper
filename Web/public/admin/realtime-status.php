@@ -87,31 +87,37 @@ if (!$todayData || $todayData['active_seconds'] === null) {
 }
 
 // Determinar estado:
-// 1. Sin conexión: dispositivo sin heartbeat por >15 min (sin importar actividad)
-// 2. Activo: heartbeat reciente (<2min) Y última actividad registrada <2min
-// 3. Away/Ausente: heartbeat reciente pero sin actividad (timer de inactividad corriendo)
+// 1. Sin conexión: dispositivo sin heartbeat >15 min O (sin actividad hoy Y sin heartbeat muy reciente)
+// 2. Activo: heartbeat reciente Y última actividad <2min
+// 3. Away/Ausente: heartbeat reciente Y (sin actividad reciente O inactivo) = timer corriendo
 
 if ($secondsSinceLastSeen >= 900) {
-    // >15 min sin heartbeat = dispositivo desconectado (PC apagado, sin internet)
+    // >15 min sin heartbeat = dispositivo desconectado (PC apagado, sin internet, app cerrada)
     $status = 'inactive';
 } else {
-    // Dispositivo conectado (tiene heartbeat reciente)
-    // Verificar si hay actividad reciente mirando last_event_at de hoy
+    // Dispositivo conectado (tiene heartbeat < 15min)
     $lastEventAt = $todayData['last_event_at'];
     
-    if ($lastEventAt) {
+    // Si no hay actividad registrada hoy
+    if (!$lastEventAt || $todayData['active_seconds'] == 0) {
+        // Si el heartbeat es MUY reciente (<2min), significa que acaba de iniciar o está iniciando
+        // De lo contrario, probablemente la app estuvo cerrada y solo envió un handshake viejo
+        if ($secondsSinceLastSeen < 120) {
+            $status = 'away';  // App activa pero sin actividad todavía
+        } else {
+            $status = 'inactive';  // No ha trabajado hoy y heartbeat no tan reciente = app cerrada
+        }
+    } else {
+        // Hay actividad registrada hoy, verificar qué tan reciente
         $secondsSinceLastEvent = $nowTimestamp - strtotime($lastEventAt);
         
         if ($secondsSinceLastEvent < 120) {
             // Actividad reciente <2 min
             $status = 'active';
         } else {
-            // Sin actividad reciente pero dispositivo conectado = ausente (timer corriendo)
+            // Sin actividad reciente pero app conectada = ausente (timer de inactividad corriendo)
             $status = 'away';
         }
-    } else {
-        // No hay eventos hoy pero dispositivo conectado = ausente
-        $status = 'away';
     }
 }
 
