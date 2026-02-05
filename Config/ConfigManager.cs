@@ -259,8 +259,6 @@ namespace AZCKeeper_Cliente.Config
                     EnableWindowTracking = true,
                     EnableProcessTracking = true,
                     EnableBlocking = false,
-                    EnableKeyboardHook = false,
-                    EnableMouseHook = false,
                     EnableUpdateManager = true,
                     EnableDebugWindow = false,
                     EnableCallTracking = true,
@@ -380,8 +378,6 @@ namespace AZCKeeper_Cliente.Config
             public bool EnableWindowTracking { get; set; }
             public bool EnableProcessTracking { get; set; }
             public bool EnableBlocking { get; set; }
-            public bool EnableKeyboardHook { get; set; }
-            public bool EnableMouseHook { get; set; }
             public bool EnableUpdateManager { get; set; }
             public bool EnableDebugWindow { get; set; }
             public bool CountCallsAsActive { get; set; } = true;

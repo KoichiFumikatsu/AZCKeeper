@@ -35,10 +35,6 @@ namespace AZCKeeper_Cliente.Core
         private ActivityTracker _activityTracker; // actividad/idle por día
         private WindowTracker _windowTracker;     // procesos/ventanas y llamadas
 
-        // --- Hooks ---
-        private KeyboardHook _keyboardHook; // detección de actividad teclado
-        private MouseHook _mouseHook;       // detección de actividad mouse
-
         // --- Control/updates ---
         private KeyBlocker _keyBlocker;        // bloqueo por política
         private UpdateManager _updateManager;  // actualización automática
@@ -131,8 +127,6 @@ namespace AZCKeeper_Cliente.Core
                 // 2) Start trackers
                 _activityTracker?.Start();
                 _windowTracker?.Start();
-                _keyboardHook?.Start();
-                _mouseHook?.Start();
                 _updateManager?.Start();
 
                 // 3) Flush periódico
@@ -177,8 +171,6 @@ namespace AZCKeeper_Cliente.Core
                 _handshakeTimer?.Dispose();
                 _activityTracker?.Stop();
                 _windowTracker?.Stop();
-                _keyboardHook?.Stop();
-                _mouseHook?.Stop();
                 _updateManager?.Stop();
 
                 if (_debugWindow != null && !_debugWindow.IsDisposed)
@@ -471,8 +463,6 @@ namespace AZCKeeper_Cliente.Core
                     modules.EnableWindowTracking = effective.Modules.EnableWindowTracking;
                     modules.EnableProcessTracking = effective.Modules.EnableProcessTracking;
                     modules.EnableBlocking = effective.Modules.EnableBlocking;
-                    modules.EnableKeyboardHook = effective.Modules.EnableKeyboardHook;
-                    modules.EnableMouseHook = effective.Modules.EnableMouseHook;
                     modules.EnableUpdateManager = effective.Modules.EnableUpdateManager;
                     modules.EnableDebugWindow = effective.Modules.EnableDebugWindow;
 
@@ -705,8 +695,7 @@ namespace AZCKeeper_Cliente.Core
             }
 
             // -------------------- Hooks / Blocking / Debug --------------------
-            if (modulesConfig.EnableKeyboardHook) _keyboardHook = new KeyboardHook();
-            if (modulesConfig.EnableMouseHook) _mouseHook = new MouseHook();
+            // KeyboardHook y MouseHook eliminados - no son necesarios (ActivityTracker usa GetLastInputInfo)
             if (modulesConfig.EnableBlocking) _keyBlocker = new KeyBlocker(_apiClient);
             
             // -------------------- UpdateManager --------------------

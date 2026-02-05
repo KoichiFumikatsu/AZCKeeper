@@ -234,7 +234,43 @@ namespace AZCKeeper_Cliente.Logging
                     !string.IsNullOrWhiteSpace(_webhookUrl) &&
                     (level == LogLevel.Warn || level == LogLevel.Error))
                 {
-                    _ = SendToWebhookAsync(level, safeMessage);
+                    // Fire-and-forget mejorado: ejecuta en background y observa excepciones
+                    Task.Run(async () => await SendToWebhookAsync(level, safeMessage))
+                        .ContinueWith(t =>
+                        {
+                            if (t.IsFaulted && t.Exception != null)
+                            {
+                                // Loguear error de webhook a archivo sin recursión
+                                var baseEx = t.Exception.GetBaseException();
+                                WriteToFileOnly(LogLevel.Warn, $"LocalLogger: webhook send failed - {baseEx.Message}");
+                            }
+                        }, TaskContinuationOptions.OnlyOnFaulted);
+                }
+            }
+            catch
+            {
+                // Degradar silenciosamente.
+            }
+        }
+
+        /// <summary>
+        /// Escribe solo a archivo (usado internamente para evitar recursión con webhook).
+        /// </summary>
+        private static void WriteToFileOnly(LogLevel level, string message)
+        {
+            try
+            {
+                if (!_enableFileLogging || string.IsNullOrWhiteSpace(_logBaseDirectory))
+                    return;
+
+                string prefix = level.ToString().ToUpperInvariant();
+                string line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{prefix}] {message}";
+
+                UpdateCurrentLogFilePath();
+
+                lock (_fileLock)
+                {
+                    File.AppendAllText(_currentLogFilePath, line + Environment.NewLine, Encoding.UTF8);
                 }
             }
             catch

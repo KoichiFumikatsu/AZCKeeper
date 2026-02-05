@@ -28,8 +28,6 @@ $defaultConfig = [
         'enableWindowTracking' => true,
         'enableProcessTracking' => false,
         'enableBlocking' => false,
-        'enableKeyboardHook' => false,
-        'enableMouseHook' => false,
         'enableUpdateManager' => true,
         'enableDebugWindow' => false,
         'enableCallTracking' => false,
@@ -97,8 +95,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'enableWindowTracking' => isset($_POST['mod_window']),
             'enableProcessTracking' => isset($_POST['mod_process']),
             'enableBlocking' => isset($_POST['mod_blocking']),
-            'enableKeyboardHook' => isset($_POST['mod_keyboard']),
-            'enableMouseHook' => isset($_POST['mod_mouse']),
             'enableUpdateManager' => isset($_POST['mod_updates']),
             'enableDebugWindow' => isset($_POST['mod_debug']),
             'enableCallTracking' => isset($_POST['mod_call_tracking']),
@@ -279,16 +275,6 @@ $affectedUsers = $pdo->query("
                     <label>Módulo de Bloqueo:</label>
                     <input type="checkbox" name="mod_blocking" <?= getConfig($config['modules'], 'enableBlocking', false) ? 'checked' : '' ?>>
                     <small>Habilita la capacidad de bloquear equipos remotamente</small>
-                </div>
- 
-                <div class="form-row">
-                    <label>Keyboard Hook:</label>
-                    <input type="checkbox" name="mod_keyboard" <?= getConfig($config['modules'], 'enableKeyboardHook', false) ? 'checked' : '' ?>>
-                </div>
- 
-                <div class="form-row">
-                    <label>Mouse Hook:</label>
-                    <input type="checkbox" name="mod_mouse" <?= getConfig($config['modules'], 'enableMouseHook', false) ? 'checked' : '' ?>>
                 </div>
  
                 <div class="form-row">

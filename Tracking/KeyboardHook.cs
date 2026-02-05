@@ -1,26 +1,29 @@
 ﻿namespace AZCKeeper_Cliente.Tracking
 {
     /// <summary>
-    /// Implementa un hook global de teclado (si es necesario).
+    /// Hook global de teclado - NO IMPLEMENTADO.
     /// 
-    /// Responsabilidades:
-    /// - Recibir eventos globales de tecla presionada/soltada.
-    /// - Notificar actividad (sin registrar el contenido de las teclas).
-    /// - Integrarse con KeyBlocker para bloquear ciertas combinaciones
-    ///   si la configuración lo indica.
+    /// Nota: Esta funcionalidad NO es necesaria porque ActivityTracker
+    /// ya detecta actividad de teclado usando GetLastInputInfo() de Win32,
+    /// que es más eficiente y no requiere hooks globales.
     /// 
-    /// Importante:
-    /// - Este módulo NO debe comportarse como un keylogger;
-    ///   solo debe usar la información necesaria para tracking/bloqueo.
+    /// Los hooks solo serían necesarios para:
+    /// - KeyBlocker (bloqueo de combinaciones específicas)
+    /// - Keylogging (NO recomendado por privacidad)
+    /// 
+    /// Estado actual: Stub vacío que no hace nada si se activa.
     /// </summary>
     internal class KeyboardHook
     {
         /// <summary>
         /// Inicia el hook global de teclado.
+        /// NO IMPLEMENTADO - ActivityTracker ya maneja detección de actividad.
         /// </summary>
         public void Start()
         {
-            // TODO: Registrar el hook global de teclado con Win32.
+            // NO IMPLEMENTADO: ActivityTracker usa GetLastInputInfo() para detectar
+            // actividad de teclado sin necesidad de hooks globales.
+            AZCKeeper_Cliente.Logging.LocalLogger.Info("KeyboardHook.Start(): NO IMPLEMENTADO. ActivityTracker ya detecta actividad de teclado vía GetLastInputInfo().");
         }
 
         /// <summary>
@@ -28,7 +31,7 @@
         /// </summary>
         public void Stop()
         {
-            // TODO: Liberar el hook global de teclado.
+            // No hay nada que detener
         }
     }
 }
