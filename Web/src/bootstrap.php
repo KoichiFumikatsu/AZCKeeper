@@ -5,6 +5,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/Db.php';
 require_once __DIR__ . '/Http.php';
 require_once __DIR__ . '/InputValidator.php';
+require_once __DIR__ . '/RateLimiter.php';
 require_once __DIR__ . '/PolicyService.php';
 require_once __DIR__ . '/AuthService.php';
 

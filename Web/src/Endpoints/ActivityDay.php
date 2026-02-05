@@ -4,6 +4,7 @@ namespace Keeper\Endpoints;
 use Keeper\Http;
 use Keeper\Db;
 use Keeper\AuthService;
+use RateLimiter;
 
 class ActivityDay
 {
@@ -186,6 +187,12 @@ class ActivityDay
     {
         $sess = AuthService::requireSession();
         $userId = (int)$sess['user_id'];
+
+        // Rate limiting: 30 peticiones por minuto para prevenir scraping masivo
+        if (!RateLimiter::allow($userId, 'activity-day-get', 30, 60)) {
+            Http::json(429, ['ok' => false, 'error' => 'Rate limit exceeded. Maximum 30 requests per minute.']);
+            return;
+        }
      
         $deviceGuid = $_GET['deviceId'] ?? ($_GET['DeviceId'] ?? null);
         $dayDate    = $_GET['dayDate']  ?? ($_GET['DayDate']  ?? null);

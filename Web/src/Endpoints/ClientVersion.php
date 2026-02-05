@@ -15,7 +15,7 @@ class ClientVersion
             'latestVersion' => $latestVersion,
             'downloadUrl' => $downloadUrl,
             'fileSize' => 0, 
-            'releaseNotes' => 'Mejoras de estabilidad, cola offline y sincronización de tiempo',
+            'releaseNotes' => 'Ensayo de la nueva versión 3.0.0.1 con mejoras en estabilidad y rendimiento.',
             'forceUpdate' => false,
             'minimumVersion' => '3.0.0.0',
             'releaseDate' => '2026-01-21'

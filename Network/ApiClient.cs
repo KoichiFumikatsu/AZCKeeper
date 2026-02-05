@@ -62,7 +62,8 @@ namespace AZCKeeper_Cliente.Network
                 _httpClient.BaseAddress = new Uri(baseUrl);
             }
 
-            _httpClient.Timeout = TimeSpan.FromSeconds(15);
+            // Timeout más generoso para evitar "response ended prematurely"
+            _httpClient.Timeout = TimeSpan.FromSeconds(30);
 
             string version = _configManager.CurrentConfig?.Version ?? "0.0.0.0";
             _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"AZCKeeper-Cliente/{version}");
@@ -413,7 +414,6 @@ namespace AZCKeeper_Cliente.Network
             {
                 if (_httpClient.BaseAddress == null)
                 {
-                    LocalLogger.Warn("ApiClient.SendWindowEpisodeAsync(): BaseAddress es null.");
                     if (!fromQueue) _offlineQueue.Enqueue("client/window-episode", payload);
                     return;
                 }
@@ -437,10 +437,22 @@ namespace AZCKeeper_Cliente.Network
                     return;
                 }
             }
+            catch (TaskCanceledException ex) when (ex.CancellationToken == default)
+            {
+                // Timeout (no es error de red, es que el servidor tardó mucho)
+                LocalLogger.Warn($"ApiClient.SendWindowEpisodeAsync(): timeout esperando respuesta. Encolando...");
+                if (!fromQueue) _offlineQueue.Enqueue("client/window-episode", payload);
+            }
             catch (HttpRequestException ex)
             {
+                // Error de red real (conexión perdida, DNS fail, etc.)
                 string errorMsg = ex.InnerException?.Message ?? ex.Message;
-                LocalLogger.Warn($"ApiClient.SendWindowEpisodeAsync(): red caída. Encolando... Error: {errorMsg}");
+                
+                // Solo logear si no es un error común de red intermitente
+                if (!errorMsg.Contains("ResponseEnded") && !errorMsg.Contains("connection was closed"))
+                {
+                    LocalLogger.Warn($"ApiClient.SendWindowEpisodeAsync(): error de red. Encolando... Error: {errorMsg}");
+                }
 
                 if (!fromQueue) _offlineQueue.Enqueue("client/window-episode", payload);
             }
