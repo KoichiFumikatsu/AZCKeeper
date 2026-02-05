@@ -47,7 +47,9 @@ $summary = $pdo->query("
         SUM(after_hours_active_seconds) as after_active,
         SUM(after_hours_idle_seconds) as after_idle,
         SUM(call_seconds) as total_call,
-        COUNT(DISTINCT day_date) as days_worked
+        COUNT(DISTINCT day_date) as total_days,
+        COUNT(DISTINCT CASE WHEN is_workday = 1 THEN day_date END) as days_worked,
+        COUNT(DISTINCT CASE WHEN is_workday = 0 THEN day_date END) as weekend_days
     FROM keeper_activity_day
     WHERE user_id = {$userId}
     AND device_id IN ({$deviceIdsStr})
@@ -69,9 +71,11 @@ $totalPagesDays = ceil($totalDays / $perPageDays);
 $dailyActivity = $pdo->query("
     SELECT 
         day_date,
+        is_workday,
         SUM(active_seconds) as active,
         SUM(idle_seconds) as idle,
         SUM(work_hours_active_seconds) as work_active,
+        SUM(work_hours_idle_seconds) as work_idle,
         SUM(lunch_active_seconds) as lunch_active,
         SUM(lunch_idle_seconds) as lunch_idle,
         SUM(after_hours_active_seconds) as after_active,
@@ -80,7 +84,7 @@ $dailyActivity = $pdo->query("
     WHERE user_id = {$userId}
     AND device_id IN ({$deviceIdsStr})
     AND day_date BETWEEN '{$dateFrom}' AND '{$dateTo}'
-    GROUP BY day_date
+    GROUP BY day_date, is_workday
     ORDER BY day_date DESC
     LIMIT {$perPageDays} OFFSET {$offsetDays}
 ")->fetchAll(PDO::FETCH_ASSOC);
@@ -135,7 +139,8 @@ if ($export === 'csv') {
     // Obtener TODOS los datos sin paginación para export
     $allDailyActivity = $pdo->query("
         SELECT day_date, SUM(active_seconds) as active, SUM(idle_seconds) as idle,
-               SUM(work_hours_active_seconds) as work_active, SUM(lunch_active_seconds) as lunch_active,
+               SUM(work_hours_active_seconds) as work_active, SUM(work_hours_idle_seconds) as work_idle,
+               SUM(lunch_active_seconds) as lunch_active, SUM(lunch_idle_seconds) as lunch_idle,
                SUM(after_hours_active_seconds) as after_active, SUM(call_seconds) as call_time
         FROM keeper_activity_day
         WHERE user_id = {$userId} AND device_id IN ({$deviceIdsStr})
@@ -176,16 +181,16 @@ if ($export === 'csv') {
     
     // Actividad diaria
     fputcsv($output, ['ACTIVIDAD DIARIA']);
-    fputcsv($output, ['Fecha', 'Activo (h)', 'Inactivo (h)', 'Laboral (h)', 'Almuerzo (h)', 'Fuera horario (h)', 'Llamadas (h)']);
+    fputcsv($output, ['Fecha', 'Activo Total (h)', 'Inactivo Total (h)', 'En Llamada (h)', 'Activo Laboral (h)', 'Inactivo Laboral (h)', 'Inactivo Almuerzo (h)']);
     foreach ($allDailyActivity as $day) {
         fputcsv($output, [
             $day['day_date'],
             round($day['active'] / 3600, 2),
             round($day['idle'] / 3600, 2),
+            round(($day['call_time'] ?? 0) / 3600, 2),
             round($day['work_active'] / 3600, 2),
-            round($day['lunch_active'] / 3600, 2),
-            round($day['after_active'] / 3600, 2),
-            round($day['call_time'] / 3600, 2)
+            round(($day['work_idle'] ?? 0) / 3600, 2),
+            round($day['lunch_idle'] / 3600, 2)
         ]);
     }
     fputcsv($output, []);
@@ -322,6 +327,90 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
             grid-template-columns: 1fr;
         }
     }
+    
+    /* ESTADO EN TIEMPO REAL */
+    .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.4rem 0.8rem;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+        animation: pulse 2s infinite;
+    }
+    
+    .status-active {
+        background: #d4edda;
+        color: #155724;
+    }
+    
+    .status-active .status-dot {
+        background: #28a745;
+    }
+    
+    .status-away {
+        background: #fff3cd;
+        color: #856404;
+    }
+    
+    .status-away .status-dot {
+        background: #ffc107;
+        animation: none;
+    }
+    
+    .status-inactive {
+        background: #f8d7da;
+        color: #721c24;
+    }
+    
+    .status-inactive .status-dot {
+        background: #dc3545;
+        animation: none;
+    }
+    
+    .status-finished {
+        background: #e2e3e5;
+        color: #6c757d;
+    }
+    
+    .status-finished .status-dot {
+        background: #6c757d;
+        animation: none;
+    }
+    
+    .status-unknown {
+        background: #e2e3e5;
+        color: #383d41;
+    }
+    
+    .status-unknown .status-dot {
+        background: #6c757d;
+    }
+    
+    .today-row {
+        background: #f0f8ff !important;
+        border-left: 4px solid #3498db;
+    }
+    
+    @keyframes pulse {
+        0%, 100% {
+            opacity: 1;
+            transform: scale(1);
+        }
+        50% {
+            opacity: 0.6;
+            transform: scale(1.2);
+        }
+    }
     </style>
 </head>
 <body>
@@ -365,8 +454,17 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
         <!-- RESUMEN -->
         <div class="stats-grid">
             <div class="stat-card">
-                <div class="stat-value"><?= $summary['days_worked'] ?></div>
-                <div class="stat-label">Días trabajados</div>
+                <div class="stat-value" style="color: #27ae60;"><?= $summary['days_worked'] ?></div>
+                <div class="stat-label">Días Laborables</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" style="color: <?= $summary['weekend_days'] > 0 ? '#e67e22' : '#95a5a6' ?>;">
+                    <?= $summary['weekend_days'] ?>
+                    <?php if ($summary['weekend_days'] > 0): ?>
+                        <i class="bi bi-exclamation-triangle-fill" style="font-size: 0.7em;"></i>
+                    <?php endif; ?>
+                </div>
+                <div class="stat-label">Fines de Semana</div>
             </div>
             <div class="stat-card">
                 <div class="stat-value"><?= formatHours($summary['total_active']) ?>h</div>
@@ -405,28 +503,49 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
 
         <!-- TABLA ACTIVIDAD DIARIA (CON PAGINACIÓN) -->
         <h2 style="margin-top: 2rem;">📅 Actividad por Día</h2>
-        <table class="data-table">
+        <table class="data-table" id="activityTable">
             <thead>
                 <tr>
                     <th>Fecha</th>
-                    <th>Activo</th>
-                    <th>Inactivo</th>
-                    <th>Laboral</th>
-                    <th>Almuerzo</th>
-                    <th>Fuera horario</th>
-                    <th>Llamadas</th>
+                    <th>Estado Actual</th>
+                    <th>Activo Total</th>
+                    <th>Inactivo Total</th>
+                    <th>En Llamada</th>
+                    <th>Activo Laboral</th>
+                    <th>Inactivo Laboral</th>
+                    <th>Inactivo Almuerzo</th>
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($dailyActivity as $day): ?>
-                <tr>
-                    <td><strong><?= $day['day_date'] ?></strong></td>
-                    <td><?= formatSeconds($day['active']) ?></td>
-                    <td><?= formatSeconds($day['idle']) ?></td>
-                    <td><?= formatSeconds($day['work_active']) ?></td>
-                    <td><?= formatSeconds($day['lunch_idle']) ?></td>
-                    <td><?= formatSeconds($day['after_active']) ?></td>
-                    <td><?= formatSeconds($day['call_time']) ?></td>
+                <?php foreach ($dailyActivity as $day): 
+                    $isToday = ($day['day_date'] === date('Y-m-d'));
+                ?>
+                <tr <?= $isToday ? 'id="todayRow" class="today-row"' : '' ?>>
+                    <td>
+                        <strong><?= $day['day_date'] ?></strong>
+                        <?php if ($isToday): ?>
+                            <span class="badge bg-primary">HOY</span>
+                        <?php endif; ?>
+                    </td>
+                    <td>
+                        <?php if ($isToday): ?>
+                            <span id="currentStatus" class="status-badge status-unknown">
+                                <span class="status-dot"></span>
+                                Cargando...
+                            </span>
+                        <?php else: ?>
+                            <span class="status-badge status-finished">
+                                <span class="status-dot"></span>
+                                Finalizado
+                            </span>
+                        <?php endif; ?>
+                    </td>
+                    <td id="<?= $isToday ? 'activeToday' : '' ?>"><?= formatSeconds($day['active']) ?></td>
+                    <td id="<?= $isToday ? 'idleToday' : '' ?>"><?= formatSeconds($day['idle']) ?></td>
+                    <td id="<?= $isToday ? 'callToday' : '' ?>"><?= formatSeconds($day['call_time'] ?? 0) ?></td>
+                    <td id="<?= $isToday ? 'workActiveToday' : '' ?>"><?= formatSeconds($day['work_active']) ?></td>
+                    <td id="<?= $isToday ? 'workIdleToday' : '' ?>"><?= formatSeconds($day['work_idle'] ?? 0) ?></td>
+                    <td id="<?= $isToday ? 'lunchIdleToday' : '' ?>"><?= formatSeconds($day['lunch_idle']) ?></td>
                 </tr>
                 <?php endforeach; ?>
             </tbody>
@@ -527,6 +646,76 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
         dailyChart.resize();
         topWindowsChart.resize();
     });
+
+    // ==================== ACTUALIZACIÓN EN TIEMPO REAL ====================
+    const userId = <?= $userId ?>;
+    const todayDate = '<?= date('Y-m-d') ?>';
+    
+    function formatSeconds(seconds) {
+        if (!seconds || seconds < 0) seconds = 0;
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = seconds % 60;
+        
+        if (hours > 0) {
+            return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+        if (minutes > 0) {
+            return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+        return `00:${String(secs).padStart(2, '0')}`;
+    }
+    
+    async function updateRealTimeData() {
+        try {
+            const response = await fetch(`realtime-status.php?user_id=${userId}`);
+            if (!response.ok) throw new Error('Error fetching data');
+            
+            const data = await response.json();
+            
+            if (data.ok) {
+                // Actualizar estado
+                const statusBadge = document.getElementById('currentStatus');
+                if (statusBadge) {
+                    const statusMap = {
+                        'active': { class: 'status-active', text: 'Activo', dot: '●' },
+                        'away': { class: 'status-away', text: 'Ausente', dot: '●' },
+                        'inactive': { class: 'status-inactive', text: 'Sin Conexión', dot: '●' }
+                    };
+                    
+                    const status = statusMap[data.status] || { class: 'status-unknown', text: 'Desconocido', dot: '○' };
+                    
+                    statusBadge.className = `status-badge ${status.class}`;
+                    statusBadge.innerHTML = `<span class="status-dot"></span>${status.text}`;
+                }
+                
+                // Actualizar contadores solo si hay datos de hoy
+                if (data.todayData) {
+                    const updates = {
+                        'activeToday': data.todayData.active_seconds,
+                        'idleToday': data.todayData.idle_seconds,
+                        'callToday': data.todayData.call_seconds,
+                        'workActiveToday': data.todayData.work_active_seconds,
+                        'workIdleToday': data.todayData.work_idle_seconds,
+                        'lunchIdleToday': data.todayData.lunch_idle_seconds
+                    };
+                    
+                    for (const [id, seconds] of Object.entries(updates)) {
+                        const elem = document.getElementById(id);
+                        if (elem && seconds !== undefined) {
+                            elem.textContent = formatSeconds(seconds);
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Error updating real-time data:', error);
+        }
+    }
+    
+    // Actualizar cada 5 segundos
+    updateRealTimeData();
+    setInterval(updateRealTimeData, 5000);
     </script>
 </body>
 </html>

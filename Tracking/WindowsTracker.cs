@@ -319,15 +319,15 @@ namespace AZCKeeper_Cliente.Tracking
             if (episode != null)
                 OnEpisodeClosed?.Invoke(episode);
 
-            // Iniciar episodio nuevo
-            _currentEpisodeStartLocalTime = nowLocal;
+            // Iniciar episodio nuevo con +1ms para evitar overlap
+            _currentEpisodeStartLocalTime = nowLocal.AddMilliseconds(1);
             _currentProcessName = newProcess;
             _currentWindowTitle = newTitle;
             _currentIsCallApp = _enableCallTracking && IsCallApplication(newProcess, newTitle);
 
             // Si el nuevo episodio es llamada, marcar inicio para cálculo realtime
             if (_currentIsCallApp)
-                _currentCallEpisodeStartLocalTime = nowLocal;
+                _currentCallEpisodeStartLocalTime = _currentEpisodeStartLocalTime;
 
             OnWindowSnapshot?.Invoke(nowLocal, newProcess, newTitle);
         }

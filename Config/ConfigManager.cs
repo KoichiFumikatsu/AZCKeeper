@@ -398,9 +398,9 @@ namespace AZCKeeper_Cliente.Config
 
             /// <summary>
             /// Umbral de inactividad, en segundos. Si el idle es mayor o igual,
-            /// se considera tiempo inactivo. Por defecto, 15s.
+            /// se considera tiempo inactivo. Por defecto, 15 minutos (900s).
             /// </summary>
-            public double ActivityInactivityThresholdSeconds { get; set; } = 600.0;
+            public double ActivityInactivityThresholdSeconds { get; set; } = 900.0;
 
             /// <summary>
             /// Intervalo de muestreo para WindowTracker, en segundos.

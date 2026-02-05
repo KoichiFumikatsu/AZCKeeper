@@ -297,15 +297,8 @@ namespace AZCKeeper_Cliente.Tracking
                         lock (_lock)
                         {
                             _currentDayLocalDate = nowDateForDelta;
-                            _currentDayActiveSeconds = 0;
-                            _currentDayInactiveSeconds = 0;
-
-                            // Si hay seed para el nuevo día (raro), aplicar
-                            if (_hasSeedForToday && _seedDayLocalDate == _currentDayLocalDate)
-                            {
-                                _currentDayActiveSeconds = Math.Max(_currentDayActiveSeconds, _seedDayActiveSeconds);
-                                _currentDayInactiveSeconds = Math.Max(_currentDayInactiveSeconds, _seedDayInactiveSeconds);
-                            }
+                            ResetDayCounters();
+                            // NO aplicar seed aquí: el seed es solo para Start(), no para cambios de día en runtime
                         }
                     }
 
@@ -463,14 +456,8 @@ namespace AZCKeeper_Cliente.Tracking
             lock (_lock)
             {
                 _currentDayLocalDate = newDate;
-                _currentDayActiveSeconds = 0;
-                _currentDayInactiveSeconds = 0;
-
-                if (_hasSeedForToday && _seedDayLocalDate == _currentDayLocalDate)
-                {
-                    _currentDayActiveSeconds = Math.Max(_currentDayActiveSeconds, _seedDayActiveSeconds);
-                    _currentDayInactiveSeconds = Math.Max(_currentDayInactiveSeconds, _seedDayInactiveSeconds);
-                }
+                ResetDayCounters();
+                // NO aplicar seed aquí: el seed es solo para Start(), no para cambios de día en runtime
             }
 
             if (newPartSeconds > 0)

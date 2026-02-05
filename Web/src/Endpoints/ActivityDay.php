@@ -37,6 +37,10 @@ class ActivityDay
         $lunchIdle = $data['lunchIdleSeconds'] ?? ($data['LunchIdleSeconds'] ?? 0);
         $afterActive = $data['afterHoursActiveSeconds'] ?? ($data['AfterHoursActiveSeconds'] ?? 0);
         $afterIdle = $data['afterHoursIdleSeconds'] ?? ($data['AfterHoursIdleSeconds'] ?? 0);
+        
+        // Día laborable: lunes-viernes = 1, sábado-domingo = 0
+        $isWorkday = isset($data['isWorkday']) ? ($data['isWorkday'] ? 1 : 0) : 
+                     (isset($data['IsWorkday']) ? ($data['IsWorkday'] ? 1 : 0) : 1); // default=1 para compatibilidad
      
         // Compat: si el cliente manda InactiveSeconds
         if ($idle === null) {
@@ -104,10 +108,12 @@ class ActivityDay
                work_hours_active_seconds, work_hours_idle_seconds,
                lunch_active_seconds, lunch_idle_seconds,
                after_hours_active_seconds, after_hours_idle_seconds,
+               is_workday,
                created_at, updated_at)
             VALUES
               (:uid, :did, :day, :tz, :a, :i, :c, :samples, NOW(), NOW(), :payload,
                :work_a, :work_i, :lunch_a, :lunch_i, :after_a, :after_i,
+               :is_workday,
                NOW(), NOW())
             ON DUPLICATE KEY UPDATE
               tz_offset_minutes = VALUES(tz_offset_minutes),
@@ -123,6 +129,7 @@ class ActivityDay
               lunch_idle_seconds = GREATEST(lunch_idle_seconds, VALUES(lunch_idle_seconds)),
               after_hours_active_seconds = GREATEST(after_hours_active_seconds, VALUES(after_hours_active_seconds)),
               after_hours_idle_seconds = GREATEST(after_hours_idle_seconds, VALUES(after_hours_idle_seconds)),
+              is_workday = VALUES(is_workday),
               updated_at     = NOW()
         ");
          
@@ -142,7 +149,8 @@ class ActivityDay
                 'lunch_a' => $lunchActive,
                 'lunch_i' => $lunchIdle,
                 'after_a' => $afterActive,
-                'after_i' => $afterIdle
+                'after_i' => $afterIdle,
+                'is_workday' => $isWorkday
             ]);
         } catch (\PDOException $e) {
             if (strpos($e->getMessage(), 'Invalid JSON') !== false) {
@@ -211,7 +219,8 @@ class ActivityDay
                    samples_count, first_event_at, last_event_at,
                    work_hours_active_seconds, work_hours_idle_seconds,
                    lunch_active_seconds, lunch_idle_seconds,
-                   after_hours_active_seconds, after_hours_idle_seconds
+                   after_hours_active_seconds, after_hours_idle_seconds,
+                   is_workday
             FROM keeper_activity_day
             WHERE user_id = :u AND device_id = :d AND day_date = :day
             LIMIT 1
@@ -240,6 +249,7 @@ class ActivityDay
             'lunchIdleSeconds' => (int)($row['lunch_idle_seconds'] ?? 0),
             'afterHoursActiveSeconds' => (int)($row['after_hours_active_seconds'] ?? 0),
             'afterHoursIdleSeconds' => (int)($row['after_hours_idle_seconds'] ?? 0),
+            'isWorkday' => (bool)($row['is_workday'] ?? true),
         ]);
     }
 }
