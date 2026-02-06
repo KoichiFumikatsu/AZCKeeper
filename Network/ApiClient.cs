@@ -385,6 +385,86 @@ namespace AZCKeeper_Cliente.Network
             }
         }
 
+        // -------------------- DEVICE LOCK --------------------
+        /// <summary>
+        /// Consulta el estado actual de bloqueo del dispositivo.
+        /// Retorna si debe estar bloqueado según la política efectiva.
+        /// </summary>
+        public async Task<LockStatusResult> GetLockStatusAsync()
+        {
+            var result = new LockStatusResult();
+
+            try
+            {
+                if (_httpClient.BaseAddress == null)
+                {
+                    result.IsSuccess = false;
+                    result.Error = "No ApiBaseUrl";
+                    return result;
+                }
+
+                using var httpRequest = CreateRequest(HttpMethod.Post, "client/device-lock/status", content: null);
+                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                result.StatusCode = (int)response.StatusCode;
+
+                string body = await SafeReadBodyAsync(response).ConfigureAwait(false);
+                result.BodyPreview = Preview(body);
+
+                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+                    response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                {
+                    result.IsUnauthorized = true;
+                    result.IsSuccess = false;
+                    result.Error = "Unauthorized";
+                    return result;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    result.IsSuccess = false;
+                    result.Error = $"HTTP {result.StatusCode}";
+                    return result;
+                }
+
+                if (string.IsNullOrWhiteSpace(body))
+                {
+                    result.IsSuccess = false;
+                    result.Error = "Empty body";
+                    return result;
+                }
+
+                if (!LooksLikeJson(response, body))
+                {
+                    result.IsSuccess = false;
+                    result.Error = "Non-JSON response";
+                    return result;
+                }
+
+                var parsed = JsonSerializer.Deserialize<LockStatusResponseWrapper>(body, _jsonOptions);
+                if (parsed == null)
+                {
+                    result.IsSuccess = false;
+                    result.Error = "Invalid JSON";
+                    return result;
+                }
+
+                result.Blocking = parsed.Blocking;
+                result.IsSuccess = parsed.Ok;
+
+                if (!result.IsSuccess)
+                    result.Error = parsed.Error ?? "Get lock status failed";
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "ApiClient.GetLockStatusAsync(): error.");
+                result.IsSuccess = false;
+                result.Error = ex.Message;
+                return result;
+            }
+        }
+
         // -------------------- WINDOW EPISODE --------------------
         /// <summary>
         /// Limpia texto de ventana/proceso (remueve solo caracteres de control, preserva Unicode válido).
@@ -944,6 +1024,30 @@ namespace AZCKeeper_Cliente.Network
             public double AfterHoursActiveSeconds { get; set; }
             public double AfterHoursIdleSeconds { get; set; }
             public bool IsWorkday { get; set; } // true=lunes-viernes, false=sábado-domingo
+        }
+
+        /// <summary>
+        /// Resultado de consulta de estado de bloqueo con metadata.
+        /// Reutiliza EffectiveBlocking existente.
+        /// </summary>
+        internal class LockStatusResult
+        {
+            public bool IsSuccess { get; set; }
+            public int? StatusCode { get; set; }
+            public bool IsUnauthorized { get; set; }
+            public string BodyPreview { get; set; }
+            public string Error { get; set; }
+            public EffectiveBlocking Blocking { get; set; }
+        }
+
+        /// <summary>
+        /// Wrapper de respuesta del endpoint device-lock/status.
+        /// </summary>
+        internal class LockStatusResponseWrapper
+        {
+            public bool Ok { get; set; }
+            public EffectiveBlocking Blocking { get; set; }
+            public string Error { get; set; }
         }
 
     }

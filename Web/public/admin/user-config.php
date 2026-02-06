@@ -25,37 +25,72 @@ $policy = $policy->fetch(PDO::FETCH_ASSOC);
 // Obtener política global para mostrar "Usando global"
 $globalPolicy = $pdo->query("SELECT * FROM keeper_policy_assignments WHERE scope='global' AND is_active=1 LIMIT 1")->fetch(PDO::FETCH_ASSOC);
  
-// Default config
+// Default config (valores base)
 $defaultConfig = [
-    'logging' => ['globalLevel' => 'Info', 'clientOverrideLevel' => null, 'enableFileLogging' => true, 'enableDiscordLogging' => false, 'discordWebhookUrl' => null],
-    'modules' => [
-        'enableActivityTracking' => true, 'enableWindowTracking' => true, 'enableProcessTracking' => false,
-        'enableBlocking' => false, 'enableUpdateManager' => true, 'enableDebugWindow' => false, 'enableCallTracking' => false,
-        'countCallsAsActive' => false, 'callActiveMaxIdleSeconds' => 1800,
-        'activityIntervalSeconds' => 1, 'activityInactivityThresholdSeconds' => 15,
-        'windowTrackingIntervalSeconds' => 2,
-        'callProcessKeywords' => ['zoom', 'teams', 'skype'], 'callTitleKeywords' => ['meeting', 'call']
+    'logging' => [
+        'globalLevel' => 'Info', 
+        'clientOverrideLevel' => null, 
+        'enableFileLogging' => true, 
+        'enableDiscordLogging' => false, 
+        'discordWebhookUrl' => null
     ],
-    'startup' => ['enableAutoStartup' => true, 'startMinimized' => false],
-    'updates' => ['enableAutoUpdate' => true, 'checkIntervalMinutes' => 60, 'autoDownload' => false, 'allowBetaVersions' => false],
-    'blocking' => ['enableDeviceLock' => false, 'lockMessage' => 'Bloqueado por IT', 'allowUnlockWithPin' => true, 'unlockPin' => null],
-    'timers' => ['activityFlushIntervalSeconds' => 6, 'handshakeIntervalMinutes' => 5, 'offlineQueueRetrySeconds' => 30]
+    'modules' => [
+        'enableActivityTracking' => true, 
+        'enableWindowTracking' => true, 
+        'enableProcessTracking' => false,
+        'enableBlocking' => false, 
+        'enableUpdateManager' => true, 
+        'enableDebugWindow' => false, 
+        'enableCallTracking' => false,
+        'countCallsAsActive' => false, 
+        'callActiveMaxIdleSeconds' => 1800,
+        'activityIntervalSeconds' => 1, 
+        'activityInactivityThresholdSeconds' => 900,
+        'windowTrackingIntervalSeconds' => 1,
+        'callProcessKeywords' => ['zoom', 'teams', 'skype'], 
+        'callTitleKeywords' => ['meeting', 'call']
+    ],
+    'startup' => [
+        'enableAutoStartup' => true, 
+        'startMinimized' => false
+    ],
+    'updates' => [
+        'enableAutoUpdate' => true, 
+        'checkIntervalMinutes' => 60, 
+        'autoDownload' => false, 
+        'allowBetaVersions' => false
+    ],
+    'blocking' => [
+        'enableDeviceLock' => false, 
+        'lockMessage' => 'Dispositivo bloqueado por políticas de seguridad.', 
+        'allowUnlockWithPin' => false, 
+        'unlockPin' => null
+    ],
+    'timers' => [
+        'activityFlushIntervalSeconds' => 10, 
+        'handshakeIntervalMinutes' => 5, 
+        'offlineQueueRetrySeconds' => 30
+    ]
 ];
  
 $usingGlobal = !$policy;
- 
-if ($policy) {
-    $savedConfig = json_decode($policy['policy_json'], true);
-    $config = array_replace_recursive($defaultConfig, $savedConfig ?: []);
-} elseif ($globalPolicy) {
-    $globalConfig = json_decode($globalPolicy['policy_json'], true);
-    $config = array_replace_recursive($defaultConfig, $globalConfig ?: []);
-} else {
-    $config = $defaultConfig;
+
+// Determinar qué política usar (user > global > default)
+$activePolicy = $policy ?: $globalPolicy;
+$activePolicyJson = $activePolicy ? json_decode($activePolicy['policy_json'], true) : null;
+
+// Configuración final: usar JSON si existe, sino defaults
+$config = $activePolicyJson && is_array($activePolicyJson) ? $activePolicyJson : $defaultConfig;
+
+// Función helper simplificada
+function val($section, $key, $default = null) {
+    global $config;
+    return $config[$section][$key] ?? $default;
 }
  
-function getConfig($array, $key, $default = null) {
-    return $array[$key] ?? $default;
+// Helper para acceso seguro a config anidada
+function getNestedConfig($config, $section, $key, $default = null) {
+    return $config[$section][$key] ?? $default;
 }
  
 // PROCESAR FORMULARIO
@@ -70,6 +105,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     
     if ($action === 'save') {
+        // ✅ FIX: Normalizar arrays vacíos para keywords (no enviar arrays vacíos en JSON)
+        $callProcesses = array_filter(array_map('trim', explode(',', $_POST['call_processes'] ?? '')));
+        $callTitles = array_filter(array_map('trim', explode(',', $_POST['call_titles'] ?? '')));
+        
         $newConfig = [
             'logging' => [
                 'globalLevel' => $_POST['log_level'] ?? 'Info',
@@ -87,12 +126,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'enableDebugWindow' => isset($_POST['mod_debug']),
                 'enableCallTracking' => isset($_POST['mod_call_tracking']),
                 'countCallsAsActive' => isset($_POST['mod_count_calls']),
-                'callActiveMaxIdleSeconds' => (float)($_POST['call_max_idle'] ?? 1800),
-                'activityIntervalSeconds' => (float)($_POST['activity_interval'] ?? 1),
-                'activityInactivityThresholdSeconds' => (float)($_POST['activity_threshold'] ?? 15),
-                'windowTrackingIntervalSeconds' => (float)($_POST['window_interval'] ?? 2),
-                'callProcessKeywords' => array_filter(array_map('trim', explode(',', $_POST['call_processes'] ?? ''))),
-                'callTitleKeywords' => array_filter(array_map('trim', explode(',', $_POST['call_titles'] ?? '')))
+                'callActiveMaxIdleSeconds' => (int)($_POST['call_max_idle'] ?? 1800),
+                'activityIntervalSeconds' => (int)($_POST['activity_interval'] ?? 1),
+                'activityInactivityThresholdSeconds' => (int)($_POST['activity_threshold'] ?? 900),
+                'windowTrackingIntervalSeconds' => (int)($_POST['window_interval'] ?? 1),
+                'callProcessKeywords' => $callProcesses ?: [],
+                'callTitleKeywords' => $callTitles ?: []
             ],
             'startup' => [
                 'enableAutoStartup' => isset($_POST['startup_auto']),
@@ -106,12 +145,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ],
             'blocking' => [
                 'enableDeviceLock' => isset($_POST['lock_enable']),
-                'lockMessage' => $_POST['lock_message'] ?? 'Bloqueado',
+                'lockMessage' => $_POST['lock_message'] ?? 'Dispositivo bloqueado por políticas de seguridad.',
                 'allowUnlockWithPin' => isset($_POST['lock_allow_pin']),
                 'unlockPin' => $_POST['lock_pin'] ?: null
             ],
             'timers' => [
-                'activityFlushIntervalSeconds' => (int)($_POST['timer_flush'] ?? 6),
+                'activityFlushIntervalSeconds' => (int)($_POST['timer_flush'] ?? 10),
                 'handshakeIntervalMinutes' => (int)($_POST['timer_handshake'] ?? 5),
                 'offlineQueueRetrySeconds' => (int)($_POST['timer_retry'] ?? 30)
             ]
@@ -187,6 +226,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         </div>
  
+        <?php if (isset($_GET['debug'])): ?>
+        <div class="info-card" style="background: #fff3cd; padding: 1.5rem; border-radius: 8px; margin-bottom: 1rem; border: 2px solid #ffc107;">
+            <h3 style="margin-bottom: 1rem; color: #856404;">🐛 DEBUG - Valores Cargados</h3>
+            <div style="font-family: monospace; font-size: 0.9rem;">
+                <p><strong>enableCallTracking:</strong> <?= var_export(val('modules', 'enableCallTracking', false), true) ?></p>
+                <p><strong>countCallsAsActive:</strong> <?= var_export(val('modules', 'countCallsAsActive', false), true) ?></p>
+                <p><strong>activityInactivityThresholdSeconds:</strong> <?= var_export(val('modules', 'activityInactivityThresholdSeconds', 15), true) ?></p>
+                <p><strong>activityIntervalSeconds:</strong> <?= var_export(val('modules', 'activityIntervalSeconds', 1), true) ?></p>
+                <p><strong>enableAutoUpdate:</strong> <?= var_export(val('updates', 'enableAutoUpdate', true), true) ?></p>
+                <hr>
+                <p><strong>Policy Source:</strong> <?= $policy ? 'USER CUSTOM (ID: '.$policy['id'].')' : ($globalPolicy ? 'GLOBAL (ID: '.$globalPolicy['id'].')' : 'DEFAULTS') ?></p>
+                <details>
+                    <summary style="cursor: pointer; color: #007bff;">Ver JSON completo de $config</summary>
+                    <pre><?= json_encode($config, JSON_PRETTY_PRINT) ?></pre>
+                </details>
+            </div>
+        </div>
+        <?php endif; ?>
+ 
         <?php if ($usingGlobal): ?>
             <div class="policy-status policy-global">
                 ℹ️ Este usuario está usando la <strong>política global</strong>. Los valores mostrados son los de la configuración global actual.
@@ -216,7 +274,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <label>Nivel de log:</label>
                     <select name="log_level">
                         <?php foreach (['Trace', 'Debug', 'Info', 'Warn', 'Error'] as $level): ?>
-                            <option <?= getConfig($config['logging'], 'globalLevel', 'Info') === $level ? 'selected' : '' ?>><?= $level ?></option>
+                            <option <?= val('logging', 'globalLevel', 'Info') === $level ? 'selected' : '' ?>><?= $level ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -226,24 +284,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <select name="log_override">
                         <option value="">-- Sin override --</option>
                         <?php foreach (['Trace', 'Debug', 'Info', 'Warn', 'Error'] as $level): ?>
-                            <option <?= getConfig($config['logging'], 'clientOverrideLevel') === $level ? 'selected' : '' ?>><?= $level ?></option>
+                            <option <?= val('logging', 'clientOverrideLevel') === $level ? 'selected' : '' ?>><?= $level ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
  
                 <div class="form-row">
                     <label>Guardar en archivo:</label>
-                    <input type="checkbox" name="log_file" <?= getConfig($config['logging'], 'enableFileLogging', true) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="log_file" <?= val('logging', 'enableFileLogging', true) ? 'checked' : '' ?>>
                 </div>
  
                 <div class="form-row">
                     <label>Enviar a Discord:</label>
-                    <input type="checkbox" name="log_discord" <?= getConfig($config['logging'], 'enableDiscordLogging', false) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="log_discord" <?= val('logging', 'enableDiscordLogging', false) ? 'checked' : '' ?>>
                 </div>
  
                 <div class="form-row">
                     <label>Discord Webhook:</label>
-                    <input type="text" name="discord_webhook" value="<?= htmlspecialchars(getConfig($config['logging'], 'discordWebhookUrl', '') ?: '') ?>">
+                    <input type="text" name="discord_webhook" value="<?= htmlspecialchars(val('logging', 'discordWebhookUrl', '') ?: '') ?>">
                 </div>
             </div>
  
@@ -253,81 +311,84 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
                 <div class="form-row">
                     <label>Activity Tracking:</label>
-                    <input type="checkbox" name="mod_activity" <?= getConfig($config['modules'], 'enableActivityTracking', true) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="mod_activity" <?= val('modules', 'enableActivityTracking', true) ? 'checked' : '' ?>>
                 </div>
  
                 <div class="form-row">
                     <label>Window Tracking:</label>
-                    <input type="checkbox" name="mod_window" <?= getConfig($config['modules'], 'enableWindowTracking', true) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="mod_window" <?= val('modules', 'enableWindowTracking', true) ? 'checked' : '' ?>>
                 </div>
  
                 <div class="form-row">
                     <label>Process Tracking:</label>
-                    <input type="checkbox" name="mod_process" <?= getConfig($config['modules'], 'enableProcessTracking', false) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="mod_process" <?= val('modules', 'enableProcessTracking', false) ? 'checked' : '' ?>>
                 </div>
  
                 <div class="form-row">
                     <label>Módulo de Bloqueo:</label>
-                    <input type="checkbox" name="mod_blocking" <?= getConfig($config['modules'], 'enableBlocking', false) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="mod_blocking" <?= val('modules', 'enableBlocking', false) ? 'checked' : '' ?>>
+                </div>
+                <div class="form-row">
+                    <small style="grid-column: 1/3; color: #666; margin-top: -0.5rem;">
+                        ℹ️ Habilita la funcionalidad de bloqueo remoto. Debe estar activado para poder bloquear equipos.
+                    </small>
                 </div>
  
                 <div class="form-row">
                     <label>Update Manager:</label>
-                    <input type="checkbox" name="mod_updates" <?= getConfig($config['modules'], 'enableUpdateManager', true) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="mod_updates" <?= val('modules', 'enableUpdateManager', true) ? 'checked' : '' ?>>
                 </div>
  
                 <div class="form-row">
                     <label>Debug Window:</label>
-                    <input type="checkbox" name="mod_debug" <?= getConfig($config['modules'], 'enableDebugWindow', false) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="mod_debug" <?= val('modules', 'enableDebugWindow', false) ? 'checked' : '' ?>>
                 </div>
  
                 <h4 style="margin-top: 2rem; color: #2c3e50;">Activity Tracking</h4>
  
                 <div class="form-row">
                     <label>Intervalo (seg):</label>
-                    <input type="number" name="activity_interval" value="<?= getConfig($config['modules'], 'activityIntervalSeconds', 1) ?>" step="0.1" min="0.1">
+                    <input type="number" name="activity_interval" value="<?= val('modules', 'activityIntervalSeconds', 1) ?>" step="0.1" min="0.1">
                 </div>
  
                 <div class="form-row">
                     <label>Umbral inactividad (seg):</label>
-                    <input type="number" name="activity_threshold" value="<?= getConfig($config['modules'], 'activityInactivityThresholdSeconds', 15) ?>" min="1">
+                    <input type="number" name="activity_threshold" value="<?= val('modules', 'activityInactivityThresholdSeconds', 15) ?>" min="1">
                 </div>
- 
+                <div class="form-row">
+                    <label>Contar llamadas como activo:</label>
+                    <input type="checkbox" name="mod_count_calls" <?= val('modules', 'countCallsAsActive', false) ? 'checked' : '' ?>>
+               </div>
+
+                <div class="form-row">
+                    <label>Max idle en llamada (seg):</label>
+                    <input type="number" name="call_max_idle" value="<?= val('modules', 'callActiveMaxIdleSeconds', 1800) ?>" min="60">
+                </div>
+
                 <h4 style="margin-top: 2rem; color: #2c3e50;">Window Tracking</h4>
  
                 <div class="form-row">
                     <label>Intervalo (seg):</label>
-                    <input type="number" name="window_interval" value="<?= getConfig($config['modules'], 'windowTrackingIntervalSeconds', 2) ?>" step="0.1" min="0.1">
+                    <input type="number" name="window_interval" value="<?= val('modules', 'windowTrackingIntervalSeconds', 2) ?>" step="0.1" min="0.1">
                 </div>
- 
-                <h4 style="margin-top: 2rem; color: #2c3e50;">Call Tracking</h4>
- 
+
                 <div class="form-row">
-                    <label>Habilitar:</label>
-                    <input type="checkbox" name="mod_call_tracking" <?= getConfig($config['modules'], 'enableCallTracking', false) ? 'checked' : '' ?>>
+                    <label>Habilitar Call Tracking:</label>
+                    <input type="checkbox" name="mod_call_tracking" <?= val('modules', 'enableCallTracking', false) ? 'checked' : '' ?>>
                 </div>
- 
+
                 <div class="form-row">
-                    <label>Contar como activo:</label>
-                    <input type="checkbox" name="mod_count_calls" <?= getConfig($config['modules'], 'countCallsAsActive', false) ? 'checked' : '' ?>>
-                </div>
- 
-                <div class="form-row">
-                    <label>Max idle en llamada (seg):</label>
-                    <input type="number" name="call_max_idle" value="<?= getConfig($config['modules'], 'callActiveMaxIdleSeconds', 1800) ?>" min="60">
-                </div>
- 
-                <div class="form-row">
-                    <label>Procesos:</label>
-                    <input type="text" name="call_processes" value="<?= htmlspecialchars(implode(', ', getConfig($config['modules'], 'callProcessKeywords', []))) ?>">
+                    <label>Procesos de llamada:</label>
+                    <input type="text" name="call_processes" value="<?= htmlspecialchars(implode(', ', val('modules', 'callProcessKeywords', []))) ?>">
                     <small>Separados por coma: zoom, teams, skype</small>
                 </div>
- 
+
                 <div class="form-row">
-                    <label>Palabras en título:</label>
-                    <input type="text" name="call_titles" value="<?= htmlspecialchars(implode(', ', getConfig($config['modules'], 'callTitleKeywords', []))) ?>">
+                    <label>Palabras clave en título:</label>
+                    <input type="text" name="call_titles" value="<?= htmlspecialchars(implode(', ', val('modules', 'callTitleKeywords', []))) ?>">
                     <small>Separadas por coma: meeting, call, reunión</small>
                 </div>
+
             </div>
  
             <!-- ========== STARTUP ========== -->
@@ -336,12 +397,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  
                 <div class="form-row">
                     <label>Iniciar con Windows:</label>
-                    <input type="checkbox" name="startup_auto" <?= getConfig($config['startup'], 'enableAutoStartup', true) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="startup_auto" <?= val('startup', 'enableAutoStartup', true) ? 'checked' : '' ?>>
                 </div>
  
                 <div class="form-row">
                     <label>Iniciar minimizado:</label>
-                    <input type="checkbox" name="startup_minimized" <?= getConfig($config['startup'], 'startMinimized', false) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="startup_minimized" <?= val('startup', 'startMinimized', false) ? 'checked' : '' ?>>
                 </div>
             </div>
  
@@ -351,22 +412,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  
                 <div class="form-row">
                     <label>Auto-actualización:</label>
-                    <input type="checkbox" name="updates_auto" <?= getConfig($config['updates'], 'enableAutoUpdate', true) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="updates_auto" <?= val('updates', 'enableAutoUpdate', true) ? 'checked' : '' ?>>
                 </div>
  
                 <div class="form-row">
                     <label>Intervalo verificación (min):</label>
-                    <input type="number" name="updates_interval" value="<?= getConfig($config['updates'], 'checkIntervalMinutes', 60) ?>" min="5">
+                    <input type="number" name="updates_interval" value="<?= val('updates', 'checkIntervalMinutes', 60) ?>" min="5">
                 </div>
  
                 <div class="form-row">
                     <label>Descarga automática:</label>
-                    <input type="checkbox" name="updates_auto_download" <?= getConfig($config['updates'], 'autoDownload', false) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="updates_auto_download" <?= val('updates', 'autoDownload', false) ? 'checked' : '' ?>>
                 </div>
  
                 <div class="form-row">
                     <label>Permitir versiones beta:</label>
-                    <input type="checkbox" name="updates_beta" <?= getConfig($config['updates'], 'allowBetaVersions', false) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="updates_beta" <?= val('updates', 'allowBetaVersions', false) ? 'checked' : '' ?>>
                 </div>
             </div>
  
@@ -374,22 +435,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="config-section">
                 <h3>🔒 Bloqueo Remoto</h3>
                 <div class="alert alert-warning" style="margin-bottom: 1rem; padding: 1rem; background: #fff3cd; border-left: 4px solid #ffc107;">
-                    ⚠️ Al activar esto, <strong>TODOS</strong> los dispositivos del usuario se bloquearán.
+                    ⚠️ <strong>Requisito:</strong> El "Módulo de Bloqueo" debe estar habilitado en Módulos.<br>
+                    ⚠️ Al activar "BLOQUEAR EQUIPOS", todos los dispositivos del usuario se bloquearán en ~30 segundos.<br>
+                    ✅ Los usuarios podrán desbloquear con el PIN (si está permitido).
                 </div>
  
                 <div class="form-row">
                     <label style="color: #e74c3c; font-weight: bold;">🔒 BLOQUEAR EQUIPOS:</label>
-                    <input type="checkbox" name="lock_enable" <?= getConfig($config['blocking'], 'enableDeviceLock', false) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="lock_enable" <?= val('blocking', 'enableDeviceLock', false) ? 'checked' : '' ?>>
+                </div>
+                <div class="form-row">
+                    <small style="grid-column: 1/3; color: #666; margin-top: -0.5rem;">
+                        ℹ️ Activa el bloqueo de pantallas. Al desactivar, se desbloqueará automáticamente. El usuario también puede desbloquear con PIN.
+                    </small>
                 </div>
  
                 <div class="form-row">
                     <label>Mensaje:</label>
-                    <textarea name="lock_message" rows="3"><?= htmlspecialchars(getConfig($config['blocking'], 'lockMessage', 'Bloqueado por IT')) ?></textarea>
+                    <textarea name="lock_message" rows="3"><?= htmlspecialchars(val('blocking', 'lockMessage', 'Bloqueado por IT')) ?></textarea>
                 </div>
  
                 <div class="form-row">
                     <label>Permitir desbloqueo con PIN:</label>
-                    <input type="checkbox" name="lock_allow_pin" <?= getConfig($config['blocking'], 'allowUnlockWithPin', true) ? 'checked' : '' ?>>
+                    <input type="checkbox" name="lock_allow_pin" <?= val('blocking', 'allowUnlockWithPin', true) ? 'checked' : '' ?>>
                 </div>
  
                 <div class="form-row">
@@ -404,17 +472,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  
                 <div class="form-row">
                     <label>Activity Flush (seg):</label>
-                    <input type="number" name="timer_flush" value="<?= getConfig($config['timers'], 'activityFlushIntervalSeconds', 6) ?>" min="1">
+                    <input type="number" name="timer_flush" value="<?= val('timers', 'activityFlushIntervalSeconds', 6) ?>" min="1">
                 </div>
  
                 <div class="form-row">
                     <label>Handshake (min):</label>
-                    <input type="number" name="timer_handshake" value="<?= getConfig($config['timers'], 'handshakeIntervalMinutes', 5) ?>" min="1">
+                    <input type="number" name="timer_handshake" value="<?= val('timers', 'handshakeIntervalMinutes', 5) ?>" min="1">
                 </div>
  
                 <div class="form-row">
                     <label>Reintentos offline (seg):</label>
-                    <input type="number" name="timer_retry" value="<?= getConfig($config['timers'], 'offlineQueueRetrySeconds', 30) ?>" min="5">
+                    <input type="number" name="timer_retry" value="<?= val('timers', 'offlineQueueRetrySeconds', 30) ?>" min="5">
                 </div>
             </div>
  
