@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("AZCKeeper_Client")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+32ecff860a31ba37c8170cecfed92133b8fd0e3c")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+09886f8340739dc8aca37d009c215d2020bdf507")]
 [assembly: System.Reflection.AssemblyProductAttribute("AZCKeeper_Client")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AZCKeeper_Client")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
