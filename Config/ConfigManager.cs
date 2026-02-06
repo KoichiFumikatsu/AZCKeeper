@@ -238,7 +238,7 @@ namespace AZCKeeper_Cliente.Config
             {
                 Version = "3.0.0.0",
                 DeviceId = null, // Se generará posteriormente en EnsureDeviceId.
-                ApiBaseUrl = "https://inventario.azc.com.co/keeper/public/index.php/api/", // Placeholder para la API real.
+                ApiBaseUrl = "https://one.azclegal.com/keeper/public/index.php/api/", // Placeholder para la API real.
                 ApiAuthToken = null,
                 Blocking = new BlockingConfig
                 {
