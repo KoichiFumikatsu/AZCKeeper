@@ -243,8 +243,8 @@ namespace AZCKeeper_Cliente.Config
                 Blocking = new BlockingConfig
                 {
                     EnableDeviceLock = false,
-                    LockMessage = "Este equipo ha sido bloqueado.\n\nContacta al administrador para desbloquearlo.",
-                    AllowUnlockWithPin = true,
+                    LockMessage = "Dispositivo bloqueado por políticas de seguridad.",
+                    AllowUnlockWithPin = false,
                     UnlockPinHash = null
                 },
                 Startup = new StartupConfig
@@ -269,8 +269,8 @@ namespace AZCKeeper_Cliente.Config
                 },
                 Timers = new TimersConfig
                 {
-                    ActivityFlushIntervalSeconds = 6,
-                    HandshakeIntervalMinutes = 1,
+                    ActivityFlushIntervalSeconds = 10,
+                    HandshakeIntervalMinutes = 5,
                     OfflineQueueRetrySeconds = 30
                 },
                 Modules = new ModulesConfig
@@ -278,7 +278,7 @@ namespace AZCKeeper_Cliente.Config
                     EnableActivityTracking = true,
                     EnableWindowTracking = true,
                     EnableProcessTracking = true,
-                    EnableBlocking = false,
+                    EnableBlocking = true,
                     EnableUpdateManager = true,
                     EnableDebugWindow = false,
                     EnableCallTracking = true,
@@ -351,7 +351,7 @@ namespace AZCKeeper_Cliente.Config
         /// </summary>
         internal class TimersConfig
         {
-            public int ActivityFlushIntervalSeconds { get; set; } = 6;
+            public int ActivityFlushIntervalSeconds { get; set; } = 10;
             public int HandshakeIntervalMinutes { get; set; } = 5;
             public int OfflineQueueRetrySeconds { get; set; } = 30;
         }
@@ -383,7 +383,7 @@ namespace AZCKeeper_Cliente.Config
         {
             public bool EnableDeviceLock { get; set; } = false;
             public string LockMessage { get; set; } = "Este equipo ha sido bloqueado.\n\nContacta al administrador.";
-            public bool AllowUnlockWithPin { get; set; } = true;
+            public bool AllowUnlockWithPin { get; set; } = false;
             public string UnlockPin { get; set; } = null; // PIN en texto plano
             public string UnlockPinHash { get; set; } = null; // Hash SHA256 del PIN (deprecated, para compatibilidad)
         }

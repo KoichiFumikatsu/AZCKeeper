@@ -34,8 +34,8 @@ $defaultConfig = [
         'countCallsAsActive' => false,
         'callActiveMaxIdleSeconds' => 1800,
         'activityIntervalSeconds' => 1,
-        'activityInactivityThresholdSeconds' => 15,
-        'windowTrackingIntervalSeconds' => 2,
+        'activityInactivityThresholdSeconds' => 900,
+        'windowTrackingIntervalSeconds' => 1,
         'callProcessKeywords' => ['zoom', 'teams', 'skype', 'meet', 'webex'],
         'callTitleKeywords' => ['meeting', 'call', 'reunión', 'llamada']
     ],
@@ -51,12 +51,12 @@ $defaultConfig = [
     ],
     'blocking' => [
         'enableDeviceLock' => false,
-        'lockMessage' => 'Este equipo ha sido bloqueado por IT.\n\nContacta al administrador.',
-        'allowUnlockWithPin' => true,
+        'lockMessage' => 'Dispositivo bloqueado por políticas de seguridad.',
+        'allowUnlockWithPin' => false,
         'unlockPin' => null
     ],
     'timers' => [
-        'activityFlushIntervalSeconds' => 6,
+        'activityFlushIntervalSeconds' => 10,
         'handshakeIntervalMinutes' => 5,
         'offlineQueueRetrySeconds' => 30
     ]

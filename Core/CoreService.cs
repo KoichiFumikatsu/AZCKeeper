@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Drawing;
+using System.IO;
 using System.Windows.Forms;
 using AZCKeeper_Cliente.Auth;
 using AZCKeeper_Cliente.Blocking;
@@ -52,6 +53,8 @@ namespace AZCKeeper_Cliente.Core
         private System.Timers.Timer _handshakeTimer; // handshake periódico
         private DateTime _lastHandshakeTime = DateTime.MinValue; // último handshake ok
         private bool _hasSuccessfulHandshake = false; // flag para primer handshake exitoso
+
+        private System.Timers.Timer _lockStatusTimer; // chequeo de bloqueo cada 30s (más frecuente que handshake)
 
         /// <summary>
         /// Inicializa servicios base, carga config/token, crea ApiClient y módulos.
@@ -132,6 +135,7 @@ namespace AZCKeeper_Cliente.Core
                 // 3) Flush periódico
                 StartActivityFlushTimer();
                 StartHandshakeTimer();
+                StartLockStatusTimer();
                 if (_debugWindow != null && !_debugWindow.IsDisposed)
                 {
                     try { _debugWindow.Show(); }
@@ -169,6 +173,8 @@ namespace AZCKeeper_Cliente.Core
 
                 _handshakeTimer?.Stop();
                 _handshakeTimer?.Dispose();
+                _lockStatusTimer?.Stop();
+                _lockStatusTimer?.Dispose();
                 _activityTracker?.Stop();
                 _windowTracker?.Stop();
                 _updateManager?.Stop();
@@ -288,6 +294,38 @@ namespace AZCKeeper_Cliente.Core
             }
         }
         /// <summary>
+        /// Inicia timer de chequeo de estado de bloqueo (cada 30 segundos).
+        /// Más frecuente que handshake para aplicar bloqueos/desbloqueos en tiempo real.
+        /// </summary>
+        private void StartLockStatusTimer()
+        {
+            try
+            {
+                if (_lockStatusTimer != null) return;
+
+                // Intervalo fijo de 30 segundos para respuesta rápida
+                _lockStatusTimer = new System.Timers.Timer(30_000);
+                _lockStatusTimer.AutoReset = true;
+                _lockStatusTimer.Elapsed += (s, e) =>
+                {
+                    try
+                    {
+                        CheckDeviceLockStatus();
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Error(ex, "CoreService: error en timer de lock status.");
+                    }
+                };
+                _lockStatusTimer.Start();
+                LocalLogger.Info("CoreService: LockStatusTimer iniciado (cada 30s).");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error al iniciar LockStatusTimer.");
+            }
+        }
+        /// <summary>
         /// Ejecuta handshake con backend y aplica effectiveConfig local.
         /// Puede habilitar/deshabilitar módulos y políticas en caliente.
         /// </summary>
@@ -362,11 +400,6 @@ namespace AZCKeeper_Cliente.Core
                         Startup.StartupManager.EnableStartup();
                     else
                         Startup.StartupManager.DisableStartup();
-                }
-                if (effective.Blocking != null && effective.Blocking.EnableDeviceLock)
-                {
-                    LocalLogger.Warn("CoreService: política de bloqueo detectada. Verificando estado...");
-                    CheckDeviceLockStatus();
                 }
                 // -------------------- Blocking --------------------
                 if (effective.Blocking != null)
@@ -719,14 +752,83 @@ namespace AZCKeeper_Cliente.Core
             }
         }
         /// <summary>
-        /// Consulta estado de bloqueo remoto y aplica si corresponde.
+        /// Consulta estado de bloqueo remoto y aplica cambios en tiempo real.
+        /// Llamado por timer cada 30 segundos y también por handshake si detecta bloqueo.
         /// </summary>
         private async void CheckDeviceLockStatus()
         {
             try
             {
-                var response = await _apiClient.PostAsync("client/device-lock/status", new { });
-                // Parsear y activar bloqueo si locked=true
+                if (_apiClient == null)
+                {
+                    LocalLogger.Warn("CoreService.CheckDeviceLockStatus(): ApiClient es null.");
+                    return;
+                }
+
+                if (_keyBlocker == null)
+                {
+                    LocalLogger.Warn("CoreService.CheckDeviceLockStatus(): KeyBlocker es null. Creando instancia...");
+                    // Crear KeyBlocker si no existe (necesario para bloqueo remoto)
+                    _keyBlocker = new KeyBlocker(_apiClient);
+                }
+
+                var result = await _apiClient.GetLockStatusAsync().ConfigureAwait(false);
+
+                if (!result.IsSuccess || result.Blocking == null)
+                {
+                    LocalLogger.Warn($"CoreService.CheckDeviceLockStatus(): falló. Error={result.Error}");
+                    return;
+                }
+
+                bool shouldBeLocked = result.Blocking.EnableDeviceLock;
+                bool isCurrentlyLocked = _keyBlocker.IsLocked();
+
+                LocalLogger.Info($"CoreService.CheckDeviceLockStatus(): shouldBeLocked={shouldBeLocked}, isCurrentlyLocked={isCurrentlyLocked}");
+
+                // Leer config actual
+                var blocking = _configManager.CurrentConfig.Blocking ?? new ConfigManager.BlockingConfig();
+
+                // Verificar si hay cambios antes de guardar
+                bool configChanged = blocking.EnableDeviceLock != shouldBeLocked ||
+                                   blocking.LockMessage != result.Blocking.LockMessage ||
+                                   blocking.AllowUnlockWithPin != result.Blocking.AllowUnlockWithPin ||
+                                   blocking.UnlockPin != result.Blocking.UnlockPin;
+
+                // Solo actualizar y guardar si hay cambios
+                if (configChanged)
+                {
+                    blocking.EnableDeviceLock = shouldBeLocked;
+                    blocking.LockMessage = result.Blocking.LockMessage ?? "Dispositivo bloqueado por IT";
+                    blocking.AllowUnlockWithPin = result.Blocking.AllowUnlockWithPin;
+                    blocking.UnlockPin = result.Blocking.UnlockPin;
+
+                    _configManager.CurrentConfig.Blocking = blocking;
+                    
+                    try
+                    {
+                        _configManager.Save();
+                        LocalLogger.Info("CoreService.CheckDeviceLockStatus(): configuración actualizada y guardada.");
+                    }
+                    catch (IOException ioEx)
+                    {
+                        // Si el archivo está bloqueado, no es crítico - se guardará en el próximo ciclo o handshake
+                        LocalLogger.Warn($"CoreService.CheckDeviceLockStatus(): no se pudo guardar config (archivo ocupado). Se reintentará. {ioEx.Message}");
+                    }
+                }
+
+                // Aplicar cambios si hay diferencia de estado
+                if (shouldBeLocked && !isCurrentlyLocked)
+                {
+                    // Necesita bloquear
+                    LocalLogger.Warn($"CoreService: BLOQUEANDO dispositivo. PIN='{(blocking.UnlockPin ?? "NULL")}'" );
+                    _keyBlocker.ActivateLock(blocking.LockMessage, blocking.AllowUnlockWithPin, blocking.UnlockPin);
+                }
+                else if (!shouldBeLocked && isCurrentlyLocked)
+                {
+                    // Necesita desbloquear
+                    LocalLogger.Info("CoreService: DESBLOQUEANDO dispositivo desde timer.");
+                    _keyBlocker.DeactivateLock();
+                }
             }
             catch (Exception ex)
             {
