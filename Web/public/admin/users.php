@@ -1,39 +1,54 @@
-<?php
-//require_once __DIR__ . '/../../../includes/auth.php';
+﻿<?php
 require_once __DIR__ . '/../../src/bootstrap.php';
-//require_once __DIR__ . '/../../../includes/validar_permiso.php';
-/*
-// Verificar autenticación
- $auth = new Auth();
- $auth->redirectIfNotLoggedIn();
 
-// Verificar permisos
- $database = new Database();
- $conn = $database->getConnection();
+$pdo = Keeper\Db::pdo();
 
-// Obtener información del usuario actual
- $query_usuario = "SELECT e.*, s.nombre as sede_nombre, f.name as firm_name 
-                 FROM employee e 
-                 LEFT JOIN sedes s ON e.sede_id = s.id
-                 LEFT JOIN firm f ON e.id_firm = f.id 
-                 WHERE e.id = ?";
- $stmt_usuario = $conn->prepare($query_usuario);
- $stmt_usuario->execute([$_SESSION['user_id']]);
- $usuario_actual = $stmt_usuario->fetch(PDO::FETCH_ASSOC);
-
-// Verificar permiso para ver la página de usuarios
-if (!tienePermiso($conn, $usuario_actual['id'], $usuario_actual['role'], $usuario_actual['position_id'], 'keeper', 'dashboard')) {
-    header("Location: ../../../admin/dashboard.php");
-    exit();
+/**
+ * Función para calcular el estado de conexión de un usuario
+ * basándose en segundos calculados directamente por MySQL (sin problemas de timezone)
+ */
+function calculateUserStatus($secondsSinceLastSeen, $secondsSinceLastEvent) {
+    // Sin dispositivos o sin last_seen
+    if ($secondsSinceLastSeen === null || $secondsSinceLastSeen > 900000) {
+        return 'offline';
+    }
+    
+    // Sin heartbeat reciente (>15 min) = desconectado
+    if ($secondsSinceLastSeen >= 900) {
+        return 'inactive';
+    }
+    
+    // Dispositivo conectado, verificar actividad
+    if ($secondsSinceLastEvent === null || $secondsSinceLastEvent > 900000) {
+        // Heartbeat reciente pero sin actividad hoy
+        return ($secondsSinceLastSeen < 120) ? 'away' : 'inactive';
+    }
+    
+    // Actividad reciente (<2 min) = activo
+    if ($secondsSinceLastEvent < 120) {
+        return 'active';
+    }
+    
+    // Sin actividad reciente pero conectado = ausente
+    return 'away';
 }
 
-// Verificar permisos específicos para las acciones
- $permiso_ver_politicas = tienePermiso($conn, $usuario_actual['id'], $usuario_actual['role'], $usuario_actual['position_id'], 'keeper', 'politicas');
- $permiso_ver_reportes = tienePermiso($conn, $usuario_actual['id'], $usuario_actual['role'], $usuario_actual['position_id'], 'keeper', 'dashboard');
-*/ 
- $pdo = Keeper\Db::pdo();
+// Paginación
+$perPage = 25;
+$page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+$offset = ($page - 1) * $perPage;
 
-// Listar usuarios con info de dispositivo actual
+// Contar total de usuarios
+$totalUsers = $pdo->query("
+    SELECT COUNT(DISTINCT u.id) as total
+    FROM keeper_users u
+    WHERE u.status = 'active'
+")->fetch(PDO::FETCH_ASSOC)['total'];
+
+$totalPages = ceil($totalUsers / $perPage);
+
+// Listar usuarios con info de dispositivo actual y última actividad
+// Usar TIMESTAMPDIFF de MySQL para evitar problemas de timezone
 $users = $pdo->query("
     SELECT 
         u.id, 
@@ -41,708 +56,641 @@ $users = $pdo->query("
         u.display_name, 
         u.email,
         u.status,
-        COUNT(DISTINCT d.id) as device_count,
         MAX(d.last_seen_at) as last_activity,
-        (SELECT COUNT(*) FROM keeper_policy_assignments WHERE scope='user' AND user_id=u.id AND is_active=1) as has_policy,
-        -- Equipo actual (último activo)
-        (SELECT d2.device_name FROM keeper_devices d2 
-         WHERE d2.user_id = u.id AND d2.status = 'active' 
-         ORDER BY d2.last_seen_at DESC LIMIT 1) as current_device_name,
-        (SELECT d2.device_guid FROM keeper_devices d2 
-         WHERE d2.user_id = u.id AND d2.status = 'active' 
-         ORDER BY d2.last_seen_at DESC LIMIT 1) as current_device_guid,
-        (SELECT d2.last_seen_at FROM keeper_devices d2 
-         WHERE d2.user_id = u.id AND d2.status = 'active' 
-         ORDER BY d2.last_seen_at DESC LIMIT 1) as current_device_last_seen
+        MAX(d.last_seen_at) as last_seen,
+        TIMESTAMPDIFF(SECOND, MAX(d.last_seen_at), NOW()) as seconds_since_seen,
+        (SELECT MAX(a.last_event_at) FROM keeper_activity_day a 
+         WHERE a.user_id = u.id AND a.day_date = CURDATE()) as last_event,
+        TIMESTAMPDIFF(SECOND, 
+            (SELECT MAX(a.last_event_at) FROM keeper_activity_day a 
+             WHERE a.user_id = u.id AND a.day_date = CURDATE()), 
+            NOW()) as seconds_since_event,
+        (SELECT COUNT(*) FROM keeper_policy_assignments WHERE scope='user' AND user_id=u.id AND is_active=1) as has_policy
     FROM keeper_users u
     LEFT JOIN keeper_devices d ON d.user_id = u.id
     WHERE u.status = 'active'
     GROUP BY u.id
     ORDER BY u.display_name
+    LIMIT {$perPage} OFFSET {$offset}
 ")->fetchAll(PDO::FETCH_ASSOC);
 
-// Obtener historial de dispositivos por usuario (para tabla colapsable)
-$devicesHistory = [];
-$devicesStmt = $pdo->query("
-    SELECT 
-        user_id,
-        id,
-        device_name,
-        device_guid,
-        status,
-        last_seen_at,
-        created_at
-    FROM keeper_devices
-    ORDER BY user_id, last_seen_at DESC
-");
-foreach ($devicesStmt as $device) {
-    $devicesHistory[$device['user_id']][] = $device;
+// Calcular estado de conexión para cada usuario usando los segundos calculados por MySQL
+foreach ($users as &$user) {
+    $user['connection_status'] = calculateUserStatus($user['seconds_since_seen'], $user['seconds_since_event']);
 }
+unset($user);
 
-// ==================== ESTADÍSTICAS GLOBALES ====================
-$stats = $pdo->query("
+// Calcular contadores de estado (de todos los usuarios, no solo la página actual)
+$allUsersForCount = $pdo->query("
     SELECT 
-        COUNT(DISTINCT u.id) as total_users,
-        COUNT(DISTINCT d.id) as total_devices,
-        COUNT(DISTINCT CASE WHEN d.last_seen_at >= NOW() - INTERVAL 24 HOUR THEN d.id END) as active_devices_24h,
-        (SELECT COUNT(*) FROM keeper_policy_assignments WHERE scope='user' AND is_active=1) as custom_policies
+        u.id,
+        TIMESTAMPDIFF(SECOND, MAX(d.last_seen_at), NOW()) as seconds_since_seen,
+        TIMESTAMPDIFF(SECOND, 
+            (SELECT MAX(a.last_event_at) FROM keeper_activity_day a 
+             WHERE a.user_id = u.id AND a.day_date = CURDATE()), 
+            NOW()) as seconds_since_event
     FROM keeper_users u
     LEFT JOIN keeper_devices d ON d.user_id = u.id
     WHERE u.status = 'active'
-")->fetch(PDO::FETCH_ASSOC);
-
-// ==================== ACTIVIDAD AGREGADA ====================
-$activity = $pdo->query("
-    SELECT 
-        SUM(active_seconds) as total_active,
-        SUM(idle_seconds) as total_idle,
-        SUM(work_hours_active_seconds) as work_active,
-        SUM(work_hours_idle_seconds) as work_idle,
-        SUM(lunch_active_seconds) as lunch_active,
-        SUM(lunch_idle_seconds) as lunch_idle,
-        SUM(after_hours_active_seconds) as after_active,
-        SUM(after_hours_idle_seconds) as after_idle,
-        SUM(call_seconds) as total_call,
-        COUNT(DISTINCT day_date) as total_days,
-        COUNT(DISTINCT CASE WHEN is_workday = 1 THEN day_date END) as workdays,
-        COUNT(DISTINCT CASE WHEN is_workday = 0 THEN day_date END) as non_workdays,
-        COUNT(DISTINCT user_id) as users_with_activity
-    FROM keeper_activity_day
-")->fetch(PDO::FETCH_ASSOC);
-
-// ==================== TOP USUARIOS ACTIVOS ====================
-$topUsers = $pdo->query("
-    SELECT 
-        u.id,
-        u.cc,
-        u.display_name,
-        SUM(a.active_seconds) as total_active,
-        SUM(a.work_hours_active_seconds) as work_active,
-        COUNT(DISTINCT CASE WHEN a.is_workday = 1 THEN a.day_date END) as days_worked,
-        COUNT(DISTINCT CASE WHEN a.is_workday = 0 THEN a.day_date END) as weekend_days
-    FROM keeper_users u
-    INNER JOIN keeper_activity_day a ON a.user_id = u.id
     GROUP BY u.id
-    ORDER BY total_active DESC
-    LIMIT 5
 ")->fetchAll(PDO::FETCH_ASSOC);
 
-function formatSeconds($seconds) {
-    if (!$seconds) return '00h 00m';
-    $h = floor($seconds / 3600);
-    $m = floor(($seconds % 3600) / 60);
-    return sprintf('%02dh %02dm', $h, $m);
+$statusCounts = [
+    'active' => 0,
+    'away' => 0,
+    'inactive' => 0,
+    'offline' => 0
+];
+foreach ($allUsersForCount as $userCount) {
+    $status = calculateUserStatus($userCount['seconds_since_seen'], $userCount['seconds_since_event']);
+    $statusCounts[$status]++;
 }
-
-function formatHours($seconds) {
-    if (!$seconds) return 0;
-    return round($seconds / 3600, 1);
-}
-
-// Definir la variable $current_page para el sidebar
- $current_page = basename($_SERVER['PHP_SELF']);
 ?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Keeper - Usuarios</title>
+    <title>AZCKeeper - Usuarios</title>
+    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
-    <link href="../../../assets/css/style.css" rel="stylesheet">
     <link rel="stylesheet" href="assets/style.css">
-    <link rel="icon" href="/assets/images/favicon.ico" type="image/x-icon">
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <style>
-        /* ESTILOS ESPECÍFICOS PARA KEEPER */
-        
-        /* BOTONES - Colores corporativos */
-        .btn-primary {
-            background-color: #003a5d !important;
-            border-color: #003a5d !important;
+        /* Estilos del indicador de estado */
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.3rem 0.6rem;
+            border-radius: 15px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
         }
         
-        .btn-primary:hover {
-            background-color: #002b47 !important;
-            border-color: #002b47 !important;
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
         }
         
-        .btn-outline-primary {
-            border-color: #003a5d !important;
-            color: #003a5d !important;
+        .status-active {
+            background: #ECFDF5;
+            color: #065F46;
         }
         
-        .btn-outline-primary:hover {
-            background-color: #003a5d !important;
-            border-color: #003a5d !important;
-            color: white !important;
+        .status-active .status-dot {
+            background: #059669;
+            animation: pulse 2s infinite;
         }
         
-        .btn-danger {
-            background-color: #be1622 !important;
-            border-color: #be1622 !important;
+        .status-away {
+            background: #fff3cd;
+            color: #856404;
         }
         
-        .btn-danger:hover {
-            background-color: #a0121d !important;
-            border-color: #a0121d !important;
+        .status-away .status-dot {
+            background: #ffc107;
         }
         
-        /* BADGES - Colores corporativos */
-        .badge.bg-success {
-            background-color: #198754 !important;
+        .status-inactive {
+            background: #F3F4F6;
+            color: #0F172A;
         }
         
-        .badge.bg-warning {
-            background-color: #ffc107 !important;
-            color: #353132 !important;
+        .status-inactive .status-dot {
+            background: #94A3B8;
         }
         
-        .badge.bg-danger {
-            background-color: #be1622 !important;
+        .status-offline {
+            background: #FFFFFF;
+            color: #94A3B8;
         }
         
-        .badge.bg-primary {
-            background-color: #003a5d !important;
+        .status-offline .status-dot {
+            background: #94A3B8;
         }
         
-        .badge.bg-secondary {
-            background-color: #9d9d9c !important;
-            color: #353132 !important;
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.6;
+                transform: scale(1.3);
+            }
         }
         
-        .badge.bg-dark {
-            background-color: #353132 !important;
+        /* Contadores de estado */
+        .status-counters {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
         }
         
-        .badge.bg-info {
-            background-color: #003a5d !important;
-            opacity: 0.8;
+        .status-counter-card {
+            background: white;
+            border: 2px solid #94A3B8;
+            border-radius: 8px;
+            padding: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            transition: transform 0.2s, box-shadow 0.2s;
         }
         
-        /* TABLAS */
-        .table-hover tbody tr:hover {
-            background-color: rgba(0, 58, 93, 0.05) !important;
+        .status-counter-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(15, 23, 42, 0.15);
         }
         
-        .card-header {
-            background-color: #003a5d !important;
-            border-color: #003a5d;
+        .status-counter-card.active-card { border-color: #059669; }
+        .status-counter-card.away-card { border-color: #F59E0B; }
+        .status-counter-card.inactive-card { border-color: #94A3B8; }
+        .status-counter-card.offline-card { border-color: #94A3B8; }
+        
+        .status-counter-icon {
+            font-size: 2rem;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         
-        /* Estilos específicos para Keeper */
-        .dashboard-grid { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); 
-            gap: 1.5rem; 
-            margin: 2rem 0; 
+        .status-counter-card.active-card .status-counter-icon {
+            background: #ECFDF5;
+            color: #059669;
         }
         
-        .stat-card { 
-            background: white; 
-            padding: 1.5rem; 
-            border-radius: 12px; 
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
-            text-align: center; 
-            transition: transform 0.2s; 
-            border: 2px solid #003a5d;
+        .status-counter-card.away-card .status-counter-icon {
+            background: #FEF3C7;
+            color: #F59E0B;
         }
         
-        .stat-card:hover { 
-            transform: translateY(-5px); 
-            box-shadow: 0 6px 12px rgba(0,0,0,0.15); 
+        .status-counter-card.inactive-card .status-counter-icon {
+            background: #F3F4F6;
+            color: #94A3B8;
         }
         
-        .stat-icon { 
-            font-size: 2.5rem; 
-            margin-bottom: 1rem; 
-            color: #003a5d;
+        .status-counter-card.offline-card .status-counter-icon {
+            background: #F3F4F6;
+            color: #94A3B8;
         }
         
-        .stat-value { 
-            font-size: 2.5rem; 
-            font-weight: bold; 
-            color: #003a5d; 
-            margin: 0.5rem 0; 
+        .status-counter-info h3 {
+            margin: 0;
+            font-size: 1.8rem;
+            font-weight: bold;
         }
         
-        .stat-label { 
-            color: #666; 
-            font-size: 0.9rem; 
+        .status-counter-info p {
+            margin: 0;
+            font-size: 0.85rem;
+            color: #94A3B8;
         }
         
-        .chart-container { 
-            background: white; 
-            padding: 1.5rem; 
-            border-radius: 12px; 
-            margin: 1.5rem 0; 
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            border: 2px solid #003a5d;
+        /* Filtros */
+        .filters {
+            background: white;
+            border: 1px solid #94A3B8;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
         }
         
-        .data-table { 
-            width: 100%; 
-            background: white; 
-            border-radius: 8px; 
-            overflow: hidden; 
-            border: 2px solid #003a5d;
+        .filters-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
         }
         
-        .data-table th { 
-            background: #003a5d; 
-            color: white; 
-            padding: 1rem; 
-            text-align: left; 
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
         }
         
-        .data-table td { 
-            padding: 0.8rem; 
-            border-bottom: 1px solid #eee; 
+        .filter-group label {
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: #0F172A;
         }
         
-        .data-table tr:hover { 
-            background: #f8f9fa; 
+        .filter-group input,
+        .filter-group select {
+            padding: 0.6rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 0.9rem;
         }
         
-        .action-btn { 
-            display: inline-block; 
-            padding: 0.5rem 1rem; 
-            background: #003a5d; 
-            color: white; 
-            text-align: center; 
-            border-radius: 4px; 
-            text-decoration: none; 
-            font-weight: bold; 
-            transition: all 0.2s; 
-            margin-right: 0.5rem;
+        .filter-group input:focus,
+        .filter-group select:focus {
+            outline: none;
+            border-color: #1E3A8A;
+            box-shadow: 0 0 0 3px rgba(30, 58, 138, 0.1);
         }
         
-        .action-btn:hover { 
-            background: #002b47; 
-            transform: scale(1.05); 
+        .filter-actions {
+            display: flex;
+            gap: 0.5rem;
         }
         
-        .action-btn.secondary { 
-            background: #6c757d; 
+        .btn-filter {
+            padding: 0.6rem 1.2rem;
+            border: none;
+            border-radius: 4px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
         }
         
-        .action-btn.secondary:hover { 
-            background: #5a6268; 
+        .btn-filter.primary {
+            background: #1E3A8A;
+            color: white;
         }
         
-        .action-btn.tertiary { 
-            background: #198754; 
+        .btn-filter.primary:hover {
+            background: #1E40AF;
         }
         
-        .action-btn.tertiary:hover { 
-            background: #157347; 
+        .btn-filter.secondary {
+            background: transparent;
+            color: #1E3A8A;
+            border: 1px solid #94A3B8;
         }
         
-        .alert-badge { 
-            display: inline-block; 
-            padding: 0.3rem 0.6rem; 
-            border-radius: 4px; 
-            font-size: 0.8rem; 
-            font-weight: bold; 
+        .btn-filter.secondary:hover {
+            background: #F3F4F6;
         }
         
-        .alert-warning { 
-            background: #fff3cd; 
-            color: #856404; 
+        .no-results {
+            text-align: center;
+            padding: 3rem;
+            color: #999;
         }
         
-        .alert-danger { 
-            background: #f8d7da; 
-            color: #721c24; 
+        .no-results i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            display: block;
         }
         
-        .charts-grid { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr)); 
-            gap: 1.5rem; 
-            margin-bottom: 2rem; 
+        /* Paginación */
+        .pagination {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: center;
+            align-items: center;
+            margin: 1.5rem 0 0.5rem;
         }
         
-        @media (max-width: 1024px) { 
-            .charts-grid { 
-                grid-template-columns: 1fr; 
-            } 
+        .page-link {
+            padding: 0.5rem 1rem;
+            border: 1px solid #94A3B8;
+            border-radius: 4px;
+            text-decoration: none;
+            color: #1E3A8A;
+            background: white;
+            transition: all 0.2s;
+            font-weight: 500;
         }
         
-        .table-responsive {
-            overflow-x: auto;
+        .page-link:hover {
+            background: #1E3A8A;
+            color: white;
+            border-color: #1E3A8A;
         }
         
-        .btn-sm {
-            padding: 0.25rem 0.5rem;
-            font-size: 0.875rem;
+        .page-link.active {
+            background: #1E3A8A;
+            color: white;
+            font-weight: 600;
+            border-color: #1E3A8A;
         }
         
-        .sidebar-icon-keeper {
-            width: 18px;
-            height: 18px;
-            margin-right: 10px;
-            vertical-align: middle;
-        }
-         .icon-keeper {
-            width: 25px;
-            height: 25px;
-            margin-right: 0px;
-            vertical-align: middle;
+        .pagination-info {
+            text-align: center;
+            color: #94A3B8;
+            margin-top: 0.5rem;
+            font-size: 0.9rem;
         }
     </style>
 </head>
 <body>
-    <?php //include '../../../includes/headerK.php'; ?>
-    
-    <div class="container-fluid">
-        <div class="row">
-            <?php //include '../../../includes/sidebar.php'; ?>
-            
-            <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4">
-        <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-            <h1 class="h2">Keeper</h1>
-            
-            <?php //if ($permiso_ver_politicas || $permiso_ver_reportes): ?>
-            <div class="btn-toolbar mb-2 mb-md-0">
-                <div class="btn-group me-2">
-                    <?php //if ($permiso_ver_politicas): ?>
-                    <a href="policies.php" class="btn btn-primary">
-                        <i class="bi bi-gear"></i> Política Global
-                    </a>
-                    <?php //endif; ?>
-                    <?php //if ($permiso_ver_reportes): ?>
-                    <button class="btn btn-outline-success" type="button" data-bs-toggle="collapse" data-bs-target="#dashboardCollapse">
-                        <i class="bi bi-bar-chart"></i> Ver Reportes
-                    </button>
-                    <?php //endif; ?>
+    <nav class="navbar">
+        <div class="nav-brand"><img src="assets/Icon White.png" alt="AZC" style="height: 24px; vertical-align: middle; margin-right: 8px;"> AZCKeeper Admin</div>
+        <div class="nav-links">
+            <a href="index.php">Dashboard</a>
+            <a href="users.php" class="active">Usuarios</a>
+            <a href="policies.php">Política Global</a>
+            <a href="releases.php">Releases</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <h1><i class="bi bi-people-fill"></i> Gestión de Usuarios</h1>
+        
+        <!-- Contadores de estado -->
+        <div class="status-counters">
+            <div class="status-counter-card active-card">
+                <div class="status-counter-icon">✓</div>
+                <div class="status-counter-info">
+                    <h3><?= $statusCounts['active'] ?></h3>
+                    <p>Activos</p>
                 </div>
             </div>
-            <?php //endif; ?>
+            <div class="status-counter-card away-card">
+                <div class="status-counter-icon">⏸</div>
+                <div class="status-counter-info">
+                    <h3><?= $statusCounts['away'] ?></h3>
+                    <p>Ausentes</p>
+                </div>
+            </div>
+            <div class="status-counter-card inactive-card">
+                <div class="status-counter-icon">⏹</div>
+                <div class="status-counter-info">
+                    <h3><?= $statusCounts['inactive'] ?></h3>
+                    <p>Sin Conexión</p>
+                </div>
+            </div>
+            <div class="status-counter-card offline-card">
+                <div class="status-counter-icon">○</div>
+                <div class="status-counter-info">
+                    <h3><?= $statusCounts['offline'] ?></h3>
+                    <p>Sin Dispositivo</p>
+                </div>
+            </div>
         </div>
-                
-                <!-- Dashboard Colapsable -->
-                <div class="collapse" id="dashboardCollapse">
-                    <div class="card">
-                        <div class="card-header text-white">
-                            <h5 class="card-title mb-0">
-                                <img 
-                                    src="../../../assets/images/keeper_white.png" 
-                                    class="icon-keeper" 
-                                    alt="Keeper Icon"> Dashboard Keeper
-                            </h5>
-                        </div>
-                        <div class="card-body">
-                            <!-- ESTADÍSTICAS GENERALES -->
-                            <div class="dashboard-grid">
-                                <div class="stat-card">
-                                    <div class="stat-value"><?= htmlspecialchars($stats['total_users']) ?></div>
-                                    <div class="stat-label">Usuarios Activos</div>
-                                </div>
-                                <div class="stat-card">
-
-                                    <div class="stat-value"><?= htmlspecialchars($stats['total_devices']) ?></div>
-                                    <div class="stat-label">Dispositivos Totales</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value"><?= htmlspecialchars($stats['active_devices_24h']) ?></div>
-                                    <div class="stat-label">Activos (24h)</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value"><?= htmlspecialchars($stats['custom_policies']) ?></div>
-                                    <div class="stat-label">Políticas Personalizadas</div>
-                                </div>
-                            </div>
-
-                            <!-- DÍAS DE ACTIVIDAD -->
-                            <div class="dashboard-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
-                                <div class="stat-card">
-                                    <div class="stat-value" style="color: #27ae60;"><?= htmlspecialchars($activity['workdays']) ?></div>
-                                    <div class="stat-label">Días Laborables</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value" style="color: #e67e22;">
-                                        <?= htmlspecialchars($activity['non_workdays']) ?>
-                                        <?php if ($activity['non_workdays'] > 0): ?>
-                                            <i class="bi bi-exclamation-triangle-fill" style="font-size: 0.7em;" title="Actividad en fin de semana"></i>
-                                        <?php endif; ?>
-                                    </div>
-                                    <div class="stat-label">Fines de Semana Trabajados</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value" style="color: #3498db;"><?= htmlspecialchars($activity['total_days']) ?></div>
-                                    <div class="stat-label">Total Días Registrados</div>
-                                </div>
-                            </div>
-
-                            <!-- MÉTRICAS DE TIEMPO -->
-                            <div class="dashboard-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
-                                <div class="stat-card">
-                                    <div class="stat-value" style="color: #27ae60;"><?= formatHours($activity['total_active']) ?>h</div>
-                                    <div class="stat-label">Tiempo Activo Total</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value" style="color: #2980b9;"><?= formatHours($activity['work_active']) ?>h</div>
-                                    <div class="stat-label">Tiempo Laboral</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value" style="color: #f39c12;"><?= formatHours($activity['lunch_idle']) ?>h</div>
-                                    <div class="stat-label">Tiempo Almuerzo</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value" style="color: #e74c3c;"><?= formatHours($activity['after_active']) ?>h</div>
-                                    <div class="stat-label">Fuera de Horario</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value" style="color: #9b59b6;"><?= formatHours($activity['total_call']) ?>h</div>
-                                    <div class="stat-label">En Llamadas</div>
-                                </div>
-                            </div>
-
-                            <!-- TOP USUARIOS -->
-                            <div class="chart-container">
-                                <h3>Top 5 Usuarios Más Activos</h3>
-                                <div class="table-responsive">
-                                    <table class="data-table">
-                                        <thead>
-                                            <tr>
-                                                <th>#</th>
-                                                <th>CC</th>
-                                                <th>Nombre</th>
-                                                <th>Días Laborados</th>
-                                                <th>Fines de Semana</th>
-                                                <th>Tiempo Total</th>
-                                                <th>Tiempo Laboral</th>
-                                                <th>Acciones</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($topUsers as $idx => $user): ?>
-                                            <tr>
-                                                <td><strong><?= htmlspecialchars($idx + 1) ?></strong></td>
-                                                <td><?= htmlspecialchars($user['cc']) ?></td>
-                                                <td><?= htmlspecialchars($user['display_name']) ?></td>
-                                                <td>
-                                                    <span class="badge bg-success"><?= htmlspecialchars($user['days_worked']) ?></span>
-                                                </td>
-                                                <td>
-                                                    <?php if ($user['weekend_days'] > 0): ?>
-                                                        <span class="badge bg-warning text-dark" title="Trabajó en fin de semana">
-                                                            <?= htmlspecialchars($user['weekend_days']) ?> 
-                                                        </span>
-                                                    <?php else: ?>
-                                                        <span class="badge bg-secondary">0</span>
-                                                    <?php endif; ?>
-                                                </td>
-                                                <td><?= formatSeconds($user['total_active']) ?></td>
-                                                <td><?= formatSeconds($user['work_active']) ?></td>
-                                                <td>
-                                                    <a href="user-dashboard.php?id=<?= htmlspecialchars($user['id']) ?>" class="btn btn-sm btn-primary"><i class="bi bi-bar-chart"></i> Dashboard</a>
-                                                </td>
-                                            </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+        
+        <!-- Filtros -->
+        <div class="filters">
+            <div class="filters-grid">
+                <div class="filter-group">
+                    <label for="filterName">
+                        <i class="bi bi-search"></i> Buscar por Nombre/CC
+                    </label>
+                    <input type="text" id="filterName" placeholder="Escribe para buscar...">
                 </div>
-                
-                <!-- Lista de Usuarios -->
-                <div class="card mt-4">
-                    <div class="card-header text-white">
-                        <h5 class="card-title mb-0">
-                            <img 
-                                src="../../../assets/images/keeper_white.png" 
-                                class="icon-keeper" 
-                                alt="Keeper Icon"> Lista de Usuarios
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="table-responsive">
-                            <table class="table table-hover">
-                                <thead>
-                                    <tr>
-                                        <th>CC (Cédula)</th>
-                                        <th>Nombre</th>
-                                        <th>Email</th>
-                                        <th>Equipo Actual</th>
-                                        <th>Última Actividad</th>
-                                        <th>Política</th>
-                                        <th>Acciones</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($users as $user): ?>
-                                    <tr>
-                                        <td><strong><?= htmlspecialchars($user['cc'] ?? 'N/A') ?></strong></td>
-                                        <td><?= htmlspecialchars($user['display_name']) ?></td>
-                                        <td><?= htmlspecialchars($user['email'] ?? 'N/A') ?></td>
-                                        <td>
-                                            <?php if ($user['current_device_name']): ?>
-                                                <div>
-                                                    <strong><?= htmlspecialchars($user['current_device_name']) ?></strong>
-                                                    <span class="badge bg-success ms-1">EN USO</span>
-                                                    <br>
-                                                    <small class="text-muted">
-                                                        GUID: <?= htmlspecialchars(substr($user['current_device_guid'], 0, 8)) ?>...
-                                                    </small>
-                                                </div>
-                                            <?php else: ?>
-                                                <span class="text-muted">Sin equipo registrado</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td><?= htmlspecialchars($user['current_device_last_seen'] ?? $user['last_activity'] ?? 'Nunca') ?></td>
-                                        <td>
-                                            <?php if ($user['has_policy']): ?>
-                                                <span class="badge bg-success">✓ Personalizada</span>
-                                            <?php else: ?>
-                                                <span class="badge bg-secondary">Global</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <a href="user-config.php?id=<?= htmlspecialchars($user['id']) ?>" class="btn btn-sm btn-secondary" title="Configurar Política">
-                                                <i class="bi bi-gear"></i> Política
-                                            </a>
-                                            <a href="user-dashboard.php?id=<?= htmlspecialchars($user['id']) ?>" class="btn btn-sm btn-primary" title="Ver Dashboard">
-                                                <i class="bi bi-bar-chart"></i> Dashboard
-                                            </a>
-                                            <?php if ($user['device_count'] > 1): ?>
-                                                <button class="btn btn-sm btn-outline-secondary" type="button" 
-                                                        data-bs-toggle="collapse" 
-                                                        data-bs-target="#devices-history-<?= htmlspecialchars($user['id']) ?>"
-                                                        title="Ver historial de equipos">
-                                                    <i class="bi bi-clock-history"></i> Historial (<?= htmlspecialchars($user['device_count']) ?>)
-                                                </button>
-                                            <?php endif; ?>
-                                        </td>
-                                    </tr>
-                                    
-                                    <!-- Historial de dispositivos (colapsable) -->
-                                    <?php if (isset($devicesHistory[$user['id']]) && count($devicesHistory[$user['id']]) > 1): ?>
-                                    <tr>
-                                        <td colspan="7" class="p-0">
-                                            <div class="collapse" id="devices-history-<?= htmlspecialchars($user['id']) ?>">
-                                                <div class="card card-body bg-light m-2">
-                                                    <div class="d-flex justify-content-between align-items-center mb-3">
-                                                        <h6 class="mb-0">
-                                                            <i class="bi bi-clock-history"></i> 
-                                                            Historial de Equipos - <?= htmlspecialchars($user['display_name']) ?>
-                                                        </h6>
-                                                        <button class="btn btn-sm btn-outline-danger" type="button" 
-                                                                data-bs-toggle="collapse" 
-                                                                data-bs-target="#devices-history-<?= htmlspecialchars($user['id']) ?>"
-                                                                title="Cerrar historial">
-                                                            <i class="bi bi-x-lg"></i> Cerrar
-                                                        </button>
-                                                    </div>
-                                                    <table class="table table-sm table-bordered mb-0">
-                                                        <thead class="table-secondary">
-                                                            <tr>
-                                                                <th>Nombre</th>
-                                                                <th>GUID</th>
-                                                                <th>Estado</th>
-                                                                <th>Última Conexión</th>
-                                                                <th>Registrado</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody>
-                                                            <?php foreach ($devicesHistory[$user['id']] as $idx => $device): ?>
-                                                            <tr class="<?= $idx === 0 ? 'table-success' : '' ?>">
-                                                                <td>
-                                                                    <?= htmlspecialchars($device['device_name']) ?>
-                                                                    <?php if ($idx === 0): ?>
-                                                                        <span class="badge bg-success ms-1">EN USO</span>
-                                                                    <?php elseif ($device['status'] === 'active'): ?>
-                                                                        <span class="badge bg-secondary ms-1">Inactivo</span>
-                                                                    <?php endif; ?>
-                                                                </td>
-                                                                <td><code class="<?= $idx === 0 ? 'fw-bold' : '' ?>"><?= htmlspecialchars($device['device_guid']) ?></code></td>
-                                                                <td>
-                                                                    <?php if ($idx === 0): ?>
-                                                                        <span class="badge bg-success">✓ Equipo Actual</span>
-                                                                    <?php elseif ($device['status'] === 'active'): ?>
-                                                                        <span class="badge bg-warning text-dark">Registrado</span>
-                                                                    <?php else: ?>
-                                                                        <span class="badge bg-danger">Revocado</span>
-                                                                    <?php endif; ?>
-                                                                </td>
-                                                                <td><?= htmlspecialchars($device['last_seen_at'] ?? 'Nunca') ?></td>
-                                                                <td><?= htmlspecialchars($device['created_at']) ?></td>
-                                                            </tr>
-                                                            <?php endforeach; ?>
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                    <?php endif; ?>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
+                <div class="filter-group">
+                    <label for="filterStatus">
+                        <i class="bi bi-broadcast"></i> Estado
+                    </label>
+                    <select id="filterStatus">
+                        <option value="">Todos los estados</option>
+                        <option value="active">Activo</option>
+                        <option value="away">Ausente</option>
+                        <option value="inactive">Sin Conexión</option>
+                        <option value="offline">Sin Dispositivo</option>
+                    </select>
                 </div>
-            </main>
+                <div class="filter-group">
+                    <label for="filterPolicy">
+                        <i class="bi bi-shield-check"></i> Política
+                    </label>
+                    <select id="filterPolicy">
+                        <option value="">Todas las políticas</option>
+                        <option value="personalizada">Personalizada</option>
+                        <option value="global">Global</option>
+                    </select>
+                </div>
+            </div>
+            <div class="filter-actions">
+                <button class="btn-filter secondary" id="clearFilters">
+                    <i class="bi bi-x-circle"></i> Limpiar Filtros
+                </button>
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Estado</th>
+                            <th>Nombre</th>
+                            <th>Última Actividad</th>
+                            <th>Política</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTableBody">
+                        <?php 
+                        $statusTextMap = [
+                            'active' => 'Activo',
+                            'away' => 'Ausente',
+                            'inactive' => 'Sin Conexión',
+                            'offline' => 'Sin Dispositivo'
+                        ];
+                        foreach ($users as $user): 
+                            $status = $user['connection_status'];
+                            $statusText = $statusTextMap[$status] ?? $status;
+                        ?>
+                        <tr class="user-row" 
+                            data-name="<?= htmlspecialchars(strtolower($user['display_name'])) ?>" 
+                            data-cc="<?= htmlspecialchars(strtolower($user['cc'] ?? '')) ?>" 
+                            data-status="<?= $status ?>" 
+                            data-policy="<?= $user['has_policy'] ? 'personalizada' : 'global' ?>">
+                            <td>
+                                <span id="status-<?= htmlspecialchars($user['id']) ?>" class="status-indicator status-<?= $status ?>">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text"><?= $statusText ?></span>
+                                </span>
+                            </td>
+                            <td>
+                                <strong><?= htmlspecialchars($user['display_name']) ?></strong>
+                                <br>
+                                <small style="color: #666;"><?= htmlspecialchars($user['cc'] ?? 'N/A') ?></small>
+                            </td>
+                            <td>
+                                <?php if ($user['last_event']): ?>
+                                    <?= htmlspecialchars($user['last_event']) ?>
+                                <?php else: ?>
+                                    <span style="color: #999;">Sin actividad hoy</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <?php if ($user['has_policy']): ?>
+                                    <span class="badge badge-active">✓ Personalizada</span>
+                                <?php else: ?>
+                                    <span class="badge badge-revoked">Global</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <a href="user-dashboard.php?id=<?= htmlspecialchars($user['id']) ?>" class="btn btn-sm btn-primary" title="Ver Dashboard">
+                                    <i class="bi bi-bar-chart"></i>
+                                </a>
+                                <a href="user-config.php?id=<?= htmlspecialchars($user['id']) ?>" class="btn btn-sm btn-secondary" title="Configurar Política">
+                                    <i class="bi bi-gear"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <div id="noResults" class="no-results" style="display: none;">
+                    <i class="bi bi-search"></i>
+                    <p>No se encontraron usuarios que coincidan con los filtros</p>
+                </div>
+            </div>
+            
+            <!-- Paginación -->
+            <div class="pagination">
+                <?php if ($page > 1): ?>
+                    <a href="?page=1" class="page-link">Primera</a>
+                    <a href="?page=<?= $page - 1 ?>" class="page-link">Anterior</a>
+                <?php endif; ?>
+                
+                <?php 
+                $startPage = max(1, $page - 2);
+                $endPage = min($totalPages, $page + 2);
+                
+                for ($i = $startPage; $i <= $endPage; $i++): 
+                ?>
+                    <a href="?page=<?= $i ?>" class="page-link <?= $i === $page ? 'active' : '' ?>"><?= $i ?></a>
+                <?php endfor; ?>
+                
+                <?php if ($page < $totalPages): ?>
+                    <a href="?page=<?= $page + 1 ?>" class="page-link">Siguiente</a>
+                    <a href="?page=<?= $totalPages ?>" class="page-link">Última</a>
+                <?php endif; ?>
+            </div>
+            <div class="pagination-info">
+                Mostrando <?= min($offset + 1, $totalUsers) ?> - <?= min($offset + $perPage, $totalUsers) ?> de <?= $totalUsers ?> usuarios (Página <?= $page ?> de <?= $totalPages ?>)
+            </div>
         </div>
     </div>
-    
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Debug en consola para detectar errores
-        window.addEventListener('error', function(e) {
-            console.error('Error detectado:', e.error);
-        });
+        // Filtrado con búsqueda en todos los usuarios (AJAX)
+        const filterName = document.getElementById('filterName');
+        const filterStatus = document.getElementById('filterStatus');
+        const filterPolicy = document.getElementById('filterPolicy');
+        const clearFiltersBtn = document.getElementById('clearFilters');
+        const userRows = document.querySelectorAll('.user-row');
+        const noResults = document.getElementById('noResults');
+        const table = document.querySelector('.data-table');
+        const tableBody = document.getElementById('usersTableBody');
+        const pagination = document.querySelector('.pagination');
+        const paginationInfo = document.querySelector('.pagination-info');
         
-        window.addEventListener('unhandledrejection', function(e) {
-            console.error('Promesa rechazada no manejada:', e.reason);
-        });
+        const statusTextMap = {
+            'active': 'Activo',
+            'away': 'Ausente',
+            'inactive': 'Sin Conexión',
+            'offline': 'Sin Dispositivo'
+        };
         
-        console.log('Página de usuarios Keeper cargada correctamente');
+        let searchTimeout;
         
-        // CORRECCIÓN: Sobreescribir las funciones del sidebar para usar rutas absolutas
-        function loadPendingTicketsCount() {
-            fetch('../../../includes/get_pending_tickets.php')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.count > 0) {
-                        document.getElementById('pending-tickets-count').textContent = data.count;
-                        document.getElementById('pending-tickets-count').style.display = 'flex';
-                    } else {
-                        document.getElementById('pending-tickets-count').style.display = 'none';
-                    }
-                })
-                .catch(error => console.error('Error:', error));
-        }
-        
-        function loadPendingPermisosCount() {
-            fetch('../../../includes/get_pending_permisos.php')
-                .then(response => response.json())
-                .then(data => {
-                    const badge = document.getElementById('pending-permisos-count');
-                    if (badge && data.count > 0) {
-                        badge.textContent = data.count;
-                        badge.style.display = 'flex';
-                    } else if (badge) {
-                        badge.style.display = 'none';
-                    }
-                })
-                .catch(error => console.error('Error:', error));
-        }
-        
-        // Inicializar las funciones del sidebar
-        document.addEventListener('DOMContentLoaded', function() {
-            // Cargar contadores de tickets y permisos
-            loadPendingTicketsCount();
-            loadPendingPermisosCount();
+        async function applyFilters() {
+            const nameValue = filterName.value.trim();
+            const statusValue = filterStatus.value;
+            const policyValue = filterPolicy.value;
             
-            // Actualizar cada 2 minutos
-            setInterval(loadPendingTicketsCount, 120000);
-            setInterval(loadPendingPermisosCount, 120000);
+            const hasActiveFilters = nameValue || statusValue || policyValue;
+            
+            // Si no hay filtros, recargar página para volver a paginación normal
+            if (!hasActiveFilters) {
+                window.location.href = 'users.php';
+                return;
+            }
+            
+            // Ocultar paginación cuando hay filtros
+            pagination.style.display = 'none';
+            paginationInfo.style.display = 'none';
+            
+            // Hacer búsqueda AJAX en todos los usuarios
+            try {
+                const params = new URLSearchParams();
+                if (nameValue) params.append('name', nameValue);
+                if (statusValue) params.append('status', statusValue);
+                if (policyValue) params.append('policy', policyValue);
+                
+                const response = await fetch(`search-users.php?${params.toString()}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Limpiar tabla
+                    tableBody.innerHTML = '';
+                    
+                    if (data.users.length === 0) {
+                        table.style.display = 'none';
+                        noResults.style.display = 'block';
+                    } else {
+                        table.style.display = 'table';
+                        noResults.style.display = 'none';
+                        
+                        // Renderizar usuarios filtrados
+                        data.users.forEach(user => {
+                            const statusText = statusTextMap[user.connection_status] || user.connection_status;
+                            const row = document.createElement('tr');
+                            row.className = 'user-row';
+                            row.innerHTML = `
+                                <td>
+                                    <span class="status-indicator status-${user.connection_status}">
+                                        <span class="status-dot"></span>
+                                        <span class="status-text">${statusText}</span>
+                                    </span>
+                                </td>
+                                <td>
+                                    <strong>${escapeHtml(user.display_name)}</strong>
+                                    <br>
+                                    <small style="color: #666;">${escapeHtml(user.cc)}</small>
+                                </td>
+                                <td>
+                                    ${user.last_event ? escapeHtml(user.last_event) : '<span style="color: #999;">Sin actividad hoy</span>'}
+                                </td>
+                                <td>
+                                    ${user.has_policy ? 
+                                        '<span class="badge badge-active">✓ Personalizada</span>' : 
+                                        '<span class="badge badge-revoked">Global</span>'}
+                                </td>
+                                <td>
+                                    <a href="user-dashboard.php?id=${user.id}" class="btn btn-sm btn-primary" title="Ver Dashboard">
+                                        <i class="bi bi-bar-chart"></i>
+                                    </a>
+                                    <a href="user-config.php?id=${user.id}" class="btn btn-sm btn-secondary" title="Configurar Política">
+                                        <i class="bi bi-gear"></i>
+                                    </a>
+                                </td>
+                            `;
+                            tableBody.appendChild(row);
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error al buscar usuarios:', error);
+            }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function clearFilters() {
+            window.location.href = 'users.php';
+        }
+        
+        // Event listeners con debounce para el input de nombre
+        filterName.addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(applyFilters, 300);
         });
+        
+        filterStatus.addEventListener('change', applyFilters);
+        filterPolicy.addEventListener('change', applyFilters);
+        clearFiltersBtn.addEventListener('click', clearFilters);
     </script>
 </body>
 </html>

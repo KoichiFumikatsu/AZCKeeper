@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 require_once __DIR__ . '/../../src/bootstrap.php';
  
 $userId = (int)($_GET['id'] ?? 0);
@@ -173,17 +173,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <title>Configurar: <?= htmlspecialchars($user['display_name']) ?></title>
+    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
     <link rel="stylesheet" href="assets/style.css">
     <style>
-    .config-section { background: white; padding: 2rem; margin-bottom: 1rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .config-section h3 { color: #3498db; margin-bottom: 1.5rem; border-bottom: 2px solid #eee; padding-bottom: 0.5rem; }
+    .config-section { background: white; padding: 2rem; margin-bottom: 1rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(15, 23, 42, 0.1); }
+    .config-section h3 { color: #1E3A8A; margin-bottom: 1.5rem; border-bottom: 2px solid #94A3B8; padding-bottom: 0.5rem; }
     .form-row { display: grid; grid-template-columns: 250px 1fr; gap: 1rem; margin-bottom: 1rem; align-items: center; }
     .form-row label { font-weight: 600; }
     .form-row input[type="checkbox"] { width: 20px; height: 20px; justify-self: start; }
     .form-row input[type="number"], .form-row input[type="text"], .form-row select, .form-row textarea { 
         padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; width: 100%;
     }
-    .form-row small { grid-column: 2; color: #666; margin-top: -0.5rem; }
+    .form-row small { grid-column: 2; color: #94A3B8; margin-top: -0.5rem; }
     .device-list { background: #f8f9fa; padding: 1rem; border-radius: 4px; margin-top: 1rem; }
     .device-item { padding: 0.5rem; border-bottom: 1px solid #ddd; }
     .policy-status { padding: 1rem; border-radius: 4px; margin-bottom: 1rem; font-weight: 600; }
@@ -193,7 +194,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body>
     <nav class="navbar">
-        <div class="nav-brand">🔒 AZCKeeper Admin</div>
+        <div class="nav-brand"><img src="assets/Icon White.png" alt="AZC" style="height: 24px; vertical-align: middle; margin-right: 8px;"> AZCKeeper Admin</div>
         <div class="nav-links">
             <a href="index.php">Dashboard</a>
             <a href="users.php">Usuarios</a>
@@ -203,10 +204,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </nav>
  
     <div class="container">
-        <h1>⚙️ Configurar Usuario</h1>
+        <h1><i class="bi bi-gear-fill"></i> Configurar Usuario</h1>
         
         <div class="info-card" style="background: white; padding: 1.5rem; border-radius: 8px; margin-bottom: 1rem;">
-            <h3 style="margin-bottom: 1rem; color: #3498db;">Información del Usuario</h3>
+            <h3 style="margin-bottom: 1rem; color: #1E3A8A;">Información del Usuario</h3>
             <p><strong>CC (Cédula):</strong> <?= htmlspecialchars($user['cc'] ?? 'N/A') ?></p>
             <p><strong>Nombre:</strong> <?= htmlspecialchars($user['display_name']) ?></p>
             <p><strong>Email:</strong> <?= htmlspecialchars($user['email'] ?? 'N/A') ?></p>
@@ -218,7 +219,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php else: ?>
                     <?php foreach ($devices as $dev): ?>
                         <div class="device-item">
-                            🖥️ <?= htmlspecialchars($dev['device_name']) ?> 
+                            <i class="bi bi-display"></i> <?= htmlspecialchars($dev['device_name']) ?> 
                             <small style="color: #666;">(Última vez: <?= htmlspecialchars($dev['last_seen_at']) ?>)</small>
                         </div>
                     <?php endforeach; ?>
@@ -228,7 +229,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  
         <?php if (isset($_GET['debug'])): ?>
         <div class="info-card" style="background: #fff3cd; padding: 1.5rem; border-radius: 8px; margin-bottom: 1rem; border: 2px solid #ffc107;">
-            <h3 style="margin-bottom: 1rem; color: #856404;">🐛 DEBUG - Valores Cargados</h3>
+            <h3 style="margin-bottom: 1rem; color: #856404;"><i class="bi bi-bug"></i> DEBUG - Valores Cargados</h3>
             <div style="font-family: monospace; font-size: 0.9rem;">
                 <p><strong>enableCallTracking:</strong> <?= var_export(val('modules', 'enableCallTracking', false), true) ?></p>
                 <p><strong>countCallsAsActive:</strong> <?= var_export(val('modules', 'countCallsAsActive', false), true) ?></p>
@@ -238,7 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <hr>
                 <p><strong>Policy Source:</strong> <?= $policy ? 'USER CUSTOM (ID: '.$policy['id'].')' : ($globalPolicy ? 'GLOBAL (ID: '.$globalPolicy['id'].')' : 'DEFAULTS') ?></p>
                 <details>
-                    <summary style="cursor: pointer; color: #007bff;">Ver JSON completo de $config</summary>
+                    <summary style="cursor: pointer; color: #1E3A8A;">Ver JSON completo de $config</summary>
                     <pre><?= json_encode($config, JSON_PRETTY_PRINT) ?></pre>
                 </details>
             </div>
@@ -251,15 +252,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         <?php else: ?>
             <div class="policy-status policy-custom">
-                ✓ Este usuario tiene una <strong>política personalizada</strong>.
+                <i class="bi bi-check-circle"></i> Este usuario tiene una <strong>política personalizada</strong>.
             </div>
         <?php endif; ?>
  
         <?php if (isset($_GET['msg'])): ?>
             <?php if ($_GET['msg'] === 'saved'): ?>
-                <div class="alert alert-success">✓ Configuración guardada. Se aplicará en próximo handshake (máx 5 min)</div>
+                <div class="alert alert-success"><i class="bi bi-check-circle"></i> Configuración guardada. Se aplicará en próximo handshake (máx 5 min)</div>
             <?php elseif ($_GET['msg'] === 'reset'): ?>
-                <div class="alert alert-success">✓ Política personalizada eliminada. Ahora usa la configuración global.</div>
+                <div class="alert alert-success"><i class="bi bi-check-circle"></i> Política personalizada eliminada. Ahora usa la configuración global.</div>
             <?php endif; ?>
         <?php endif; ?>
  
@@ -268,7 +269,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             <!-- ========== LOGGING ========== -->
             <div class="config-section">
-                <h3>📋 Configuración de Logs</h3>
+                <h3><i class="bi bi-clipboard-data"></i> Configuración de Logs</h3>
                 
                 <div class="form-row">
                     <label>Nivel de log:</label>
@@ -307,7 +308,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  
             <!-- ========== MÓDULOS ========== -->
             <div class="config-section">
-                <h3>🔧 Módulos y Funcionalidades</h3>
+                <h3><i class="bi bi-wrench"></i> Módulos y Funcionalidades</h3>
                 
                 <div class="form-row">
                     <label>Activity Tracking:</label>
@@ -344,7 +345,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <input type="checkbox" name="mod_debug" <?= val('modules', 'enableDebugWindow', false) ? 'checked' : '' ?>>
                 </div>
  
-                <h4 style="margin-top: 2rem; color: #2c3e50;">Activity Tracking</h4>
+                <h4 style="margin-top: 2rem; color: #0F172A;">Activity Tracking</h4>
  
                 <div class="form-row">
                     <label>Intervalo (seg):</label>
@@ -365,7 +366,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <input type="number" name="call_max_idle" value="<?= val('modules', 'callActiveMaxIdleSeconds', 1800) ?>" min="60">
                 </div>
 
-                <h4 style="margin-top: 2rem; color: #2c3e50;">Window Tracking</h4>
+                <h4 style="margin-top: 2rem; color: #0F172A;">Window Tracking</h4>
  
                 <div class="form-row">
                     <label>Intervalo (seg):</label>
@@ -393,7 +394,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  
             <!-- ========== STARTUP ========== -->
             <div class="config-section">
-                <h3>🚀 Configuración de Inicio</h3>
+                <h3><i class="bi bi-rocket-takeoff"></i> Configuración de Inicio</h3>
  
                 <div class="form-row">
                     <label>Iniciar con Windows:</label>
@@ -408,7 +409,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  
             <!-- ========== UPDATES ========== -->
             <div class="config-section">
-                <h3>🔄 Sistema de Actualizaciones</h3>
+                <h3><i class="bi bi-arrow-repeat"></i> Sistema de Actualizaciones</h3>
  
                 <div class="form-row">
                     <label>Auto-actualización:</label>
@@ -433,15 +434,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  
             <!-- ========== BLOCKING ========== -->
             <div class="config-section">
-                <h3>🔒 Bloqueo Remoto</h3>
+                <h3><i class="bi bi-lock"></i> Bloqueo Remoto</h3>
                 <div class="alert alert-warning" style="margin-bottom: 1rem; padding: 1rem; background: #fff3cd; border-left: 4px solid #ffc107;">
-                    ⚠️ <strong>Requisito:</strong> El "Módulo de Bloqueo" debe estar habilitado en Módulos.<br>
-                    ⚠️ Al activar "BLOQUEAR EQUIPOS", todos los dispositivos del usuario se bloquearán en ~30 segundos.<br>
-                    ✅ Los usuarios podrán desbloquear con el PIN (si está permitido).
+                    <i class="bi bi-exclamation-triangle"></i> <strong>Requisito:</strong> El "Módulo de Bloqueo" debe estar habilitado en Módulos.<br>
+                    <i class="bi bi-exclamation-triangle"></i> Al activar "BLOQUEAR EQUIPOS", todos los dispositivos del usuario se bloquearán en ~30 segundos.<br>
+                    <i class="bi bi-check-circle"></i> Los usuarios podrán desbloquear con el PIN (si está permitido).
                 </div>
  
                 <div class="form-row">
-                    <label style="color: #e74c3c; font-weight: bold;">🔒 BLOQUEAR EQUIPOS:</label>
+                    <label style="color: #e74c3c; font-weight: bold;"><i class="bi bi-lock-fill"></i> BLOQUEAR EQUIPOS:</label>
                     <input type="checkbox" name="lock_enable" <?= val('blocking', 'enableDeviceLock', false) ? 'checked' : '' ?>>
                 </div>
                 <div class="form-row">
@@ -468,7 +469,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  
             <!-- ========== TIMERS ========== -->
             <div class="config-section">
-                <h3>⏱️ Intervalos de Sistema</h3>
+                <h3><i class="bi bi-stopwatch"></i> Intervalos de Sistema</h3>
  
                 <div class="form-row">
                     <label>Activity Flush (seg):</label>
@@ -488,13 +489,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  
             <div style="display: flex; gap: 1rem; justify-content: center; padding: 2rem 0;">
                 <button type="submit" name="action" value="save" class="btn btn-primary" style="font-size: 1.2rem; padding: 1rem 2rem;">
-                    💾 GUARDAR CONFIGURACIÓN PERSONALIZADA
+                    <i class="bi bi-save"></i> GUARDAR CONFIGURACIÓN PERSONALIZADA
                 </button>
                 
                 <?php if (!$usingGlobal): ?>
                 <button type="submit" name="action" value="reset" class="btn btn-secondary" style="font-size: 1.2rem; padding: 1rem 2rem;" 
                         onclick="return confirm('¿Seguro que deseas eliminar la configuración personalizada y usar la global?')">
-                    🔄 USAR CONFIGURACIÓN GLOBAL
+                    <i class="bi bi-arrow-counterclockwise"></i> USAR CONFIGURACIÓN GLOBAL
                 </button>
                 <?php endif; ?>
             </div>

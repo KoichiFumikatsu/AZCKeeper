@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 require_once __DIR__ . '/../../src/bootstrap.php';
 
 use Keeper\InputValidator;
@@ -13,6 +13,63 @@ $user = $pdo->prepare("SELECT id, cc, display_name, email FROM keeper_users WHER
 $user->execute([$userId]);
 $user = $user->fetch(PDO::FETCH_ASSOC);
 if (!$user) die('Usuario no encontrado');
+
+/**
+ * Función para calcular el estado de conexión de un usuario
+ * basándose en segundos calculados directamente por MySQL (sin problemas de timezone)
+ */
+function calculateUserStatus($secondsSinceLastSeen, $secondsSinceLastEvent) {
+    // Sin dispositivos o sin last_seen
+    if ($secondsSinceLastSeen === null || $secondsSinceLastSeen > 900000) {
+        return 'offline';
+    }
+    
+    // Sin heartbeat reciente (>15 min) = desconectado
+    if ($secondsSinceLastSeen >= 900) {
+        return 'inactive';
+    }
+    
+    // Dispositivo conectado, verificar actividad
+    if ($secondsSinceLastEvent === null || $secondsSinceLastEvent > 900000) {
+        // Heartbeat reciente pero sin actividad hoy
+        return ($secondsSinceLastSeen < 120) ? 'away' : 'inactive';
+    }
+    
+    // Actividad reciente (<2 min) = activo
+    if ($secondsSinceLastEvent < 120) {
+        return 'active';
+    }
+    
+    // Sin actividad reciente pero conectado = ausente
+    return 'away';
+}
+
+// Obtener estado actual del usuario desde la BD
+// Usar TIMESTAMPDIFF de MySQL para evitar problemas de timezone
+$statusQuery = $pdo->prepare("
+    SELECT 
+        MAX(d.last_seen_at) as last_seen,
+        TIMESTAMPDIFF(SECOND, MAX(d.last_seen_at), NOW()) as seconds_since_seen,
+        (SELECT MAX(a.last_event_at) FROM keeper_activity_day a 
+         WHERE a.user_id = ? AND a.day_date = CURDATE()) as last_event,
+        TIMESTAMPDIFF(SECOND, 
+            (SELECT MAX(a.last_event_at) FROM keeper_activity_day a 
+             WHERE a.user_id = ? AND a.day_date = CURDATE()), 
+            NOW()) as seconds_since_event
+    FROM keeper_devices d
+    WHERE d.user_id = ? AND d.status = 'active'
+");
+$statusQuery->execute([$userId, $userId, $userId]);
+$statusData = $statusQuery->fetch(PDO::FETCH_ASSOC);
+$currentStatus = calculateUserStatus($statusData['seconds_since_seen'], $statusData['seconds_since_event']);
+
+$statusMap = [
+    'active' => ['class' => 'status-active', 'text' => 'Activo'],
+    'away' => ['class' => 'status-away', 'text' => 'Ausente'],
+    'inactive' => ['class' => 'status-inactive', 'text' => 'Sin Conexión'],
+    'offline' => ['class' => 'status-offline', 'text' => 'Sin Dispositivo']
+];
+$currentStatusInfo = $statusMap[$currentStatus] ?? ['class' => 'status-unknown', 'text' => 'Desconocido'];
  
 // Filtros validados
 $dateFrom = InputValidator::validateDate($_GET['date_from'] ?? '', date('Y-m-01'));
@@ -310,31 +367,32 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
 <head>
     <meta charset="UTF-8">
     <title>Dashboard: <?= htmlspecialchars($user['display_name']) ?></title>
+    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
     <link rel="stylesheet" href="assets/style.css">
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <style>
-    .dashboard-header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 8px; margin-bottom: 2rem; }
+    .dashboard-header { background: linear-gradient(135deg, #1E3A8A 0%, #1E40AF 100%); color: white; padding: 2rem; border-radius: 8px; margin-bottom: 2rem; }
     .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
-    .stat-card { background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .stat-value { font-size: 2rem; font-weight: bold; color: #3498db; }
-    .stat-label { color: #666; margin-top: 0.5rem; }
-    .chart-container { background: white; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .data-table { width: 100%; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .data-table th { background: #3498db; color: white; padding: 1rem; text-align: left; }
+    .stat-card { background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(15, 23, 42, 0.1); }
+    .stat-value { font-size: 2rem; font-weight: bold; color: #1E3A8A; }
+    .stat-label { color: #94A3B8; margin-top: 0.5rem; }
+    .chart-container { background: white; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem; box-shadow: 0 2px 4px rgba(15, 23, 42, 0.1); }
+    .data-table { width: 100%; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(15, 23, 42, 0.1); }
+    .data-table th { background: #1E3A8A; color: white; padding: 1rem; text-align: left; }
     .data-table td { padding: 0.8rem; border-bottom: 1px solid #eee; }
     .data-table tr:hover { background: #f8f9fa; }
     .filter-bar { background: white; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem; display: flex; gap: 1rem; align-items: end; }
     .filter-bar input, .filter-bar button { padding: 0.6rem 1rem; border: 1px solid #ddd; border-radius: 4px; }
-    .filter-bar button { background: #3498db; color: white; border: none; cursor: pointer; }
-    .filter-bar button:hover { background: #2980b9; }
+    .filter-bar button { background: #1E3A8A; color: white; border: none; cursor: pointer; }
+    .filter-bar button:hover { background: #1E40AF; }
     
     /* PAGINACIÓN */
     .pagination { display: flex; gap: 0.5rem; justify-content: center; align-items: center; margin: 1.5rem 0; }
-    .page-link { padding: 0.5rem 1rem; border: 1px solid #ddd; border-radius: 4px; text-decoration: none; color: #3498db; background: white; transition: all 0.2s; }
-    .page-link:hover { background: #3498db; color: white; }
-    .page-link.active { background: #3498db; color: white; font-weight: bold; border-color: #3498db; }
-    .page-ellipsis { padding: 0.5rem; color: #666; }
-    .pagination-info { text-align: center; color: #666; margin-top: 0.5rem; font-size: 0.9rem; }
+    .page-link { padding: 0.5rem 1rem; border: 1px solid #ddd; border-radius: 4px; text-decoration: none; color: #1E3A8A; background: white; transition: all 0.2s; }
+    .page-link:hover { background: #1E3A8A; color: white; }
+    .page-link.active { background: #1E3A8A; color: white; font-weight: bold; border-color: #1E3A8A; }
+    .page-ellipsis { padding: 0.5rem; color: #94A3B8; }
+    .pagination-info { text-align: center; color: #94A3B8; margin-top: 0.5rem; font-size: 0.9rem; }
     /* GRID PARA GRÁFICOS */
     .charts-grid {
         display: grid;
@@ -370,12 +428,12 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
     }
     
     .status-active {
-        background: #d4edda;
-        color: #155724;
+        background: #ECFDF5;
+        color: #065F46;
     }
     
     .status-active .status-dot {
-        background: #28a745;
+        background: #059669;
     }
     
     .status-away {
@@ -389,37 +447,37 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
     }
     
     .status-inactive {
-        background: #f8d7da;
-        color: #721c24;
+        background: #F3F4F6;
+        color: #0F172A;
     }
     
     .status-inactive .status-dot {
-        background: #dc3545;
+        background: #94A3B8;
         animation: none;
     }
     
     .status-finished {
-        background: #e2e3e5;
-        color: #6c757d;
+        background: #F3F4F6;
+        color: #94A3B8;
     }
     
     .status-finished .status-dot {
-        background: #6c757d;
+        background: #94A3B8;
         animation: none;
     }
     
     .status-unknown {
-        background: #e2e3e5;
-        color: #383d41;
+        background: #F3F4F6;
+        color: #0F172A;
     }
     
     .status-unknown .status-dot {
-        background: #6c757d;
+        background: #94A3B8;
     }
     
     .today-row {
         background: #f0f8ff !important;
-        border-left: 4px solid #3498db;
+        border-left: 4px solid #1E3A8A;
     }
     
     @keyframes pulse {
@@ -436,7 +494,7 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
 </head>
 <body>
     <nav class="navbar">
-        <div class="nav-brand">🔒 AZCKeeper Admin</div>
+        <div class="nav-brand"><img src="assets/Icon White.png" alt="AZC" style="height: 24px; vertical-align: middle; margin-right: 8px;"> AZCKeeper Admin</div>
         <div class="nav-links">
             <a href="index.php">Dashboard</a>
             <a href="users.php">Usuarios</a>
@@ -447,7 +505,7 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
  
     <div class="container">
         <div class="dashboard-header">
-            <h1>📊 Dashboard de Usuario</h1>
+            <h1><i class="bi bi-graph-up"></i> Dashboard de Usuario</h1>
             <p style="font-size: 1.2rem; margin-top: 0.5rem;">
                 <strong><?= htmlspecialchars($user['display_name']) ?></strong> (CC: <?= htmlspecialchars($user['cc']) ?>)
             </p>
@@ -468,19 +526,19 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
                 <label>Hasta:</label>
                 <input type="date" name="date_to" value="<?= $dateTo ?>" required>
             </div>
-            <button type="submit">🔍 Filtrar</button>
-            <button type="submit" name="export" value="csv" style="background: #27ae60;">📥 Descargar CSV</button>
-            <a href="user-config.php?id=<?= $userId ?>" class="btn btn-secondary">⚙️ Configuración</a>
+            <button type="submit"><i class="bi bi-search"></i> Filtrar</button>
+            <button type="submit" name="export" value="csv" style="background: #059669;"><i class="bi bi-download"></i> Descargar CSV</button>
+            <a href="user-config.php?id=<?= $userId ?>" class="btn btn-secondary"><i class="bi bi-gear"></i> Configuración</a>
         </form>
  
         <!-- RESUMEN -->
         <div class="stats-grid">
             <div class="stat-card">
-                <div class="stat-value" style="color: #27ae60;"><?= $summary['days_worked'] ?></div>
+                <div class="stat-value" style="color: #059669;"><?= $summary['days_worked'] ?></div>
                 <div class="stat-label">Días Laborables</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value" style="color: <?= $summary['weekend_days'] > 0 ? '#e67e22' : '#95a5a6' ?>;">
+                <div class="stat-value" style="color: <?= $summary['weekend_days'] > 0 ? '#F59E0B' : '#94A3B8' ?>;">
                     <?= $summary['weekend_days'] ?>
                     <?php if ($summary['weekend_days'] > 0): ?>
                         <i class="bi bi-exclamation-triangle-fill" style="font-size: 0.7em;"></i>
@@ -506,25 +564,25 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
         <div class="charts-grid">
             <!-- GRÁFICO CATEGORÍAS -->
             <div class="chart-container">
-                <h3>📊 Distribución de Tiempo</h3>
+                <h3><i class="bi bi-bar-chart"></i> Distribución de Tiempo</h3>
                 <div id="categoryChart" style="height: 350px;"></div>
             </div>
  
             <!-- GRÁFICO ACTIVIDAD DIARIA -->
             <div class="chart-container">
-                <h3>📈 Actividad Diaria</h3>
+                <h3><i class="bi bi-graph-up"></i> Actividad Diaria</h3>
                 <div id="dailyChart" style="height: 350px;"></div>
             </div>
         </div>
  
         <!-- TOP VENTANAS (ANCHO COMPLETO) -->
         <div class="chart-container">
-            <h3>💻 Top 20 Aplicaciones Más Usadas</h3>
+            <h3><i class="bi bi-laptop"></i> Top 20 Aplicaciones Más Usadas</h3>
             <div id="topWindowsChart" style="height: 450px;"></div>
         </div>
 
         <!-- TABLA ACTIVIDAD DIARIA (CON PAGINACIÓN) -->
-        <h2 style="margin-top: 2rem;">📅 Actividad por Día</h2>
+        <h2 style="margin-top: 2rem;"><i class="bi bi-calendar3"></i> Actividad por Día</h2>
         <table class="data-table" id="activityTable">
             <thead>
                 <tr>
@@ -551,9 +609,9 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
                     </td>
                     <td>
                         <?php if ($isToday): ?>
-                            <span id="currentStatus" class="status-badge status-unknown">
+                            <span id="currentStatus" class="status-badge <?= $currentStatusInfo['class'] ?>">
                                 <span class="status-dot"></span>
-                                Cargando...
+                                <?= $currentStatusInfo['text'] ?>
                             </span>
                         <?php else: ?>
                             <span class="status-badge status-finished">
@@ -598,7 +656,7 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
                     <td><code><?= htmlspecialchars($win['process_name']) ?></code></td>
                     <td><?= htmlspecialchars(substr($win['window_title'], 0, 80)) ?></td>
                     <td><?= formatSeconds($win['duration_seconds']) ?></td>
-                    <td><?= $win['is_in_call'] ? '📞' : '' ?></td>
+                    <td><?= $win['is_in_call'] ? '<i class="bi bi-telephone-fill"></i>' : '' ?></td>
 
                 </tr>
                 <?php endforeach; ?>
@@ -659,7 +717,7 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
         series: [{ 
             type: 'bar', 
             data: <?= json_encode(array_map(fn($w) => round($w['total_duration']/3600, 2), array_slice($topWindows, 0, 20))) ?>,
-            itemStyle: { color: '#3498db' }
+            itemStyle: { color: '#1E3A8A' }
         }]
     });
  
@@ -688,6 +746,11 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
         return `00:${String(secs).padStart(2, '0')}`;
     }
     
+    // El estado se calcula directamente en el servidor (PHP)
+    // y se renderiza en el HTML inicial. Si necesitas actualización
+    // automática en tiempo real, puedes descomentar el código a continuación:
+    
+    /*
     async function updateRealTimeData() {
         try {
             const response = await fetch(`realtime-status.php?user_id=${userId}`);
@@ -696,7 +759,6 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
             const data = await response.json();
             
             if (data.ok) {
-                // Actualizar estado
                 const statusBadge = document.getElementById('currentStatus');
                 if (statusBadge) {
                     const statusMap = {
@@ -711,7 +773,6 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
                     statusBadge.innerHTML = `<span class="status-dot"></span>${status.text}`;
                 }
                 
-                // Actualizar contadores solo si hay datos de hoy
                 if (data.todayData) {
                     const updates = {
                         'activeToday': data.todayData.active_seconds,
@@ -735,9 +796,10 @@ $baseParams = ['id' => $userId, 'date_from' => $dateFrom, 'date_to' => $dateTo];
         }
     }
     
-    // Actualizar cada 5 segundos
+    // Actualizar cada 30 segundos (ajustado para reducir carga)
     updateRealTimeData();
-    setInterval(updateRealTimeData, 5000);
+    setInterval(updateRealTimeData, 30000);
+    */
     </script>
 </body>
 </html>

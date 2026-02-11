@@ -1,4 +1,21 @@
 <?php
+/**
+ * Endpoint optimizado para obtener el estado de conexión de un usuario específico
+ * 
+ * OPTIMIZACIÓN:
+ * - Consulta directamente la base de datos usando last_seen_at y last_event_at
+ * - NO hace llamadas a APIs externas
+ * - Retorna datos detallados de actividad del día actual
+ * 
+ * LÓGICA DE ESTADOS:
+ * - offline: Sin dispositivos registrados
+ * - inactive: Sin heartbeat reciente (>15 min) o sin actividad hoy
+ * - away: Dispositivo conectado pero sin actividad reciente (>2 min)
+ * - active: Actividad reciente (<2 min)
+ * 
+ * HEARTBEAT: last_seen_at en keeper_devices (actualizado por el cliente)
+ * ACTIVIDAD: last_event_at en keeper_activity_day (última acción registrada)
+ */
 require_once __DIR__ . '/../../src/bootstrap.php';
 
 use Keeper\InputValidator;

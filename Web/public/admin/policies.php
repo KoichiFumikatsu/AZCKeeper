@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 require_once __DIR__ . '/../../src/bootstrap.php';
 
 use Keeper\InputValidator;
@@ -160,22 +160,23 @@ $affectedUsers = $pdo->query("
 <head>
     <meta charset="UTF-8">
     <title>Política Global - AZCKeeper Admin</title>
+    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
     <link rel="stylesheet" href="assets/style.css">
     <style>
-    .config-section { background: white; padding: 2rem; margin-bottom: 1rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .config-section h3 { color: #3498db; margin-bottom: 1.5rem; border-bottom: 2px solid #eee; padding-bottom: 0.5rem; }
+    .config-section { background: white; padding: 2rem; margin-bottom: 1rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(15, 23, 42, 0.1); }
+    .config-section h3 { color: #1E3A8A; margin-bottom: 1.5rem; border-bottom: 2px solid #94A3B8; padding-bottom: 0.5rem; }
     .form-row { display: grid; grid-template-columns: 250px 1fr; gap: 1rem; margin-bottom: 1rem; align-items: center; }
     .form-row label { font-weight: 600; }
     .form-row input[type="checkbox"] { width: 20px; height: 20px; justify-self: start; }
     .form-row input[type="number"], .form-row input[type="text"], .form-row select, .form-row textarea { 
         padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; width: 100%;
     }
-    .form-row small { grid-column: 2; color: #666; margin-top: -0.5rem; }
+    .form-row small { grid-column: 2; color: #94A3B8; margin-top: -0.5rem; }
     </style>
 </head>
 <body>
     <nav class="navbar">
-        <div class="nav-brand">🔒 AZCKeeper Admin</div>
+        <div class="nav-brand"><img src="assets/Icon White.png" alt="AZC" style="height: 24px; vertical-align: middle; margin-right: 8px;"> AZCKeeper Admin</div>
         <div class="nav-links">
             <a href="index.php">Dashboard</a>
             <a href="users.php">Usuarios</a>
@@ -185,19 +186,19 @@ $affectedUsers = $pdo->query("
     </nav>
  
     <div class="container">
-        <h1>🌐 Política Global</h1>
-        <p style="font-size: 1.1rem; color: #666; margin-bottom: 2rem;">
-            Esta política se aplica a <strong style="color: #3498db;"><?= $affectedUsers ?> usuario(s)</strong> que NO tienen política personalizada.
+        <h1><i class="bi bi-shield-check"></i> Política Global</h1>
+        <p style="font-size: 1.1rem; color: #94A3B8; margin-bottom: 2rem;">
+            Esta política se aplica a <strong style="color: #1E3A8A;"><?= $affectedUsers ?> usuario(s)</strong> que NO tienen política personalizada.
         </p>
  
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'saved'): ?>
-            <div class="alert alert-success">✓ Política global guardada. Se aplicará en próximo handshake de todos los clientes (máx 5 min)</div>
+            <div class="alert alert-success"><i class="bi bi-check-circle"></i> Política global guardada. Se aplicará en próximo handshake de todos los clientes (máx 5 min)</div>
         <?php endif; ?>
  
         <form method="POST">
             <!-- API BASE URL -->
             <div style="background: #e3f2fd; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem; border-left: 4px solid #2196f3;">
-                <h3 style="margin-bottom: 1rem;">🌐 Endpoint de API</h3>
+                <h3 style="margin-bottom: 1rem;"><i class="bi bi-globe"></i> Endpoint de API</h3>
                 <div>
                     <label style="display: block; margin-bottom: 0.5rem; font-weight: bold;">URL Base de la API:</label>
                     <input type="text" name="api_base_url" 
@@ -205,14 +206,14 @@ $affectedUsers = $pdo->query("
                            style="width: 100%; padding: 0.6rem; border: 1px solid #ddd; border-radius: 4px; font-family: monospace;"
                            placeholder="https://tudominio.com/keeper/public/index.php/api/"
                            required>
-                    <small style="color: #666; display: block; margin-top: 0.5rem;">
-                        ⚠️ Incluir <code>/api/</code> al final. Ejemplo: <code>https://ejemplo.com/keeper/public/index.php/api/</code>
+                    <small style="color: #94A3B8; display: block; margin-top: 0.5rem;">
+                        <i class="bi bi-exclamation-triangle"></i> Incluir <code>/api/</code> al final. Ejemplo: <code>https://ejemplo.com/keeper/public/index.php/api/</code>
                     </small>
                 </div>
             </div>
             <!-- ========== LOGGING ========== -->
             <div class="config-section">
-                <h3>📋 Configuración de Logs</h3>
+                <h3><i class="bi bi-clipboard-data"></i> Configuración de Logs</h3>
                 
                 <div class="form-row">
                     <label>Nivel de log global:</label>
@@ -252,7 +253,7 @@ $affectedUsers = $pdo->query("
  
             <!-- ========== MÓDULOS ========== -->
             <div class="config-section">
-                <h3>🔧 Módulos y Funcionalidades</h3>
+                <h3><i class="bi bi-wrench"></i> Módulos y Funcionalidades</h3>
                 
                 <div class="form-row">
                     <label>Activity Tracking:</label>
@@ -290,7 +291,7 @@ $affectedUsers = $pdo->query("
                     <small>Ventana de debug con estadísticas en tiempo real</small>
                 </div>
  
-                <h4 style="margin-top: 2rem; color: #2c3e50;">Configuración de Activity Tracking</h4>
+                <h4 style="margin-top: 2rem; color: #0F172A;">Configuración de Activity Tracking</h4>
  
                 <div class="form-row">
                     <label>Intervalo (segundos):</label>
@@ -304,7 +305,7 @@ $affectedUsers = $pdo->query("
                     <small>Segundos sin input para considerar inactivo</small>
                 </div>
  
-                <h4 style="margin-top: 2rem; color: #2c3e50;">Configuración de Window Tracking</h4>
+                <h4 style="margin-top: 2rem; color: #0F172A;">Configuración de Window Tracking</h4>
  
                 <div class="form-row">
                     <label>Intervalo (segundos):</label>
@@ -312,7 +313,7 @@ $affectedUsers = $pdo->query("
                     <small>Cada cuánto se captura la ventana activa</small>
                 </div>
  
-                <h4 style="margin-top: 2rem; color: #2c3e50;">Call Tracking (Apps de Llamadas)</h4>
+                <h4 style="margin-top: 2rem; color: #0F172A;">Call Tracking (Apps de Llamadas)</h4>
  
                 <div class="form-row">
                     <label>Habilitar Call Tracking:</label>
@@ -347,7 +348,7 @@ $affectedUsers = $pdo->query("
  
             <!-- ========== STARTUP ========== -->
             <div class="config-section">
-                <h3>🚀 Configuración de Inicio</h3>
+                <h3><i class="bi bi-rocket-takeoff"></i> Configuración de Inicio</h3>
  
                 <div class="form-row">
                     <label>Iniciar con Windows:</label>
@@ -364,7 +365,7 @@ $affectedUsers = $pdo->query("
  
             <!-- ========== UPDATES ========== -->
             <div class="config-section">
-                <h3>🔄 Sistema de Actualizaciones</h3>
+                <h3><i class="bi bi-arrow-repeat"></i> Sistema de Actualizaciones</h3>
  
                 <div class="form-row">
                     <label>Auto-actualización:</label>
@@ -392,9 +393,9 @@ $affectedUsers = $pdo->query("
  
             <!-- ========== BLOCKING ========== -->
             <div class="config-section">
-                <h3>🔒 Bloqueo Remoto (Por Defecto)</h3>
+                <h3><i class="bi bi-lock"></i> Bloqueo Remoto (Por Defecto)</h3>
                 <div class="alert alert-warning" style="margin-bottom: 1.5rem; padding: 1rem; background: #fff3cd; border-left: 4px solid #ffc107;">
-                    ⚠️ <strong>NOTA:</strong> Esta configuración NO bloquea equipos. Solo establece los valores por defecto. Para bloquear, usa la configuración por usuario.
+                    <i class="bi bi-exclamation-triangle"></i> <strong>NOTA:</strong> Esta configuración NO bloquea equipos. Solo establece los valores por defecto. Para bloquear, usa la configuración por usuario.
                 </div>
 
                 <div class="form-row">
@@ -423,7 +424,7 @@ $affectedUsers = $pdo->query("
  
             <!-- ========== TIMERS ========== -->
             <div class="config-section">
-                <h3>⏱️ Intervalos de Sistema</h3>
+                <h3><i class="bi bi-stopwatch"></i> Intervalos de Sistema</h3>
  
                 <div class="form-row">
                     <label>Activity Flush (segundos):</label>
@@ -446,10 +447,10 @@ $affectedUsers = $pdo->query("
  
             <div style="text-align: center; padding: 2rem 0;">
                 <button type="submit" class="btn btn-primary" style="font-size: 1.3rem; padding: 1.2rem 3rem;">
-                    💾 GUARDAR POLÍTICA GLOBAL
+                    <i class="bi bi-save"></i> GUARDAR POLÍTICA GLOBAL
                 </button>
                 <button type="button" onclick="forceHandshake()" class="btn btn-primary" style="font-size: 1.3rem; padding: 1.2rem 3rem;">
-                    🔄 Forzar Actualización Inmediata
+                    <i class="bi bi-arrow-clockwise"></i> Forzar Actualización Inmediata
                 </button>
  
                 <script>

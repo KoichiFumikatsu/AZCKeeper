@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 require_once __DIR__ . '/../../src/bootstrap.php';
 
 use Keeper\Db;
@@ -116,6 +116,7 @@ if (isset($_GET['edit'])) {
 <head>
     <meta charset="UTF-8">
     <title>Releases - AZCKeeper Admin</title>
+    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
     <link rel="stylesheet" href="assets/style.css">
     <style>
         .release-form { background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 30px; }
@@ -132,23 +133,23 @@ if (isset($_GET['edit'])) {
         .checkbox-group input { width: auto; }
         .btn-group { display: flex; gap: 10px; margin-top: 20px; }
         .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
-        .btn-primary { background: #007bff; color: white; }
-        .btn-secondary { background: #6c757d; color: white; }
-        .btn-danger { background: #dc3545; color: white; }
-        .btn-success { background: #28a745; color: white; }
+        .btn-primary { background: #1E3A8A; color: white; }
+        .btn-secondary { background: transparent; color: #1E3A8A; border: 1px solid #94A3B8; }
+        .btn-danger { background: #EF4444; color: white; }
+        .btn-success { background: #059669; color: white; }
         .btn-sm { padding: 5px 10px; font-size: 12px; }
         .alert { padding: 15px; margin-bottom: 20px; border-radius: 4px; }
-        .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .alert-danger { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        .badge-beta { background: #ffc107; color: #000; }
-        .badge-force { background: #dc3545; color: white; }
-        .badge-inactive { background: #6c757d; color: white; }
+        .alert-success { background: #ECFDF5; color: #065F46; border: 1px solid #059669; }
+        .alert-danger { background: #FEE2E2; color: #991B1B; border: 1px solid #EF4444; }
+        .badge-beta { background: #F59E0B; color: #000; }
+        .badge-force { background: #EF4444; color: white; }
+        .badge-inactive { background: #94A3B8; color: white; }
         .release-notes { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     </style>
 </head>
 <body>
     <nav class="navbar">
-        <div class="nav-brand">🔒 AZCKeeper Admin</div>
+        <div class="nav-brand"><img src="assets/Icon White.png" alt="AZC" style="height: 24px; vertical-align: middle; margin-right: 8px;"> AZCKeeper Admin</div>
         <div class="nav-links">
             <a href="index.php">Dashboard</a>
             <a href="devices.php">Dispositivos</a>
@@ -158,7 +159,7 @@ if (isset($_GET['edit'])) {
     </nav>
  
     <div class="container">
-        <h1>📦 Gestión de Releases del Cliente</h1>
+        <h1><i class="bi bi-box-seam"></i> Gestión de Releases del Cliente</h1>
         
         <?php if ($message): ?>
             <div class="alert alert-success"><?= htmlspecialchars($message) ?></div>
