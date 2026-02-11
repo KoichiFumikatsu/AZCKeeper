@@ -19,11 +19,12 @@ $devices = $pdo->query("
 <head>
     <meta charset="UTF-8">
     <title>Dispositivos - AZCKeeper Admin</title>
+    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
     <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
     <nav class="navbar">
-        <div class="nav-brand">🔒 AZCKeeper Admin</div>
+        <div class="nav-brand"><img src="assets/Icon White.png" alt="AZC" style="height: 24px; vertical-align: middle; margin-right: 8px;"> AZCKeeper Admin</div>
         <div class="nav-links">
             <a href="index.php">Dashboard</a>
             <a href="devices.php" class="active">Dispositivos</a>
@@ -33,7 +34,7 @@ $devices = $pdo->query("
     </nav>
  
     <div class="container">
-        <h1>Gestión de Dispositivos</h1>
+        <h1><i class="bi bi-laptop"></i> Gestión de Dispositivos</h1>
  
         <table class="data-table">
             <thead>
@@ -61,7 +62,7 @@ $devices = $pdo->query("
                     </td>
                     <td><?= htmlspecialchars($device['last_seen_at']) ?></td>
                     <td>
-                        <?= $device['is_locked'] ? '🔒 Sí' : '✓ No' ?>
+                        <?= $device['is_locked'] ? '<i class="bi bi-lock-fill"></i> Sí' : '<i class="bi bi-check-circle"></i> No' ?>
                     </td>
                     <td>
                         <!-- Administración de dispositivos individual eliminada -->

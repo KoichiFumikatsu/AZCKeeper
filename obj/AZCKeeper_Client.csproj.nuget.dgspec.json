@@ -1,23 +1,23 @@
 {
   "format": 1,
   "restore": {
-    "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client\\AZCKeeper_Client.csproj": {}
+    "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client.csproj": {}
   },
   "projects": {
-    "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client\\AZCKeeper_Client.csproj": {
-      "version": "3.0.0.7",
+    "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client.csproj": {
+      "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client\\AZCKeeper_Client.csproj",
+        "projectUniqueName": "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client.csproj",
         "projectName": "AZCKeeper_Client",
-        "projectPath": "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client\\AZCKeeper_Client.csproj",
-        "packagesPath": "C:\\Users\\AZC\\.nuget\\packages\\",
-        "outputPath": "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client\\obj\\",
+        "projectPath": "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client.csproj",
+        "packagesPath": "C:\\Users\\Koichi Fumikatsu\\.nuget\\packages\\",
+        "outputPath": "C:\\xampp\\htdocs\\AZCKeeper\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
         ],
         "configFilePaths": [
-          "C:\\Users\\AZC\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Users\\Koichi Fumikatsu\\AppData\\Roaming\\NuGet\\NuGet.Config",
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
@@ -26,6 +26,7 @@
         ],
         "sources": {
           "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "C:\\Program Files\\dotnet\\library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
@@ -44,7 +45,7 @@
           "auditLevel": "low",
           "auditMode": "direct"
         },
-        "SdkAnalysisLevel": "9.0.100"
+        "SdkAnalysisLevel": "10.0.100"
       },
       "frameworks": {
         "net8.0-windows7.0": {
@@ -66,24 +67,6 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
-          "downloadDependencies": [
-            {
-              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
-              "version": "[8.0.12, 8.0.12]"
-            },
-            {
-              "name": "Microsoft.NETCore.App.Crossgen2.win-x64",
-              "version": "[8.0.12, 8.0.12]"
-            },
-            {
-              "name": "Microsoft.NETCore.App.Runtime.win-x64",
-              "version": "[8.0.12, 8.0.12]"
-            },
-            {
-              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
-              "version": "[8.0.12, 8.0.12]"
-            }
-          ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
@@ -92,12 +75,7 @@
               "privateAssets": "none"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.102/PortableRuntimeIdentifierGraph.json"
-        }
-      },
-      "runtimes": {
-        "win-x64": {
-          "#import": []
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.103/PortableRuntimeIdentifierGraph.json"
         }
       }
     }

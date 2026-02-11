@@ -1,15 +1,11 @@
 {
   "version": 2,
-  "dgSpecHash": "5f5weFwRygI=",
+  "dgSpecHash": "uaIKe8uskTA=",
   "success": true,
-  "projectFilePath": "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client\\AZCKeeper_Client.csproj",
+  "projectFilePath": "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client.csproj",
   "expectedPackageFiles": [
-    "C:\\Users\\AZC\\.nuget\\packages\\stub.system.data.sqlite.core.netstandard\\1.0.118\\stub.system.data.sqlite.core.netstandard.1.0.118.nupkg.sha512",
-    "C:\\Users\\AZC\\.nuget\\packages\\system.data.sqlite.core\\1.0.118\\system.data.sqlite.core.1.0.118.nupkg.sha512",
-    "C:\\Users\\AZC\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.12\\microsoft.netcore.app.runtime.win-x64.8.0.12.nupkg.sha512",
-    "C:\\Users\\AZC\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.12\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.12.nupkg.sha512",
-    "C:\\Users\\AZC\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.12\\microsoft.aspnetcore.app.runtime.win-x64.8.0.12.nupkg.sha512",
-    "C:\\Users\\AZC\\.nuget\\packages\\microsoft.netcore.app.crossgen2.win-x64\\8.0.12\\microsoft.netcore.app.crossgen2.win-x64.8.0.12.nupkg.sha512"
+    "C:\\Users\\Koichi Fumikatsu\\.nuget\\packages\\stub.system.data.sqlite.core.netstandard\\1.0.118\\stub.system.data.sqlite.core.netstandard.1.0.118.nupkg.sha512",
+    "C:\\Users\\Koichi Fumikatsu\\.nuget\\packages\\system.data.sqlite.core\\1.0.118\\system.data.sqlite.core.1.0.118.nupkg.sha512"
   ],
   "logs": []
 }
