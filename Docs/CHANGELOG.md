@@ -1,0 +1,627 @@
+# CHANGELOG — AZCKeeper Cliente
+
+Control de versiones local de cambios aplicados al código fuente.
+Cada entrada incluye: fecha, archivo afectado, código removido, código añadido y justificación.
+
+---
+
+## [2025-07-11] — Fix: Duplicación de tiempo activo en BD al reconectar internet
+
+**Problema identificado:**
+`TryResumeTodayActivityFromServer()` podía ser llamado múltiples veces en la misma sesión
+desde tres puntos distintos:
+- `Start()`
+- `PerformHandshake()` (bloque `if (!_hasSuccessfulHandshake)`)
+- `PrepareLoginUi()` (callback `OnLoginSubmitted`)
+
+Cada llamada ejecutaba `SeedDayTotals()` que **sumaba** el valor de la BD a los contadores
+locales ya existentes, causando que los segundos se duplicaran (o triplicaran) tanto en
+memoria como en la BD en el próximo flush.
+
+**Flujo del bug (ejemplo):**
+```
+Start()            ? TryResume ? Seed(BD=3600s) ? _current = 3600s
+PerformHandshake() ? TryResume ? Seed(BD=3600s) ? _current = 7200s  ? BUG
+PrepareLoginUi()   ? TryResume ? Seed(BD=3600s) ? _current = 10800s ? BUG
+Flush envía 10800s ? BD guarda GREATEST(3600, 10800) = 10800s ? DATO CORRUPTO
+```
+
+---
+
+### Cambio 1 — Nuevo campo `_todayResumed`
+
+**Archivo:** `Core\CoreService.cs`
+**Ubicación:** Bloque de declaración de campos privados (junto a `_hasSuccessfulHandshake`)
+
+**Código ANTES:**
+```csharp
+private System.Timers.Timer _handshakeTimer; // handshake periódico
+private DateTime _lastHandshakeTime = DateTime.MinValue; // último handshake ok
+private bool _hasSuccessfulHandshake = false; // flag para primer handshake exitoso
+
+private System.Timers.Timer _lockStatusTimer;
+```
+
+**Código DESPUÉS:**
+```csharp
+private System.Timers.Timer _handshakeTimer; // handshake periódico
+private DateTime _lastHandshakeTime = DateTime.MinValue; // último handshake ok
+private bool _hasSuccessfulHandshake = false; // flag para primer handshake exitoso
+private bool _todayResumed = false;           // evita seed duplicado en el mismo día
+
+private System.Timers.Timer _lockStatusTimer;
+```
+
+**Justificación línea por línea:**
+- `private bool _todayResumed = false;` — Flag de instancia que controla si el seed del día
+  ya fue aplicado. Inicia en `false` en cada arranque del cliente (correcto: al reiniciar,
+  se debe volver a pedir el acumulado al servidor).
+
+---
+
+### Cambio 2 — Guard en `TryResumeTodayActivityFromServer()`
+
+**Archivo:** `Core\CoreService.cs`
+**Método:** `TryResumeTodayActivityFromServer()`
+
+**Código ANTES:**
+```csharp
+private async void TryResumeTodayActivityFromServer()
+{
+    try
+    {
+        if (_activityTracker == null) return;
+        if (_apiClient == null) return;
+
+        if (_authManager == null || !_authManager.HasToken)
+        {
+            LocalLogger.Info("CoreService: no hay token -> no se retoma actividad del día.");
+            return;
+        }
+
+        string today = DateTime.Now.ToString("yyyy-MM-dd");
+        string deviceId = _configManager.CurrentConfig.DeviceId;
+
+        var res = await _apiClient.GetActivityDayAsync(deviceId, today).ConfigureAwait(false);
+        if (res == null || !res.IsSuccess || res.Response == null)
+        {
+            LocalLogger.Warn($"CoreService: activity-day/get no exitoso. Err={res?.Error} Preview={res?.BodyPreview}");
+            return;
+        }
+
+        if (!res.Response.Found)
+        {
+            LocalLogger.Info("CoreService: no existe registro previo del día para retomar.");
+            return;   // ? NO marcaba _todayResumed, permitía reintento infinito
+        }
+
+        _activityTracker.SeedDayTotals(
+            DateTime.Now.Date,
+            res.Response.ActiveSeconds,
+            res.Response.IdleSeconds,
+            res.Response.WorkHoursActiveSeconds,
+            res.Response.WorkHoursIdleSeconds,
+            res.Response.LunchActiveSeconds,
+            res.Response.LunchIdleSeconds,
+            res.Response.AfterHoursActiveSeconds,
+            res.Response.AfterHoursIdleSeconds
+        );
+
+        // Para flush
+        _activityFirstEventLocal = DateTime.Now;
+        _activitySamplesCount = res.Response.SamplesCount;
+
+        // ? NO existía ninguna marca de "seed ya aplicado"
+
+        LocalLogger.Info($"CoreService: ? Seed aplicado exitosamente...");
+    }
+    catch (Exception ex)
+    {
+        LocalLogger.Warn($"CoreService: ?? No se pudo retomar actividad del día...");
+    }
+}
+```
+
+**Código DESPUÉS:**
+```csharp
+private async void TryResumeTodayActivityFromServer()
+{
+    try
+    {
+        if (_activityTracker == null) return;
+        if (_apiClient == null) return;
+
+        if (_authManager == null || !_authManager.HasToken)
+        {
+            LocalLogger.Info("CoreService: no hay token -> no se retoma actividad del día.");
+            return;
+        }
+
+        string today = DateTime.Now.ToString("yyyy-MM-dd");
+
+        // Guard: si el seed ya fue aplicado hoy, no repetir.
+        if (_todayResumed)
+        {
+            LocalLogger.Info($"CoreService: seed ya aplicado para {today}. Se omite TryResumeToday.");
+            return;
+        }
+
+        string deviceId = _configManager.CurrentConfig.DeviceId;
+
+        var res = await _apiClient.GetActivityDayAsync(deviceId, today).ConfigureAwait(false);
+        if (res == null || !res.IsSuccess || res.Response == null)
+        {
+            LocalLogger.Warn($"CoreService: activity-day/get no exitoso. Err={res?.Error} Preview={res?.BodyPreview}");
+            return;
+        }
+
+        if (!res.Response.Found)
+        {
+            LocalLogger.Info("CoreService: no existe registro previo del día para retomar.");
+            _todayResumed = true;   // ? AÑADIDO: marcar resuelto aunque no haya datos
+            return;
+        }
+
+        _activityTracker.SeedDayTotals(
+            DateTime.Now.Date,
+            res.Response.ActiveSeconds,
+            res.Response.IdleSeconds,
+            res.Response.WorkHoursActiveSeconds,
+            res.Response.WorkHoursIdleSeconds,
+            res.Response.LunchActiveSeconds,
+            res.Response.LunchIdleSeconds,
+            res.Response.AfterHoursActiveSeconds,
+            res.Response.AfterHoursIdleSeconds
+        );
+
+        _activityFirstEventLocal = DateTime.Now;
+        _activitySamplesCount = res.Response.SamplesCount;
+
+        _todayResumed = true;   // ? AÑADIDO: marcar seed como aplicado
+
+        LocalLogger.Info($"CoreService: ? Seed aplicado exitosamente...");
+    }
+    catch (Exception ex)
+    {
+        LocalLogger.Warn($"CoreService: ?? No se pudo retomar actividad del día...");
+    }
+}
+```
+
+**Justificación línea por línea:**
+
+| Línea añadida | Por qué |
+|---|---|
+| `if (_todayResumed) { ... return; }` | Corta la ejecución si el seed ya corrió hoy. Cualquier llamada posterior desde `PerformHandshake()` o `PrepareLoginUi()` queda bloqueada. |
+| `_todayResumed = true;` (path `!Found`) | Si la BD no tiene datos del día (primer día del dispositivo), marcar igualmente como resuelto. Sin esto, el método se reintentaría en cada handshake sin posibilidad de éxito, generando peticiones innecesarias. |
+| `_todayResumed = true;` (path exitoso) | Confirma que el seed fue aplicado correctamente. Bloquea cualquier llamada subsecuente que intentara aplicar el mismo seed encima de los contadores ya cargados. |
+
+---
+
+### Cambio 3 — Reset de `_todayResumed` al cruzar medianoche
+
+**Archivo:** `Core\CoreService.cs`
+**Método:** `StartActivityFlushTimer()` — lambda `_activityFlushTimer.Elapsed`
+
+**Código ANTES:**
+```csharp
+if (_lastFlushDayLocalDate != dayLocal)
+{
+    _lastFlushDayLocalDate = dayLocal;
+    _activitySamplesCount = 0;
+    _activityFirstEventLocal = nowLocal;
+}
+```
+
+**Código DESPUÉS:**
+```csharp
+if (_lastFlushDayLocalDate != dayLocal)
+{
+    _lastFlushDayLocalDate = dayLocal;
+    _activitySamplesCount = 0;
+    _activityFirstEventLocal = nowLocal;
+    _todayResumed = false;  // ? AÑADIDO: nuevo día ? permitir seed al día siguiente
+    LocalLogger.Info($"CoreService: nuevo día detectado ({dayLocal:yyyy-MM-dd}). _todayResumed reseteado.");
+}
+```
+
+**Justificación línea por línea:**
+
+| Línea añadida | Por qué |
+|---|---|
+| `_todayResumed = false;` | El flag debe vivir exactamente un día calendario. El flush timer ya tiene detección de cambio de fecha (`_lastFlushDayLocalDate != dayLocal`), que es el lugar correcto para resetear el guard. Sin este reset, al día siguiente `TryResumeTodayActivityFromServer()` quedaría bloqueado permanentemente y nunca cargaría el acumulado del nuevo día. |
+| `LocalLogger.Info(...)` | Trazabilidad: permite confirmar en logs que el ciclo diario se reinició correctamente. |
+
+---
+
+## Flujo correcto resultante
+
+```
+Inicio (con internet):
+  Start() ? TryResume ? _todayResumed=false ? GET BD ? Seed(3600s) ? _todayResumed=true ?
+  PerformHandshake() ? TryResume ? _todayResumed=true ? RETORNA sin hacer nada ?
+  PrepareLoginUi() ? TryResume ? _todayResumed=true ? RETORNA sin hacer nada ?
+
+Internet cae (modo offline):
+  Tracker acumula localmente: _current = 3600 + 1800 = 5400s
+  Flush falla ? OfflineQueue encola payload con 5400s
+
+Internet regresa:
+  OfflineQueue reenvía payload acumulado real (5400s)
+  BD: GREATEST(3600, 5400) = 5400s ? — sin duplicación
+  _todayResumed=true ? TryResume no corre ? no se vuelve a sumar seed ?
+
+Medianoche (23:59 ? 00:00):
+  FlushTimer detecta dayLocal cambió ? _todayResumed = false ?
+  Próximo handshake/Start ? TryResume corre para el nuevo día ?
+```
+
+---
+
+*Generado: 2025-07-11 | Rama: master | Archivo modificado: `Core\CoreService.cs`*
+
+---
+
+## [2025-07-11] — Fix: Contexto de usuario en logs + clasificación de errores de red
+
+### Problema 1 — Logs sin identificación de usuario en producción
+
+Los logs no incluían ningún dato del usuario o equipo que generó el error.
+Con múltiples clientes en producción era imposible saber a qué persona/máquina
+pertenecía un error específico.
+
+### Problema 2 — Error de red tratado como error crítico
+
+El error `ResponseEnded` en `SendHandshakeAsync` es un error transitorio de red.
+Se logueaba como `[Error]` con stack trace completo cuando debería clasificarse como
+`[Warn]`, ya que el cliente lo reintenta automáticamente en el siguiente ciclo del timer.
+
+---
+
+### Cambio 1 — Contexto de usuario en `LocalLogger`
+
+**Archivo:** `Logging\LocalLogger.cs`
+
+**Código ANTES — sin contexto de usuario:**
+```csharp
+// Ejemplo de línea de log resultante:
+// 2025-07-11 10:30:00.123 [ERROR] ApiClient.SendHandshakeAsync(): error. ...
+
+// No existían campos de contexto ni método SetUserContext.
+// Timeout del HttpClient del logger: no configurado (indefinido).
+private static readonly HttpClient _httpClient = new HttpClient();
+```
+
+**Código DESPUÉS — campos nuevos:**
+```csharp
+private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+
+// Contexto de usuario (se actualiza en runtime via SetUserContext)
+private static string _contextDeviceId = "NO-DEVICE";
+private static string _contextMachineName = Environment.MachineName;
+private static string _contextUsername = "NO-USER";
+```
+
+**Método nuevo `SetUserContext()`:**
+```csharp
+public static void SetUserContext(string deviceId, string machineName, string username)
+{
+    _contextDeviceId  = !string.IsNullOrWhiteSpace(deviceId)   ? deviceId   : "NO-DEVICE";
+    _contextMachineName = !string.IsNullOrWhiteSpace(machineName) ? machineName : Environment.MachineName;
+    _contextUsername  = !string.IsNullOrWhiteSpace(username)   ? username   : "NO-USER";
+    Info($"LocalLogger.SetUserContext(): contexto establecido...");
+}
+```
+
+**`WriteLog()` — ANTES:**
+```csharp
+string line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{prefix}] {safeMessage}";
+```
+
+**`WriteLog()` — DESPUÉS:**
+```csharp
+// Prefijo de 8 chars del GUID para legibilidad sin exponer el ID completo
+string userCtx = $"[{_contextUsername}|{_contextMachineName}|{_contextDeviceId[..Math.Min(8, _contextDeviceId.Length)]}]";
+string line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{prefix}] {userCtx} {safeMessage}";
+// Ejemplo: 2025-07-11 10:30:00.123 [ERROR] [juanlopez|PC-CONTAB01|a1b2c3d] ApiClient...
+```
+
+**`SendToWebhookAsync()` — ANTES:**
+```csharp
+private static async Task SendToWebhookAsync(LogLevel level, string safeMessage)
+{
+    // ...
+    string contentText = $"`AZCKeeper_Cliente` **[{level}]**\n{msg}";
+}
+```
+
+**`SendToWebhookAsync()` — DESPUÉS:**
+```csharp
+private static async Task SendToWebhookAsync(LogLevel level, string userCtx, string safeMessage)
+{
+    // ...
+    // Discord mostrará: AZCKeeper_Cliente [ERROR] [juanlopez|PC-CONTAB01|a1b2c3d4]
+    string contentText = $"`AZCKeeper_Cliente` **[{level}]** {userCtx}\n{msg}";
+}
+```
+
+---
+
+### Cambio 2 — Llamadas a `SetUserContext()` en `CoreService`
+
+**Archivo:** `Core\CoreService.cs`
+
+**Ubicación 1 — `Initialize()` (contexto base antes del login):**
+
+**Código ANTES:**
+```csharp
+_authManager = new AuthManager();
+_authManager.TryLoadTokenFromDisk();
+
+if (!_authManager.HasToken)
+    PrepareLoginUi();
+```
+
+**Código DESPUÉS:**
+```csharp
+_authManager = new AuthManager();
+_authManager.TryLoadTokenFromDisk();
+
+// Contexto base: DeviceId y MachineName ya disponibles. Username se completa post-login.
+LocalLogger.SetUserContext(
+    _configManager.CurrentConfig.DeviceId,
+    Environment.MachineName,
+    "NO-LOGIN"
+);
+
+if (!_authManager.HasToken)
+    PrepareLoginUi();
+```
+
+**Ubicación 2 — `PrepareLoginUi()` (contexto completo post-login exitoso):**
+
+**Código ANTES:**
+```csharp
+_authManager.UpdateAuthToken(login.Response.Token);
+_configManager.CurrentConfig.ApiAuthToken = login.Response.Token;
+_configManager.Save();
+
+_loginForm.SetBusy(true, "Sincronizando configuración...");
+```
+
+**Código DESPUÉS:**
+```csharp
+_authManager.UpdateAuthToken(login.Response.Token);
+_configManager.CurrentConfig.ApiAuthToken = login.Response.Token;
+_configManager.Save();
+
+// Actualizar contexto con CC del empleado (username real del sistema)
+LocalLogger.SetUserContext(
+    _configManager.CurrentConfig.DeviceId,
+    Environment.MachineName,
+    user    // CC del empleado ingresado en el login
+);
+
+_loginForm.SetBusy(true, "Sincronizando configuración...");
+```
+
+**Justificación:**
+- Antes del login: los errores ya llevan `DeviceId` + `MachineName`, útil para identificar el equipo.
+- Después del login: se agrega el CC del empleado. A partir de este punto los logs quedan
+  totalmente identificados.
+
+---
+
+### Cambio 3 — Clasificación de errores en `SendHandshakeAsync()`
+
+**Archivo:** `Network\ApiClient.cs`
+
+**Código ANTES — un solo catch genérico trata todo como error crítico:**
+```csharp
+catch (JsonException jex)
+{
+    LocalLogger.Error(jex, "ApiClient.SendHandshakeAsync(): error JSON.");
+    result.IsSuccess = false;
+    return result;
+}
+catch (Exception ex)
+{
+    // ResponseEnded, timeout, DNS fail ? todos como [Error] con stack trace completo
+    LocalLogger.Error(ex, "ApiClient.SendHandshakeAsync(): error.");
+    result.IsSuccess = false;
+    return result;
+}
+```
+
+**Código DESPUÉS — catches específicos por tipo de error:**
+```csharp
+catch (JsonException jex)
+{
+    LocalLogger.Error(jex, "ApiClient.SendHandshakeAsync(): error JSON.");
+    result.IsSuccess = false;
+    return result;
+}
+catch (HttpRequestException ex)
+{
+    // Transitorio de red ? [Warn] sin stack trace
+    // Incluye: ResponseEnded, ConnectionReset, DNS fail, socket errors
+    string errorMsg = ex.InnerException?.Message ?? ex.Message;
+    LocalLogger.Warn($"ApiClient.SendHandshakeAsync(): red no disponible. Se reintentará. Causa: {errorMsg}");
+    result.IsSuccess = false;
+    return result;
+}
+catch (TaskCanceledException)
+{
+    // Timeout de 30s configurado en HttpClient ? [Warn]
+    LocalLogger.Warn("ApiClient.SendHandshakeAsync(): timeout esperando respuesta del servidor. Se reintentará.");
+    result.IsSuccess = false;
+    return result;
+}
+catch (Exception ex)
+{
+    // Errores verdaderamente inesperados (bug de código) ? [Error] con stack trace
+    LocalLogger.Error(ex, "ApiClient.SendHandshakeAsync(): error inesperado.");
+    result.IsSuccess = false;
+    return result;
+}
+```
+
+**Justificación por tipo de catch:**
+
+| Tipo | Nivel log | Razón |
+|---|---|---|
+| `HttpRequestException` | `Warn` | `ResponseEnded`, `ConnectionReset`, DNS fail — transitorios. El timer reintenta automáticamente. No requieren acción del administrador. |
+| `TaskCanceledException` | `Warn` | HttpClient tiene timeout de 30s. Si el servidor tarda más es un problema temporal de carga. |
+| `Exception` genérico | `Error` | Reservado para errores reales de código que sí requieren revisión. |
+
+---
+
+### Formato de log resultante en producción
+
+```
+# Antes del login (solo equipo):
+2025-07-11 08:00:01.234 [INFO]  [NO-LOGIN|PC-CONTAB01|a1b2c3d] CoreService.Initialize(): inicio.
+2025-07-11 08:00:02.456 [WARN]  [NO-LOGIN|PC-CONTAB01|a1b2c3d] ApiClient.SendHandshakeAsync(): red no disponible. Se reintentará. Causa: The response ended prematurely.
+
+# Después del login exitoso:
+2025-07-11 08:01:10.789 [INFO]  [12345678|PC-CONTAB01|a1b2c3d] LocalLogger.SetUserContext(): contexto establecido.
+2025-07-11 08:01:11.001 [INFO]  [12345678|PC-CONTAB01|a1b2c3d] CoreService: ? Seed aplicado exitosamente.
+2025-07-11 08:01:12.333 [ERROR] [12345678|PC-CONTAB01|a1b2c3d] (si hubiera un error real aquí)
+```
+
+*Generado: 2025-07-11 | Archivos modificados: `Logging\LocalLogger.cs`, `Network\ApiClient.cs`, `Core\CoreService.cs`*
+
+---
+
+## [2025-07-11] — Fix: Actualización silenciosa + trazabilidad por Discord webhook
+
+### Problema 1 — Ventana CMD visible durante la actualización automática
+
+El updater externo se lanzaba con `UseShellExecute = true` sin `CreateNoWindow`, lo que
+abría una ventana de consola visible para el usuario durante el proceso de actualización.
+
+### Problema 2 — Sin trazabilidad de actualizaciones en producción
+
+No había forma de saber qué usuario/equipo ejecutó una actualización, si fue exitosa,
+o si requirió intervención manual.
+
+### Problema 3 — `MainModule` podía ser `null`
+
+En procesos .NET de 64 bits con permisos restringidos, `Process.GetCurrentProcess().MainModule`
+puede retornar `null`, causando una `NullReferenceException` que abortaba la actualización
+silenciosamente dentro del `catch`.
+
+---
+
+### Cambio — `DownloadAndInstallAsync()` en `UpdateManager`
+
+**Archivo:** `Update\UpdateManager.cs`
+
+**Código ANTES — ProcessStartInfo:**
+```csharp
+var psi = new System.Diagnostics.ProcessStartInfo
+{
+    FileName = updaterPath,
+    Arguments = $"\"{currentDir}\" \"{extractPath}\" \"{currentExe}\"",
+    UseShellExecute = true,   // ? abre shell del SO ? ventana CMD visible
+    WorkingDirectory = updateDir
+    // CreateNoWindow no definido ? false por defecto con UseShellExecute=true
+};
+
+LocalLogger.Info("UpdateManager: lanzando updater. El cliente se cerrará...");
+System.Diagnostics.Process.Start(psi);
+await Task.Delay(1000);
+System.Windows.Forms.Application.Exit();
+```
+
+**Código DESPUÉS — ProcessStartInfo:**
+```csharp
+var psi = new System.Diagnostics.ProcessStartInfo
+{
+    FileName = updaterPath,
+    Arguments = $"\"{currentDir}\" \"{extractPath}\" \"{currentExe}\"",
+    UseShellExecute = false,  // lanza proceso directo sin shell ? sin ventana CMD
+    CreateNoWindow = true,    // suprime cualquier ventana de consola del updater
+    WorkingDirectory = updateDir
+};
+
+LocalLogger.Warn($"UpdateManager: ?? INICIANDO ACTUALIZACIÓN {currentVersion} ? v{version}. Lanzando updater silencioso...");
+System.Diagnostics.Process.Start(psi);
+await Task.Delay(1500);       // 500ms extra para garantizar inicio del updater
+LocalLogger.Warn($"UpdateManager: ? Updater lanzado correctamente. Cerrando cliente para aplicar v{version}...");
+System.Windows.Forms.Application.Exit();
+```
+
+**Código ANTES — obtención de ruta del exe:**
+```csharp
+string currentExe = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+// ? .MainModule puede ser null en x64 ? NullReferenceException
+```
+
+**Código DESPUÉS — obtención segura:**
+```csharp
+string currentExe = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName
+    ?? System.Reflection.Assembly.GetExecutingAssembly().Location;
+// Si MainModule es null (x64/permisos restringidos), usa la ruta del assembly como fallback
+```
+
+**Código ANTES — catches:**
+```csharp
+catch (Exception ex)
+{
+    // Todo tipo de error tratado igual — red, permisos, zip corrupto
+    LocalLogger.Error(ex, "UpdateManager: error al descargar/instalar actualización.");
+}
+```
+
+**Código DESPUÉS — catches específicos:**
+```csharp
+catch (HttpRequestException ex)
+{
+    // Transitorio de red ? Warn, sin stack trace. Se reintentará.
+    LocalLogger.Warn($"UpdateManager: ? Error de red al descargar v{version}. Se reintentará. {ex.Message}");
+}
+catch (Exception ex)
+{
+    // Error real (zip corrupto, permisos, updater no existe) ? Error con stack trace
+    LocalLogger.Error(ex, $"UpdateManager: ? Error al descargar/instalar v{version}. Actualización fallida.");
+}
+```
+
+---
+
+### Justificación línea por línea
+
+| Cambio | Por qué |
+|---|---|
+| `UseShellExecute = false` | Con `true`, Windows abre un shell intermediario (cmd.exe) que hereda una ventana de consola. Con `false`, el proceso se lanza directamente sin shell ? sin ventana visible. |
+| `CreateNoWindow = true` | Garantía adicional: aunque el updater intente abrir una consola propia, este flag la suprime a nivel del proceso hijo. |
+| `MainModule?.FileName ?? Assembly.Location` | `MainModule` retorna `null` en procesos x64 con `SeDebugPrivilege` denegado. El fallback con `Assembly.Location` garantiza que siempre se obtiene una ruta válida. |
+| `LogLevel.Warn` para inicio/fin de actualización | Los `Warn` se envían al webhook de Discord (ver `LocalLogger.WriteLog`). Usar `Info` no los enviaría al webhook. |
+| `await Task.Delay(1500)` | Aumentado de 1000ms a 1500ms para dar margen al updater de iniciar y adquirir los archivos antes de que el cliente cierre su handle. |
+| `currentVersion` capturado antes del try | Si el updater falla a mitad del proceso y `_config` quedara en estado inconsistente, el log del catch aún tendría la versión original para diagnóstico. |
+
+---
+
+### Trazabilidad en Discord resultante
+
+```
+# Cuando se detecta nueva versión y se inicia descarga:
+AZCKeeper_Cliente [WARN] [12345678|PC-CONTAB01|a1b2c3d]
+UpdateManager: ?? INICIANDO ACTUALIZACIÓN 3.0.0.1 ? v3.0.0.2. Lanzando updater silencioso...
+
+# Si el updater arrancó correctamente:
+AZCKeeper_Cliente [WARN] [12345678|PC-CONTAB01|a1b2c3d]
+UpdateManager: ? Updater lanzado correctamente. Cerrando cliente para aplicar v3.0.0.2...
+
+# Si falló la descarga (red caída):
+AZCKeeper_Cliente [WARN] [12345678|PC-CONTAB01|a1b2c3d]
+UpdateManager: ? Error de red al descargar v3.0.0.2. Se reintentará en el próximo ciclo.
+
+# Si falló el proceso (zip corrupto, permisos, updater ausente):
+AZCKeeper_Cliente [ERROR] [12345678|PC-CONTAB01|a1b2c3d]
+UpdateManager: ? Error al descargar/instalar v3.0.0.2. Actualización fallida.
+(stack trace completo para diagnóstico)
+```
+
+*Generado: 2025-07-11 | Archivo modificado: `Update\UpdateManager.cs`*

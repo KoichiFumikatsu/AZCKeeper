@@ -160,11 +160,12 @@ namespace AZCKeeper_Cliente.Update
         {
             _isDownloading = true;
 
+            string currentVersion = _config.CurrentConfig.Version;
+
             try
             {
-                LocalLogger.Info($"UpdateManager: descargando actualización desde {url}...");
+                LocalLogger.Info($"UpdateManager: descargando actualización v{version} desde {url}...");
 
-                // ✅ USAR APPDATA en lugar de TEMP
                 string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 string updateDir = Path.Combine(appDataPath, "AZCKeeper", "Updates");
 
@@ -180,45 +181,65 @@ namespace AZCKeeper_Cliente.Update
                     await File.WriteAllBytesAsync(zipPath, bytes);
                 }
 
-                LocalLogger.Info($"UpdateManager: descarga completada ({new FileInfo(zipPath).Length / 1024}KB). Extrayendo...");
+                long sizeKb = new FileInfo(zipPath).Length / 1024;
+                LocalLogger.Info($"UpdateManager: descarga completada ({sizeKb}KB). Extrayendo...");
 
                 // Extraer ZIP
                 string extractPath = Path.Combine(updateDir, $"v{version}");
                 if (Directory.Exists(extractPath))
                     Directory.Delete(extractPath, true);
 
-                System.IO.Compression.ZipFile.ExtractToDirectory(zipPath, extractPath);
+                ZipFile.ExtractToDirectory(zipPath, extractPath);
 
                 // Verificar que exista el updater
                 string updaterPath = Path.Combine(extractPath, "AZCKeeperUpdater.exe");
                 if (!File.Exists(updaterPath))
                 {
-                    LocalLogger.Error("UpdateManager: updater no encontrado en el paquete de actualización.");
+                    LocalLogger.Error($"UpdateManager: updater no encontrado en el paquete v{version}. Actualización abortada.");
                     return;
                 }
 
-                // Lanzar updater con parámetros
-                string currentExe = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+                // Obtener ruta del ejecutable actual de forma segura (MainModule puede ser null en x64)
+                string currentExe = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName
+                    ?? System.Reflection.Assembly.GetExecutingAssembly().Location;
                 string currentDir = Path.GetDirectoryName(currentExe);
 
                 var psi = new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = updaterPath,
                     Arguments = $"\"{currentDir}\" \"{extractPath}\" \"{currentExe}\"",
-                    UseShellExecute = true,
+                    // UseShellExecute = false: lanza el proceso directamente sin shell del SO.
+                    // Esto elimina la ventana CMD visible durante el debug.
+                    UseShellExecute = false,
+                    // CreateNoWindow = true: suprime cualquier ventana de consola del updater.
+                    CreateNoWindow = true,
                     WorkingDirectory = updateDir
                 };
 
-                LocalLogger.Info("UpdateManager: lanzando updater. El cliente se cerrará...");
+                // Log de inicio de actualización — va al webhook Discord para trazabilidad en producción.
+                // Incluye usuario, equipo y versiones para saber exactamente quién actualizó y desde dónde.
+                LocalLogger.Warn($"UpdateManager: 🚀 INICIANDO ACTUALIZACIÓN {currentVersion} → v{version}. Lanzando updater silencioso...");
+
                 System.Diagnostics.Process.Start(psi);
 
-                // Cerrar aplicación para permitir actualización
-                await Task.Delay(1000);
+                // Dar tiempo al updater para iniciar antes de cerrar el cliente
+                await Task.Delay(1500);
+
+                // Log final antes de cerrar — si el proceso llegó aquí, el updater arrancó correctamente.
+                // Si el updater falla internamente, el próximo arranque del cliente lo detectará por versión.
+                LocalLogger.Warn($"UpdateManager: ✅ Updater lanzado correctamente. Cerrando cliente para aplicar v{version}...");
+
                 System.Windows.Forms.Application.Exit();
+            }
+            catch (HttpRequestException ex)
+            {
+                // Error de red al descargar el ZIP — no es un bug, es transitorio
+                LocalLogger.Warn($"UpdateManager: ❌ Error de red al descargar v{version}. Se reintentará en el próximo ciclo. {ex.Message}");
             }
             catch (Exception ex)
             {
-                LocalLogger.Error(ex, "UpdateManager: error al descargar/instalar actualización.");
+                // Error inesperado — requiere revisión manual
+                LocalLogger.Error(ex, $"UpdateManager: ❌ Error al descargar/instalar v{version}. Actualización fallida.");
             }
             finally
             {
