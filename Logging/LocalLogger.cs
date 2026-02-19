@@ -41,8 +41,13 @@ namespace AZCKeeper_Cliente.Logging
         private static string _currentLogFilePath;
         private static readonly object _fileLock = new object();
 
-        private static readonly HttpClient _httpClient = new HttpClient();
+        private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
         private static string _webhookUrl;
+
+        // ---- Contexto de usuario para identificar errores en producción ----
+        private static string _contextDeviceId = "NO-DEVICE";
+        private static string _contextMachineName = Environment.MachineName;
+        private static string _contextUsername = "NO-USER";
 
         // ---- Sanitización de secretos ----
         // Reemplaza patrones típicos: Authorization: Bearer xxx, token=xxx, webhook urls, etc.
@@ -205,7 +210,21 @@ namespace AZCKeeper_Cliente.Logging
         }
 
         /// <summary>
+        /// Establece el contexto de usuario que se incluirá en cada línea de log.
+        /// Llamar desde CoreService al cargar config y después del login exitoso.
+        /// </summary>
+        public static void SetUserContext(string deviceId, string machineName, string username)
+        {
+            _contextDeviceId = !string.IsNullOrWhiteSpace(deviceId) ? deviceId : "NO-DEVICE";
+            _contextMachineName = !string.IsNullOrWhiteSpace(machineName) ? machineName : Environment.MachineName;
+            _contextUsername = !string.IsNullOrWhiteSpace(username) ? username : "NO-USER";
+
+            Info($"LocalLogger.SetUserContext(): contexto establecido. Device={_contextDeviceId}, Machine={_contextMachineName}, User={_contextUsername}");
+        }
+
+        /// <summary>
         /// Maneja la escritura de logs a archivo y webhook (si aplica).
+        /// Incluye contexto de usuario [device|machine|user] en cada línea.
         /// </summary>
         private static void WriteLog(LogLevel level, string message)
         {
@@ -216,7 +235,10 @@ namespace AZCKeeper_Cliente.Logging
                 // Sanitizar antes de escribir/enviar
                 string safeMessage = Sanitize(message);
 
-                string line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{prefix}] {safeMessage}";
+                // Contexto de usuario: identifica de qué equipo/persona viene el log en producción
+                string userCtx = $"[{_contextUsername}|{_contextMachineName}|{_contextDeviceId[..Math.Min(8, _contextDeviceId.Length)]}]";
+
+                string line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{prefix}] {userCtx} {safeMessage}";
 
                 // 1) Archivo local
                 if (_enableFileLogging && !string.IsNullOrWhiteSpace(_logBaseDirectory))
@@ -234,13 +256,11 @@ namespace AZCKeeper_Cliente.Logging
                     !string.IsNullOrWhiteSpace(_webhookUrl) &&
                     (level == LogLevel.Warn || level == LogLevel.Error))
                 {
-                    // Fire-and-forget mejorado: ejecuta en background y observa excepciones
-                    Task.Run(async () => await SendToWebhookAsync(level, safeMessage))
+                    Task.Run(async () => await SendToWebhookAsync(level, userCtx, safeMessage))
                         .ContinueWith(t =>
                         {
                             if (t.IsFaulted && t.Exception != null)
                             {
-                                // Loguear error de webhook a archivo sin recursión
                                 var baseEx = t.Exception.GetBaseException();
                                 WriteToFileOnly(LogLevel.Warn, $"LocalLogger: webhook send failed - {baseEx.Message}");
                             }
@@ -304,20 +324,20 @@ namespace AZCKeeper_Cliente.Logging
 
         /// <summary>
         /// Envía log a webhook (Discord) de forma asíncrona.
+        /// Incluye contexto de usuario para identificar el origen en producción.
         /// </summary>
-        private static async Task SendToWebhookAsync(LogLevel level, string safeMessage)
+        private static async Task SendToWebhookAsync(LogLevel level, string userCtx, string safeMessage)
         {
             if (string.IsNullOrWhiteSpace(_webhookUrl))
                 return;
 
             try
             {
-                // Payload corto (Discord tiene límites)
                 string msg = safeMessage ?? string.Empty;
                 if (msg.Length > WebhookMaxChars)
                     msg = msg.Substring(0, WebhookMaxChars) + "...(truncated)";
 
-                string contentText = $"`AZCKeeper_Cliente` **[{level}]**\n{msg}";
+                string contentText = $"`AZCKeeper_Cliente` **[{level}]** {userCtx}\n{msg}";
 
                 var payload = new { content = contentText };
                 string json = JsonSerializer.Serialize(payload);

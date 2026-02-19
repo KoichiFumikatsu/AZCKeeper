@@ -229,9 +229,26 @@ namespace AZCKeeper_Cliente.Network
                 result.IsSuccess = false;
                 return result;
             }
+            catch (HttpRequestException ex)
+            {
+                // Error transitorio de red (conexión interrumpida, ResponseEnded, DNS, etc.)
+                // Se loguea como Warn en lugar de Error para reducir ruido en producción.
+                // El cliente reintentará en el próximo ciclo del handshake timer.
+                string errorMsg = ex.InnerException?.Message ?? ex.Message;
+                LocalLogger.Warn($"ApiClient.SendHandshakeAsync(): red no disponible. Se reintentará. Causa: {errorMsg}");
+                result.IsSuccess = false;
+                return result;
+            }
+            catch (TaskCanceledException)
+            {
+                // Timeout del HttpClient (30s configurado en constructor)
+                LocalLogger.Warn("ApiClient.SendHandshakeAsync(): timeout esperando respuesta del servidor. Se reintentará.");
+                result.IsSuccess = false;
+                return result;
+            }
             catch (Exception ex)
             {
-                LocalLogger.Error(ex, "ApiClient.SendHandshakeAsync(): error.");
+                LocalLogger.Error(ex, "ApiClient.SendHandshakeAsync(): error inesperado.");
                 result.IsSuccess = false;
                 return result;
             }
@@ -873,6 +890,7 @@ namespace AZCKeeper_Cliente.Network
         {
             public bool Ok { get; set; }
             public string ServerTimeUtc { get; set; }
+            public string Cc { get; set; }
             public PolicyApplied PolicyApplied { get; set; }
             public EffectiveConfig EffectiveConfig { get; set; }
             public string Error { get; set; }

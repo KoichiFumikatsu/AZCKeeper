@@ -3,6 +3,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using AZCKeeper_Cliente.Logging;
+using System.Text.Json;
 
 namespace AZCKeeper_Cliente.Auth
 {
@@ -31,8 +32,10 @@ namespace AZCKeeper_Cliente.Auth
         private const string AppFolderName = "AZCKeeper"; // AppData\Roaming\AZCKeeper
         private const string AuthFolderName = "Auth";     // subcarpeta para secretos locales
         private const string TokenFileName = "auth_token.bin"; // archivo binario cifrado
+        private const string UsernameFileName = "auth_user.txt"; // username en texto plano (no es secreto)
 
         private string _authToken; // Token en memoria (fuente para Authorization: Bearer)
+        private string _cachedUsername; // username guardado en disco al hacer login
 
         /// <summary>
         /// Token actual (Bearer).
@@ -44,6 +47,12 @@ namespace AZCKeeper_Cliente.Auth
         /// Indica si hay token cargado en memoria.
         /// </summary>
         public bool HasToken => !string.IsNullOrWhiteSpace(_authToken);
+
+        /// <summary>
+        /// Username asociado al token actual.
+        /// Se persiste en disco al hacer login y se carga junto al token en sesiones silenciosas.
+        /// </summary>
+        public string CachedUsername => _cachedUsername;
 
         /// <summary>
         /// Actualiza token en memoria y lo persiste cifrado.
@@ -58,12 +67,31 @@ namespace AZCKeeper_Cliente.Auth
             }
 
             _authToken = newToken;
-
-            // Persistir en disco cifrado (no debe romper flujo si falla).
             TrySaveTokenToDisk(newToken);
-
-            // Log seguro (preview).
             LocalLogger.Info($"AuthManager.UpdateAuthToken(): token actualizado. Preview={GetTokenPreview(newToken)}");
+        }
+
+        /// <summary>
+        /// Persiste el username en disco junto al token para recuperarlo en sesiones silenciosas.
+        /// Llamar inmediatamente después de un login exitoso.
+        /// </summary>
+        public void SaveUsername(string username)
+        {
+            if (string.IsNullOrWhiteSpace(username)) return;
+
+            _cachedUsername = username;
+
+            try
+            {
+                EnsureAuthFolderExists();
+                string path = GetUsernamePath();
+                File.WriteAllText(path, username, Encoding.UTF8);
+                LocalLogger.Info($"AuthManager: username persistido en disco. User={username}");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "AuthManager: error al persistir username.");
+            }
         }
 
         /// <summary>
@@ -107,6 +135,10 @@ namespace AZCKeeper_Cliente.Auth
                 }
 
                 _authToken = token;
+
+                // Cargar username guardado junto al token
+                TryLoadUsernameFromDisk();
+
                 LocalLogger.Info($"AuthManager.TryLoadTokenFromDisk(): token cargado en memoria. Preview={GetTokenPreview(token)}");
                 return true;
             }
@@ -114,6 +146,26 @@ namespace AZCKeeper_Cliente.Auth
             {
                 LocalLogger.Error(ex, "AuthManager.TryLoadTokenFromDisk(): error al cargar/descifrar token. Se continuará sin token.");
                 return false;
+            }
+        }
+
+        private void TryLoadUsernameFromDisk()
+        {
+            try
+            {
+                string path = GetUsernamePath();
+                if (!File.Exists(path)) return;
+
+                string username = File.ReadAllText(path, Encoding.UTF8)?.Trim();
+                if (!string.IsNullOrWhiteSpace(username))
+                {
+                    _cachedUsername = username;
+                    LocalLogger.Info($"AuthManager: username cargado desde disco. User={username}");
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "AuthManager: error al cargar username desde disco.");
             }
         }
 
@@ -127,9 +179,13 @@ namespace AZCKeeper_Cliente.Auth
                 return;
 
             _authToken = null;
+            _cachedUsername = null;
 
             if (deleteFromDisk)
+            {
                 TryDeleteTokenFromDisk();
+                TryDeleteUsernameFromDisk();
+            }
 
             LocalLogger.Warn("AuthManager.ClearToken(): token limpiado.");
         }
@@ -189,6 +245,23 @@ namespace AZCKeeper_Cliente.Auth
             }
         }
 
+        private void TryDeleteUsernameFromDisk()
+        {
+            try
+            {
+                string path = GetUsernamePath();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                    LocalLogger.Info("AuthManager: username eliminado de disco.");
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "AuthManager: error al eliminar username de disco.");
+            }
+        }
+
         /// <summary>
         /// Asegura carpeta AppData\Roaming\AZCKeeper\Auth
         /// </summary>
@@ -214,6 +287,14 @@ namespace AZCKeeper_Cliente.Auth
         private static string GetTokenFilePath()
         {
             return Path.Combine(GetAuthFolderPath(), TokenFileName);
+        }
+
+        /// <summary>
+        /// Devuelve la ruta completa del archivo de username.
+        /// </summary>
+        private static string GetUsernamePath()
+        {
+            return Path.Combine(GetAuthFolderPath(), UsernameFileName);
         }
 
         /// <summary>

@@ -53,6 +53,7 @@ namespace AZCKeeper_Cliente.Core
         private System.Timers.Timer _handshakeTimer; // handshake periódico
         private DateTime _lastHandshakeTime = DateTime.MinValue; // último handshake ok
         private bool _hasSuccessfulHandshake = false; // flag para primer handshake exitoso
+        private bool _todayResumed = false;           // evita seed duplicado en el mismo día
 
         private System.Timers.Timer _lockStatusTimer; // chequeo de bloqueo cada 30s (más frecuente que handshake)
 
@@ -78,6 +79,14 @@ namespace AZCKeeper_Cliente.Core
 
                 _authManager = new AuthManager();
                 _authManager.TryLoadTokenFromDisk();
+
+                // CachedUsername se carga desde disco junto al token en TryLoadTokenFromDisk()
+                string knownUsername = _authManager.CachedUsername ?? "NO-LOGIN";
+                LocalLogger.SetUserContext(
+                    _configManager.CurrentConfig.DeviceId,
+                    Environment.MachineName,
+                    knownUsername
+                );
 
                 if (!_authManager.HasToken)
                     PrepareLoginUi();
@@ -236,8 +245,16 @@ namespace AZCKeeper_Cliente.Core
                     }
 
                     _authManager.UpdateAuthToken(login.Response.Token);
+                    _authManager.SaveUsername(user); // ← persistir username para sesiones silenciosas
                     _configManager.CurrentConfig.ApiAuthToken = login.Response.Token;
                     _configManager.Save();
+
+                    // Actualizar contexto de usuario en logs con el username real del login
+                    LocalLogger.SetUserContext(
+                        _configManager.CurrentConfig.DeviceId,
+                        Environment.MachineName,
+                        user
+                    );
 
                     _loginForm.SetBusy(true, "Sincronizando configuración...");
                     PerformHandshake();
@@ -548,6 +565,21 @@ namespace AZCKeeper_Cliente.Core
                 if (!_hasSuccessfulHandshake)
                 {
                     _hasSuccessfulHandshake = true;
+
+                    // Migración: si no hay username en disco (usuario pre-actualización),
+                    // usar el 'cc' devuelto por el servidor y persistirlo para futuros arranques.
+                    if (string.IsNullOrWhiteSpace(_authManager.CachedUsername) &&
+                        !string.IsNullOrWhiteSpace(hs.Response?.Cc))
+                    {
+                        _authManager.SaveUsername(hs.Response.Cc);
+                        LocalLogger.SetUserContext(
+                            _configManager.CurrentConfig.DeviceId,
+                            Environment.MachineName,
+                            hs.Response.Cc
+                        );
+                        LocalLogger.Info($"CoreService: username recuperado desde handshake (migración). CC={hs.Response.Cc}");
+                    }
+
                     LocalLogger.Info("CoreService.PerformHandshake(): primer handshake exitoso. Intentando resumir actividad del día...");
                     TryResumeTodayActivityFromServer();
                 }
@@ -837,6 +869,7 @@ namespace AZCKeeper_Cliente.Core
         }
         /// <summary>
         /// Si existe registro del día en backend, rehidrata contadores locales.
+        /// Solo se ejecuta una vez por día. El flag _todayResumed previene seed duplicado.
         /// </summary>
         private async void TryResumeTodayActivityFromServer()
         {
@@ -852,6 +885,16 @@ namespace AZCKeeper_Cliente.Core
                 }
 
                 string today = DateTime.Now.ToString("yyyy-MM-dd");
+
+                // Si el seed ya fue aplicado hoy (con o sin datos), no repetir.
+                // Evita duplicación cuando Start(), PerformHandshake() y PrepareLoginUi()
+                // llaman a este método en la misma sesión.
+                if (_todayResumed)
+                {
+                    LocalLogger.Info($"CoreService: seed ya aplicado para {today}. Se omite TryResumeToday.");
+                    return;
+                }
+
                 string deviceId = _configManager.CurrentConfig.DeviceId;
 
                 var res = await _apiClient.GetActivityDayAsync(deviceId, today).ConfigureAwait(false);
@@ -864,6 +907,9 @@ namespace AZCKeeper_Cliente.Core
                 if (!res.Response.Found)
                 {
                     LocalLogger.Info("CoreService: no existe registro previo del día para retomar.");
+                    // Marcar como resuelto aunque no haya datos: evita reintentos en loop
+                    // si es el primer día del dispositivo o primer día del mes.
+                    _todayResumed = true;
                     return;
                 }
 
@@ -880,8 +926,11 @@ namespace AZCKeeper_Cliente.Core
                 );
 
                 // Para flush
-                _activityFirstEventLocal = DateTime.Now; // o parsear res.Response.FirstEventAt si quieres
+                _activityFirstEventLocal = DateTime.Now;
                 _activitySamplesCount = res.Response.SamplesCount;
+
+                // Marcar seed como aplicado exitosamente para este día.
+                _todayResumed = true;
 
                 LocalLogger.Info($"CoreService: ✅ Seed aplicado exitosamente. dayDate={today} active={res.Response.ActiveSeconds}s idle={res.Response.IdleSeconds}s " +
                        $"work={res.Response.WorkHoursActiveSeconds}s lunch={res.Response.LunchActiveSeconds}s after={res.Response.AfterHoursActiveSeconds}s samples={res.Response.SamplesCount}");
@@ -923,6 +972,9 @@ namespace AZCKeeper_Cliente.Core
                             _lastFlushDayLocalDate = dayLocal;
                             _activitySamplesCount = 0;
                             _activityFirstEventLocal = nowLocal;
+                            // Nuevo día detectado: permitir que TryResumeToday corra al día siguiente.
+                            _todayResumed = false;
+                            LocalLogger.Info($"CoreService: nuevo día detectado ({dayLocal:yyyy-MM-dd}). _todayResumed reseteado.");
                         }
 
                         if (_activityFirstEventLocal == null)

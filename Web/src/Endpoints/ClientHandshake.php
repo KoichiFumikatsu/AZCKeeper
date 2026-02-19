@@ -94,6 +94,7 @@ class ClientHandshake {
 
     Http::json(200, [
       'ok' => true,
+      'cc' => $pdo->query("SELECT cc FROM keeper_users WHERE id = $userId LIMIT 1")->fetchColumn(),
       'serverTimeUtc' => Http::nowUtcIso(),
       'policyApplied' => ['scope' => $appliedScope, 'policyId' => $appliedId, 'version' => $appliedVersion],
       'effectiveConfig' => $effective
