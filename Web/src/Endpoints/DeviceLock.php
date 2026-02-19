@@ -19,16 +19,28 @@ class DeviceLock
         $deviceId = (int)$sess['device_id'];
         
         $pdo = Db::pdo();
+
+        $safeDefault = [
+            'ok' => true,
+            'blocking' => [
+                'enableDeviceLock'  => false,
+                'lockMessage'       => 'Dispositivo bloqueado por políticas de seguridad.',
+                'allowUnlockWithPin'=> true,
+                'unlockPin'         => null
+            ]
+        ];
         
         // Obtener política global
         $global = PolicyRepo::getActiveGlobal($pdo);
         if (!$global) {
-            Http::json(500, ['ok' => false, 'error' => 'No active global policy']);
+            Http::json(200, $safeDefault);
         }
         
         // Iniciar con política global
         $effective = json_decode($global['policy_json'], true);
-        if (!is_array($effective)) $effective = [];
+        if (!is_array($effective)) {
+            Http::json(200, $safeDefault);
+        }
         
         // Merge con política de usuario (si existe)
         $userPol = PolicyRepo::getActiveUser($pdo, $userId);
@@ -40,11 +52,13 @@ class DeviceLock
         }
         
         // Merge con política de dispositivo (si existe)
-        $devPol = PolicyRepo::getActiveDevice($pdo, $deviceId);
-        if ($devPol) {
-            $d = json_decode($devPol['policy_json'], true);
-            if (is_array($d)) {
-                $effective = PolicyService::deepMerge($effective, $d);
+        if ($deviceId > 0) {
+            $devPol = PolicyRepo::getActiveDevice($pdo, $deviceId);
+            if ($devPol) {
+                $d = json_decode($devPol['policy_json'], true);
+                if (is_array($d)) {
+                    $effective = PolicyService::deepMerge($effective, $d);
+                }
             }
         }
         
@@ -55,10 +69,10 @@ class DeviceLock
         Http::json(200, [
             'ok' => true,
             'blocking' => [
-                'enableDeviceLock' => (bool)($blocking['enableDeviceLock'] ?? false),
-                'lockMessage' => $blocking['lockMessage'] ?? 'Dispositivo bloqueado por políticas de seguridad.',
+                'enableDeviceLock'   => (bool)($blocking['enableDeviceLock'] ?? false),
+                'lockMessage'        => $blocking['lockMessage'] ?? 'Dispositivo bloqueado por políticas de seguridad.',
                 'allowUnlockWithPin' => (bool)($blocking['allowUnlockWithPin'] ?? true),
-                'unlockPin' => $blocking['unlockPin'] ?? null
+                'unlockPin'          => $blocking['unlockPin'] ?? null
             ]
         ]);
     }

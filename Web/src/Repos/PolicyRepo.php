@@ -5,15 +5,19 @@ use PDO;
 
 class PolicyRepo {
   public static function getActiveGlobal(PDO $pdo): ?array {
-    $st = $pdo->query("
-      SELECT id, version, policy_json
-      FROM keeper_policy_assignments
-      WHERE scope='global' AND is_active=1
-      ORDER BY priority ASC, id DESC
-      LIMIT 1
-    ");
-    $row = $st->fetch();
-    return $row ?: null;
+    try {
+      $st = $pdo->query("
+        SELECT id, version, policy_json
+        FROM keeper_policy_assignments
+        WHERE scope='global' AND is_active=1
+        ORDER BY priority ASC, id DESC
+        LIMIT 1
+      ");
+      $row = $st->fetch();
+      return $row ?: null;
+    } catch (\Throwable $e) {
+      return null;
+    }
   }
 
   public static function getActiveUser(PDO $pdo, int $userId): ?array {

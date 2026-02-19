@@ -65,7 +65,8 @@ $users = $pdo->query("
             (SELECT MAX(a.last_event_at) FROM keeper_activity_day a 
              WHERE a.user_id = u.id AND a.day_date = CURDATE()), 
             NOW()) as seconds_since_event,
-        (SELECT COUNT(*) FROM keeper_policy_assignments WHERE scope='user' AND user_id=u.id AND is_active=1) as has_policy
+        (SELECT COUNT(*) FROM keeper_policy_assignments WHERE scope='user' AND user_id=u.id AND is_active=1) as has_policy,
+        (SELECT client_version FROM keeper_handshake_log WHERE user_id = u.id ORDER BY created_at DESC LIMIT 1) as client_version
     FROM keeper_users u
     LEFT JOIN keeper_devices d ON d.user_id = u.id
     WHERE u.status = 'active'
@@ -477,6 +478,7 @@ foreach ($allUsersForCount as $userCount) {
                             <th>Estado</th>
                             <th>Nombre</th>
                             <th>Última Actividad</th>
+                            <th>Versión</th>
                             <th>Política</th>
                             <th>Acciones</th>
                         </tr>
@@ -514,6 +516,15 @@ foreach ($allUsersForCount as $userCount) {
                                     <?= htmlspecialchars($user['last_event']) ?>
                                 <?php else: ?>
                                     <span style="color: #999;">Sin actividad hoy</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <?php if ($user['client_version']): ?>
+                                    <span class="badge" style="background:#EFF6FF;color:#1E3A8A;border:1px solid #BFDBFE;font-size:0.78rem;padding:0.25rem 0.55rem;border-radius:6px;font-family:monospace;">
+                                        <?= htmlspecialchars($user['client_version']) ?>
+                                    </span>
+                                <?php else: ?>
+                                    <span style="color: #999;">—</span>
                                 <?php endif; ?>
                             </td>
                             <td>
@@ -648,6 +659,11 @@ foreach ($allUsersForCount as $userCount) {
                                 </td>
                                 <td>
                                     ${user.last_event ? escapeHtml(user.last_event) : '<span style="color: #999;">Sin actividad hoy</span>'}
+                                </td>
+                                <td>
+                                    ${user.client_version ? 
+                                        `<span class="badge" style="background:#EFF6FF;color:#1E3A8A;border:1px solid #BFDBFE;font-size:0.78rem;padding:0.25rem 0.55rem;border-radius:6px;font-family:monospace;">${escapeHtml(user.client_version)}</span>` : 
+                                        '<span style="color: #999;">—</span>'}
                                 </td>
                                 <td>
                                     ${user.has_policy ? 

@@ -12,7 +12,7 @@ C:\xampp\htdocs\AZCKeeper\build\package\createdump.exe
 C:\xampp\htdocs\AZCKeeper\build\package\hostfxr.dll
 C:\xampp\htdocs\AZCKeeper\build\package\hostpolicy.dll
 C:\xampp\htdocs\AZCKeeper\build\package\mscordaccore.dll
-C:\xampp\htdocs\AZCKeeper\build\package\mscordaccore_amd64_amd64_8.0.1224.60305.dll
+C:\xampp\htdocs\AZCKeeper\build\package\mscordaccore_amd64_amd64_8.0.2426.7010.dll
 C:\xampp\htdocs\AZCKeeper\build\package\mscordbi.dll
 C:\xampp\htdocs\AZCKeeper\build\package\mscorrc.dll
 C:\xampp\htdocs\AZCKeeper\build\package\msquic.dll

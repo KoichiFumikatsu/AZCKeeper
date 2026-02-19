@@ -47,7 +47,8 @@ $users = $pdo->query("
             (SELECT MAX(a.last_event_at) FROM keeper_activity_day a 
              WHERE a.user_id = u.id AND a.day_date = CURDATE()), 
             NOW()) as seconds_since_event,
-        (SELECT COUNT(*) FROM keeper_policy_assignments WHERE scope='user' AND user_id=u.id AND is_active=1) as has_policy
+        (SELECT COUNT(*) FROM keeper_policy_assignments WHERE scope='user' AND user_id=u.id AND is_active=1) as has_policy,
+        (SELECT client_version FROM keeper_handshake_log WHERE user_id = u.id ORDER BY created_at DESC LIMIT 1) as client_version
     FROM keeper_users u
     LEFT JOIN keeper_devices d ON d.user_id = u.id
     WHERE u.status = 'active'
@@ -77,7 +78,8 @@ foreach ($users as $user) {
             'display_name' => $user['display_name'],
             'connection_status' => $user['connection_status'],
             'last_event' => $user['last_event'],
-            'has_policy' => (bool)$user['has_policy']
+            'has_policy' => (bool)$user['has_policy'],
+            'client_version' => $user['client_version']
         ];
     }
 }

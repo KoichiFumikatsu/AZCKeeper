@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client.csproj": {}
+    "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client\\AZCKeeper_Client.csproj": {}
   },
   "projects": {
-    "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client.csproj": {
-      "version": "1.0.0",
+    "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client\\AZCKeeper_Client.csproj": {
+      "version": "3.0.0.8",
       "restore": {
-        "projectUniqueName": "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client.csproj",
+        "projectUniqueName": "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client\\AZCKeeper_Client.csproj",
         "projectName": "AZCKeeper_Client",
-        "projectPath": "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client.csproj",
+        "projectPath": "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client\\AZCKeeper_Client.csproj",
         "packagesPath": "C:\\Users\\Koichi Fumikatsu\\.nuget\\packages\\",
-        "outputPath": "C:\\xampp\\htdocs\\AZCKeeper\\obj\\",
+        "outputPath": "C:\\xampp\\htdocs\\AZCKeeper\\AZCKeeper_Client\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
@@ -67,6 +67,24 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
+              "version": "[8.0.24, 8.0.24]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Crossgen2.win-x64",
+              "version": "[8.0.24, 8.0.24]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Runtime.win-x64",
+              "version": "[8.0.24, 8.0.24]"
+            },
+            {
+              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
+              "version": "[8.0.24, 8.0.24]"
+            }
+          ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
@@ -76,6 +94,11 @@
             }
           },
           "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.311/PortableRuntimeIdentifierGraph.json"
+        }
+      },
+      "runtimes": {
+        "win-x64": {
+          "#import": []
         }
       }
     }
