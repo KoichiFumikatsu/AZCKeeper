@@ -96,6 +96,19 @@ namespace AZCKeeper_Cliente.Tracking
         internal double CurrentDayAfterHoursActiveSeconds { get { lock (_lock) return _currentDayAfterHoursActiveSeconds; } }
         internal double CurrentDayAfterHoursIdleSeconds { get { lock (_lock) return _currentDayAfterHoursIdleSeconds; } }
 
+        /// <summary>
+        /// Hora UTC del último input real del usuario (teclado/ratón), calculada desde GetLastInputInfo.
+        /// Úsala como LastEventAt en los payloads para reflejar actividad real, no la hora del flush.
+        /// </summary>
+        internal DateTime LastRealInputUtc
+        {
+            get
+            {
+                double idleSeconds = GetIdleSeconds();
+                return DateTime.UtcNow.AddSeconds(-idleSeconds);
+            }
+        }
+
         // -------------------- Integración: callback de cierre de día --------------------
         public Action<DateTime, double, double> OnDayClosed { get; set; }
 

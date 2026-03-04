@@ -111,7 +111,7 @@ class Db {
       PDO::ATTR_TIMEOUT => 5 // Timeout de 5 segundos
     ]);
     
-    // Forzar charset/collation en la conexión
+    // Forzar charset/collation en la conexión.
     $pdo->exec("SET NAMES {$charset} COLLATE {$collation}");
     
     return $pdo;

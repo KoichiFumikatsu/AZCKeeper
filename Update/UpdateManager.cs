@@ -208,26 +208,44 @@ namespace AZCKeeper_Cliente.Update
                 {
                     FileName = updaterPath,
                     Arguments = $"\"{currentDir}\" \"{extractPath}\" \"{currentExe}\"",
-                    // UseShellExecute = false: lanza el proceso directamente sin shell del SO.
-                    // Esto elimina la ventana CMD visible durante el debug.
-                    UseShellExecute = false,
-                    // CreateNoWindow = true: suprime cualquier ventana de consola del updater.
-                    CreateNoWindow = true,
+                    // UseShellExecute = true: necesario para ejecutar correctamente un .exe externo
+                    // WindowStyle.Hidden: oculta la ventana sin impedir la ejecución
+                    UseShellExecute = true,
+                    WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
+                    CreateNoWindow = false,
                     WorkingDirectory = updateDir
                 };
 
                 // Log de inicio de actualización — va al webhook Discord para trazabilidad en producción.
                 // Incluye usuario, equipo y versiones para saber exactamente quién actualizó y desde dónde.
-                LocalLogger.Warn($"UpdateManager: 🚀 INICIANDO ACTUALIZACIÓN {currentVersion} → v{version}. Lanzando updater silencioso...");
+                LocalLogger.Warn($"UpdateManager: 🚀 INICIANDO ACTUALIZACIÓN {currentVersion} → v{version}. Lanzando updater...");
+                LocalLogger.Info($"UpdateManager: ProcessStartInfo → FileName={psi.FileName}, Args={psi.Arguments}, Shell={psi.UseShellExecute}, WorkDir={psi.WorkingDirectory}");
 
-                System.Diagnostics.Process.Start(psi);
+                System.Diagnostics.Process proc = null;
+                try
+                {
+                    proc = System.Diagnostics.Process.Start(psi);
+                }
+                catch (Exception startEx)
+                {
+                    LocalLogger.Error(startEx, $"UpdateManager: ❌ Process.Start lanzó excepción. El updater NO se inició. FileName={psi.FileName}");
+                    return;
+                }
+
+                if (proc == null)
+                {
+                    LocalLogger.Error($"UpdateManager: ❌ Process.Start devolvió null. El updater no pudo iniciarse. FileName={psi.FileName}");
+                    return;
+                }
+
+                LocalLogger.Info($"UpdateManager: proceso updater iniciado correctamente (PID={proc.Id}).");
 
                 // Dar tiempo al updater para iniciar antes de cerrar el cliente
                 await Task.Delay(1500);
 
                 // Log final antes de cerrar — si el proceso llegó aquí, el updater arrancó correctamente.
                 // Si el updater falla internamente, el próximo arranque del cliente lo detectará por versión.
-                LocalLogger.Warn($"UpdateManager: ✅ Updater lanzado correctamente. Cerrando cliente para aplicar v{version}...");
+                LocalLogger.Warn($"UpdateManager: ✅ Updater lanzado (PID={proc.Id}). Cerrando cliente para aplicar v{version}...");
 
                 System.Windows.Forms.Application.Exit();
             }

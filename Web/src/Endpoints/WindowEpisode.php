@@ -81,7 +81,7 @@ class WindowEpisode
                   (user_id, device_id, start_at, end_at, duration_seconds,
                    process_name, app_name, window_title, is_in_call, call_app_hint, day_date, created_at)
                 VALUES
-                  (:uid, :did, :start, :end, :dur, :proc, :app, :title, :call, :hint, :day, NOW())
+                  (:uid, :did, :start, :end, :dur, :proc, :app, :title, :call, :hint, :day, UTC_TIMESTAMP())
             ");
          
             $st->execute([

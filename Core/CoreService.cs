@@ -144,7 +144,10 @@ namespace AZCKeeper_Cliente.Core
                 // 3) Flush periódico
                 StartActivityFlushTimer();
                 StartHandshakeTimer();
-                StartLockStatusTimer();
+                // NOTA: LockStatusTimer eliminado — el bloqueo ahora se aplica desde
+                // effectiveConfig.Blocking que ya viene en cada respuesta del handshake.
+                // Latencia de cambio de política de bloqueo = intervalo de handshake (~5min).
+                // Reducción: -400 req/min y -1200 queries/min a keeper_policy_assignments.
                 if (_debugWindow != null && !_debugWindow.IsDisposed)
                 {
                     try { _debugWindow.Show(); }
@@ -358,11 +361,18 @@ namespace AZCKeeper_Cliente.Core
                     return;
                 }
 
+                var tzOffset = (int)TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow).TotalMinutes;
+                string ianaTimezone = null;
+                if (!TimeZoneInfo.TryConvertWindowsIdToIanaId(TimeZoneInfo.Local.Id, out ianaTimezone))
+                    ianaTimezone = TimeZoneInfo.Local.Id; // fallback al ID de Windows si no hay mapeo
+
                 var request = new ApiClient.HandshakeRequest
                 {
-                    DeviceId = _configManager.CurrentConfig.DeviceId,
-                    Version = _configManager.CurrentConfig.Version,
-                    DeviceName = Environment.MachineName
+                    DeviceId     = _configManager.CurrentConfig.DeviceId,
+                    Version      = _configManager.CurrentConfig.Version,
+                    DeviceName   = Environment.MachineName,
+                    TzOffsetMinutes = tzOffset,
+                    IanaTimezone = ianaTimezone
                 };
 
                 var hs = _apiClient.SendHandshakeAsync(request)
@@ -704,8 +714,7 @@ namespace AZCKeeper_Cliente.Core
                 {
                     try
                     {
-                        // Validar que la duración sea >= 1 segundo para evitar errores de redondeo
-                        // al serializar sin milisegundos (backend espera YYYY-MM-DD HH:MM:SS)
+                        // Ignorar episodios menores a 1 segundo.
                         if (episode.DurationSeconds < 1.0)
                         {
                             LocalLogger.Info($"CoreService: episodio ignorado por duración <1s ({episode.DurationSeconds:F3}s): {episode.ProcessName}");
@@ -714,13 +723,16 @@ namespace AZCKeeper_Cliente.Core
 
                         var payload = new ApiClient.WindowEpisodePayload
                         {
-                            DeviceId = _configManager.CurrentConfig.DeviceId,
+                            DeviceId       = _configManager.CurrentConfig.DeviceId,
                             StartLocalTime = episode.StartLocalTime.ToString("yyyy-MM-dd HH:mm:ss"),
-                            EndLocalTime = episode.EndLocalTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                            EndLocalTime   = episode.EndLocalTime.ToString("yyyy-MM-dd HH:mm:ss"),
                             DurationSeconds = episode.DurationSeconds,
-                            ProcessName = episode.ProcessName,
-                            WindowTitle = episode.WindowTitle,
-                            IsCallApp = episode.IsCallApp
+                            ProcessName    = episode.ProcessName,
+                            WindowTitle    = episode.WindowTitle,
+                            IsCallApp      = episode.IsCallApp,
+                            // Offset UTC del equipo en el momento del episodio.
+                            // El panel lo usa para mostrar la hora local del empleado.
+                            TzOffsetMinutes = (int)TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow).TotalMinutes
                         };
 
                         _ = _apiClient.SendWindowEpisodeAsync(payload);

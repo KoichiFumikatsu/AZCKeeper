@@ -881,6 +881,10 @@ namespace AZCKeeper_Cliente.Network
             public string DeviceId { get; set; }
             public string Version { get; set; }
             public string DeviceName { get; set; }
+            /// <summary>Offset UTC del equipo en minutos. Ej: Colombia UTC-5 = -300.</summary>
+            public int TzOffsetMinutes { get; set; }
+            /// <summary>ID IANA de la zona horaria del equipo. Ej: "America/Bogota".</summary>
+            public string IanaTimezone { get; set; }
         }
 
         /// <summary>
@@ -1019,6 +1023,8 @@ namespace AZCKeeper_Cliente.Network
             public string ProcessName { get; set; }
             public string WindowTitle { get; set; }
             public bool IsCallApp { get; set; }
+            /// <summary>Offset UTC del equipo en minutos al momento del episodio. Ej: UTC-5 = -300.</summary>
+            public int TzOffsetMinutes { get; set; }
         }
 
         /// <summary>

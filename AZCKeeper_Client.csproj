@@ -7,6 +7,8 @@
 		<UseWindowsForms>true</UseWindowsForms>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Platforms>AnyCPU;x64</Platforms>
+		<AssemblyVersion>3.0.0.13</AssemblyVersion>
+		<FileVersion>3.0.0.13</FileVersion>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(Configuration)' == 'Release'">
@@ -18,34 +20,34 @@
 		<PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
 	</ItemGroup>
 
+	<ItemGroup>
+	  <Folder Include="Properties\PublishProfiles\" />
+	</ItemGroup>
+
 	<!-- ✅ NUEVO: Copiar updater SI existe (el script lo compila antes) -->
 	<Target Name="CopyUpdaterIfExists" AfterTargets="Publish">
 		<PropertyGroup>
-			<!-- Buscar el updater en diferentes ubicaciones posibles -->
+			<!-- Path 1: dotnet publish output (build-release.bat o Publish desde VS) -->
 			<UpdaterPath1>..\AZCKeeperUpdater\bin\$(Configuration)\net8.0-windows\win-x64\publish\AZCKeeperUpdater.exe</UpdaterPath1>
+			<!-- Path 2: build-release.bat copia el updater aquí explícitamente -->
 			<UpdaterPath2>..\build\updater\AZCKeeperUpdater.exe</UpdaterPath2>
+			<!-- Path 3: dotnet build normal (sin publish) — output sin subcarpeta publish\ -->
+			<UpdaterPath3>..\AZCKeeperUpdater\bin\$(Configuration)\net8.0-windows\win-x64\AZCKeeperUpdater.exe</UpdaterPath3>
 		</PropertyGroup>
 
-		<!-- Intentar copiar desde path 1 -->
-		<Copy
-		  SourceFiles="$(UpdaterPath1)"
-		  DestinationFolder="$(PublishDir)"
-		  Condition="Exists('$(UpdaterPath1)')"
-		  ContinueOnError="true"
-    />
+		<!-- Intentar copiar desde path 1 (publish) -->
+		<Copy SourceFiles="$(UpdaterPath1)" DestinationFolder="$(PublishDir)" Condition="Exists('$(UpdaterPath1)')" ContinueOnError="true" />
 
-		<!-- Intentar copiar desde path 2 (si el script ya lo compiló) -->
-		<Copy
-		  SourceFiles="$(UpdaterPath2)"
-		  DestinationFolder="$(PublishDir)"
-		  Condition="Exists('$(UpdaterPath2)')"
-		  ContinueOnError="true"
-    />
+		<!-- Intentar copiar desde path 2 (build-release.bat) -->
+		<Copy SourceFiles="$(UpdaterPath2)" DestinationFolder="$(PublishDir)" Condition="!Exists('$(UpdaterPath1)') AND Exists('$(UpdaterPath2)')" ContinueOnError="true" />
+
+		<!-- Intentar copiar desde path 3 (build normal sin publish) -->
+		<Copy SourceFiles="$(UpdaterPath3)" DestinationFolder="$(PublishDir)" Condition="!Exists('$(UpdaterPath1)') AND !Exists('$(UpdaterPath2)') AND Exists('$(UpdaterPath3)')" ContinueOnError="true" />
 
 		<Message Importance="high" Text="Buscando Updater en: $(UpdaterPath1)" />
 		<Message Importance="high" Text="Buscando Updater en: $(UpdaterPath2)" />
-		<Warning Text="Updater no encontrado. Ejecuta build-release.bat para incluirlo."
-				 Condition="!Exists('$(UpdaterPath1)') AND !Exists('$(UpdaterPath2)')" />
+		<Message Importance="high" Text="Buscando Updater en: $(UpdaterPath3)" />
+		<Warning Text="Updater no encontrado en ninguna ruta. Ejecuta build-release.bat o publica AZCKeeperUpdater primero." Condition="!Exists('$(UpdaterPath1)') AND !Exists('$(UpdaterPath2)') AND !Exists('$(UpdaterPath3)')" />
 	</Target>
 
 </Project>

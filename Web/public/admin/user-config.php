@@ -27,6 +27,7 @@ $globalPolicy = $pdo->query("SELECT * FROM keeper_policy_assignments WHERE scope
  
 // Default config (valores base)
 $defaultConfig = [
+    'apiBaseUrl' => 'http://localhost/AZCKeeper/AZCKeeper_Client/Web/public/index.php/api/',
     'logging' => [
         'globalLevel' => 'Info', 
         'clientOverrideLevel' => null, 
@@ -110,6 +111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $callTitles = array_filter(array_map('trim', explode(',', $_POST['call_titles'] ?? '')));
         
         $newConfig = [
+            'apiBaseUrl' => filter_var(trim($_POST['api_base_url'] ?? ''), FILTER_VALIDATE_URL) ?: ($config['apiBaseUrl'] ?? ''),
             'logging' => [
                 'globalLevel' => $_POST['log_level'] ?? 'Info',
                 'clientOverrideLevel' => $_POST['log_override'] ?: null,
@@ -266,7 +268,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  
         <form method="POST">
             <input type="hidden" name="action" value="save">
-            
+
+            <!-- ========== API BASE URL ========== -->
+            <div style="background: #e3f2fd; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem; border-left: 4px solid #2196f3;">
+                <h3 style="margin-bottom: 1rem;"><i class="bi bi-globe"></i> Endpoint de API</h3>
+                <div>
+                    <label style="display: block; margin-bottom: 0.5rem; font-weight: bold;">URL Base de la API:</label>
+                    <input type="text" name="api_base_url"
+                           value="<?= htmlspecialchars($config['apiBaseUrl'] ?? 'http://localhost/AZCKeeper/AZCKeeper_Client/Web/public/index.php/api/') ?>"
+                           style="width: 100%; padding: 0.6rem; border: 1px solid #ddd; border-radius: 4px; font-family: monospace;"
+                           placeholder="https://tudominio.com/keeper/public/index.php/api/">
+                    <small style="color: #666; display: block; margin-top: 0.5rem;">
+                        <i class="bi bi-exclamation-triangle"></i> Incluir <code>/api/</code> al final. Si se deja igual que la política global, se usará esa. Este valor sobreescribe al global para este usuario.
+                    </small>
+                </div>
+            </div>
+
             <!-- ========== LOGGING ========== -->
             <div class="config-section">
                 <h3><i class="bi bi-clipboard-data"></i> Configuración de Logs</h3>

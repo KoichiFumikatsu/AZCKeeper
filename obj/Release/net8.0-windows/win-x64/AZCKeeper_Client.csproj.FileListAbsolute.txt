@@ -246,7 +246,6 @@ C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\cr
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\hostfxr.dll
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\hostpolicy.dll
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\mscordaccore.dll
-C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\mscordaccore_amd64_amd64_8.0.1224.60305.dll
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\mscordbi.dll
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\mscorrc.dll
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\msquic.dll
@@ -476,3 +475,4 @@ C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\zh
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\zh-Hant\UIAutomationTypes.resources.dll
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\zh-Hant\WindowsBase.resources.dll
 C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\zh-Hant\WindowsFormsIntegration.resources.dll
+C:\xampp\htdocs\AZCKeeper\AZCKeeper_Client\bin\Release\net8.0-windows\win-x64\mscordaccore_amd64_amd64_8.0.2426.7010.dll
