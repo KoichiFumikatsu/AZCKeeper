@@ -112,10 +112,10 @@ class ActivityDay
                is_workday,
                created_at, updated_at)
             VALUES
-              (:uid, :did, :day, :tz, :a, :i, :c, :samples, UTC_TIMESTAMP(), UTC_TIMESTAMP(), :payload,
+              (:uid, :did, :day, :tz, :a, :i, :c, :samples, NOW(), NOW(), :payload,
                :work_a, :work_i, :lunch_a, :lunch_i, :after_a, :after_i,
                :is_workday,
-               UTC_TIMESTAMP(), UTC_TIMESTAMP())
+               NOW(), NOW())
             ON DUPLICATE KEY UPDATE
               tz_offset_minutes = VALUES(tz_offset_minutes),
               active_seconds = GREATEST(active_seconds, VALUES(active_seconds)),
@@ -131,7 +131,7 @@ class ActivityDay
               after_hours_active_seconds = GREATEST(after_hours_active_seconds, VALUES(after_hours_active_seconds)),
               after_hours_idle_seconds = GREATEST(after_hours_idle_seconds, VALUES(after_hours_idle_seconds)),
               is_workday = VALUES(is_workday),
-              updated_at     = UTC_TIMESTAMP()
+              updated_at     = NOW()
         ");
          
         try {

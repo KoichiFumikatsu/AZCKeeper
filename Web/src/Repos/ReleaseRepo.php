@@ -3,6 +3,23 @@ namespace Keeper\Repos;
 
 use Keeper\Db;
 
+/**
+ * ReleaseRepo — gestiona las versiones del cliente Windows en la tabla `keeper_client_releases`.
+ *
+ * Tabla: keeper_client_releases
+ *   id, version (X.Y.Z.W), download_url, file_size, release_notes,
+ *   is_beta, force_update, minimum_version, is_active, release_date,
+ *   created_at, updated_at
+ *
+ * Flujo de uso:
+ *   GET /api/client/version ? ClientVersion.php ? getLatestRelease()
+ *   El cliente C# (UpdateManager) compara latestVersion con su version local.
+ *   Si latestVersion > local ? descarga el ZIP y lanza AZCKeeperUpdater.exe.
+ *   Si local < minimum_version ? la actualización es forzada (force_update=1).
+ *
+ * Panel admin:
+ *   /admin/releases.php ? CRUD de releases vía create/update/softDelete/versionExists.
+ */
 class ReleaseRepo
 {
     /**

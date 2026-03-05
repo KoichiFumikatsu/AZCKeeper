@@ -269,9 +269,9 @@ namespace AZCKeeper_Cliente.Config
                 },
                 Timers = new TimersConfig
                 {
-                    ActivityFlushIntervalSeconds = 60,
-                    HandshakeIntervalMinutes = 10,
-                    OfflineQueueRetrySeconds = 90
+                    ActivityFlushIntervalSeconds = 10,
+                    HandshakeIntervalMinutes = 5,
+                    OfflineQueueRetrySeconds = 30
                 },
                 Modules = new ModulesConfig
                 {
@@ -351,9 +351,9 @@ namespace AZCKeeper_Cliente.Config
         /// </summary>
         internal class TimersConfig
         {
-            public int ActivityFlushIntervalSeconds { get; set; } = 60;
-            public int HandshakeIntervalMinutes { get; set; } = 10;
-            public int OfflineQueueRetrySeconds { get; set; } = 90;
+            public int ActivityFlushIntervalSeconds { get; set; } = 10;
+            public int HandshakeIntervalMinutes { get; set; } = 5;
+            public int OfflineQueueRetrySeconds { get; set; } = 30;
         }
         /// <summary>
         /// Configuración de actualizaciones automáticas.

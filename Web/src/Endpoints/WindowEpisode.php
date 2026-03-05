@@ -4,7 +4,25 @@ namespace Keeper\Endpoints;
 use Keeper\Http;
 use Keeper\Db;
 use Keeper\AuthService;
- 
+
+/**
+ * WindowEpisode — recibe y almacena episodios de ventana activa enviados por el cliente C#.
+ *
+ * El cliente (WindowTracker.cs) detecta cambios de ventana activa y al cerrar cada episodio
+ * llama POST /api/client/window-episode con:
+ *   deviceId, startLocalTime, endLocalTime, durationSeconds,
+ *   processName, windowTitle, isCallApp
+ *
+ * Mapeo a tabla `keeper_window_episode`:
+ *   process_name  ← processName   (también se copia en app_name como alias)
+ *   window_title  ← windowTitle
+ *   is_in_call    ← isCallApp     (0/1)
+ *   call_app_hint ← processName   (solo si isCallApp=true, para identificar qué app era la llamada)
+ *
+ * Nota: `app_name` y `call_app_hint` existen en la BD para uso futuro de clasificación
+ * (distinguir app de sistema vs app de usuario, o nombre amigable vs proceso).
+ * Por ahora se rellena con el mismo process_name.
+ */
 class WindowEpisode
 {
     public static function handle(): void
@@ -81,7 +99,7 @@ class WindowEpisode
                   (user_id, device_id, start_at, end_at, duration_seconds,
                    process_name, app_name, window_title, is_in_call, call_app_hint, day_date, created_at)
                 VALUES
-                  (:uid, :did, :start, :end, :dur, :proc, :app, :title, :call, :hint, :day, UTC_TIMESTAMP())
+                  (:uid, :did, :start, :end, :dur, :proc, :app, :title, :call, :hint, :day, NOW())
             ");
          
             $st->execute([

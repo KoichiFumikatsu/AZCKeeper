@@ -3,6 +3,7 @@ namespace Keeper\Endpoints;
 
 use Keeper\Http;
 use Keeper\Db;
+use Keeper\Repos\AuditRepo;
 
 class ClientLogin
 {
@@ -55,6 +56,8 @@ class ClientLogin
             $emp = $stmt->fetch();
 
             if (!$emp || (string)$emp['password'] !== (string)$password) {
+                // Auditar intento fallido de login
+                AuditRepo::log($pdo, null, null, 'login_failed', "Login fallido para CC={$cc}", ['cc' => $cc, 'ip' => $_SERVER['REMOTE_ADDR'] ?? null]);
                 Http::json(401, ['ok' => false, 'error' => 'Invalid credentials']);
             }
              
@@ -97,6 +100,13 @@ class ClientLogin
                 'hash' => $tokenHash,
                 'ip' => $_SERVER['REMOTE_ADDR'] ?? null,
                 'ua' => $_SERVER['HTTP_USER_AGENT'] ?? null
+            ]);
+
+            // Auditar login exitoso
+            AuditRepo::log($pdo, $keeperUserId, $keeperDeviceId, 'login_ok', "Login exitoso CC={$cc}", [
+                'cc' => $cc,
+                'deviceGuid' => $deviceGuid,
+                'ip' => $_SERVER['REMOTE_ADDR'] ?? null
             ]);
              
             Http::json(200, [

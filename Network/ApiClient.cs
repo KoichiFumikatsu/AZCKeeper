@@ -229,26 +229,9 @@ namespace AZCKeeper_Cliente.Network
                 result.IsSuccess = false;
                 return result;
             }
-            catch (HttpRequestException ex)
-            {
-                // Error transitorio de red (conexión interrumpida, ResponseEnded, DNS, etc.)
-                // Se loguea como Warn en lugar de Error para reducir ruido en producción.
-                // El cliente reintentará en el próximo ciclo del handshake timer.
-                string errorMsg = ex.InnerException?.Message ?? ex.Message;
-                LocalLogger.Warn($"ApiClient.SendHandshakeAsync(): red no disponible. Se reintentará. Causa: {errorMsg}");
-                result.IsSuccess = false;
-                return result;
-            }
-            catch (TaskCanceledException)
-            {
-                // Timeout del HttpClient (30s configurado en constructor)
-                LocalLogger.Warn("ApiClient.SendHandshakeAsync(): timeout esperando respuesta del servidor. Se reintentará.");
-                result.IsSuccess = false;
-                return result;
-            }
             catch (Exception ex)
             {
-                LocalLogger.Error(ex, "ApiClient.SendHandshakeAsync(): error inesperado.");
+                LocalLogger.Error(ex, "ApiClient.SendHandshakeAsync(): error.");
                 result.IsSuccess = false;
                 return result;
             }
@@ -396,86 +379,6 @@ namespace AZCKeeper_Cliente.Network
             catch (Exception ex)
             {
                 LocalLogger.Error(ex, "ApiClient.GetActivityDayAsync(): error.");
-                result.IsSuccess = false;
-                result.Error = ex.Message;
-                return result;
-            }
-        }
-
-        // -------------------- DEVICE LOCK --------------------
-        /// <summary>
-        /// Consulta el estado actual de bloqueo del dispositivo.
-        /// Retorna si debe estar bloqueado según la política efectiva.
-        /// </summary>
-        public async Task<LockStatusResult> GetLockStatusAsync()
-        {
-            var result = new LockStatusResult();
-
-            try
-            {
-                if (_httpClient.BaseAddress == null)
-                {
-                    result.IsSuccess = false;
-                    result.Error = "No ApiBaseUrl";
-                    return result;
-                }
-
-                using var httpRequest = CreateRequest(HttpMethod.Post, "client/device-lock/status", content: null);
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
-                result.StatusCode = (int)response.StatusCode;
-
-                string body = await SafeReadBodyAsync(response).ConfigureAwait(false);
-                result.BodyPreview = Preview(body);
-
-                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
-                    response.StatusCode == System.Net.HttpStatusCode.Forbidden)
-                {
-                    result.IsUnauthorized = true;
-                    result.IsSuccess = false;
-                    result.Error = "Unauthorized";
-                    return result;
-                }
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    result.IsSuccess = false;
-                    result.Error = $"HTTP {result.StatusCode}";
-                    return result;
-                }
-
-                if (string.IsNullOrWhiteSpace(body))
-                {
-                    result.IsSuccess = false;
-                    result.Error = "Empty body";
-                    return result;
-                }
-
-                if (!LooksLikeJson(response, body))
-                {
-                    result.IsSuccess = false;
-                    result.Error = "Non-JSON response";
-                    return result;
-                }
-
-                var parsed = JsonSerializer.Deserialize<LockStatusResponseWrapper>(body, _jsonOptions);
-                if (parsed == null)
-                {
-                    result.IsSuccess = false;
-                    result.Error = "Invalid JSON";
-                    return result;
-                }
-
-                result.Blocking = parsed.Blocking;
-                result.IsSuccess = parsed.Ok;
-
-                if (!result.IsSuccess)
-                    result.Error = parsed.Error ?? "Get lock status failed";
-
-                return result;
-            }
-            catch (Exception ex)
-            {
-                LocalLogger.Error(ex, "ApiClient.GetLockStatusAsync(): error.");
                 result.IsSuccess = false;
                 result.Error = ex.Message;
                 return result;
@@ -881,10 +784,6 @@ namespace AZCKeeper_Cliente.Network
             public string DeviceId { get; set; }
             public string Version { get; set; }
             public string DeviceName { get; set; }
-            /// <summary>Offset UTC del equipo en minutos. Ej: Colombia UTC-5 = -300.</summary>
-            public int TzOffsetMinutes { get; set; }
-            /// <summary>ID IANA de la zona horaria del equipo. Ej: "America/Bogota".</summary>
-            public string IanaTimezone { get; set; }
         }
 
         /// <summary>
@@ -894,9 +793,13 @@ namespace AZCKeeper_Cliente.Network
         {
             public bool Ok { get; set; }
             public string ServerTimeUtc { get; set; }
-            public string Cc { get; set; }
             public PolicyApplied PolicyApplied { get; set; }
             public EffectiveConfig EffectiveConfig { get; set; }
+            /// <summary>
+            /// Horario laboral configurado en keeper_work_schedules para el usuario.
+            /// Si es null, el cliente mantiene los valores hardcodeados en WorkSchedule.cs.
+            /// </summary>
+            public WorkScheduleConfig WorkSchedule { get; set; }
             public string Error { get; set; }
         }
 
@@ -1023,8 +926,6 @@ namespace AZCKeeper_Cliente.Network
             public string ProcessName { get; set; }
             public string WindowTitle { get; set; }
             public bool IsCallApp { get; set; }
-            /// <summary>Offset UTC del equipo en minutos al momento del episodio. Ej: UTC-5 = -300.</summary>
-            public int TzOffsetMinutes { get; set; }
         }
 
         /// <summary>
@@ -1049,29 +950,18 @@ namespace AZCKeeper_Cliente.Network
             public double AfterHoursIdleSeconds { get; set; }
             public bool IsWorkday { get; set; } // true=lunes-viernes, false=sábado-domingo
         }
-
         /// <summary>
-        /// Resultado de consulta de estado de bloqueo con metadata.
-        /// Reutiliza EffectiveBlocking existente.
+        /// Horario laboral enviado por el servidor desde keeper_work_schedules.
+        /// El cliente lo aplica en WorkSchedule.cs reemplazando los valores hardcodeados.
+        /// Formato de tiempo: "HH:mm:ss" (ej: "07:00:00")
         /// </summary>
-        internal class LockStatusResult
+        internal class WorkScheduleConfig
         {
-            public bool IsSuccess { get; set; }
-            public int? StatusCode { get; set; }
-            public bool IsUnauthorized { get; set; }
-            public string BodyPreview { get; set; }
-            public string Error { get; set; }
-            public EffectiveBlocking Blocking { get; set; }
-        }
-
-        /// <summary>
-        /// Wrapper de respuesta del endpoint device-lock/status.
-        /// </summary>
-        internal class LockStatusResponseWrapper
-        {
-            public bool Ok { get; set; }
-            public EffectiveBlocking Blocking { get; set; }
-            public string Error { get; set; }
+            public string WorkStartTime { get; set; }
+            public string WorkEndTime { get; set; }
+            public string LunchStartTime { get; set; }
+            public string LunchEndTime { get; set; }
+            public string Timezone { get; set; }
         }
 
     }

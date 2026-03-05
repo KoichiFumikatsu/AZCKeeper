@@ -3,9 +3,9 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 162.210.103.253:3306
--- Generation Time: Feb 25, 2026 at 04:31 PM
+-- Generation Time: Mar 05, 2026 at 09:09 PM
 -- Server version: 8.0.40
--- PHP Version: 8.2.29
+-- PHP Version: 8.2.30
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
@@ -20,8 +20,6 @@ SET time_zone = "+00:00";
 --
 -- Database: `pipezafra_soporte_db`
 --
-CREATE DATABASE IF NOT EXISTS `pipezafra_soporte_db` DEFAULT CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci;
-USE `pipezafra_soporte_db`;
 
 -- --------------------------------------------------------
 
@@ -29,11 +27,10 @@ USE `pipezafra_soporte_db`;
 -- Table structure for table `acciones`
 --
 
-DROP TABLE IF EXISTS `acciones`;
 CREATE TABLE `acciones` (
   `id` int NOT NULL,
-  `nombre` varchar(100) COLLATE utf8mb3_unicode_ci NOT NULL,
-  `descripcion` text COLLATE utf8mb3_unicode_ci,
+  `nombre` varchar(100) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
+  `descripcion` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci,
   `recurso_id` int NOT NULL,
   `activa` tinyint(1) DEFAULT '1',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
@@ -45,11 +42,10 @@ CREATE TABLE `acciones` (
 -- Table structure for table `areas`
 --
 
-DROP TABLE IF EXISTS `areas`;
 CREATE TABLE `areas` (
   `id` int NOT NULL,
-  `nombre` varchar(255) COLLATE utf8mb3_unicode_ci NOT NULL,
-  `descripcion` text COLLATE utf8mb3_unicode_ci,
+  `nombre` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
+  `descripcion` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci,
   `padre_id` int DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -61,7 +57,6 @@ CREATE TABLE `areas` (
 -- Table structure for table `asignaciones_mesa`
 --
 
-DROP TABLE IF EXISTS `asignaciones_mesa`;
 CREATE TABLE `asignaciones_mesa` (
   `id` int NOT NULL,
   `mesa_id` int NOT NULL,
@@ -78,10 +73,9 @@ CREATE TABLE `asignaciones_mesa` (
 -- Table structure for table `cargos`
 --
 
-DROP TABLE IF EXISTS `cargos`;
 CREATE TABLE `cargos` (
   `id` int NOT NULL,
-  `nombre` varchar(100) COLLATE utf8mb3_unicode_ci NOT NULL,
+  `nombre` varchar(100) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
 
@@ -91,7 +85,6 @@ CREATE TABLE `cargos` (
 -- Table structure for table `categorias`
 --
 
-DROP TABLE IF EXISTS `categorias`;
 CREATE TABLE `categorias` (
   `id` int NOT NULL,
   `nombre` varchar(50) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
@@ -105,7 +98,6 @@ CREATE TABLE `categorias` (
 -- Table structure for table `cumpleanos_likes`
 --
 
-DROP TABLE IF EXISTS `cumpleanos_likes`;
 CREATE TABLE `cumpleanos_likes` (
   `id` int NOT NULL,
   `empleado_id` int NOT NULL,
@@ -119,7 +111,6 @@ CREATE TABLE `cumpleanos_likes` (
 -- Table structure for table `elementos_plano`
 --
 
-DROP TABLE IF EXISTS `elementos_plano`;
 CREATE TABLE `elementos_plano` (
   `id` int NOT NULL,
   `piso_id` int NOT NULL,
@@ -137,7 +128,6 @@ CREATE TABLE `elementos_plano` (
 -- Table structure for table `employee`
 --
 
-DROP TABLE IF EXISTS `employee`;
 CREATE TABLE `employee` (
   `id` int NOT NULL,
   `id_firm` int DEFAULT NULL,
@@ -156,7 +146,7 @@ CREATE TABLE `employee` (
   `phone` varchar(20) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
   `country` varchar(100) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT 'Colombia',
   `city` varchar(100) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
-  `address` varchar(500) COLLATE utf8mb3_unicode_ci DEFAULT NULL,
+  `address` varchar(500) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
   `sede_id` int DEFAULT NULL,
   `activo_fijo` varchar(50) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
   `extension` varchar(20) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
@@ -167,10 +157,10 @@ CREATE TABLE `employee` (
   `password` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
   `needs_phone` tinyint DEFAULT '0',
   `id_phone` int DEFAULT NULL,
-  `role` enum('empleado','administrador','nomina','talento_humano','it','retirado','candidato') COLLATE utf8mb3_unicode_ci DEFAULT NULL,
+  `role` enum('empleado','administrador','nomina','talento_humano','it','retirado','candidato') CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
   `supervisor_id` int DEFAULT NULL,
   `area_id` int DEFAULT NULL,
-  `photo` varchar(255) COLLATE utf8mb3_unicode_ci DEFAULT NULL,
+  `photo` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `last_status` enum('Online','Away','Offline') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'Offline',
@@ -184,7 +174,6 @@ CREATE TABLE `employee` (
 -- Table structure for table `equipos`
 --
 
-DROP TABLE IF EXISTS `equipos`;
 CREATE TABLE `equipos` (
   `id` int NOT NULL,
   `activo_fijo` varchar(50) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
@@ -214,7 +203,6 @@ CREATE TABLE `equipos` (
 -- Table structure for table `files`
 --
 
-DROP TABLE IF EXISTS `files`;
 CREATE TABLE `files` (
   `id` int NOT NULL,
   `id_employee` int NOT NULL,
@@ -240,7 +228,6 @@ CREATE TABLE `files` (
 -- Table structure for table `firm`
 --
 
-DROP TABLE IF EXISTS `firm`;
 CREATE TABLE `firm` (
   `id` int NOT NULL,
   `name` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
@@ -256,7 +243,6 @@ CREATE TABLE `firm` (
 -- Table structure for table `historial`
 --
 
-DROP TABLE IF EXISTS `historial`;
 CREATE TABLE `historial` (
   `id` int NOT NULL,
   `ticket_id` int DEFAULT NULL,
@@ -275,16 +261,15 @@ CREATE TABLE `historial` (
 -- Table structure for table `historial_items`
 --
 
-DROP TABLE IF EXISTS `historial_items`;
 CREATE TABLE `historial_items` (
   `id` int NOT NULL,
   `item_id` int NOT NULL,
   `admin_id` int DEFAULT NULL COMMENT 'ID del administrador que realizó la acción',
-  `accion` varchar(50) COLLATE utf8mb3_unicode_ci NOT NULL COMMENT 'crear, editar_stock, mover, eliminar, etc.',
+  `accion` varchar(50) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL COMMENT 'crear, editar_stock, mover, eliminar, etc.',
   `cantidad` int DEFAULT '0' COMMENT 'Cantidad modificada o movida',
   `stock_anterior` int DEFAULT '0' COMMENT 'Stock antes de la operación',
   `stock_nuevo` int DEFAULT '0' COMMENT 'Stock después de la operación',
-  `notas` text COLLATE utf8mb3_unicode_ci,
+  `notas` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci,
   `sede_id` int DEFAULT NULL COMMENT 'Sede donde ocurrió el evento',
   `referencia_id` int DEFAULT NULL COMMENT 'ID de referencia (ej: movimiento_sedes_id)',
   `creado_en` timestamp NULL DEFAULT CURRENT_TIMESTAMP
@@ -296,7 +281,6 @@ CREATE TABLE `historial_items` (
 -- Table structure for table `history`
 --
 
-DROP TABLE IF EXISTS `history`;
 CREATE TABLE `history` (
   `id` int NOT NULL,
   `id_employee` int NOT NULL,
@@ -313,7 +297,6 @@ CREATE TABLE `history` (
 -- Table structure for table `items`
 --
 
-DROP TABLE IF EXISTS `items`;
 CREATE TABLE `items` (
   `id` int NOT NULL,
   `nombre` varchar(100) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
@@ -333,7 +316,6 @@ CREATE TABLE `items` (
 -- Table structure for table `keeper_activity_day`
 --
 
-DROP TABLE IF EXISTS `keeper_activity_day`;
 CREATE TABLE `keeper_activity_day` (
   `id` bigint NOT NULL,
   `user_id` bigint NOT NULL,
@@ -364,7 +346,6 @@ CREATE TABLE `keeper_activity_day` (
 -- Table structure for table `keeper_audit_log`
 --
 
-DROP TABLE IF EXISTS `keeper_audit_log`;
 CREATE TABLE `keeper_audit_log` (
   `id` bigint NOT NULL,
   `user_id` bigint DEFAULT NULL,
@@ -381,7 +362,6 @@ CREATE TABLE `keeper_audit_log` (
 -- Table structure for table `keeper_client_releases`
 --
 
-DROP TABLE IF EXISTS `keeper_client_releases`;
 CREATE TABLE `keeper_client_releases` (
   `id` int NOT NULL,
   `version` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Semantic version (e.g., 3.0.0.1)',
@@ -403,7 +383,6 @@ CREATE TABLE `keeper_client_releases` (
 -- Table structure for table `keeper_daily_metrics`
 --
 
-DROP TABLE IF EXISTS `keeper_daily_metrics`;
 CREATE TABLE `keeper_daily_metrics` (
   `id` bigint NOT NULL,
   `user_id` bigint NOT NULL,
@@ -421,12 +400,12 @@ CREATE TABLE `keeper_daily_metrics` (
 -- Table structure for table `keeper_devices`
 --
 
-DROP TABLE IF EXISTS `keeper_devices`;
 CREATE TABLE `keeper_devices` (
   `id` bigint NOT NULL,
   `user_id` bigint NOT NULL,
   `device_guid` char(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `device_name` varchar(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `client_version` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `serial_hint` varchar(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `status` enum('active','revoked') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'active',
   `last_seen_at` timestamp NULL DEFAULT NULL,
@@ -440,7 +419,6 @@ CREATE TABLE `keeper_devices` (
 -- Table structure for table `keeper_device_locks`
 --
 
-DROP TABLE IF EXISTS `keeper_device_locks`;
 CREATE TABLE `keeper_device_locks` (
   `id` bigint NOT NULL,
   `device_id` bigint NOT NULL,
@@ -459,7 +437,6 @@ CREATE TABLE `keeper_device_locks` (
 -- Table structure for table `keeper_events`
 --
 
-DROP TABLE IF EXISTS `keeper_events`;
 CREATE TABLE `keeper_events` (
   `id` bigint NOT NULL,
   `user_id` bigint NOT NULL,
@@ -486,7 +463,6 @@ CREATE TABLE `keeper_events` (
 -- Table structure for table `keeper_handshake_log`
 --
 
-DROP TABLE IF EXISTS `keeper_handshake_log`;
 CREATE TABLE `keeper_handshake_log` (
   `id` bigint NOT NULL,
   `user_id` bigint NOT NULL,
@@ -503,7 +479,6 @@ CREATE TABLE `keeper_handshake_log` (
 -- Table structure for table `keeper_module_catalog`
 --
 
-DROP TABLE IF EXISTS `keeper_module_catalog`;
 CREATE TABLE `keeper_module_catalog` (
   `module_code` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `name` varchar(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -520,7 +495,6 @@ CREATE TABLE `keeper_module_catalog` (
 -- Table structure for table `keeper_policy_assignments`
 --
 
-DROP TABLE IF EXISTS `keeper_policy_assignments`;
 CREATE TABLE `keeper_policy_assignments` (
   `id` bigint NOT NULL,
   `scope` enum('global','user','device') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -539,7 +513,6 @@ CREATE TABLE `keeper_policy_assignments` (
 -- Table structure for table `keeper_sessions`
 --
 
-DROP TABLE IF EXISTS `keeper_sessions`;
 CREATE TABLE `keeper_sessions` (
   `id` bigint NOT NULL,
   `user_id` bigint NOT NULL,
@@ -559,7 +532,6 @@ CREATE TABLE `keeper_sessions` (
 -- Table structure for table `keeper_users`
 --
 
-DROP TABLE IF EXISTS `keeper_users`;
 CREATE TABLE `keeper_users` (
   `id` bigint NOT NULL,
   `legacy_employee_id` int NOT NULL,
@@ -578,7 +550,6 @@ CREATE TABLE `keeper_users` (
 -- Table structure for table `keeper_window_episode`
 --
 
-DROP TABLE IF EXISTS `keeper_window_episode`;
 CREATE TABLE `keeper_window_episode` (
   `id` bigint NOT NULL,
   `user_id` bigint NOT NULL,
@@ -601,7 +572,6 @@ CREATE TABLE `keeper_window_episode` (
 -- Table structure for table `keeper_work_schedules`
 --
 
-DROP TABLE IF EXISTS `keeper_work_schedules`;
 CREATE TABLE `keeper_work_schedules` (
   `id` bigint NOT NULL,
   `user_id` bigint DEFAULT NULL,
@@ -620,7 +590,6 @@ CREATE TABLE `keeper_work_schedules` (
 -- Table structure for table `location`
 --
 
-DROP TABLE IF EXISTS `location`;
 CREATE TABLE `location` (
   `id` int NOT NULL,
   `id_firm` int NOT NULL,
@@ -638,7 +607,6 @@ CREATE TABLE `location` (
 -- Table structure for table `marcas_equipos`
 --
 
-DROP TABLE IF EXISTS `marcas_equipos`;
 CREATE TABLE `marcas_equipos` (
   `id` int NOT NULL,
   `nombre` varchar(50) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL
@@ -650,7 +618,6 @@ CREATE TABLE `marcas_equipos` (
 -- Table structure for table `mesas`
 --
 
-DROP TABLE IF EXISTS `mesas`;
 CREATE TABLE `mesas` (
   `id` int NOT NULL,
   `piso_id` int NOT NULL,
@@ -669,7 +636,6 @@ CREATE TABLE `mesas` (
 -- Table structure for table `movimientos_sedes`
 --
 
-DROP TABLE IF EXISTS `movimientos_sedes`;
 CREATE TABLE `movimientos_sedes` (
   `id` int NOT NULL,
   `item_id` int NOT NULL,
@@ -680,8 +646,8 @@ CREATE TABLE `movimientos_sedes` (
   `persona_recibe_id` int DEFAULT NULL,
   `fecha_envio` datetime NOT NULL,
   `fecha_recibido` datetime DEFAULT NULL,
-  `estado` enum('enviado','recibido','cancelado') COLLATE utf8mb3_unicode_ci NOT NULL DEFAULT 'enviado',
-  `notas` text COLLATE utf8mb3_unicode_ci,
+  `estado` enum('enviado','recibido','cancelado') CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL DEFAULT 'enviado',
+  `notas` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci,
   `creado_en` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
 
@@ -691,23 +657,22 @@ CREATE TABLE `movimientos_sedes` (
 -- Table structure for table `permisos`
 --
 
-DROP TABLE IF EXISTS `permisos`;
 CREATE TABLE `permisos` (
   `id` int NOT NULL,
-  `empleado_id` varchar(50) COLLATE utf8mb3_unicode_ci NOT NULL,
-  `empleado_nombre` varchar(100) COLLATE utf8mb3_unicode_ci NOT NULL,
-  `empleado_departamento` varchar(100) COLLATE utf8mb3_unicode_ci NOT NULL,
+  `empleado_id` varchar(50) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
+  `empleado_nombre` varchar(100) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
+  `empleado_departamento` varchar(100) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
   `supervisor_id` int DEFAULT NULL,
-  `tipo_permiso` enum('no_remunerado','remunerado','por_hora','matrimonio','trabajo_casa') COLLATE utf8mb3_unicode_ci NOT NULL,
+  `tipo_permiso` enum('no_remunerado','remunerado','por_hora','matrimonio','trabajo_casa') CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
   `fecha_inicio` date NOT NULL,
   `fecha_fin` date NOT NULL,
   `horas` time DEFAULT NULL,
-  `motivo` text COLLATE utf8mb3_unicode_ci NOT NULL,
-  `soporte_ruta` varchar(500) COLLATE utf8mb3_unicode_ci DEFAULT NULL,
-  `estado_supervisor` enum('pendiente','aprobado','rechazado') COLLATE utf8mb3_unicode_ci DEFAULT 'pendiente',
-  `estado_talento_humano` enum('pendiente','aprobado','rechazado') COLLATE utf8mb3_unicode_ci DEFAULT 'pendiente',
-  `notas_supervisor` text COLLATE utf8mb3_unicode_ci,
-  `notas_talento_humano` text COLLATE utf8mb3_unicode_ci,
+  `motivo` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
+  `soporte_ruta` varchar(500) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
+  `estado_supervisor` enum('pendiente','aprobado','rechazado') CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT 'pendiente',
+  `estado_talento_humano` enum('pendiente','aprobado','rechazado') CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT 'pendiente',
+  `notas_supervisor` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci,
+  `notas_talento_humano` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci,
   `responsable_id` int DEFAULT NULL,
   `creado_en` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `actualizado_en` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -719,7 +684,6 @@ CREATE TABLE `permisos` (
 -- Table structure for table `permisos_cargos`
 --
 
-DROP TABLE IF EXISTS `permisos_cargos`;
 CREATE TABLE `permisos_cargos` (
   `id` int NOT NULL,
   `cargo_id` int NOT NULL,
@@ -735,10 +699,9 @@ CREATE TABLE `permisos_cargos` (
 -- Table structure for table `permisos_roles`
 --
 
-DROP TABLE IF EXISTS `permisos_roles`;
 CREATE TABLE `permisos_roles` (
   `id` int NOT NULL,
-  `rol` varchar(50) COLLATE utf8mb3_unicode_ci NOT NULL,
+  `rol` varchar(50) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
   `recurso_id` int NOT NULL,
   `accion_id` int NOT NULL,
   `permitido` tinyint(1) DEFAULT '1',
@@ -751,7 +714,6 @@ CREATE TABLE `permisos_roles` (
 -- Table structure for table `permisos_usuarios`
 --
 
-DROP TABLE IF EXISTS `permisos_usuarios`;
 CREATE TABLE `permisos_usuarios` (
   `id` int NOT NULL,
   `usuario_id` int NOT NULL,
@@ -767,7 +729,6 @@ CREATE TABLE `permisos_usuarios` (
 -- Table structure for table `phones`
 --
 
-DROP TABLE IF EXISTS `phones`;
 CREATE TABLE `phones` (
   `id` int NOT NULL,
   `id_firm` int NOT NULL,
@@ -783,7 +744,6 @@ CREATE TABLE `phones` (
 -- Table structure for table `pisos_sede`
 --
 
-DROP TABLE IF EXISTS `pisos_sede`;
 CREATE TABLE `pisos_sede` (
   `id` int NOT NULL,
   `sede_id` int NOT NULL,
@@ -800,13 +760,12 @@ CREATE TABLE `pisos_sede` (
 -- Table structure for table `publicaciones`
 --
 
-DROP TABLE IF EXISTS `publicaciones`;
 CREATE TABLE `publicaciones` (
   `id` int NOT NULL,
   `usuario_id` int DEFAULT NULL,
-  `contenido` text COLLATE utf8mb3_unicode_ci,
-  `imagen` varchar(255) COLLATE utf8mb3_unicode_ci DEFAULT NULL,
-  `tipo` enum('texto','imagen','mixto','cumpleanos') COLLATE utf8mb3_unicode_ci NOT NULL DEFAULT 'texto',
+  `contenido` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci,
+  `imagen` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
+  `tipo` enum('texto','imagen','mixto','cumpleanos') CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL DEFAULT 'texto',
   `activo` tinyint DEFAULT '1',
   `creado_en` timestamp NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
@@ -817,7 +776,6 @@ CREATE TABLE `publicaciones` (
 -- Table structure for table `publicaciones_likes`
 --
 
-DROP TABLE IF EXISTS `publicaciones_likes`;
 CREATE TABLE `publicaciones_likes` (
   `id` int NOT NULL,
   `publicacion_id` int NOT NULL,
@@ -831,14 +789,13 @@ CREATE TABLE `publicaciones_likes` (
 -- Table structure for table `recursos`
 --
 
-DROP TABLE IF EXISTS `recursos`;
 CREATE TABLE `recursos` (
   `id` int NOT NULL,
-  `nombre` varchar(100) COLLATE utf8mb3_unicode_ci NOT NULL,
-  `descripcion` text COLLATE utf8mb3_unicode_ci,
-  `ruta` varchar(255) COLLATE utf8mb3_unicode_ci NOT NULL,
-  `icono` varchar(50) COLLATE utf8mb3_unicode_ci DEFAULT NULL,
-  `categoria` varchar(50) COLLATE utf8mb3_unicode_ci DEFAULT 'general',
+  `nombre` varchar(100) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
+  `descripcion` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci,
+  `ruta` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
+  `icono` varchar(50) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
+  `categoria` varchar(50) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT 'general',
   `activo` tinyint(1) DEFAULT '1',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
@@ -849,7 +806,6 @@ CREATE TABLE `recursos` (
 -- Table structure for table `sedes`
 --
 
-DROP TABLE IF EXISTS `sedes`;
 CREATE TABLE `sedes` (
   `id` int NOT NULL,
   `nombre` varchar(100) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
@@ -865,11 +821,10 @@ CREATE TABLE `sedes` (
 -- Table structure for table `supervisores`
 --
 
-DROP TABLE IF EXISTS `supervisores`;
 CREATE TABLE `supervisores` (
   `id` int NOT NULL,
   `empleado_id` int NOT NULL,
-  `tipo_supervisor` enum('coordinador','director','gerente') COLLATE utf8mb3_unicode_ci NOT NULL,
+  `tipo_supervisor` enum('coordinador','director','gerente') CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
   `area_id` int NOT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -878,10 +833,120 @@ CREATE TABLE `supervisores` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `tareas`
+--
+
+CREATE TABLE `tareas` (
+  `id` int NOT NULL,
+  `titulo` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `descripcion` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `tablero_id` int NOT NULL DEFAULT '1',
+  `estado_id` int NOT NULL,
+  `asignado_a` int DEFAULT NULL,
+  `creado_por` int NOT NULL,
+  `ticket_id` int DEFAULT NULL,
+  `tarea_padre_id` int DEFAULT NULL,
+  `tiene_fecha_limite` tinyint(1) DEFAULT '0',
+  `fecha_limite` datetime DEFAULT NULL,
+  `fecha_inicio` datetime DEFAULT NULL,
+  `fecha_completada` datetime DEFAULT NULL,
+  `prioridad` enum('baja','media','alta','urgente') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'media',
+  `etiquetas` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `orden` int DEFAULT '0',
+  `activo` tinyint(1) DEFAULT '1',
+  `creado_en` datetime DEFAULT CURRENT_TIMESTAMP,
+  `actualizado_en` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `subtarea_finalizada` tinyint(1) NOT NULL DEFAULT '0',
+  `fecha_finalizacion_subtarea` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `tareas_comentarios`
+--
+
+CREATE TABLE `tareas_comentarios` (
+  `id` int NOT NULL,
+  `tarea_id` int NOT NULL,
+  `usuario_id` int NOT NULL,
+  `comentario` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `creado_en` datetime DEFAULT CURRENT_TIMESTAMP,
+  `actualizado_en` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `tareas_estados`
+--
+
+CREATE TABLE `tareas_estados` (
+  `id` int NOT NULL,
+  `tablero_id` int NOT NULL,
+  `nombre` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `color` varchar(7) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT '#6c757d',
+  `es_estado_final` tinyint(1) DEFAULT '0',
+  `orden` int DEFAULT '0',
+  `activo` tinyint(1) DEFAULT '1',
+  `creado_en` datetime DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `tareas_historial`
+--
+
+CREATE TABLE `tareas_historial` (
+  `id` int NOT NULL,
+  `tarea_id` int NOT NULL,
+  `usuario_id` int NOT NULL,
+  `tipo_accion` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `campo_modificado` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `valor_anterior` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `valor_nuevo` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `comentario` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `creado_en` datetime DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `tareas_tableros`
+--
+
+CREATE TABLE `tareas_tableros` (
+  `id` int NOT NULL,
+  `nombre` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `descripcion` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `color` varchar(7) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT '#003a5d',
+  `creado_por` int NOT NULL,
+  `activo` tinyint(1) DEFAULT '1',
+  `creado_en` datetime DEFAULT CURRENT_TIMESTAMP,
+  `actualizado_en` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `tareas_tablero_miembros`
+--
+
+CREATE TABLE `tareas_tablero_miembros` (
+  `id` int NOT NULL,
+  `tablero_id` int NOT NULL,
+  `usuario_id` int NOT NULL,
+  `rol` enum('admin','miembro','observador') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'miembro',
+  `creado_en` datetime DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `tickets`
 --
 
-DROP TABLE IF EXISTS `tickets`;
 CREATE TABLE `tickets` (
   `id` int NOT NULL,
   `empleado_id` varchar(50) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
@@ -892,13 +957,14 @@ CREATE TABLE `tickets` (
   `asunto` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
   `equipo_id` int DEFAULT NULL,
   `cantidad` int DEFAULT '1',
-  `tipo` enum('solicitud','devolucion','intercambio','email','ticket','onboarding','prestamo') COLLATE utf8mb3_unicode_ci NOT NULL,
+  `tipo` enum('solicitud','devolucion','intercambio','email','ticket','onboarding','prestamo') CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
   `notas` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci,
   `mal_estado` tinyint(1) DEFAULT '0',
   `notas_admin` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci,
-  `imagen_ruta` varchar(500) COLLATE utf8mb3_unicode_ci DEFAULT NULL,
+  `imagen_ruta` varchar(500) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
   `estado` enum('pendiente','aprobado','rechazado','completado') CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT 'pendiente',
   `responsable_id` int DEFAULT NULL,
+  `tarea_id` int DEFAULT NULL,
   `creado_en` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `actualizado_en` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
@@ -909,7 +975,6 @@ CREATE TABLE `tickets` (
 -- Table structure for table `ticket_calificaciones`
 --
 
-DROP TABLE IF EXISTS `ticket_calificaciones`;
 CREATE TABLE `ticket_calificaciones` (
   `id` int NOT NULL,
   `ticket_id` int NOT NULL,
@@ -924,14 +989,13 @@ CREATE TABLE `ticket_calificaciones` (
 -- Table structure for table `time_logs`
 --
 
-DROP TABLE IF EXISTS `time_logs`;
 CREATE TABLE `time_logs` (
   `log_id` int NOT NULL,
   `employee_id` int NOT NULL,
-  `log_type` enum('Entrada','Salida') COLLATE utf8mb4_general_ci NOT NULL,
+  `log_type` enum('Entrada','Salida') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `log_time` datetime NOT NULL,
-  `photo_url` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `location` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL
+  `photo_url` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `location` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -940,7 +1004,6 @@ CREATE TABLE `time_logs` (
 -- Table structure for table `tipos_mesa`
 --
 
-DROP TABLE IF EXISTS `tipos_mesa`;
 CREATE TABLE `tipos_mesa` (
   `id` int NOT NULL,
   `nombre` varchar(50) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
@@ -1092,7 +1155,8 @@ ALTER TABLE `keeper_activity_day`
   ADD KEY `ix_keeper_activity_user_day` (`user_id`,`day_date`),
   ADD KEY `fk_keeper_activity_device` (`device_id`),
   ADD KEY `idx_is_workday` (`is_workday`),
-  ADD KEY `idx_activity_device_day` (`device_id`,`day_date`);
+  ADD KEY `idx_activity_device_day` (`device_id`,`day_date`),
+  ADD KEY `idx_activity_user_day_event` (`user_id`,`day_date`,`last_event_at`);
 
 --
 -- Indexes for table `keeper_audit_log`
@@ -1339,6 +1403,56 @@ ALTER TABLE `supervisores`
   ADD KEY `empleado_id` (`empleado_id`);
 
 --
+-- Indexes for table `tareas`
+--
+ALTER TABLE `tareas`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `creado_por` (`creado_por`),
+  ADD KEY `idx_tareas_asignado` (`asignado_a`),
+  ADD KEY `idx_tareas_estado` (`estado_id`),
+  ADD KEY `idx_tareas_tablero` (`tablero_id`),
+  ADD KEY `idx_tareas_ticket` (`ticket_id`),
+  ADD KEY `idx_tareas_padre` (`tarea_padre_id`);
+
+--
+-- Indexes for table `tareas_comentarios`
+--
+ALTER TABLE `tareas_comentarios`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `usuario_id` (`usuario_id`),
+  ADD KEY `idx_tareas_comentarios_tarea` (`tarea_id`);
+
+--
+-- Indexes for table `tareas_estados`
+--
+ALTER TABLE `tareas_estados`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_tareas_estados_tablero` (`tablero_id`);
+
+--
+-- Indexes for table `tareas_historial`
+--
+ALTER TABLE `tareas_historial`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `usuario_id` (`usuario_id`),
+  ADD KEY `idx_tareas_historial_tarea` (`tarea_id`);
+
+--
+-- Indexes for table `tareas_tableros`
+--
+ALTER TABLE `tareas_tableros`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `creado_por` (`creado_por`);
+
+--
+-- Indexes for table `tareas_tablero_miembros`
+--
+ALTER TABLE `tareas_tablero_miembros`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `unique_miembro` (`tablero_id`,`usuario_id`),
+  ADD KEY `usuario_id` (`usuario_id`);
+
+--
 -- Indexes for table `tickets`
 --
 ALTER TABLE `tickets`
@@ -1346,7 +1460,8 @@ ALTER TABLE `tickets`
   ADD KEY `item_id` (`item_id`),
   ADD KEY `equipo_id` (`equipo_id`),
   ADD KEY `responsable_id` (`responsable_id`),
-  ADD KEY `item_devuelto_id` (`item_devuelto_id`);
+  ADD KEY `item_devuelto_id` (`item_devuelto_id`),
+  ADD KEY `tarea_id` (`tarea_id`);
 
 --
 -- Indexes for table `ticket_calificaciones`
@@ -1631,6 +1746,42 @@ ALTER TABLE `supervisores`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `tareas`
+--
+ALTER TABLE `tareas`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `tareas_comentarios`
+--
+ALTER TABLE `tareas_comentarios`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `tareas_estados`
+--
+ALTER TABLE `tareas_estados`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `tareas_historial`
+--
+ALTER TABLE `tareas_historial`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `tareas_tableros`
+--
+ALTER TABLE `tareas_tableros`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `tareas_tablero_miembros`
+--
+ALTER TABLE `tareas_tablero_miembros`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `tickets`
 --
 ALTER TABLE `tickets`
@@ -1894,6 +2045,48 @@ ALTER TABLE `publicaciones_likes`
 ALTER TABLE `supervisores`
   ADD CONSTRAINT `supervisores_ibfk_1` FOREIGN KEY (`empleado_id`) REFERENCES `employee` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `supervisores_ibfk_2` FOREIGN KEY (`area_id`) REFERENCES `areas` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `tareas`
+--
+ALTER TABLE `tareas`
+  ADD CONSTRAINT `tareas_ibfk_1` FOREIGN KEY (`asignado_a`) REFERENCES `employee` (`id`) ON DELETE SET NULL,
+  ADD CONSTRAINT `tareas_ibfk_2` FOREIGN KEY (`creado_por`) REFERENCES `employee` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `tareas_ibfk_3` FOREIGN KEY (`ticket_id`) REFERENCES `tickets` (`id`) ON DELETE SET NULL,
+  ADD CONSTRAINT `tareas_ibfk_4` FOREIGN KEY (`tarea_padre_id`) REFERENCES `tareas` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `tareas_comentarios`
+--
+ALTER TABLE `tareas_comentarios`
+  ADD CONSTRAINT `tareas_comentarios_ibfk_1` FOREIGN KEY (`tarea_id`) REFERENCES `tareas` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `tareas_comentarios_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `employee` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `tareas_estados`
+--
+ALTER TABLE `tareas_estados`
+  ADD CONSTRAINT `tareas_estados_ibfk_1` FOREIGN KEY (`tablero_id`) REFERENCES `tareas_tableros` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `tareas_historial`
+--
+ALTER TABLE `tareas_historial`
+  ADD CONSTRAINT `tareas_historial_ibfk_1` FOREIGN KEY (`tarea_id`) REFERENCES `tareas` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `tareas_historial_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `employee` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `tareas_tableros`
+--
+ALTER TABLE `tareas_tableros`
+  ADD CONSTRAINT `tareas_tableros_ibfk_1` FOREIGN KEY (`creado_por`) REFERENCES `employee` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `tareas_tablero_miembros`
+--
+ALTER TABLE `tareas_tablero_miembros`
+  ADD CONSTRAINT `tareas_tablero_miembros_ibfk_1` FOREIGN KEY (`tablero_id`) REFERENCES `tareas_tableros` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `tareas_tablero_miembros_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `employee` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `tickets`

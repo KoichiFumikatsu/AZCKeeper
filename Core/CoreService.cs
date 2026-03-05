@@ -53,9 +53,6 @@ namespace AZCKeeper_Cliente.Core
         private System.Timers.Timer _handshakeTimer; // handshake periódico
         private DateTime _lastHandshakeTime = DateTime.MinValue; // último handshake ok
         private bool _hasSuccessfulHandshake = false; // flag para primer handshake exitoso
-        private bool _todayResumed = false;           // evita seed duplicado en el mismo día
-
-        private System.Timers.Timer _lockStatusTimer; // chequeo de bloqueo cada 30s (más frecuente que handshake)
 
         /// <summary>
         /// Inicializa servicios base, carga config/token, crea ApiClient y módulos.
@@ -79,14 +76,6 @@ namespace AZCKeeper_Cliente.Core
 
                 _authManager = new AuthManager();
                 _authManager.TryLoadTokenFromDisk();
-
-                // CachedUsername se carga desde disco junto al token en TryLoadTokenFromDisk()
-                string knownUsername = _authManager.CachedUsername ?? "NO-LOGIN";
-                LocalLogger.SetUserContext(
-                    _configManager.CurrentConfig.DeviceId,
-                    Environment.MachineName,
-                    knownUsername
-                );
 
                 if (!_authManager.HasToken)
                     PrepareLoginUi();
@@ -144,10 +133,6 @@ namespace AZCKeeper_Cliente.Core
                 // 3) Flush periódico
                 StartActivityFlushTimer();
                 StartHandshakeTimer();
-                // NOTA: LockStatusTimer eliminado — el bloqueo ahora se aplica desde
-                // effectiveConfig.Blocking que ya viene en cada respuesta del handshake.
-                // Latencia de cambio de política de bloqueo = intervalo de handshake (~5min).
-                // Reducción: -400 req/min y -1200 queries/min a keeper_policy_assignments.
                 if (_debugWindow != null && !_debugWindow.IsDisposed)
                 {
                     try { _debugWindow.Show(); }
@@ -185,8 +170,7 @@ namespace AZCKeeper_Cliente.Core
 
                 _handshakeTimer?.Stop();
                 _handshakeTimer?.Dispose();
-                _lockStatusTimer?.Stop();
-                _lockStatusTimer?.Dispose();
+                // _lockStatusTimer eliminado: bloqueo va por handshake
                 _activityTracker?.Stop();
                 _windowTracker?.Stop();
                 _updateManager?.Stop();
@@ -248,16 +232,8 @@ namespace AZCKeeper_Cliente.Core
                     }
 
                     _authManager.UpdateAuthToken(login.Response.Token);
-                    _authManager.SaveUsername(user); // ← persistir username para sesiones silenciosas
                     _configManager.CurrentConfig.ApiAuthToken = login.Response.Token;
                     _configManager.Save();
-
-                    // Actualizar contexto de usuario en logs con el username real del login
-                    LocalLogger.SetUserContext(
-                        _configManager.CurrentConfig.DeviceId,
-                        Environment.MachineName,
-                        user
-                    );
 
                     _loginForm.SetBusy(true, "Sincronizando configuración...");
                     PerformHandshake();
@@ -314,38 +290,6 @@ namespace AZCKeeper_Cliente.Core
             }
         }
         /// <summary>
-        /// Inicia timer de chequeo de estado de bloqueo (cada 30 segundos).
-        /// Más frecuente que handshake para aplicar bloqueos/desbloqueos en tiempo real.
-        /// </summary>
-        private void StartLockStatusTimer()
-        {
-            try
-            {
-                if (_lockStatusTimer != null) return;
-
-                // Intervalo fijo de 30 segundos para respuesta rápida
-                _lockStatusTimer = new System.Timers.Timer(30_000);
-                _lockStatusTimer.AutoReset = true;
-                _lockStatusTimer.Elapsed += (s, e) =>
-                {
-                    try
-                    {
-                        CheckDeviceLockStatus();
-                    }
-                    catch (Exception ex)
-                    {
-                        LocalLogger.Error(ex, "CoreService: error en timer de lock status.");
-                    }
-                };
-                _lockStatusTimer.Start();
-                LocalLogger.Info("CoreService: LockStatusTimer iniciado (cada 30s).");
-            }
-            catch (Exception ex)
-            {
-                LocalLogger.Error(ex, "CoreService: error al iniciar LockStatusTimer.");
-            }
-        }
-        /// <summary>
         /// Ejecuta handshake con backend y aplica effectiveConfig local.
         /// Puede habilitar/deshabilitar módulos y políticas en caliente.
         /// </summary>
@@ -361,18 +305,11 @@ namespace AZCKeeper_Cliente.Core
                     return;
                 }
 
-                var tzOffset = (int)TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow).TotalMinutes;
-                string ianaTimezone = null;
-                if (!TimeZoneInfo.TryConvertWindowsIdToIanaId(TimeZoneInfo.Local.Id, out ianaTimezone))
-                    ianaTimezone = TimeZoneInfo.Local.Id; // fallback al ID de Windows si no hay mapeo
-
                 var request = new ApiClient.HandshakeRequest
                 {
-                    DeviceId     = _configManager.CurrentConfig.DeviceId,
-                    Version      = _configManager.CurrentConfig.Version,
-                    DeviceName   = Environment.MachineName,
-                    TzOffsetMinutes = tzOffset,
-                    IanaTimezone = ianaTimezone
+                    DeviceId = _configManager.CurrentConfig.DeviceId,
+                    Version = _configManager.CurrentConfig.Version,
+                    DeviceName = Environment.MachineName
                 };
 
                 var hs = _apiClient.SendHandshakeAsync(request)
@@ -575,23 +512,15 @@ namespace AZCKeeper_Cliente.Core
                 if (!_hasSuccessfulHandshake)
                 {
                     _hasSuccessfulHandshake = true;
-
-                    // Migración: si no hay username en disco (usuario pre-actualización),
-                    // usar el 'cc' devuelto por el servidor y persistirlo para futuros arranques.
-                    if (string.IsNullOrWhiteSpace(_authManager.CachedUsername) &&
-                        !string.IsNullOrWhiteSpace(hs.Response?.Cc))
-                    {
-                        _authManager.SaveUsername(hs.Response.Cc);
-                        LocalLogger.SetUserContext(
-                            _configManager.CurrentConfig.DeviceId,
-                            Environment.MachineName,
-                            hs.Response.Cc
-                        );
-                        LocalLogger.Info($"CoreService: username recuperado desde handshake (migración). CC={hs.Response.Cc}");
-                    }
-
                     LocalLogger.Info("CoreService.PerformHandshake(): primer handshake exitoso. Intentando resumir actividad del día...");
                     TryResumeTodayActivityFromServer();
+                }
+
+                // Aplicar horario laboral desde keeper_work_schedules si el servidor lo retornó
+                // Reemplaza los valores hardcodeados en WorkSchedule.cs (07:00, 19:00, 12:00, 13:00)
+                if (hs.Response.WorkSchedule != null && _activityTracker != null)
+                {
+                    ApplyWorkSchedule(hs.Response.WorkSchedule);
                 }
 
                 LocalLogger.Info("CoreService.PerformHandshake(): configuración aplicada desde effectiveConfig.");
@@ -714,7 +643,8 @@ namespace AZCKeeper_Cliente.Core
                 {
                     try
                     {
-                        // Ignorar episodios menores a 1 segundo.
+                        // Validar que la duración sea >= 1 segundo para evitar errores de redondeo
+                        // al serializar sin milisegundos (backend espera YYYY-MM-DD HH:MM:SS)
                         if (episode.DurationSeconds < 1.0)
                         {
                             LocalLogger.Info($"CoreService: episodio ignorado por duración <1s ({episode.DurationSeconds:F3}s): {episode.ProcessName}");
@@ -723,16 +653,13 @@ namespace AZCKeeper_Cliente.Core
 
                         var payload = new ApiClient.WindowEpisodePayload
                         {
-                            DeviceId       = _configManager.CurrentConfig.DeviceId,
+                            DeviceId = _configManager.CurrentConfig.DeviceId,
                             StartLocalTime = episode.StartLocalTime.ToString("yyyy-MM-dd HH:mm:ss"),
-                            EndLocalTime   = episode.EndLocalTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                            EndLocalTime = episode.EndLocalTime.ToString("yyyy-MM-dd HH:mm:ss"),
                             DurationSeconds = episode.DurationSeconds,
-                            ProcessName    = episode.ProcessName,
-                            WindowTitle    = episode.WindowTitle,
-                            IsCallApp      = episode.IsCallApp,
-                            // Offset UTC del equipo en el momento del episodio.
-                            // El panel lo usa para mostrar la hora local del empleado.
-                            TzOffsetMinutes = (int)TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow).TotalMinutes
+                            ProcessName = episode.ProcessName,
+                            WindowTitle = episode.WindowTitle,
+                            IsCallApp = episode.IsCallApp
                         };
 
                         _ = _apiClient.SendWindowEpisodeAsync(payload);
@@ -795,93 +722,13 @@ namespace AZCKeeper_Cliente.Core
                 }
             }
         }
-        /// <summary>
-        /// Consulta estado de bloqueo remoto y aplica cambios en tiempo real.
-        /// Llamado por timer cada 30 segundos y también por handshake si detecta bloqueo.
-        /// </summary>
-        private async void CheckDeviceLockStatus()
-        {
-            try
-            {
-                if (_apiClient == null)
-                {
-                    LocalLogger.Warn("CoreService.CheckDeviceLockStatus(): ApiClient es null.");
-                    return;
-                }
+        // CheckDeviceLockStatus() eliminado — el bloqueo se aplica dentro de PerformHandshake()
+        // a través del effectiveConfig.blocking que ya retorna el backend.
+        // El handshake se ejecuta cada 5 min (configurable), que es suficiente para
+        // reflejar cambios de bloqueo sin necesidad de un timer separado de 30s.
 
-                if (_keyBlocker == null)
-                {
-                    LocalLogger.Warn("CoreService.CheckDeviceLockStatus(): KeyBlocker es null. Creando instancia...");
-                    // Crear KeyBlocker si no existe (necesario para bloqueo remoto)
-                    _keyBlocker = new KeyBlocker(_apiClient);
-                }
-
-                var result = await _apiClient.GetLockStatusAsync().ConfigureAwait(false);
-
-                if (!result.IsSuccess || result.Blocking == null)
-                {
-                    LocalLogger.Warn($"CoreService.CheckDeviceLockStatus(): falló. Error={result.Error}");
-                    return;
-                }
-
-                bool shouldBeLocked = result.Blocking.EnableDeviceLock;
-                bool isCurrentlyLocked = _keyBlocker.IsLocked();
-
-                LocalLogger.Info($"CoreService.CheckDeviceLockStatus(): shouldBeLocked={shouldBeLocked}, isCurrentlyLocked={isCurrentlyLocked}");
-
-                // Leer config actual
-                var blocking = _configManager.CurrentConfig.Blocking ?? new ConfigManager.BlockingConfig();
-
-                // Verificar si hay cambios antes de guardar
-                bool configChanged = blocking.EnableDeviceLock != shouldBeLocked ||
-                                   blocking.LockMessage != result.Blocking.LockMessage ||
-                                   blocking.AllowUnlockWithPin != result.Blocking.AllowUnlockWithPin ||
-                                   blocking.UnlockPin != result.Blocking.UnlockPin;
-
-                // Solo actualizar y guardar si hay cambios
-                if (configChanged)
-                {
-                    blocking.EnableDeviceLock = shouldBeLocked;
-                    blocking.LockMessage = result.Blocking.LockMessage ?? "Dispositivo bloqueado por IT";
-                    blocking.AllowUnlockWithPin = result.Blocking.AllowUnlockWithPin;
-                    blocking.UnlockPin = result.Blocking.UnlockPin;
-
-                    _configManager.CurrentConfig.Blocking = blocking;
-                    
-                    try
-                    {
-                        _configManager.Save();
-                        LocalLogger.Info("CoreService.CheckDeviceLockStatus(): configuración actualizada y guardada.");
-                    }
-                    catch (IOException ioEx)
-                    {
-                        // Si el archivo está bloqueado, no es crítico - se guardará en el próximo ciclo o handshake
-                        LocalLogger.Warn($"CoreService.CheckDeviceLockStatus(): no se pudo guardar config (archivo ocupado). Se reintentará. {ioEx.Message}");
-                    }
-                }
-
-                // Aplicar cambios si hay diferencia de estado
-                if (shouldBeLocked && !isCurrentlyLocked)
-                {
-                    // Necesita bloquear
-                    LocalLogger.Warn($"CoreService: BLOQUEANDO dispositivo. PIN='{(blocking.UnlockPin ?? "NULL")}'" );
-                    _keyBlocker.ActivateLock(blocking.LockMessage, blocking.AllowUnlockWithPin, blocking.UnlockPin);
-                }
-                else if (!shouldBeLocked && isCurrentlyLocked)
-                {
-                    // Necesita desbloquear
-                    LocalLogger.Info("CoreService: DESBLOQUEANDO dispositivo desde timer.");
-                    _keyBlocker.DeactivateLock();
-                }
-            }
-            catch (Exception ex)
-            {
-                LocalLogger.Error(ex, "CoreService: error al verificar estado de bloqueo.");
-            }
-        }
         /// <summary>
         /// Si existe registro del día en backend, rehidrata contadores locales.
-        /// Solo se ejecuta una vez por día. El flag _todayResumed previene seed duplicado.
         /// </summary>
         private async void TryResumeTodayActivityFromServer()
         {
@@ -897,16 +744,6 @@ namespace AZCKeeper_Cliente.Core
                 }
 
                 string today = DateTime.Now.ToString("yyyy-MM-dd");
-
-                // Si el seed ya fue aplicado hoy (con o sin datos), no repetir.
-                // Evita duplicación cuando Start(), PerformHandshake() y PrepareLoginUi()
-                // llaman a este método en la misma sesión.
-                if (_todayResumed)
-                {
-                    LocalLogger.Info($"CoreService: seed ya aplicado para {today}. Se omite TryResumeToday.");
-                    return;
-                }
-
                 string deviceId = _configManager.CurrentConfig.DeviceId;
 
                 var res = await _apiClient.GetActivityDayAsync(deviceId, today).ConfigureAwait(false);
@@ -919,9 +756,6 @@ namespace AZCKeeper_Cliente.Core
                 if (!res.Response.Found)
                 {
                     LocalLogger.Info("CoreService: no existe registro previo del día para retomar.");
-                    // Marcar como resuelto aunque no haya datos: evita reintentos en loop
-                    // si es el primer día del dispositivo o primer día del mes.
-                    _todayResumed = true;
                     return;
                 }
 
@@ -938,11 +772,8 @@ namespace AZCKeeper_Cliente.Core
                 );
 
                 // Para flush
-                _activityFirstEventLocal = DateTime.Now;
+                _activityFirstEventLocal = DateTime.Now; // o parsear res.Response.FirstEventAt si quieres
                 _activitySamplesCount = res.Response.SamplesCount;
-
-                // Marcar seed como aplicado exitosamente para este día.
-                _todayResumed = true;
 
                 LocalLogger.Info($"CoreService: ✅ Seed aplicado exitosamente. dayDate={today} active={res.Response.ActiveSeconds}s idle={res.Response.IdleSeconds}s " +
                        $"work={res.Response.WorkHoursActiveSeconds}s lunch={res.Response.LunchActiveSeconds}s after={res.Response.AfterHoursActiveSeconds}s samples={res.Response.SamplesCount}");
@@ -984,9 +815,6 @@ namespace AZCKeeper_Cliente.Core
                             _lastFlushDayLocalDate = dayLocal;
                             _activitySamplesCount = 0;
                             _activityFirstEventLocal = nowLocal;
-                            // Nuevo día detectado: permitir que TryResumeToday corra al día siguiente.
-                            _todayResumed = false;
-                            LocalLogger.Info($"CoreService: nuevo día detectado ({dayLocal:yyyy-MM-dd}). _todayResumed reseteado.");
                         }
 
                         if (_activityFirstEventLocal == null)
@@ -1106,6 +934,37 @@ namespace AZCKeeper_Cliente.Core
                 LocalLogger.Info("CoreService: ActivityFlushTimer detenido.");
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Aplica el horario laboral recibido del servidor al ActivityTracker.
+        /// El servidor consulta keeper_work_schedules priorizando el registro del usuario
+        /// sobre el registro global (user_id IS NULL).
+        /// Formato de tiempo esperado: "HH:mm:ss" (ej: "07:00:00").
+        /// </summary>
+        private void ApplyWorkSchedule(ApiClient.WorkScheduleConfig ws)
+        {
+            try
+            {
+                var schedule = _activityTracker.WorkSchedule;
+
+                if (TimeSpan.TryParse(ws.WorkStartTime, out var workStart))
+                    schedule.WorkStart = workStart;
+                if (TimeSpan.TryParse(ws.WorkEndTime, out var workEnd))
+                    schedule.WorkEnd = workEnd;
+                if (TimeSpan.TryParse(ws.LunchStartTime, out var lunchStart))
+                    schedule.LunchStart = lunchStart;
+                if (TimeSpan.TryParse(ws.LunchEndTime, out var lunchEnd))
+                    schedule.LunchEnd = lunchEnd;
+
+                LocalLogger.Info($"CoreService: WorkSchedule aplicado desde servidor. " +
+                    $"Work={schedule.WorkStart:hh\\:mm}-{schedule.WorkEnd:hh\\:mm} " +
+                    $"Lunch={schedule.LunchStart:hh\\:mm}-{schedule.LunchEnd:hh\\:mm}");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Warn($"CoreService.ApplyWorkSchedule(): error al aplicar horario. Se usan valores anteriores. {ex.Message}");
+            }
         }
     }
 

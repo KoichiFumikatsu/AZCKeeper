@@ -12,11 +12,11 @@ using System.Reflection;
 
 [assembly: System.Reflection.AssemblyCompanyAttribute("AZCKeeper_Client")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
-[assembly: System.Reflection.AssemblyFileVersionAttribute("3.0.0.13")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("3.0.0.14+7d24831e40ab55bc4b119a7d232273f74de0bf85")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("3.0.1.1")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("3.0.1.1+32d6b027823f68d0545442d414a6d620f5fe1ebb")]
 [assembly: System.Reflection.AssemblyProductAttribute("AZCKeeper_Client")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AZCKeeper_Client")]
-[assembly: System.Reflection.AssemblyVersionAttribute("3.0.0.13")]
+[assembly: System.Reflection.AssemblyVersionAttribute("3.0.1.1")]
 [assembly: System.Runtime.Versioning.TargetPlatformAttribute("Windows7.0")]
 [assembly: System.Runtime.Versioning.SupportedOSPlatformAttribute("Windows7.0")]
 
