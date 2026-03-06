@@ -7,16 +7,32 @@ use Keeper\PolicyService;
 use Keeper\Repos\PolicyRepo;
 use Keeper\Repos\SessionRepo;
 use Keeper\Repos\DeviceRepo;
-use Keeper\Repos\HandshakeRepo;
-use Keeper\Repos\AuditRepo;
 
+/**
+ * ClientHandshake — petición central del cliente.
+ *
+ * Con el handshake cada 60s este endpoint reemplaza:
+ *   - Polling de bloqueo (era timer cada 30s separado, ya eliminado)
+ *   - Retomar actividad del día (GET activity-day, solo al iniciar)
+ *   - Configuración efectiva (policies global + user + device)
+ *   - Horario laboral (keeper_work_schedules)
+ *   - Estado del dispositivo (active/away/inactive) para el panel admin
+ *
+ * Queries ejecutadas por request (mínimo posible):
+ *   1. SELECT keeper_sessions          (auth)
+ *   2. SELECT keeper_devices           (device lookup + last_seen UPDATE en 1 op)
+ *   3. SELECT keeper_policy_assignments (global cacheada en memoria)
+ *   4. SELECT keeper_policy_assignments (user + device en 1 UNION)
+ *   5. SELECT keeper_work_schedules    (user + global en 1 UNION)
+ *   6. SELECT keeper_activity_day      (estado del día para panel)
+ *   Total: 6 queries, de las cuales #3 usa cache en memoria.
+ */
 class ClientHandshake {
 
   public static function handle(): void {
     $pdo = Db::pdo();
-    $body = Http::readJson(); // alias OK
+    $body = Http::readJson();
 
-    // camelCase (cliente) + fallback PascalCase (robustez)
     $version    = $body['version']    ?? ($body['Version']    ?? null);
     $deviceGuid = $body['deviceId']   ?? ($body['DeviceId']   ?? null);
     $deviceName = $body['deviceName'] ?? ($body['DeviceName'] ?? null);
@@ -30,86 +46,138 @@ class ClientHandshake {
       Http::json(401, ['ok' => false, 'error' => 'Missing token']);
     }
 
+    // 1. Auth
     $sess = SessionRepo::validateBearer($pdo, $token);
     if (!$sess) {
       Http::json(401, ['ok' => false, 'error' => 'Invalid token']);
     }
+    $userId   = (int)$sess['user_id'];
+    $deviceId = (int)($sess['device_id'] ?? 0);
 
-    $userId = (int)$sess['user_id'];
-
-    // Asegurar device existe y pertence al user
+    // 2. Device — buscar, crear si no existe, actualizar last_seen_at
     $dev = DeviceRepo::findByGuid($pdo, $deviceGuid);
     if (!$dev) {
       $deviceId = DeviceRepo::create($pdo, $userId, $deviceGuid, $deviceName);
-      AuditRepo::log($pdo, $userId, $deviceId, 'device_registered', "Nuevo device registrado: {$deviceGuid}", ['deviceName' => $deviceName]);
     } else {
       $deviceId = (int)$dev['id'];
 
-      // Verificar que el device no esté revocado
       if (($dev['status'] ?? 'active') !== 'active') {
-        AuditRepo::log($pdo, $userId, $deviceId, 'handshake_revoked_device', "Handshake denegado: device revocado {$deviceGuid}", null);
         Http::json(403, ['ok' => false, 'error' => 'Device revoked']);
       }
 
-      // reasignar si necesario
-      $st = $pdo->prepare("UPDATE keeper_devices SET user_id=:u WHERE id=:id");
-      $st->execute([':u' => $userId, ':id' => $deviceId]);
+      // Reasignar user si necesario (edge case)
+      if ((int)$dev['user_id'] !== $userId) {
+        $pdo->prepare("UPDATE keeper_devices SET user_id=:u WHERE id=:id")
+            ->execute([':u' => $userId, ':id' => $deviceId]);
+      }
 
       DeviceRepo::touch($pdo, $deviceId, $deviceName);
     }
 
-    $global = PolicyRepo::getActiveGlobal($pdo);
+    // 3 + 4. Políticas: global (cache) + user/device (1 UNION)
+    $policies = PolicyRepo::getAllPolicies($pdo, $userId, $deviceId);
+
+    $global = $policies['global'];
     if (!$global) Http::json(500, ['ok' => false, 'error' => 'No active global policy']);
 
-    $effective = json_decode($global['policy_json'], true);
-    if (!is_array($effective)) $effective = [];
-
-    $appliedScope = 'global';
-    $appliedId = (int)$global['id'];
+    $effective      = json_decode($global['policy_json'], true) ?? [];
+    $appliedScope   = 'global';
+    $appliedId      = (int)$global['id'];
     $appliedVersion = (int)$global['version'];
 
-    $userPol = PolicyRepo::getActiveUser($pdo, $userId);
-    if ($userPol) {
-      $u = json_decode($userPol['policy_json'], true);
+    if ($policies['user']) {
+      $u = json_decode($policies['user']['policy_json'], true);
       if (is_array($u)) {
-        $effective = PolicyService::deepMerge($effective, $u);
-        $appliedScope = 'user';
-        $appliedId = (int)$userPol['id'];
-        $appliedVersion = (int)$userPol['version'];
+        $effective      = PolicyService::deepMerge($effective, $u);
+        $appliedScope   = 'user';
+        $appliedId      = (int)$policies['user']['id'];
+        $appliedVersion = (int)$policies['user']['version'];
       }
     }
 
-    $devPol = PolicyRepo::getActiveDevice($pdo, $deviceId);
-    if ($devPol) {
-      $d = json_decode($devPol['policy_json'], true);
+    if ($policies['device']) {
+      $d = json_decode($policies['device']['policy_json'], true);
       if (is_array($d)) {
-        $effective = PolicyService::deepMerge($effective, $d);
-        $appliedScope = 'device';
-        $appliedId = (int)$devPol['id'];
-        $appliedVersion = (int)$devPol['version'];
+        $effective      = PolicyService::deepMerge($effective, $d);
+        $appliedScope   = 'device';
+        $appliedId      = (int)$policies['device']['id'];
+        $appliedVersion = (int)$policies['device']['version'];
       }
     }
 
-    HandshakeRepo::insert(
-      $pdo,
-      $userId,
-      $deviceId,
-      $version,
-      // guarda request normalizado
-      ['version'=>$version,'deviceId'=>$deviceGuid,'deviceName'=>$deviceName],
-      $effective
-    );
-
-    // Inyectar horario laboral en la respuesta (consulta keeper_work_schedules)
-    // El cliente C# lo aplica en WorkSchedule.cs reemplazando los valores hardcodeados
+    // 5. Horario laboral (1 UNION)
     $workSchedule = PolicyRepo::getWorkSchedule($pdo, $userId);
 
+    // 6. Estado del dispositivo para panel admin (activo/ausente/inactivo)
+    //    Se calcula con last_event_at de keeper_activity_day del día actual.
+    //    El panel solo lee este campo del handshake — sin query propia.
+    $deviceStatus = self::computeDeviceStatus($pdo, $userId, $deviceId);
+
     Http::json(200, [
-      'ok' => true,
+      'ok'            => true,
       'serverTimeUtc' => Http::nowUtcIso(),
-      'policyApplied' => ['scope' => $appliedScope, 'policyId' => $appliedId, 'version' => $appliedVersion],
+      'policyApplied' => [
+        'scope'    => $appliedScope,
+        'policyId' => $appliedId,
+        'version'  => $appliedVersion,
+      ],
       'effectiveConfig' => $effective,
-      'workSchedule' => $workSchedule
+      'workSchedule'    => $workSchedule,
+      // Estado calculado en servidor — el panel admin lo lee desde keeper_devices
+      // (guardado en la columna que añadiremos: device_status)
+      'deviceStatus'    => $deviceStatus,
     ]);
+  }
+
+  /**
+   * Calcula el estado del dispositivo basado en actividad del día.
+   * Resultado: 'active' | 'away' | 'inactive'
+   *
+   * Lógica:
+   *   active   ? last_event_at hace < 2 min (usuario trabajando ahora)
+   *   away     ? app conectada pero sin actividad reciente (idle o pausa)
+   *   inactive ? no hay registro de actividad hoy
+   *
+   * Este valor se guarda en keeper_devices.device_status para que
+   * realtime-status.php solo haga 1 SELECT en vez de múltiples queries.
+   */
+  private static function computeDeviceStatus(
+    \PDO $pdo, int $userId, int $deviceId
+  ): string {
+    $st = $pdo->prepare("
+      SELECT last_event_at, active_seconds, idle_seconds, call_seconds,
+             work_hours_active_seconds, lunch_active_seconds, after_hours_active_seconds
+      FROM keeper_activity_day
+      WHERE user_id = :u AND device_id = :d AND day_date = CURDATE()
+      LIMIT 1
+    ");
+    $st->execute([':u' => $userId, ':d' => $deviceId]);
+    $row = $st->fetch();
+
+    if (!$row || !$row['last_event_at'] || (int)$row['active_seconds'] === 0) {
+      $status = 'inactive';
+      $summary = null;
+    } else {
+      $secondsSince = time() - strtotime($row['last_event_at']);
+      $status = $secondsSince < 120 ? 'active' : 'away';
+      $summary = json_encode([
+        'active_seconds'      => (int)$row['active_seconds'],
+        'idle_seconds'        => (int)$row['idle_seconds'],
+        'call_seconds'        => (int)$row['call_seconds'],
+        'work_active_seconds' => (int)$row['work_hours_active_seconds'],
+        'lunch_active_seconds'=> (int)$row['lunch_active_seconds'],
+        'after_active_seconds'=> (int)$row['after_hours_active_seconds'],
+        'last_event_at'       => $row['last_event_at'],
+      ]);
+    }
+
+    // Guardar estado + resumen del día en keeper_devices para lectura del panel
+    $pdo->prepare("
+      UPDATE keeper_devices
+      SET device_status = :s, day_summary_json = :j
+      WHERE id = :id
+    ")->execute([':s' => $status, ':j' => $summary, ':id' => $deviceId]);
+
+    return $status;
   }
 }

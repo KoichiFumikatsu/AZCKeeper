@@ -264,9 +264,17 @@ namespace AZCKeeper_Cliente.Core
             {
                 if (_handshakeTimer != null) return;
 
-                int intervalMinutes = _configManager.CurrentConfig.Timers?.HandshakeIntervalMinutes ?? 5;
+                int intervalSeconds = _configManager.CurrentConfig.Timers?.HandshakeIntervalSeconds ?? 60;
+                intervalSeconds = Math.Max(30, intervalSeconds);
 
-                _handshakeTimer = new System.Timers.Timer(intervalMinutes * 60_000);
+                // Jitter: retraso aleatorio de 0 a intervalSeconds antes del primer tick.
+                // Evita que 500 clientes que arrancan al mismo tiempo (ej: 8:00 AM)
+                // disparen todos sus handshakes en el mismo segundo → thundering herd.
+                // Ejemplo con 60s: clientes se distribuyen en una ventana de 60s
+                // → máximo ~9 req/s en lugar de 500 simultáneos.
+                int jitterMs = new Random().Next(0, intervalSeconds * 1000);
+
+                _handshakeTimer = new System.Timers.Timer(intervalSeconds * 1000);
                 _handshakeTimer.AutoReset = true;
                 _handshakeTimer.Elapsed += (s, e) =>
                 {
@@ -281,8 +289,20 @@ namespace AZCKeeper_Cliente.Core
                         LocalLogger.Error(ex, "CoreService: error en handshake periódico.");
                     }
                 };
-                _handshakeTimer.Start();
-                LocalLogger.Info($"CoreService: HandshakeTimer iniciado (cada {intervalMinutes}min).");
+
+                // Primer tick retrasado por jitter, luego AutoReset se encarga
+                System.Threading.Tasks.Task.Delay(jitterMs).ContinueWith(_ =>
+                {
+                    try
+                    {
+                        PerformHandshake();
+                        _lastHandshakeTime = DateTime.Now;
+                    }
+                    catch { }
+                    _handshakeTimer?.Start();
+                });
+
+                LocalLogger.Info($"CoreService: HandshakeTimer iniciado (cada {intervalSeconds}s, jitter={jitterMs}ms).");
             }
             catch (Exception ex)
             {
@@ -380,7 +400,8 @@ namespace AZCKeeper_Cliente.Core
 
                     _configManager.CurrentConfig.Blocking = blocking;
                     _configManager.Save();
-                    LocalLogger.Info($"CoreService: Blocking guardado en config.json. UnlockPin='{(blocking.UnlockPin ?? "NULL")}'");
+                    LocalLogger.Info($"CoreService: Blocking guardado en config.json. UnlockPin='" +
+                        $"{(blocking.UnlockPin ?? "NULL")}'");
 
                     // Aplicar bloqueo: cambio de false→true
                     if (!wasLocked && blocking.EnableDeviceLock && _keyBlocker != null)
@@ -546,13 +567,16 @@ namespace AZCKeeper_Cliente.Core
                     LocalLogger.Info($"CoreService: ActivityFlush actualizado a {timers.ActivityFlushIntervalSeconds}s");
                 }
 
-                // Reiniciar Handshake con nuevo intervalo
+                // Reiniciar Handshake con nuevo intervalo (en segundos)
                 if (_handshakeTimer != null)
                 {
+                    int hs = timers.HandshakeIntervalSeconds > 0
+                        ? Math.Max(30, timers.HandshakeIntervalSeconds)
+                        : Math.Max(30, timers.HandshakeIntervalMinutes * 60);
                     _handshakeTimer.Stop();
-                    _handshakeTimer.Interval = timers.HandshakeIntervalMinutes * 60_000;
+                    _handshakeTimer.Interval = hs * 1000;
                     _handshakeTimer.Start();
-                    LocalLogger.Info($"CoreService: Handshake actualizado a {timers.HandshakeIntervalMinutes}min");
+                    LocalLogger.Info($"CoreService: Handshake actualizado a {hs}s");
                 }
 
                 // Actualizar OfflineQueue retry
@@ -795,7 +819,12 @@ namespace AZCKeeper_Cliente.Core
                 if (_apiClient == null) return;
                 if (_activityFlushTimer != null) return;
 
-                int intervalSeconds = _configManager.CurrentConfig.Timers?.ActivityFlushIntervalSeconds ?? 6;
+                int intervalSeconds = _configManager.CurrentConfig.Timers?.ActivityFlushIntervalSeconds ?? 10;
+
+                // Jitter: 0 a intervalSeconds antes del primer flush.
+                // Con 500 usuarios y flush cada 10s: sin jitter → 500 req simultáneos cada 10s.
+                // Con jitter → máximo ~50 req/s distribuidos, nunca un pico.
+                int jitterMs = new Random().Next(0, intervalSeconds * 1000);
 
                 _activityFlushTimer = new System.Timers.Timer(intervalSeconds * 1000);
                 _activityFlushTimer.AutoReset = true;
@@ -852,7 +881,51 @@ namespace AZCKeeper_Cliente.Core
                     }
                 };
 
-                _activityFlushTimer.Start();
+                // Primer tick retrasado por jitter, luego AutoReset se encarga
+                System.Threading.Tasks.Task.Delay(jitterMs).ContinueWith(_ =>
+                {
+                    try
+                    {
+                        if (_authManager == null || !_authManager.HasToken)
+                            return;
+
+                        var snap = _activityTracker.GetCurrentDaySnapshot();
+                        var nowLocal = DateTime.Now;
+
+                        _activityFirstEventLocal = nowLocal;
+                        _activitySamplesCount = 1;
+
+                        int tzOffsetMinutes = (int)TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow).TotalMinutes;
+
+                        var payload = new ApiClient.ActivityDayPayload
+                        {
+                            DeviceId = _configManager.CurrentConfig.DeviceId,
+                            DayDate = snap.DayLocalDate.ToString("yyyy-MM-dd"),
+                            TzOffsetMinutes = tzOffsetMinutes,
+                            ActiveSeconds = snap.ActiveSeconds,
+                            IdleSeconds = snap.InactiveSeconds,
+                            CallSeconds = _windowTracker?.CallSessionSeconds ?? 0,
+                            SamplesCount = _activitySamplesCount,
+                            FirstEventAt = _activityFirstEventLocal?.ToString("yyyy-MM-dd HH:mm:ss"),
+                            LastEventAt = nowLocal.ToString("yyyy-MM-dd HH:mm:ss"),
+                            WorkHoursActiveSeconds = snap.WorkActive,
+                            WorkHoursIdleSeconds = snap.WorkIdle,
+                            LunchActiveSeconds = snap.LunchActive,
+                            LunchIdleSeconds = snap.LunchIdle,
+                            AfterHoursActiveSeconds = snap.AfterActive,
+                            AfterHoursIdleSeconds = snap.AfterIdle,
+                            IsWorkday = snap.DayLocalDate.DayOfWeek != DayOfWeek.Saturday && snap.DayLocalDate.DayOfWeek != DayOfWeek.Sunday
+                        };
+
+                        _ = _apiClient.SendActivityDayAsync(payload);
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Error(ex, "CoreService: error en primer flush de actividad con jitter.");
+                    }
+                    _activityFlushTimer?.Start();
+                });
+
                 LocalLogger.Info($"CoreService: ActivityFlushTimer iniciado (cada {intervalSeconds}s).");
             }
             catch (Exception ex)

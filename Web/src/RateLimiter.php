@@ -101,26 +101,36 @@ class RateLimiter
     }
 
     /**
-     * Obtiene ruta del directorio de almacenamiento
+     * Obtiene ruta del directorio de almacenamiento.
+     * Se organiza en subdirectorios por módulo del userId para evitar
+     * contención de filesystem con 500+ usuarios (evita tener 500 archivos en un dir).
      */
     private static function getStorageDir(): string
     {
-        $dir = sys_get_temp_dir() . '/azc_keeper_ratelimit';
-        
-        if (!is_dir($dir)) {
-            @mkdir($dir, 0750, true);
+        $base = sys_get_temp_dir() . '/azc_keeper_ratelimit';
+
+        if (!is_dir($base)) {
+            @mkdir($base, 0750, true);
         }
-        
-        return $dir;
+
+        return $base;
     }
 
     /**
-     * Genera ruta completa del archivo de timestamps
+     * Genera ruta completa del archivo de timestamps.
+     * Usa subdirectorio por bucket (userId mod 16) para distribuir I/O.
      */
     private static function getFilePath(string $key): string
     {
         $safeName = preg_replace('/[^a-z0-9_-]/', '', strtolower($key));
-        return self::getStorageDir() . '/' . $safeName . '.dat';
+        // Extraer userId del key para hacer bucket (ratelimit_123_endpoint -> bucket "b7")
+        preg_match('/ratelimit_(\d+)_/', $safeName, $m);
+        $bucket = isset($m[1]) ? 'b' . ((int)$m[1] % 16) : 'b0';
+        $dir = self::getStorageDir() . '/' . $bucket;
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0750, true);
+        }
+        return $dir . '/' . $safeName . '.dat';
     }
 
     /**

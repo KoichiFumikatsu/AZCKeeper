@@ -270,6 +270,7 @@ namespace AZCKeeper_Cliente.Config
                 Timers = new TimersConfig
                 {
                     ActivityFlushIntervalSeconds = 10,
+                    HandshakeIntervalSeconds = 60,
                     HandshakeIntervalMinutes = 5,
                     OfflineQueueRetrySeconds = 30
                 },
@@ -352,7 +353,12 @@ namespace AZCKeeper_Cliente.Config
         internal class TimersConfig
         {
             public int ActivityFlushIntervalSeconds { get; set; } = 10;
-            public int HandshakeIntervalMinutes { get; set; } = 5;
+            /// <summary>
+            /// Intervalo de handshake en segundos. Default 60s.
+            /// Reemplaza HandshakeIntervalMinutes (mantenido por compatibilidad con configs legacy).
+            /// </summary>
+            public int HandshakeIntervalSeconds { get; set; } = 60;
+            public int HandshakeIntervalMinutes { get; set; } = 5; // legacy
             public int OfflineQueueRetrySeconds { get; set; } = 30;
         }
         /// <summary>

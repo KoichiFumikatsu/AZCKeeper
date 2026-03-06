@@ -20,12 +20,18 @@ class DeviceRepo {
     return (int)$pdo->lastInsertId();
   }
 
+  /**
+   * Actualiza last_seen_at solo si han pasado más de 60 segundos desde la última actualización.
+   * Evita 100 UPDATEs/min en keeper_devices con 500 usuarios haciendo handshake cada 5 min.
+   * El valor sigue siendo preciso a ±1 minuto para realtime-status.php (umbral: 15 min).
+   */
   public static function touch(PDO $pdo, int $deviceId, ?string $name): void {
     $st = $pdo->prepare("
       UPDATE keeper_devices
       SET device_name = COALESCE(:n, device_name),
           last_seen_at = NOW()
-      WHERE id=:id
+      WHERE id = :id
+        AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL 60 SECOND)
     ");
     $st->execute([':n' => $name, ':id' => $deviceId]);
   }

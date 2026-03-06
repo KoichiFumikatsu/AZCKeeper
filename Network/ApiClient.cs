@@ -854,7 +854,12 @@ namespace AZCKeeper_Cliente.Network
         internal class EffectiveTimers
         {
             public int ActivityFlushIntervalSeconds { get; set; }
-            public int HandshakeIntervalMinutes { get; set; }
+            /// <summary>
+            /// Intervalo de handshake en segundos (reemplaza HandshakeIntervalMinutes).
+            /// Default 60s. El handshake centraliza: bloqueo + estado + políticas + horario.
+            /// </summary>
+            public int HandshakeIntervalSeconds { get; set; }
+            public int HandshakeIntervalMinutes { get; set; } // legacy — ignorado si HandshakeIntervalSeconds > 0
             public int OfflineQueueRetrySeconds { get; set; }
         }
         /// <summary>
