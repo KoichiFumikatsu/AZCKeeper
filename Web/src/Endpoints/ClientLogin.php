@@ -47,7 +47,9 @@ class ClientLogin
                     e.supervisor_id,
                     e.area_id,
                     e.position,
-                    e.company
+                    e.position_id,
+                    e.company,
+                    e.sede_id
                 FROM employee e
                 WHERE e.cc = :cc
                 LIMIT 1
@@ -73,12 +75,20 @@ class ClientLogin
             // 2) Asegurar keeper_user CON password_hash
             $keeperUserId = self::ensureKeeperUser($pdo, [
                 'legacy_employee_id' => (int)$emp['legacy_employee_id'],
-                'cc' => $emp['cc'],  // ← AÑADIR
+                'cc' => $emp['cc'],
                 'display_name' => $displayName ?: (string)$emp['cc'],
                 'email' => $email,
                 'password' => $password
             ]);
-             
+
+            // 2b) Sincronizar firma/área/cargo desde legacy → keeper_user_assignments
+            \Keeper\LegacySyncService::syncOne($pdo, $keeperUserId, [
+                'firm_id'  => $emp['company'] ? (int)$emp['company'] : null,
+                'area_id'  => $emp['area_id'] ? (int)$emp['area_id'] : null,
+                'cargo_id' => $emp['position_id'] ? (int)$emp['position_id'] : null,
+                'sede_id'  => $emp['sede_id'] ? (int)$emp['sede_id'] : null,
+            ]);
+
             // 3) Device
             $keeperDeviceId = null;
             if ($deviceGuid) {

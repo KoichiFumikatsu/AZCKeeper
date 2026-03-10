@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 162.210.103.253:3306
--- Generation Time: Mar 05, 2026 at 09:09 PM
+-- Generation Time: Mar 07, 2026 at 05:30 PM
 -- Server version: 8.0.40
 -- PHP Version: 8.2.30
 
@@ -343,6 +343,43 @@ CREATE TABLE `keeper_activity_day` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `keeper_admin_accounts`
+--
+
+CREATE TABLE `keeper_admin_accounts` (
+  `id` bigint NOT NULL,
+  `keeper_user_id` bigint NOT NULL COMMENT 'FK keeper_users.id',
+  `panel_role` varchar(50) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'viewer' COMMENT 'Slug del rol (FK lógica a keeper_panel_roles.slug)',
+  `firm_scope_id` int DEFAULT NULL COMMENT 'Solo ve empleados de esta firma (NULL=todas)',
+  `area_scope_id` int DEFAULT NULL COMMENT 'Solo ve empleados de esta área (NULL=todas las de la firma)',
+  `sede_scope_id` int DEFAULT NULL COMMENT 'Solo ve empleados de esta sede (NULL=todas)',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_by` bigint DEFAULT NULL COMMENT 'keeper_admin_accounts.id de quien creó esta cuenta',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `last_login_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Cuentas con acceso al panel de control Keeper';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `keeper_admin_sessions`
+--
+
+CREATE TABLE `keeper_admin_sessions` (
+  `id` bigint NOT NULL,
+  `admin_id` bigint NOT NULL COMMENT 'FK keeper_admin_accounts.id',
+  `token_hash` char(64) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'SHA-256 del token de cookie',
+  `ip` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `user_agent` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `expires_at` timestamp NOT NULL COMMENT 'Sesión expira aquí',
+  `revoked_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Sesiones activas del panel de control';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `keeper_audit_log`
 --
 
@@ -492,6 +529,40 @@ CREATE TABLE `keeper_module_catalog` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `keeper_panel_roles`
+--
+
+CREATE TABLE `keeper_panel_roles` (
+  `id` int NOT NULL,
+  `slug` varchar(50) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Identificador único del rol (se usa en panel_role)',
+  `label` varchar(100) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Nombre visible',
+  `description` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Descripción del rol',
+  `hierarchy_level` int NOT NULL DEFAULT '0' COMMENT 'Nivel jerárquico — mayor = más poder',
+  `color_bg` varchar(50) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'bg-gray-100' COMMENT 'Clase Tailwind para fondo del badge',
+  `color_text` varchar(50) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'text-gray-700' COMMENT 'Clase Tailwind para texto del badge',
+  `is_system` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = rol del sistema, no se puede borrar ni cambiar slug',
+  `permissions` json DEFAULT NULL COMMENT 'Permisos granulares por módulo: {"users":{"can_edit":true,...}, ...}',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Roles dinámicos del panel de control Keeper';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `keeper_panel_settings`
+--
+
+CREATE TABLE `keeper_panel_settings` (
+  `id` int NOT NULL,
+  `setting_key` varchar(100) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Clave única del setting',
+  `setting_value` json NOT NULL COMMENT 'Valor en formato JSON',
+  `updated_by` bigint DEFAULT NULL COMMENT 'keeper_admin_accounts.id de quien lo modificó',
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Configuración dinámica del panel de control Keeper';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `keeper_policy_assignments`
 --
 
@@ -547,6 +618,25 @@ CREATE TABLE `keeper_users` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `keeper_user_assignments`
+--
+
+CREATE TABLE `keeper_user_assignments` (
+  `id` bigint NOT NULL,
+  `keeper_user_id` bigint NOT NULL COMMENT 'FK keeper_users.id',
+  `firm_id` int DEFAULT NULL COMMENT 'FK legacy firm.id',
+  `area_id` int DEFAULT NULL COMMENT 'FK legacy areas.id',
+  `cargo_id` int DEFAULT NULL COMMENT 'FK legacy cargos.id',
+  `sede_id` int DEFAULT NULL COMMENT 'FK sedes.id',
+  `manual_override` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Si 1, el sync legacy no sobreescribe esta asignación',
+  `assigned_by` bigint DEFAULT NULL COMMENT 'keeper_admin_accounts.id de quien asignó',
+  `assigned_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Firma/área/cargo asignados a cada usuario Keeper (para filtros del panel)';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `keeper_window_episode`
 --
 
@@ -579,6 +669,7 @@ CREATE TABLE `keeper_work_schedules` (
   `work_end_time` time DEFAULT '19:00:00',
   `lunch_start_time` time DEFAULT '12:00:00',
   `lunch_end_time` time DEFAULT '13:00:00',
+  `applicable_days` varchar(20) DEFAULT '1,2,3,4,5' COMMENT 'Días aplicables CSV (0=Dom,1=Lun..6=Sáb), NULL=todos',
   `timezone` varchar(50) DEFAULT 'America/Bogota',
   `is_active` tinyint(1) DEFAULT '1',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
@@ -650,6 +741,25 @@ CREATE TABLE `movimientos_sedes` (
   `notas` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci,
   `creado_en` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `notificaciones`
+--
+
+CREATE TABLE `notificaciones` (
+  `id` int NOT NULL,
+  `usuario_id` int NOT NULL,
+  `tipo` varchar(50) NOT NULL,
+  `titulo` varchar(255) NOT NULL,
+  `mensaje` text,
+  `tarea_id` int DEFAULT NULL,
+  `tablero_id` int DEFAULT NULL,
+  `url_redirect` varchar(255) DEFAULT NULL,
+  `leida` tinyint(1) DEFAULT '0',
+  `creado_en` datetime DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
 
@@ -1159,6 +1269,24 @@ ALTER TABLE `keeper_activity_day`
   ADD KEY `idx_activity_user_day_event` (`user_id`,`day_date`,`last_event_at`);
 
 --
+-- Indexes for table `keeper_admin_accounts`
+--
+ALTER TABLE `keeper_admin_accounts`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_keeper_admin_user` (`keeper_user_id`),
+  ADD KEY `ix_keeper_admin_role` (`panel_role`,`is_active`),
+  ADD KEY `ix_keeper_admin_firm` (`firm_scope_id`),
+  ADD KEY `ix_keeper_admin_sede` (`sede_scope_id`);
+
+--
+-- Indexes for table `keeper_admin_sessions`
+--
+ALTER TABLE `keeper_admin_sessions`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_keeper_admin_session_token` (`token_hash`),
+  ADD KEY `ix_keeper_admin_session_admin` (`admin_id`,`expires_at`);
+
+--
 -- Indexes for table `keeper_audit_log`
 --
 ALTER TABLE `keeper_audit_log`
@@ -1230,6 +1358,21 @@ ALTER TABLE `keeper_module_catalog`
   ADD KEY `ix_keeper_module_active` (`active`);
 
 --
+-- Indexes for table `keeper_panel_roles`
+--
+ALTER TABLE `keeper_panel_roles`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_panel_role_slug` (`slug`),
+  ADD KEY `ix_panel_role_hierarchy` (`hierarchy_level`);
+
+--
+-- Indexes for table `keeper_panel_settings`
+--
+ALTER TABLE `keeper_panel_settings`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_panel_setting_key` (`setting_key`);
+
+--
 -- Indexes for table `keeper_policy_assignments`
 --
 ALTER TABLE `keeper_policy_assignments`
@@ -1260,6 +1403,16 @@ ALTER TABLE `keeper_users`
   ADD UNIQUE KEY `uk_keeper_users_legacy` (`legacy_employee_id`),
   ADD UNIQUE KEY `uk_keeper_users_cc` (`cc`),
   ADD KEY `ix_keeper_users_email` (`email`);
+
+--
+-- Indexes for table `keeper_user_assignments`
+--
+ALTER TABLE `keeper_user_assignments`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `ix_keeper_assignment_firm` (`firm_id`),
+  ADD KEY `ix_keeper_assignment_area` (`area_id`),
+  ADD KEY `fk_keeper_assignment_user` (`keeper_user_id`),
+  ADD KEY `ix_keeper_assignment_sede` (`sede_id`);
 
 --
 -- Indexes for table `keeper_window_episode`
@@ -1311,6 +1464,14 @@ ALTER TABLE `movimientos_sedes`
   ADD KEY `sede_destino_id` (`sede_destino_id`),
   ADD KEY `persona_envia_id` (`persona_envia_id`),
   ADD KEY `persona_recibe_id` (`persona_recibe_id`);
+
+--
+-- Indexes for table `notificaciones`
+--
+ALTER TABLE `notificaciones`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_usuario_leida` (`usuario_id`,`leida`),
+  ADD KEY `idx_creado_en` (`creado_en`);
 
 --
 -- Indexes for table `permisos`
@@ -1584,6 +1745,18 @@ ALTER TABLE `keeper_activity_day`
   MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `keeper_admin_accounts`
+--
+ALTER TABLE `keeper_admin_accounts`
+  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `keeper_admin_sessions`
+--
+ALTER TABLE `keeper_admin_sessions`
+  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `keeper_audit_log`
 --
 ALTER TABLE `keeper_audit_log`
@@ -1626,6 +1799,18 @@ ALTER TABLE `keeper_handshake_log`
   MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `keeper_panel_roles`
+--
+ALTER TABLE `keeper_panel_roles`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `keeper_panel_settings`
+--
+ALTER TABLE `keeper_panel_settings`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `keeper_policy_assignments`
 --
 ALTER TABLE `keeper_policy_assignments`
@@ -1641,6 +1826,12 @@ ALTER TABLE `keeper_sessions`
 -- AUTO_INCREMENT for table `keeper_users`
 --
 ALTER TABLE `keeper_users`
+  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `keeper_user_assignments`
+--
+ALTER TABLE `keeper_user_assignments`
   MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
 
 --
@@ -1677,6 +1868,12 @@ ALTER TABLE `mesas`
 -- AUTO_INCREMENT for table `movimientos_sedes`
 --
 ALTER TABLE `movimientos_sedes`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `notificaciones`
+--
+ALTER TABLE `notificaciones`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
@@ -1901,6 +2098,18 @@ ALTER TABLE `keeper_activity_day`
   ADD CONSTRAINT `fk_keeper_activity_user` FOREIGN KEY (`user_id`) REFERENCES `keeper_users` (`id`) ON DELETE CASCADE;
 
 --
+-- Constraints for table `keeper_admin_accounts`
+--
+ALTER TABLE `keeper_admin_accounts`
+  ADD CONSTRAINT `fk_keeper_admin_user` FOREIGN KEY (`keeper_user_id`) REFERENCES `keeper_users` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `keeper_admin_sessions`
+--
+ALTER TABLE `keeper_admin_sessions`
+  ADD CONSTRAINT `fk_keeper_admin_session` FOREIGN KEY (`admin_id`) REFERENCES `keeper_admin_accounts` (`id`) ON DELETE CASCADE;
+
+--
 -- Constraints for table `keeper_audit_log`
 --
 ALTER TABLE `keeper_audit_log`
@@ -1954,6 +2163,12 @@ ALTER TABLE `keeper_policy_assignments`
 ALTER TABLE `keeper_sessions`
   ADD CONSTRAINT `fk_keeper_sessions_device` FOREIGN KEY (`device_id`) REFERENCES `keeper_devices` (`id`) ON DELETE SET NULL,
   ADD CONSTRAINT `fk_keeper_sessions_user` FOREIGN KEY (`user_id`) REFERENCES `keeper_users` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `keeper_user_assignments`
+--
+ALTER TABLE `keeper_user_assignments`
+  ADD CONSTRAINT `fk_keeper_assignment_user` FOREIGN KEY (`keeper_user_id`) REFERENCES `keeper_users` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `keeper_window_episode`

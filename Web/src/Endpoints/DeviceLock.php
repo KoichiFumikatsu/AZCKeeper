@@ -20,29 +20,25 @@ class DeviceLock
         
         $pdo = Db::pdo();
         
-        // Obtener política global
-        $global = PolicyRepo::getActiveGlobal($pdo);
+        // Resolver políticas: global (cache) + user/device (1 UNION)
+        $policies = PolicyRepo::getAllPolicies($pdo, $userId, $deviceId);
+
+        $global = $policies['global'];
         if (!$global) {
             Http::json(500, ['ok' => false, 'error' => 'No active global policy']);
         }
-        
-        // Iniciar con política global
-        $effective = json_decode($global['policy_json'], true);
-        if (!is_array($effective)) $effective = [];
-        
-        // Merge con política de usuario (si existe)
-        $userPol = PolicyRepo::getActiveUser($pdo, $userId);
-        if ($userPol) {
-            $u = json_decode($userPol['policy_json'], true);
+
+        $effective = json_decode($global['policy_json'], true) ?? [];
+
+        if ($policies['user']) {
+            $u = json_decode($policies['user']['policy_json'], true);
             if (is_array($u)) {
                 $effective = PolicyService::deepMerge($effective, $u);
             }
         }
-        
-        // Merge con política de dispositivo (si existe)
-        $devPol = PolicyRepo::getActiveDevice($pdo, $deviceId);
-        if ($devPol) {
-            $d = json_decode($devPol['policy_json'], true);
+
+        if ($policies['device']) {
+            $d = json_decode($policies['device']['policy_json'], true);
             if (is_array($d)) {
                 $effective = PolicyService::deepMerge($effective, $d);
             }

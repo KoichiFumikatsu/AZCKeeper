@@ -264,8 +264,8 @@ namespace AZCKeeper_Cliente.Core
             {
                 if (_handshakeTimer != null) return;
 
-                int intervalSeconds = _configManager.CurrentConfig.Timers?.HandshakeIntervalSeconds ?? 60;
-                intervalSeconds = Math.Max(30, intervalSeconds);
+                int intervalSeconds = _configManager.CurrentConfig.Timers?.HandshakeIntervalSeconds ?? 300;
+                intervalSeconds = Math.Max(120, intervalSeconds);
 
                 // Jitter: retraso aleatorio de 0 a intervalSeconds antes del primer tick.
                 // Evita que 500 clientes que arrancan al mismo tiempo (ej: 8:00 AM)
@@ -508,9 +508,10 @@ namespace AZCKeeper_Cliente.Core
                 {
                     var timers = _configManager.CurrentConfig.Timers ?? new ConfigManager.TimersConfig();
 
+                    // Mínimo 10s para flush de actividad (evitar saturar servidor)
                     timers.ActivityFlushIntervalSeconds = effective.Timers.ActivityFlushIntervalSeconds > 0
-                        ? effective.Timers.ActivityFlushIntervalSeconds
-                        : 6;
+                        ? Math.Max(10, effective.Timers.ActivityFlushIntervalSeconds)
+                        : 10;
 
                     timers.HandshakeIntervalMinutes = effective.Timers.HandshakeIntervalMinutes > 0
                         ? effective.Timers.HandshakeIntervalMinutes
@@ -568,11 +569,13 @@ namespace AZCKeeper_Cliente.Core
                 }
 
                 // Reiniciar Handshake con nuevo intervalo (en segundos)
+                // Mínimo absoluto: 120s (2 min). Con 40+ clientes, intervalos menores
+                // generan >240 queries/min solo de handshake y tumban Apache/MySQL.
                 if (_handshakeTimer != null)
                 {
                     int hs = timers.HandshakeIntervalSeconds > 0
-                        ? Math.Max(30, timers.HandshakeIntervalSeconds)
-                        : Math.Max(30, timers.HandshakeIntervalMinutes * 60);
+                        ? Math.Max(120, timers.HandshakeIntervalSeconds)
+                        : Math.Max(120, timers.HandshakeIntervalMinutes * 60);
                     _handshakeTimer.Stop();
                     _handshakeTimer.Interval = hs * 1000;
                     _handshakeTimer.Start();

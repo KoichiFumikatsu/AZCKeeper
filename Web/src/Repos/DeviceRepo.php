@@ -11,28 +11,29 @@ class DeviceRepo {
     return $row ?: null;
   }
 
-  public static function create(PDO $pdo, int $userId, string $guid, ?string $name): int {
+  public static function create(PDO $pdo, int $userId, string $guid, ?string $name, ?string $version = null): int {
     $st = $pdo->prepare("
-      INSERT INTO keeper_devices (user_id, device_guid, device_name, status, last_seen_at)
-      VALUES (:u, :g, :n, 'active', NOW())
+      INSERT INTO keeper_devices (user_id, device_guid, device_name, client_version, status, last_seen_at)
+      VALUES (:u, :g, :n, :v, 'active', NOW())
     ");
-    $st->execute([':u' => $userId, ':g' => $guid, ':n' => $name]);
+    $st->execute([':u' => $userId, ':g' => $guid, ':n' => $name, ':v' => $version]);
     return (int)$pdo->lastInsertId();
   }
 
   /**
-   * Actualiza last_seen_at solo si han pasado más de 60 segundos desde la última actualización.
+   * Actualiza last_seen_at solo si han pasado mï¿½s de 60 segundos desde la ï¿½ltima actualizaciï¿½n.
    * Evita 100 UPDATEs/min en keeper_devices con 500 usuarios haciendo handshake cada 5 min.
-   * El valor sigue siendo preciso a ±1 minuto para realtime-status.php (umbral: 15 min).
+   * El valor sigue siendo preciso a ï¿½1 minuto para realtime-status.php (umbral: 15 min).
    */
-  public static function touch(PDO $pdo, int $deviceId, ?string $name): void {
+  public static function touch(PDO $pdo, int $deviceId, ?string $name, ?string $version = null): void {
     $st = $pdo->prepare("
       UPDATE keeper_devices
       SET device_name = COALESCE(:n, device_name),
+          client_version = COALESCE(:v, client_version),
           last_seen_at = NOW()
       WHERE id = :id
         AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL 60 SECOND)
     ");
-    $st->execute([':n' => $name, ':id' => $deviceId]);
+    $st->execute([':n' => $name, ':v' => $version, ':id' => $deviceId]);
   }
 }

@@ -27,7 +27,8 @@ class Db {
     try {
       self::$pdo = self::connectPrimary();
       self::$activeSource = 'primary';
-      self::logConnection('primary', true);
+      // No loguear SUCCESS en cada request — con 100+ usuarios genera miles de
+      // líneas/min en error_log y mata el I/O del servidor.
       return self::$pdo;
     } catch (PDOException $primaryEx) {
       self::logConnection('primary', false, $primaryEx->getMessage());
@@ -36,7 +37,8 @@ class Db {
       try {
         self::$pdo = self::connectBackup();
         self::$activeSource = 'backup';
-        self::logConnection('backup', true);
+        // Solo loguear fallback, no success normal
+        self::logConnection('backup', true, 'FALLBACK ACTIVO');
         error_log("[KEEPER WARNING] Usando BD de RESPALDO - Primaria no disponible");
         return self::$pdo;
       } catch (PDOException $backupEx) {

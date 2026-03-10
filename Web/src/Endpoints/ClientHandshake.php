@@ -9,27 +9,36 @@ use Keeper\Repos\SessionRepo;
 use Keeper\Repos\DeviceRepo;
 
 /**
- * ClientHandshake — petición central del cliente.
+ * ClientHandshake ï¿½ peticiï¿½n central del cliente.
  *
  * Con el handshake cada 60s este endpoint reemplaza:
  *   - Polling de bloqueo (era timer cada 30s separado, ya eliminado)
- *   - Retomar actividad del día (GET activity-day, solo al iniciar)
- *   - Configuración efectiva (policies global + user + device)
+ *   - Retomar actividad del dï¿½a (GET activity-day, solo al iniciar)
+ *   - Configuraciï¿½n efectiva (policies global + user + device)
  *   - Horario laboral (keeper_work_schedules)
  *   - Estado del dispositivo (active/away/inactive) para el panel admin
  *
- * Queries ejecutadas por request (mínimo posible):
+ * Queries ejecutadas por request (mï¿½nimo posible):
  *   1. SELECT keeper_sessions          (auth)
  *   2. SELECT keeper_devices           (device lookup + last_seen UPDATE en 1 op)
  *   3. SELECT keeper_policy_assignments (global cacheada en memoria)
  *   4. SELECT keeper_policy_assignments (user + device en 1 UNION)
  *   5. SELECT keeper_work_schedules    (user + global en 1 UNION)
- *   6. SELECT keeper_activity_day      (estado del día para panel)
+ *   6. SELECT keeper_activity_day      (estado del dï¿½a para panel)
  *   Total: 6 queries, de las cuales #3 usa cache en memoria.
  */
 class ClientHandshake {
 
   public static function handle(): void {
+    try {
+      self::doHandle();
+    } catch (\Throwable $e) {
+      error_log("[KEEPER FATAL] ClientHandshake: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
+      Http::json(500, ['ok' => false, 'error' => 'Internal server error']);
+    }
+  }
+
+  private static function doHandle(): void {
     $pdo = Db::pdo();
     $body = Http::readJson();
 
@@ -54,10 +63,10 @@ class ClientHandshake {
     $userId   = (int)$sess['user_id'];
     $deviceId = (int)($sess['device_id'] ?? 0);
 
-    // 2. Device — buscar, crear si no existe, actualizar last_seen_at
+    // 2. Device ï¿½ buscar, crear si no existe, actualizar last_seen_at
     $dev = DeviceRepo::findByGuid($pdo, $deviceGuid);
     if (!$dev) {
-      $deviceId = DeviceRepo::create($pdo, $userId, $deviceGuid, $deviceName);
+      $deviceId = DeviceRepo::create($pdo, $userId, $deviceGuid, $deviceName, $version);
     } else {
       $deviceId = (int)$dev['id'];
 
@@ -71,10 +80,10 @@ class ClientHandshake {
             ->execute([':u' => $userId, ':id' => $deviceId]);
       }
 
-      DeviceRepo::touch($pdo, $deviceId, $deviceName);
+      DeviceRepo::touch($pdo, $deviceId, $deviceName, $version);
     }
 
-    // 3 + 4. Políticas: global (cache) + user/device (1 UNION)
+    // 3 + 4. Polï¿½ticas: global (cache) + user/device (1 UNION)
     $policies = PolicyRepo::getAllPolicies($pdo, $userId, $deviceId);
 
     $global = $policies['global'];
@@ -109,8 +118,8 @@ class ClientHandshake {
     $workSchedule = PolicyRepo::getWorkSchedule($pdo, $userId);
 
     // 6. Estado del dispositivo para panel admin (activo/ausente/inactivo)
-    //    Se calcula con last_event_at de keeper_activity_day del día actual.
-    //    El panel solo lee este campo del handshake — sin query propia.
+    //    Se calcula con last_event_at de keeper_activity_day del dï¿½a actual.
+    //    El panel solo lee este campo del handshake ï¿½ sin query propia.
     $deviceStatus = self::computeDeviceStatus($pdo, $userId, $deviceId);
 
     Http::json(200, [
@@ -123,23 +132,23 @@ class ClientHandshake {
       ],
       'effectiveConfig' => $effective,
       'workSchedule'    => $workSchedule,
-      // Estado calculado en servidor — el panel admin lo lee desde keeper_devices
-      // (guardado en la columna que añadiremos: device_status)
+      // Estado calculado en servidor ï¿½ el panel admin lo lee desde keeper_devices
+      // (guardado en la columna que aï¿½adiremos: device_status)
       'deviceStatus'    => $deviceStatus,
     ]);
   }
 
   /**
-   * Calcula el estado del dispositivo basado en actividad del día.
+   * Calcula el estado del dispositivo basado en actividad del dï¿½a.
    * Resultado: 'active' | 'away' | 'inactive'
    *
-   * Lógica:
+   * Lï¿½gica:
    *   active   ? last_event_at hace < 2 min (usuario trabajando ahora)
    *   away     ? app conectada pero sin actividad reciente (idle o pausa)
    *   inactive ? no hay registro de actividad hoy
    *
    * Este valor se guarda en keeper_devices.device_status para que
-   * realtime-status.php solo haga 1 SELECT en vez de múltiples queries.
+   * realtime-status.php solo haga 1 SELECT en vez de mï¿½ltiples queries.
    */
   private static function computeDeviceStatus(
     \PDO $pdo, int $userId, int $deviceId
@@ -171,12 +180,18 @@ class ClientHandshake {
       ]);
     }
 
-    // Guardar estado + resumen del día en keeper_devices para lectura del panel
-    $pdo->prepare("
-      UPDATE keeper_devices
-      SET device_status = :s, day_summary_json = :j
-      WHERE id = :id
-    ")->execute([':s' => $status, ':j' => $summary, ':id' => $deviceId]);
+    // Guardar estado + resumen del dï¿½a en keeper_devices para lectura del panel
+    try {
+      $pdo->prepare("
+        UPDATE keeper_devices
+        SET device_status = :s, day_summary_json = :j
+        WHERE id = :id
+      ")->execute([':s' => $status, ':j' => $summary, ':id' => $deviceId]);
+    } catch (\PDOException $e) {
+      // Columnas device_status/day_summary_json no existen aÃºn â€” ignorar
+      // hasta que se ejecute la migraciÃ³n add_device_status_columns.sql
+      error_log("[KEEPER] computeDeviceStatus UPDATE ignorado: " . $e->getMessage());
+    }
 
     return $status;
   }

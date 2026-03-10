@@ -27,7 +27,9 @@ namespace AZCKeeper_Cliente.Network
     {
         private readonly ConfigManager _configManager; // base URL, versión, config general
         private readonly AuthManager _authManager;     // token para Authorization
-        private readonly HttpClient _httpClient;       // cliente HTTP reutilizable
+        private readonly HttpClient _httpClient;       // cliente HTTP reutilizable (HTTPS)
+        private HttpClient _httpFallbackClient;        // fallback HTTP (puerto 80) si HTTPS falla
+        private bool _usingFallback;                   // true si estamos usando HTTP fallback
         private readonly OfflineQueue _offlineQueue;   // cola persistente de reintentos
         private System.Timers.Timer _retryTimer;       // timer para reintentar cola offline
 
@@ -46,7 +48,16 @@ namespace AZCKeeper_Cliente.Network
             _authManager = authManager ?? throw new ArgumentNullException(nameof(authManager));
             _offlineQueue = new OfflineQueue(); // ← AÑADIR
 
-            _httpClient = new HttpClient();
+            // SocketsHttpHandler: recicla conexiones TCP cada 5 min.
+            // Resuelve: si el servidor se reinicia o cambia IP (DNS),
+            // el cliente renueva las conexiones automáticamente en vez de
+            // quedarse pegado a una conexión muerta/rechazada.
+            var handler = new System.Net.Http.SocketsHttpHandler
+            {
+                PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+                ConnectTimeout = TimeSpan.FromSeconds(15)
+            };
+            _httpClient = new HttpClient(handler);
 
             string baseUrl = _configManager.CurrentConfig?.ApiBaseUrl;
 
@@ -60,6 +71,23 @@ namespace AZCKeeper_Cliente.Network
                     baseUrl += "/";
 
                 _httpClient.BaseAddress = new Uri(baseUrl);
+
+                // Crear fallback HTTP si la URL es HTTPS
+                if (baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    string httpUrl = "http://" + baseUrl.Substring("https://".Length);
+                    var fallbackHandler = new System.Net.Http.SocketsHttpHandler
+                    {
+                        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+                        ConnectTimeout = TimeSpan.FromSeconds(15)
+                    };
+                    _httpFallbackClient = new HttpClient(fallbackHandler);
+                    _httpFallbackClient.BaseAddress = new Uri(httpUrl);
+                    _httpFallbackClient.Timeout = TimeSpan.FromSeconds(30);
+                    string ver = _configManager.CurrentConfig?.Version ?? "0.0.0.0";
+                    _httpFallbackClient.DefaultRequestHeaders.UserAgent.ParseAdd($"AZCKeeper-Cliente/{ver}");
+                    LocalLogger.Info($"ApiClient: HTTP fallback configurado → {httpUrl}");
+                }
             }
 
             // Timeout más generoso para evitar "response ended prematurely"
@@ -98,7 +126,7 @@ namespace AZCKeeper_Cliente.Network
 
                 using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
 
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
                 result.StatusCode = (int)response.StatusCode;
 
                 string responseBody = await SafeReadBodyAsync(response).ConfigureAwait(false);
@@ -169,7 +197,7 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = CreateRequest(HttpMethod.Post, url, content);
 
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
 
                 result.StatusCode = (int)response.StatusCode;
 
@@ -241,8 +269,9 @@ namespace AZCKeeper_Cliente.Network
 
         /// <summary>
         /// Envía snapshot de actividad del día (con reintento offline si falla).
+        /// Retorna true si el envío HTTP fue exitoso (2xx).
         /// </summary>
-        public async Task SendActivityDayAsync(ActivityDayPayload payload, bool fromQueue = false)
+        public async Task<bool> SendActivityDayAsync(ActivityDayPayload payload, bool fromQueue = false)
         {
             if (payload == null) throw new ArgumentNullException(nameof(payload));
 
@@ -252,7 +281,7 @@ namespace AZCKeeper_Cliente.Network
                 {
                     LocalLogger.Warn("ApiClient.SendActivityDayAsync(): BaseAddress es null.");
                     if (!fromQueue) _offlineQueue.Enqueue("client/activity-day", payload);
-                    return;
+                    return false;
                 }
 
                 const string url = "client/activity-day";
@@ -261,7 +290,7 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = CreateRequest(HttpMethod.Post, url, content);
 
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -270,10 +299,11 @@ namespace AZCKeeper_Cliente.Network
 
                     // Solo encolar si no viene de la cola (evitar loop infinito)
                     if (!fromQueue) _offlineQueue.Enqueue("client/activity-day", payload);
-                    return;
+                    return false;
                 }
 
                 LocalLogger.Info($"ApiClient.SendActivityDayAsync(): activity-day enviado. DayDate={payload.DayDate}");
+                return true;
             }
             catch (HttpRequestException ex)
             {
@@ -282,12 +312,14 @@ namespace AZCKeeper_Cliente.Network
                 LocalLogger.Warn($"ApiClient.SendActivityDayAsync(): red caída. Encolando... Error: {errorMsg}");
 
                 if (!fromQueue) _offlineQueue.Enqueue("client/activity-day", payload);
+                return false;
             }
             catch (Exception ex)
             {
                 // Otros errores: log completo
                 LocalLogger.Error(ex, $"ApiClient.SendActivityDayAsync(): error inesperado. DayDate={payload.DayDate}");
                 if (!fromQueue) _offlineQueue.Enqueue("client/activity-day", payload);
+                return false;
             }
         }
 
@@ -324,7 +356,7 @@ namespace AZCKeeper_Cliente.Network
                 string url = $"client/activity-day?deviceId={Uri.EscapeDataString(deviceId)}&dayDate={Uri.EscapeDataString(dayDate)}";
                 using var httpRequest = CreateRequest(HttpMethod.Get, url, content: null);
 
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
                 result.StatusCode = (int)response.StatusCode;
 
                 string body = await SafeReadBodyAsync(response).ConfigureAwait(false);
@@ -405,8 +437,9 @@ namespace AZCKeeper_Cliente.Network
         }
         /// <summary>
         /// Envía un episodio de ventana (con reintento offline si falla).
+        /// Retorna true si el envío HTTP fue exitoso (2xx).
         /// </summary>
-        public async Task SendWindowEpisodeAsync(WindowEpisodePayload payload, bool fromQueue = false)
+        public async Task<bool> SendWindowEpisodeAsync(WindowEpisodePayload payload, bool fromQueue = false)
         {
             if (payload == null) throw new ArgumentNullException(nameof(payload));
 
@@ -415,7 +448,7 @@ namespace AZCKeeper_Cliente.Network
                 if (_httpClient.BaseAddress == null)
                 {
                     if (!fromQueue) _offlineQueue.Enqueue("client/window-episode", payload);
-                    return;
+                    return false;
                 }
 
                 const string url = "client/window-episode";
@@ -427,21 +460,24 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = CreateRequest(HttpMethod.Post, url, content);
 
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
                 {
                     string body = await SafeReadBodyAsync(response).ConfigureAwait(false);
                     LocalLogger.Warn($"ApiClient.SendWindowEpisodeAsync(): HTTP {(int)response.StatusCode}. BodyPreview={Preview(body)}");
                     if (!fromQueue) _offlineQueue.Enqueue("client/window-episode", payload);
-                    return;
+                    return false;
                 }
+
+                return true;
             }
             catch (TaskCanceledException ex) when (ex.CancellationToken == default)
             {
                 // Timeout (no es error de red, es que el servidor tardó mucho)
                 LocalLogger.Warn($"ApiClient.SendWindowEpisodeAsync(): timeout esperando respuesta. Encolando...");
                 if (!fromQueue) _offlineQueue.Enqueue("client/window-episode", payload);
+                return false;
             }
             catch (HttpRequestException ex)
             {
@@ -455,11 +491,13 @@ namespace AZCKeeper_Cliente.Network
                 }
 
                 if (!fromQueue) _offlineQueue.Enqueue("client/window-episode", payload);
+                return false;
             }
             catch (Exception ex)
             {
                 LocalLogger.Error(ex, "ApiClient.SendWindowEpisodeAsync(): error inesperado.");
                 if (!fromQueue) _offlineQueue.Enqueue("client/window-episode", payload);
+                return false;
             }
         }
 
@@ -480,7 +518,7 @@ namespace AZCKeeper_Cliente.Network
                 }
 
                 using var httpRequest = CreateRequest(HttpMethod.Get, relativeUrl, content: null);
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -516,7 +554,7 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = CreateRequest(HttpMethod.Post, relativeUrl, content);
 
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -535,6 +573,56 @@ namespace AZCKeeper_Cliente.Network
         }
 
         // -------------------- Helpers --------------------
+
+        /// <summary>
+        /// Devuelve el HttpClient activo (HTTPS o fallback HTTP).
+        /// </summary>
+        private HttpClient ActiveClient => _usingFallback && _httpFallbackClient != null
+            ? _httpFallbackClient
+            : _httpClient;
+
+        /// <summary>
+        /// Envía request con auto-fallback HTTPS→HTTP si hay error de conexión.
+        /// </summary>
+        private async Task<HttpResponseMessage> SendWithFallbackAsync(HttpRequestMessage request)
+        {
+            var client = ActiveClient;
+            try
+            {
+                return await client.SendAsync(request).ConfigureAwait(false);
+            }
+            catch (HttpRequestException) when (!_usingFallback && _httpFallbackClient != null)
+            {
+                // HTTPS falló por error de red → intentar HTTP
+                LocalLogger.Warn("ApiClient: HTTPS falló, intentando fallback HTTP...");
+                _usingFallback = true;
+
+                // Recrear request (no se puede reusar después de SendAsync)
+                var fallbackRequest = await CloneRequestAsync(request).ConfigureAwait(false);
+                var result = await _httpFallbackClient.SendAsync(fallbackRequest).ConfigureAwait(false);
+                LocalLogger.Info("ApiClient: fallback HTTP exitoso.");
+                return result;
+            }
+        }
+
+        /// <summary>
+        /// Clona un HttpRequestMessage (necesario porque no se puede reusar tras SendAsync).
+        /// </summary>
+        private static async Task<HttpRequestMessage> CloneRequestAsync(HttpRequestMessage original)
+        {
+            var clone = new HttpRequestMessage(original.Method, original.RequestUri);
+            if (original.Content != null)
+            {
+                var body = await original.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+                clone.Content = new ByteArrayContent(body);
+                if (original.Content.Headers.ContentType != null)
+                    clone.Content.Headers.ContentType = original.Content.Headers.ContentType;
+            }
+            foreach (var header in original.Headers)
+                clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            return clone;
+        }
+
         // Ajuste helper: permitir content null
         /// <summary>
         /// Crea una request con Authorization Bearer y header fallback X-Auth-Token.
@@ -653,35 +741,30 @@ namespace AZCKeeper_Cliente.Network
                 {
                     try
                     {
-                        bool success = false;
+                        bool sent = false;
 
                         if (item.Endpoint == "client/activity-day")
                         {
                             var payload = JsonSerializer.Deserialize<ActivityDayPayload>(item.PayloadJson, _jsonOptions);
                             if (payload != null)
-                            {
-                                await SendActivityDayAsync(payload, fromQueue: true);
-                                success = true;
-                            }
+                                sent = await SendActivityDayAsync(payload, fromQueue: true);
                         }
                         else if (item.Endpoint == "client/window-episode")
                         {
                             var payload = JsonSerializer.Deserialize<WindowEpisodePayload>(item.PayloadJson, _jsonOptions);
                             if (payload != null)
-                            {
-                                await SendWindowEpisodeAsync(payload, fromQueue: true);
-                                success = true;
-                            }
+                                sent = await SendWindowEpisodeAsync(payload, fromQueue: true);
                         }
 
-                        if (success)
+                        if (sent)
                         {
                             _offlineQueue.MarkAsSent(item.Id);
                             LocalLogger.Info($"ApiClient: item {item.Id} reenviado exitosamente.");
                         }
                         else
                         {
-                            _offlineQueue.MarkAsRetried(item.Id, "Deserialización falló");
+                            _offlineQueue.MarkAsRetried(item.Id, "Envío HTTP falló o deserialización inválida");
+                            LocalLogger.Warn($"ApiClient: retry falló para item {item.Id} ({item.Endpoint}). Se reintentará.");
                         }
                     }
                     catch (Exception ex)

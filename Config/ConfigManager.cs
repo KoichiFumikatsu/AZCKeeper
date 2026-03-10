@@ -238,7 +238,7 @@ namespace AZCKeeper_Cliente.Config
             {
                 Version = "3.0.0.0",
                 DeviceId = null, // Se generará posteriormente en EnsureDeviceId.
-                ApiBaseUrl = "https://one.azclegal.com/keeper/public/index.php/api/", // Placeholder para la API real.
+                ApiBaseUrl = "https://keep.azclegal.com/public/index.php/api/", // Placeholder para la API real.
                 ApiAuthToken = null,
                 Blocking = new BlockingConfig
                 {
@@ -352,12 +352,18 @@ namespace AZCKeeper_Cliente.Config
         /// </summary>
         internal class TimersConfig
         {
-            public int ActivityFlushIntervalSeconds { get; set; } = 10;
             /// <summary>
-            /// Intervalo de handshake en segundos. Default 60s.
-            /// Reemplaza HandshakeIntervalMinutes (mantenido por compatibilidad con configs legacy).
+            /// Intervalo de flush de actividad. Default 30s.
+            /// Con 100 usuarios a 10s = 600 req/min. A 30s = 200 req/min (3x menos carga).
+            /// La precisión sigue siendo suficiente: máximo 30s de desfase.
             /// </summary>
-            public int HandshakeIntervalSeconds { get; set; } = 60;
+            public int ActivityFlushIntervalSeconds { get; set; } = 30;
+            /// <summary>
+            /// Intervalo de handshake en segundos. Default 300s (5 min).
+            /// Con 100 usuarios a 60s = 100 handshakes/min × 6 queries = 600 queries/min.
+            /// A 300s = 20 handshakes/min × 6 queries = 120 queries/min.
+            /// </summary>
+            public int HandshakeIntervalSeconds { get; set; } = 300;
             public int HandshakeIntervalMinutes { get; set; } = 5; // legacy
             public int OfflineQueueRetrySeconds { get; set; } = 30;
         }

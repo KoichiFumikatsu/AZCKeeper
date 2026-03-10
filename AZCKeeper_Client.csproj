@@ -27,25 +27,14 @@
 		</PropertyGroup>
 
 		<!-- Intentar copiar desde path 1 -->
-		<Copy
-		  SourceFiles="$(UpdaterPath1)"
-		  DestinationFolder="$(PublishDir)"
-		  Condition="Exists('$(UpdaterPath1)')"
-		  ContinueOnError="true"
-    />
+		<Copy SourceFiles="$(UpdaterPath1)" DestinationFolder="$(PublishDir)" Condition="Exists('$(UpdaterPath1)')" ContinueOnError="true" />
 
 		<!-- Intentar copiar desde path 2 (si el script ya lo compiló) -->
-		<Copy
-		  SourceFiles="$(UpdaterPath2)"
-		  DestinationFolder="$(PublishDir)"
-		  Condition="Exists('$(UpdaterPath2)')"
-		  ContinueOnError="true"
-    />
+		<Copy SourceFiles="$(UpdaterPath2)" DestinationFolder="$(PublishDir)" Condition="Exists('$(UpdaterPath2)')" ContinueOnError="true" />
 
 		<Message Importance="high" Text="Buscando Updater en: $(UpdaterPath1)" />
 		<Message Importance="high" Text="Buscando Updater en: $(UpdaterPath2)" />
-		<Warning Text="Updater no encontrado. Ejecuta build-release.bat para incluirlo."
-				 Condition="!Exists('$(UpdaterPath1)') AND !Exists('$(UpdaterPath2)')" />
+		<Warning Text="Updater no encontrado. Ejecuta build-release.bat para incluirlo." Condition="!Exists('$(UpdaterPath1)') AND !Exists('$(UpdaterPath2)')" />
 	</Target>
 
 </Project>

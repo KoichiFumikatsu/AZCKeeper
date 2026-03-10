@@ -8,6 +8,7 @@ require_once __DIR__ . '/InputValidator.php';
 require_once __DIR__ . '/RateLimiter.php';
 require_once __DIR__ . '/PolicyService.php';
 require_once __DIR__ . '/AuthService.php';
+require_once __DIR__ . '/LegacySyncService.php';
 
 
 // Repos
@@ -19,6 +20,7 @@ require_once __DIR__ . '/Repos/AuditRepo.php';
 require_once __DIR__ . '/Repos/UserRepo.php';
 require_once __DIR__ . '/Repos/LegacyAuthRepo.php';
 require_once __DIR__ . '/Repos/ReleaseRepo.php';
+require_once __DIR__ . '/Repos/AdminAuthRepo.php';
 
 // Endpoints
 require_once __DIR__ . '/Endpoints/Health.php';
