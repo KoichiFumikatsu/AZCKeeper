@@ -14,6 +14,8 @@
 require_once __DIR__ . '/admin_auth.php';
 requireModule('assignments');
 
+use Keeper\Db;
+
 $pageTitle   = 'Asignaciones';
 $currentPage = 'assignments';
 $msg     = '';
@@ -146,15 +148,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $uid = $st->fetchColumn();
                 if (!$uid) throw new \Exception('Asignación no encontrada');
 
-                // Pull fresh data from legacy employee
-                $leg = $pdo->prepare("
-                    SELECT e.company AS firm_id, e.area_id, e.position_id AS cargo_id, e.sede_id
-                    FROM keeper_users ku
-                    JOIN employee e ON e.id = ku.legacy_employee_id
-                    WHERE ku.id = ?
-                ");
-                $leg->execute([$uid]);
-                $legacy = $leg->fetch(PDO::FETCH_ASSOC);
+                // Pull fresh data from legacy employee (BD separada)
+                $kuSt = $pdo->prepare("SELECT legacy_employee_id FROM keeper_users WHERE id = ?");
+                $kuSt->execute([$uid]);
+                $legacyEmpId = $kuSt->fetchColumn();
+
+                $legacy = null;
+                if ($legacyEmpId) {
+                    $legPdo = Db::legacyPdo();
+                    $leg = $legPdo->prepare("
+                        SELECT company AS firm_id, area_id, position_id AS cargo_id, sede_id
+                        FROM employee
+                        WHERE id = ?
+                    ");
+                    $leg->execute([$legacyEmpId]);
+                    $legacy = $leg->fetch(PDO::FETCH_ASSOC);
+                }
 
                 if ($legacy) {
                     $pdo->prepare("

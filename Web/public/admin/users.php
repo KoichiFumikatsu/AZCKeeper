@@ -4,11 +4,16 @@
  */
 require_once __DIR__ . '/admin_auth.php';
 
+use Keeper\Db;
+
 $pageTitle   = 'Usuarios';
 $currentPage = 'users';
 
 $scope  = scopeFilter();
 $params = $scope['params'];
+
+// PDO legacy para consultas contra tabla employee
+$legacyPdo = Db::legacyPdo();
 
 // ──────── AJAX: buscar empleado por email ────────
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'search_employee') {
@@ -18,7 +23,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'search_employee') {
         echo json_encode(['found' => false, 'message' => 'Escribe al menos 3 caracteres.']);
         exit;
     }
-    $stE = $pdo->prepare("
+    $stE = $legacyPdo->prepare("
         SELECT e.id, e.CC, e.first_Name, e.second_Name, e.first_LastName, e.second_LastName, e.mail
         FROM employee e
         WHERE e.mail LIKE :email AND e.exit_status = 0
@@ -74,17 +79,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $flashMsg = 'error|La contraseña es requerida.';
         } elseif ($empId > 0) {
             // Mode 1: link to legacy employee
-            $empSt = $pdo->prepare("
+            $empSt = $legacyPdo->prepare("
                 SELECT e.id, e.CC, e.first_Name, e.second_Name, e.first_LastName, e.second_LastName, e.mail
                 FROM employee e
-                WHERE e.id = ? AND e.id NOT IN (SELECT legacy_employee_id FROM keeper_users)
+                WHERE e.id = ?
                 LIMIT 1
             ");
             $empSt->execute([$empId]);
             $emp = $empSt->fetch(PDO::FETCH_ASSOC);
 
+            // Verificar que no esté ya registrado en keeper
+            $chk = $pdo->prepare("SELECT id FROM keeper_users WHERE legacy_employee_id = ? LIMIT 1");
+            $chk->execute([$empId]);
+            $alreadyRegistered = (bool)$chk->fetch();
+
             if (!$emp) {
-                $flashMsg = 'error|Empleado no encontrado o ya registrado.';
+                $flashMsg = 'error|Empleado no encontrado.';
+            } elseif ($alreadyRegistered) {
+                $flashMsg = 'error|Empleado ya registrado en Keeper.';
             } else {
                 $displayName = trim(implode(' ', array_filter([
                     $emp['first_Name'], $emp['second_Name'], $emp['first_LastName'], $emp['second_LastName']

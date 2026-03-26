@@ -239,10 +239,9 @@ namespace AZCKeeper_Cliente.Logging
                     }
                 }
 
-                // 2) Webhook (solo WARN/ERROR)
+                // 2) Webhook (todos los niveles habilitados)
                 if (_enableWebhookLogging &&
-                    !string.IsNullOrWhiteSpace(_webhookUrl) &&
-                    (level == LogLevel.Warn || level == LogLevel.Error))
+                    !string.IsNullOrWhiteSpace(_webhookUrl))
                 {
                     // Fire-and-forget mejorado: ejecuta en background y observa excepciones
                     Task.Run(async () => await SendToWebhookAsync(level, safeMessage))
@@ -327,7 +326,8 @@ namespace AZCKeeper_Cliente.Logging
                 if (msg.Length > WebhookMaxChars)
                     msg = msg.Substring(0, WebhookMaxChars) + "...(truncated)";
 
-                string contentText = $"`AZCKeeper_Cliente` **[{level}]**\n{msg}";
+                string userTag = !string.IsNullOrWhiteSpace(_userContext) ? $" `{_userContext}`" : "";
+                string contentText = $"`AZCKeeper_Cliente`{userTag} **[{level}]**\n{msg}";
 
                 var payload = new { content = contentText };
                 string json = JsonSerializer.Serialize(payload);

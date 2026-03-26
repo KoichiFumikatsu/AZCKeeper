@@ -8,6 +8,9 @@ use Exception;
 class Db {
   private static ?PDO $pdo = null;
   private static ?string $activeSource = null;
+  private static ?PDO $legacyPdo = null;
+  /** @var array<int,PDO> Cache de conexiones por firma_id */
+  private static array $firmConnections = [];
 
   /**
    * Obtiene conexión PDO con sistema de fallback automático
@@ -171,10 +174,111 @@ class Db {
   }
 
   /**
+   * Conexión a la BD legacy (employee, etc.)
+   * Lee LEGACY_DB_* del .env. Si no están definidos, usa los mismos
+   * valores de DB_* (modo single-DB para migración gradual).
+   */
+  public static function legacyPdo(): PDO {
+    if (self::$legacyPdo) return self::$legacyPdo;
+
+    $host = Config::get('LEGACY_DB_HOST', Config::get('DB_HOST'));
+    $db   = Config::get('LEGACY_DB_NAME');
+    $user = Config::get('LEGACY_DB_USER');
+    $pass = Config::get('LEGACY_DB_PASS');
+
+    // Fallback: si no hay LEGACY_DB_* configurados, usar la conexión principal
+    // Esto permite migración gradual sin romper nada
+    if (!$db || !$user || !$pass) {
+      self::$legacyPdo = self::pdo();
+      return self::$legacyPdo;
+    }
+
+    self::$legacyPdo = self::createConnection($host, $db, $user, $pass);
+    return self::$legacyPdo;
+  }
+
+  /**
+   * Conexión a la fuente de datos de una firma específica.
+   * Busca en keeper_data_sources; si no hay registro, usa legacyPdo().
+   */
+  public static function sourceFor(int $firmaId): PDO {
+    if (isset(self::$firmConnections[$firmaId])) {
+      return self::$firmConnections[$firmaId];
+    }
+
+    $keeperPdo = self::pdo();
+    $st = $keeperPdo->prepare("
+      SELECT db_host, db_port, db_name, db_user, db_pass, source_type
+      FROM keeper_data_sources
+      WHERE firma_id = :fid AND is_active = 1
+      LIMIT 1
+    ");
+    $st->execute(['fid' => $firmaId]);
+    $ds = $st->fetch(PDO::FETCH_ASSOC);
+
+    if (!$ds || $ds['source_type'] !== 'mysql') {
+      // Sin fuente custom o tipo no-mysql → fallback a legacy global
+      self::$firmConnections[$firmaId] = self::legacyPdo();
+      return self::$firmConnections[$firmaId];
+    }
+
+    $dbPass = self::decryptCredential($ds['db_pass']);
+    $host = $ds['db_host'] ?: Config::get('LEGACY_DB_HOST', Config::get('DB_HOST'));
+    $port = (int)($ds['db_port'] ?: 3306);
+
+    $conn = self::createConnection($host, $ds['db_name'], $ds['db_user'], $dbPass);
+    self::$firmConnections[$firmaId] = $conn;
+    return $conn;
+  }
+
+  /**
+   * Cifra una credencial con AES-256-CBC usando APP_KEY del .env.
+   * @return string Base64 del IV + ciphertext
+   */
+  public static function encryptCredential(string $plaintext): string {
+    $key = self::getEncryptionKey();
+    $iv = random_bytes(16);
+    $encrypted = openssl_encrypt($plaintext, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
+    if ($encrypted === false) {
+      throw new Exception('Encryption failed');
+    }
+    return base64_encode($iv . $encrypted);
+  }
+
+  /**
+   * Descifra una credencial cifrada con encryptCredential().
+   */
+  public static function decryptCredential(?string $ciphertext): string {
+    if ($ciphertext === null || $ciphertext === '') return '';
+    $key = self::getEncryptionKey();
+    $raw = base64_decode($ciphertext, true);
+    if ($raw === false || strlen($raw) < 17) {
+      throw new Exception('Invalid encrypted credential');
+    }
+    $iv = substr($raw, 0, 16);
+    $encrypted = substr($raw, 16);
+    $decrypted = openssl_decrypt($encrypted, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
+    if ($decrypted === false) {
+      throw new Exception('Decryption failed — check APP_KEY');
+    }
+    return $decrypted;
+  }
+
+  private static function getEncryptionKey(): string {
+    $hex = Config::get('APP_KEY', '');
+    if ($hex === '') {
+      throw new Exception('APP_KEY no está configurado en .env. Genere uno con: php -r "echo bin2hex(random_bytes(32));"');
+    }
+    return hex2bin($hex);
+  }
+
+  /**
    * Resetea la conexión (útil para testing)
    */
   public static function reset(): void {
     self::$pdo = null;
     self::$activeSource = null;
+    self::$legacyPdo = null;
+    self::$firmConnections = [];
   }
 }

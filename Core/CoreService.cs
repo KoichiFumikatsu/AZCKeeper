@@ -81,7 +81,11 @@ namespace AZCKeeper_Cliente.Core
                 _authManager.TryLoadTokenFromDisk();
 
                 if (!_authManager.HasToken)
-                    PrepareLoginUi();
+                {
+                    // Intentar auto-re-login silencioso con credenciales guardadas
+                    if (!TrySilentReLogin())
+                        PrepareLoginUi();
+                }
 
                 _apiClient = new ApiClient(_configManager, _authManager);
 
@@ -237,6 +241,9 @@ namespace AZCKeeper_Cliente.Core
                     _authManager.UpdateAuthToken(login.Response.Token);
                     _configManager.CurrentConfig.ApiAuthToken = login.Response.Token;
 
+                    // Guardar credenciales para auto-re-login futuro
+                    _authManager.SaveCredentials(user, pass);
+
                     if (!string.IsNullOrWhiteSpace(login.Response.DisplayName))
                     {
                         _configManager.CurrentConfig.UserDisplayName = login.Response.DisplayName;
@@ -263,6 +270,64 @@ namespace AZCKeeper_Cliente.Core
                     _loginForm.SetBusy(false, $"Error en login: {ex.Message}");
                 }
             };
+        }
+
+        /// <summary>
+        /// Intenta re-autenticar silenciosamente usando credenciales guardadas (DPAPI).
+        /// Retorna true si obtuvo un nuevo token válido.
+        /// </summary>
+        private bool TrySilentReLogin()
+        {
+            try
+            {
+                var creds = _authManager.TryLoadCredentials();
+                if (creds == null)
+                {
+                    LocalLogger.Info("CoreService.TrySilentReLogin(): sin credenciales guardadas.");
+                    return false;
+                }
+
+                LocalLogger.Info("CoreService.TrySilentReLogin(): credenciales encontradas. Intentando login silencioso...");
+
+                // Necesitamos ApiClient para hacer la llamada — crear uno temporal si aún no existe
+                var apiClient = _apiClient ?? new ApiClient(_configManager, _authManager);
+
+                var login = apiClient.SendLoginAsync(new ApiClient.LoginRequest
+                {
+                    Username = creds.Value.Username,
+                    Password = creds.Value.Password,
+                    DeviceId = _configManager.CurrentConfig.DeviceId,
+                    DeviceName = Environment.MachineName
+                }).GetAwaiter().GetResult();
+
+                if (login == null || !login.IsSuccess || login.Response == null || string.IsNullOrWhiteSpace(login.Response.Token))
+                {
+                    LocalLogger.Warn($"CoreService.TrySilentReLogin(): login falló. Error={login?.Error ?? login?.Response?.Error ?? "sin detalle"}");
+                    return false;
+                }
+
+                // Login exitoso — restaurar token y contexto
+                _authManager.UpdateAuthToken(login.Response.Token);
+                _configManager.CurrentConfig.ApiAuthToken = login.Response.Token;
+
+                // Refrescar credenciales (por si el servidor cambió algo)
+                _authManager.SaveCredentials(creds.Value.Username, creds.Value.Password);
+
+                if (!string.IsNullOrWhiteSpace(login.Response.DisplayName))
+                {
+                    _configManager.CurrentConfig.UserDisplayName = login.Response.DisplayName;
+                    LocalLogger.SetUserContext(login.Response.DisplayName);
+                }
+
+                _configManager.Save();
+                LocalLogger.Info("CoreService.TrySilentReLogin(): token restaurado exitosamente.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService.TrySilentReLogin(): error durante auto-re-login.");
+                return false;
+            }
         }
 
         /// <summary>
@@ -354,9 +419,19 @@ namespace AZCKeeper_Cliente.Core
 
                 if (hs.IsUnauthorized)
                 {
-                    LocalLogger.Warn("CoreService.PerformHandshake(): 401/403. Se limpia token y se solicitará login.");
-                    _authManager.ClearToken();
+                    LocalLogger.Warn("CoreService.PerformHandshake(): 401/403. Intentando auto-re-login...");
+                    _authManager.ClearToken(deleteFromDisk: true);
 
+                    if (TrySilentReLogin())
+                    {
+                        LocalLogger.Info("CoreService.PerformHandshake(): auto-re-login exitoso. Reintentando handshake...");
+                        // Reintentar handshake con el nuevo token (recursión controlada: solo 1 nivel)
+                        return;
+                    }
+
+                    // Auto-re-login falló — mostrar formulario
+                    LocalLogger.Warn("CoreService.PerformHandshake(): auto-re-login falló. Se solicitará login manual.");
+                    _authManager.ClearCredentials();
                     StopActivityFlushTimer();
 
                     if (_loginForm == null || _loginForm.IsDisposed)
@@ -553,6 +628,14 @@ namespace AZCKeeper_Cliente.Core
                 if (hs.Response.WorkSchedule != null && _activityTracker != null)
                 {
                     ApplyWorkSchedule(hs.Response.WorkSchedule);
+                }
+
+                // Refrescar UserDisplayName desde el servidor
+                if (!string.IsNullOrWhiteSpace(hs.Response.DisplayName))
+                {
+                    _configManager.CurrentConfig.UserDisplayName = hs.Response.DisplayName;
+                    _configManager.Save();
+                    LocalLogger.SetUserContext(hs.Response.DisplayName);
                 }
 
                 LocalLogger.Info("CoreService.PerformHandshake(): configuración aplicada desde effectiveConfig.");

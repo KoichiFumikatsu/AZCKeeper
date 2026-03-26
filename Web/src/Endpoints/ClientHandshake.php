@@ -122,9 +122,15 @@ class ClientHandshake {
     //    El panel solo lee este campo del handshake � sin query propia.
     $deviceStatus = self::computeDeviceStatus($pdo, $userId, $deviceId);
 
+    // 7. Display name del usuario (para logs del cliente)
+    $userRow = $pdo->prepare("SELECT display_name FROM keeper_users WHERE id = :id");
+    $userRow->execute([':id' => $userId]);
+    $displayName = $userRow->fetchColumn() ?: null;
+
     Http::json(200, [
       'ok'            => true,
       'serverTimeUtc' => Http::nowUtcIso(),
+      'displayName'   => $displayName,
       'policyApplied' => [
         'scope'    => $appliedScope,
         'policyId' => $appliedId,

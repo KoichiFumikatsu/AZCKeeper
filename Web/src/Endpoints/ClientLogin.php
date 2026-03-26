@@ -29,10 +29,11 @@ class ClientLogin
             }
 
             $pdo = Db::pdo();
+            $legacyPdo = Db::legacyPdo();
 
             // 1) Validar contra LEGACY Employee (cc + password plano)
-            // Campos reales según tu tabla: first_Name, second_Name, first_LastName, second_LastName, mail, personal_mail, role, supervisor_id, area_id, position, company
-            $stmt = $pdo->prepare("
+            // Usa BD legacy separada (Db::legacyPdo())
+            $stmt = $legacyPdo->prepare("
                 SELECT
                     e.id AS legacy_employee_id,
                     e.cc,
@@ -58,7 +59,7 @@ class ClientLogin
             $emp = $stmt->fetch();
 
             if (!$emp || (string)$emp['password'] !== (string)$password) {
-                // Auditar intento fallido de login
+                // Auditar intento fallido de login (en keeper DB)
                 AuditRepo::log($pdo, null, null, 'login_failed', "Login fallido para CC={$cc}", ['cc' => $cc, 'ip' => $_SERVER['REMOTE_ADDR'] ?? null]);
                 Http::json(401, ['ok' => false, 'error' => 'Invalid credentials']);
             }

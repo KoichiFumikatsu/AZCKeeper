@@ -230,5 +230,122 @@ namespace AZCKeeper_Cliente.Auth
 
             return $"{token.Substring(0, 6)}...{token.Substring(token.Length - 4)}";
         }
+
+        // ==================== Credenciales para auto-re-login ====================
+
+        private const string CredentialsFileName = "auth_credentials.bin";
+
+        /// <summary>
+        /// Guarda CC + password cifrados con DPAPI (CurrentUser).
+        /// Se usa para auto-re-login silencioso cuando el token se pierde o expira.
+        /// </summary>
+        public void SaveCredentials(string username, string password)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+                    return;
+
+                EnsureAuthFolderExists();
+
+                // Formato: username\npassword
+                string payload = $"{username}\n{password}";
+                byte[] bytes = Encoding.UTF8.GetBytes(payload);
+
+                byte[] protectedBytes = ProtectedData.Protect(
+                    bytes,
+                    optionalEntropy: null,
+                    scope: DataProtectionScope.CurrentUser);
+
+                string path = GetCredentialsFilePath();
+                string tmp = path + ".tmp";
+                File.WriteAllBytes(tmp, protectedBytes);
+
+                if (File.Exists(path))
+                    File.Delete(path);
+
+                File.Move(tmp, path);
+
+                LocalLogger.Info("AuthManager: credenciales persistidas cifradas (DPAPI) para auto-re-login.");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "AuthManager: error al persistir credenciales. Auto-re-login no disponible.");
+            }
+        }
+
+        /// <summary>
+        /// Carga credenciales cifradas desde disco.
+        /// Retorna (username, password) o null si no existen/son inválidas.
+        /// </summary>
+        public (string Username, string Password)? TryLoadCredentials()
+        {
+            try
+            {
+                string path = GetCredentialsFilePath();
+
+                if (!File.Exists(path))
+                    return null;
+
+                byte[] protectedBytes = File.ReadAllBytes(path);
+                if (protectedBytes == null || protectedBytes.Length == 0)
+                    return null;
+
+                byte[] bytes = ProtectedData.Unprotect(
+                    protectedBytes,
+                    optionalEntropy: null,
+                    scope: DataProtectionScope.CurrentUser);
+
+                string payload = Encoding.UTF8.GetString(bytes);
+                int sep = payload.IndexOf('\n');
+                if (sep < 0) return null;
+
+                string username = payload.Substring(0, sep);
+                string password = payload.Substring(sep + 1);
+
+                if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+                    return null;
+
+                return (username, password);
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "AuthManager: error al cargar credenciales. Auto-re-login no disponible.");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Elimina credenciales guardadas (ej. password cambiado, login manual requerido).
+        /// </summary>
+        public void ClearCredentials()
+        {
+            try
+            {
+                string path = GetCredentialsFilePath();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                    LocalLogger.Info("AuthManager: credenciales eliminadas de disco.");
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "AuthManager: error al eliminar credenciales.");
+            }
+        }
+
+        /// <summary>
+        /// Indica si hay credenciales guardadas en disco.
+        /// </summary>
+        public bool HasSavedCredentials()
+        {
+            return File.Exists(GetCredentialsFilePath());
+        }
+
+        private static string GetCredentialsFilePath()
+        {
+            return Path.Combine(GetAuthFolderPath(), CredentialsFileName);
+        }
     }
 }

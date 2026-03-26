@@ -877,6 +877,7 @@ namespace AZCKeeper_Cliente.Network
         {
             public bool Ok { get; set; }
             public string ServerTimeUtc { get; set; }
+            public string DisplayName { get; set; }
             public PolicyApplied PolicyApplied { get; set; }
             public EffectiveConfig EffectiveConfig { get; set; }
             /// <summary>

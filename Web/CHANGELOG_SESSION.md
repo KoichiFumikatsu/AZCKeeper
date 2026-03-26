@@ -244,3 +244,51 @@ settings      → can_view, can_edit
 - Banner de resultado (éxito verde / error rojo) con estadísticas: procesados, alertas, errores, duración
 - Sin dependencia de API key ni cron; usa la sesión admin existente
 - El endpoint cron (`/api/cron/productivity`) sigue disponible para cuando se configure cron en producción
+
+### 2.11 Separación Multi-Base de Datos (keeper + legacy)
+**Archivos:** `Db.php`, `LegacySyncService.php`, `ClientLogin.php`, `users.php`, `assignments.php`, `organization.php`, `.env`
+**Migración:** `Web/migrations/add_data_sources.sql`
+
+- **Arquitectura dual PDO**: Tablas keeper en `pipezafra_keep`, tablas legacy (employee, firm, areas, etc.) en `pipezafra_soporte_db`
+- `Db::legacyPdo()` — conexión a DB legacy (lee LEGACY_DB_* de .env, fallback a pdo())
+- `Db::sourceFor($firmaId)` — conexión per-firma desde `keeper_data_sources` (soporte futuro multi-tenant 50+ clientes)
+- `encryptCredential()` / `decryptCredential()` — AES-256-CBC con APP_KEY de .env
+- **LegacySyncService.php** reescrito: sin JOINs cross-DB, matching en PHP
+- **ClientLogin.php**: `$legacyPdo` para employee, `$pdo` para keeper
+- **users.php**: `$legacyPdo` para búsqueda/vínculo de empleados
+- **assignments.php**: fix `reset_override` — split query cross-DB
+- **organization.php**: Sección "Fuente de Datos Legacy" en modal Firma, "Probar Conexión" AJAX, badge BD
+- **add_data_sources.sql**: tabla `keeper_data_sources` (firma_id FK, type mysql/csv/api, credenciales cifradas)
+
+### 2.12 Fix Discord webhook: nombre de usuario y logs Info
+**Archivo:** `LocalLogger.cs`
+
+- **Bug 1**: `SendToWebhookAsync()` no incluía `_userContext` en el mensaje de Discord — los webhooks llegaban sin nombre de usuario
+- **Fix**: Agregado `_userContext` al formato del webhook: `` `AZCKeeper_Cliente` `{usuario}` **[{nivel}]** ``
+- **Bug 2**: Filtro hardcodeado `(level == Warn || level == Error)` impedía enviar logs Info a Discord
+- **Fix**: Removido filtro redundante — `ShouldLog()` ya controla los niveles permitidos
+
+### 2.13 DisplayName en handshake (corrección nombre en logs)
+**Archivos:** `ClientHandshake.php`, `ApiClient.cs`, `CoreService.cs`
+
+- **Problema**: `UserDisplayName` solo se guardaba en login; en reinicio se leía del config.json y si estaba vacío, todos los logs (locales y Discord) salían sin nombre
+- **ClientHandshake.php**: Ahora consulta `display_name` de `keeper_users` y lo incluye como `displayName` en la respuesta JSON
+- **ApiClient.cs**: Agregado `DisplayName` al modelo `HandshakeResponse`
+- **CoreService.cs**: Al final de `PerformHandshake()`, si el servidor devuelve `DisplayName`, lo guarda en config, persiste a disco, y llama `SetUserContext()`
+- Resultado: en cada handshake periódico (cada ~5min) el nombre se refresca desde el servidor
+
+### 2.14 Auto-re-login silencioso (recuperación de token perdido)
+**Archivos:** `AuthManager.cs`, `CoreService.cs`
+
+- **Problema**: Si el token se perdía o expiraba, el cliente quedaba sin autenticación y requería login manual — imposible porque los empleados no saben que la app existe
+- **AuthManager.cs** — Nuevos métodos:
+  - `SaveCredentials(username, password)` — persiste CC+password cifrados con DPAPI (CurrentUser) en `auth_credentials.bin`
+  - `TryLoadCredentials()` — retorna `(Username, Password)?` o null
+  - `ClearCredentials()` — elimina credenciales guardadas
+  - `HasSavedCredentials()` — verifica existencia
+- **CoreService.cs** — Nuevo método `TrySilentReLogin()`:
+  - Carga credenciales DPAPI → `POST /client/login` → nuevo token → handshake normal
+  - Se invoca en: (1) al iniciar si no hay token, (2) cuando handshake recibe 401/403
+  - Si falla (password cambiado, usuario deshabilitado): limpia credenciales → muestra LoginForm
+- **Flujo login exitoso**: Ahora guarda credenciales además del token
+- Seguridad: DPAPI CurrentUser — solo el mismo usuario Windows puede descifrar

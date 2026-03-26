@@ -12,6 +12,8 @@
 require_once __DIR__ . '/admin_auth.php';
 requireModule('organization');
 
+use Keeper\Db;
+
 $pageTitle   = 'Organización';
 $currentPage = 'organization';
 $msg     = '';
@@ -60,6 +62,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $mailMgr = trim($_POST['mail_manager'] ?? '');
                         $st = $pdo->prepare("INSERT INTO keeper_firmas (nombre, manager, mail_manager) VALUES (?, ?, ?)");
                         $st->execute([$name, $manager ?: null, $mailMgr ?: null]);
+                        $newFirmId = (int)$pdo->lastInsertId();
+                        // Guardar fuente de datos si se proporcionó
+                        saveDataSource($pdo, $newFirmId, $_POST);
                     } elseif ($entity === 'area') {
                         $desc = trim($_POST['descripcion'] ?? '');
                         $st = $pdo->prepare("INSERT INTO keeper_areas (nombre, descripcion) VALUES (?, ?)");
@@ -104,6 +109,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $mailMgr = trim($_POST['mail_manager'] ?? '');
                         $st = $pdo->prepare("UPDATE keeper_firmas SET nombre = ?, manager = ?, mail_manager = ? WHERE id = ?");
                         $st->execute([$name, $manager ?: null, $mailMgr ?: null, $id]);
+                        // Actualizar fuente de datos
+                        saveDataSource($pdo, $id, $_POST);
                     } elseif ($entity === 'area') {
                         $desc = trim($_POST['descripcion'] ?? '');
                         $st = $pdo->prepare("UPDATE keeper_areas SET nombre = ?, descripcion = ? WHERE id = ?");
@@ -171,6 +178,84 @@ if (isset($_GET['msg'])) {
     $msgType = $_GET['type'] ?? 'success';
 }
 
+// ──────── AJAX: probar conexión de fuente de datos ────────
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'test_connection') {
+    header('Content-Type: application/json');
+    if (!canDo('organization', 'can_edit')) {
+        echo json_encode(['ok' => false, 'error' => 'Sin permisos']);
+        exit;
+    }
+    $dsHost = trim($_GET['ds_host'] ?? '');
+    $dsPort = (int)($_GET['ds_port'] ?? 3306) ?: 3306;
+    $dsName = trim($_GET['ds_name'] ?? '');
+    $dsUser = trim($_GET['ds_user'] ?? '');
+    $dsPass = trim($_GET['ds_pass'] ?? '');
+    if (!$dsHost || !$dsName || !$dsUser) {
+        echo json_encode(['ok' => false, 'error' => 'Host, nombre de BD y usuario son obligatorios']);
+        exit;
+    }
+    try {
+        $dsn = "mysql:host={$dsHost};port={$dsPort};dbname={$dsName};charset=utf8mb4";
+        $testPdo = new PDO($dsn, $dsUser, $dsPass, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_TIMEOUT => 5,
+        ]);
+        $testPdo->query('SELECT 1');
+        echo json_encode(['ok' => true, 'message' => 'Conexión exitosa']);
+    } catch (\PDOException $e) {
+        echo json_encode(['ok' => false, 'error' => 'Error: ' . $e->getMessage()]);
+    }
+    exit;
+}
+
+/**
+ * Guarda/actualiza fuente de datos de una firma.
+ */
+function saveDataSource(PDO $pdo, int $firmaId, array $post): void {
+    $dsType = trim($post['ds_type'] ?? '');
+    if ($dsType === '' || $dsType === 'none') {
+        // Eliminar fuente existente si la hay
+        $pdo->prepare("DELETE FROM keeper_data_sources WHERE firma_id = ?")->execute([$firmaId]);
+        return;
+    }
+    if ($dsType !== 'mysql') return; // Solo mysql por ahora
+
+    $dsHost = trim($post['ds_host'] ?? '');
+    $dsPort = (int)($post['ds_port'] ?? 3306) ?: 3306;
+    $dsName = trim($post['ds_name'] ?? '');
+    $dsUser = trim($post['ds_user'] ?? '');
+    $dsPass = trim($post['ds_pass'] ?? '');
+    $dsTable = trim($post['ds_employee_table'] ?? 'employee') ?: 'employee';
+
+    if (!$dsHost || !$dsName || !$dsUser) return;
+
+    // Cifrar password si se proporcionó
+    $encPass = ($dsPass !== '' && $dsPass !== '••••••••')
+        ? Db::encryptCredential($dsPass)
+        : null;
+
+    // Verificar si ya existe
+    $existing = $pdo->prepare("SELECT id, db_pass FROM keeper_data_sources WHERE firma_id = ? LIMIT 1");
+    $existing->execute([$firmaId]);
+    $row = $existing->fetch(PDO::FETCH_ASSOC);
+
+    if ($row) {
+        $sets = ['source_type = ?', 'label = ?', 'db_host = ?', 'db_port = ?', 'db_name = ?', 'db_user = ?', 'employee_table = ?'];
+        $vals = [$dsType, "Legacy {$dsName}", $dsHost, $dsPort, $dsName, $dsUser, $dsTable];
+        if ($encPass !== null) {
+            $sets[] = 'db_pass = ?';
+            $vals[] = $encPass;
+        }
+        $vals[] = $row['id'];
+        $pdo->prepare("UPDATE keeper_data_sources SET " . implode(', ', $sets) . " WHERE id = ?")->execute($vals);
+    } else {
+        $pdo->prepare("
+            INSERT INTO keeper_data_sources (firma_id, source_type, label, db_host, db_port, db_name, db_user, db_pass, employee_table)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ")->execute([$firmaId, $dsType, "Legacy {$dsName}", $dsHost, $dsPort, $dsName, $dsUser, $encPass ?? '', $dsTable]);
+    }
+}
+
 $activeTab = $_GET['tab'] ?? 'sociedad';
 if (!in_array($activeTab, ['sociedad', 'firm', 'area', 'cargo', 'sede'])) $activeTab = 'sociedad';
 
@@ -185,11 +270,17 @@ $sociedades = $pdo->query("
     ORDER BY s.nombre ASC
 ")->fetchAll(PDO::FETCH_ASSOC);
 
-// Firmas
+// Firmas (con fuente de datos)
 $firms = $pdo->query("
-    SELECT f.*, COUNT(ua.id) AS users_count
+    SELECT f.*, COUNT(ua.id) AS users_count,
+           ds.id AS ds_id, ds.source_type AS ds_type,
+           ds.db_host AS ds_host, ds.db_port AS ds_port,
+           ds.db_name AS ds_name, ds.db_user AS ds_user,
+           ds.employee_table AS ds_employee_table,
+           ds.is_active AS ds_active, ds.last_sync AS ds_last_sync
     FROM keeper_firmas f
     LEFT JOIN keeper_user_assignments ua ON ua.firm_id = f.id
+    LEFT JOIN keeper_data_sources ds ON ds.firma_id = f.id
     GROUP BY f.id
     ORDER BY f.nombre ASC
 ")->fetchAll(PDO::FETCH_ASSOC);
@@ -240,6 +331,16 @@ require_once __DIR__ . '/partials/layout_header.php';
     editNit: '',
     editNivelJerarquico: 0,
     editAction: 'create',
+    // Data source fields (firma only)
+    dsType: 'none',
+    dsHost: '',
+    dsPort: 3306,
+    dsName: '',
+    dsUser: '',
+    dsPass: '',
+    dsEmployeeTable: 'employee',
+    dsTestResult: '',
+    dsTestLoading: false,
     openCreate(entity) {
         this.editEntity = entity;
         this.editAction = 'create';
@@ -251,6 +352,9 @@ require_once __DIR__ . '/partials/layout_header.php';
         this.editCodigo = '';
         this.editNit = '';
         this.editNivelJerarquico = 0;
+        this.dsType = 'none'; this.dsHost = ''; this.dsPort = 3306;
+        this.dsName = ''; this.dsUser = ''; this.dsPass = '';
+        this.dsEmployeeTable = 'employee'; this.dsTestResult = '';
         this.editModal = true;
     },
     openEdit(entity, id, name, extra) {
@@ -264,7 +368,34 @@ require_once __DIR__ . '/partials/layout_header.php';
         this.editCodigo = extra.codigo || '';
         this.editNit = extra.nit || '';
         this.editNivelJerarquico = extra.nivel_jerarquico || 0;
+        // Data source
+        this.dsType = extra.ds_type || 'none';
+        this.dsHost = extra.ds_host || '';
+        this.dsPort = extra.ds_port || 3306;
+        this.dsName = extra.ds_name || '';
+        this.dsUser = extra.ds_user || '';
+        this.dsPass = extra.ds_type ? '••••••••' : '';
+        this.dsEmployeeTable = extra.ds_employee_table || 'employee';
+        this.dsTestResult = '';
         this.editModal = true;
+    },
+    async testConnection() {
+        this.dsTestLoading = true;
+        this.dsTestResult = '';
+        try {
+            const params = new URLSearchParams({
+                ajax: 'test_connection',
+                ds_host: this.dsHost, ds_port: this.dsPort,
+                ds_name: this.dsName, ds_user: this.dsUser,
+                ds_pass: this.dsPass === '••••••••' ? '' : this.dsPass
+            });
+            const res = await fetch('organization.php?' + params);
+            const data = await res.json();
+            this.dsTestResult = data.ok ? 'ok|' + data.message : 'error|' + data.error;
+        } catch(e) {
+            this.dsTestResult = 'error|Error de red';
+        }
+        this.dsTestLoading = false;
     },
     entityLabel() {
         return { sociedad: 'Sociedad', firm: 'Firma', area: 'Área', cargo: 'Cargo', sede: 'Sede' }[this.editEntity] || '';
@@ -403,6 +534,12 @@ require_once __DIR__ . '/partials/layout_header.php';
                 <tr class="hover:bg-gray-50/50 transition-colors">
                     <td class="py-2.5 px-3 font-medium text-dark">
                         <?= htmlspecialchars($f['nombre']) ?>
+                        <?php if ($f['ds_type']): ?>
+                        <span class="inline-flex items-center gap-0.5 ml-1 px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-medium rounded" title="Fuente de datos: <?= htmlspecialchars($f['ds_name'] ?? '') ?>">
+                            <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
+                            BD
+                        </span>
+                        <?php endif; ?>
                         <p class="text-[10px] text-muted sm:hidden"><?= htmlspecialchars($f['manager'] ?? '') ?></p>
                     </td>
                     <td class="py-2.5 px-3 text-muted text-xs hidden sm:table-cell"><?= htmlspecialchars($f['manager'] ?? '—') ?></td>
@@ -413,7 +550,7 @@ require_once __DIR__ . '/partials/layout_header.php';
                     <td class="py-2.5 px-3 text-right">
                         <div class="flex items-center justify-end gap-1">
                             <?php if ($canEdit): ?>
-                            <button @click="openEdit('firm', <?= $f['id'] ?>, <?= htmlspecialchars(json_encode($f['nombre']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode(['manager' => $f['manager'] ?? '', 'mail_manager' => $f['mail_manager'] ?? '']), ENT_QUOTES) ?>)"
+                            <button @click="openEdit('firm', <?= $f['id'] ?>, <?= htmlspecialchars(json_encode($f['nombre']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode(['manager' => $f['manager'] ?? '', 'mail_manager' => $f['mail_manager'] ?? '', 'ds_type' => $f['ds_type'] ?? '', 'ds_host' => $f['ds_host'] ?? '', 'ds_port' => (int)($f['ds_port'] ?? 3306), 'ds_name' => $f['ds_name'] ?? '', 'ds_user' => $f['ds_user'] ?? '', 'ds_employee_table' => $f['ds_employee_table'] ?? 'employee']), ENT_QUOTES) ?>)"
                                     class="p-1.5 rounded-lg text-muted hover:text-corp-800 hover:bg-corp-50 transition-colors" title="Editar">
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
                             </button>
@@ -679,6 +816,83 @@ require_once __DIR__ . '/partials/layout_header.php';
                         <input type="email" name="mail_manager" x-model="editMailManager"
                                class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none"
                                placeholder="email@empresa.com (opcional)">
+                    </div>
+
+                    <!-- ── Fuente de Datos ── -->
+                    <div class="border-t border-gray-100 pt-3 mt-3">
+                        <div class="flex items-center gap-2 mb-2">
+                            <svg class="w-4 h-4 text-corp-800" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
+                            <span class="text-xs font-bold text-dark uppercase tracking-wider">Fuente de Datos Legacy</span>
+                        </div>
+                        <p class="text-[10px] text-muted mb-3">Configura la BD legacy de esta firma para sincronizar empleados. Si no se configura, se usa la fuente global.</p>
+
+                        <div>
+                            <label class="text-xs font-semibold text-dark block mb-1">Tipo de Fuente</label>
+                            <select name="ds_type" x-model="dsType" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none">
+                                <option value="none">Ninguna (usar global)</option>
+                                <option value="mysql">MySQL / MariaDB</option>
+                            </select>
+                        </div>
+
+                        <template x-if="dsType === 'mysql'">
+                            <div class="space-y-2 mt-2">
+                                <div class="grid grid-cols-3 gap-2">
+                                    <div class="col-span-2">
+                                        <label class="text-[10px] font-semibold text-muted block mb-0.5">Host</label>
+                                        <input type="text" name="ds_host" x-model="dsHost"
+                                               class="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none"
+                                               placeholder="mysql.example.com">
+                                    </div>
+                                    <div>
+                                        <label class="text-[10px] font-semibold text-muted block mb-0.5">Puerto</label>
+                                        <input type="number" name="ds_port" x-model.number="dsPort" min="1" max="65535"
+                                               class="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none"
+                                               placeholder="3306">
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="text-[10px] font-semibold text-muted block mb-0.5">Nombre de BD</label>
+                                    <input type="text" name="ds_name" x-model="dsName"
+                                           class="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none"
+                                           placeholder="nombre_base_datos">
+                                </div>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label class="text-[10px] font-semibold text-muted block mb-0.5">Usuario</label>
+                                        <input type="text" name="ds_user" x-model="dsUser"
+                                               class="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none"
+                                               placeholder="db_user">
+                                    </div>
+                                    <div>
+                                        <label class="text-[10px] font-semibold text-muted block mb-0.5">Contraseña</label>
+                                        <input type="password" name="ds_pass" x-model="dsPass"
+                                               class="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none"
+                                               placeholder="••••••••">
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="text-[10px] font-semibold text-muted block mb-0.5">Tabla de Empleados</label>
+                                    <input type="text" name="ds_employee_table" x-model="dsEmployeeTable"
+                                           class="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none"
+                                           placeholder="employee">
+                                </div>
+                                <!-- Test connection button -->
+                                <div class="flex items-center gap-2 pt-1">
+                                    <button type="button" @click="testConnection()" :disabled="dsTestLoading || !dsHost || !dsName || !dsUser"
+                                            class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-medium transition-colors"
+                                            :class="dsTestLoading ? 'bg-gray-50 text-muted cursor-wait' : 'hover:bg-corp-50 hover:border-corp-200 hover:text-corp-800 text-dark'">
+                                        <svg x-show="!dsTestLoading" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                        <svg x-show="dsTestLoading" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                                        <span x-text="dsTestLoading ? 'Probando…' : 'Probar Conexión'"></span>
+                                    </button>
+                                    <template x-if="dsTestResult">
+                                        <span class="text-[10px] font-medium"
+                                              :class="dsTestResult.startsWith('ok') ? 'text-emerald-600' : 'text-red-600'"
+                                              x-text="dsTestResult.split('|')[1]"></span>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
                     </div>
                 </div>
             </template>
