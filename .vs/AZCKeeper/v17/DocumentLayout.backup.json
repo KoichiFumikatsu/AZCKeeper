@@ -1,0 +1,173 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\xampp\\htdocs\\AZCKeeper\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|c:\\xampp\\htdocs\\azckeeper\\update\\updatemanager.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|solutionrelative:update\\updatemanager.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|c:\\xampp\\htdocs\\azckeeper\\docs\\changelog.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}|",
+      "RelativeMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|solutionrelative:docs\\changelog.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}|"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|c:\\xampp\\htdocs\\azckeeper\\logging\\locallogger.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|solutionrelative:logging\\locallogger.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|c:\\xampp\\htdocs\\azckeeper\\network\\apiclient.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|solutionrelative:network\\apiclient.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|c:\\xampp\\htdocs\\azckeeper\\auth\\authmanager.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|solutionrelative:auth\\authmanager.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|c:\\xampp\\htdocs\\azckeeper\\web\\src\\endpoints\\clienthandshake.php||{3B902123-F8A7-4915-9F01-361F908088D0}",
+      "RelativeMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|solutionrelative:web\\src\\endpoints\\clienthandshake.php||{3B902123-F8A7-4915-9F01-361F908088D0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|c:\\xampp\\htdocs\\azckeeper\\core\\coreservice.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|solutionrelative:core\\coreservice.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|c:\\xampp\\htdocs\\azckeeper\\tracking\\activitytracker.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|solutionrelative:tracking\\activitytracker.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|c:\\xampp\\htdocs\\azckeeper\\.gitignore||{3B902123-F8A7-4915-9F01-361F908088D0}",
+      "RelativeMoniker": "D:0:0:{14ABED5B-E424-BF26-F192-155D38543233}|AZCKeeper_Client.csproj|solutionrelative:.gitignore||{3B902123-F8A7-4915-9F01-361F908088D0}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 1,
+          "Children": [
+            {
+              "$type": "Document",
+              "DocumentIndex": 8,
+              "Title": ".gitignore",
+              "DocumentMoniker": "C:\\xampp\\htdocs\\AZCKeeper\\.gitignore",
+              "RelativeDocumentMoniker": ".gitignore",
+              "ToolTip": "C:\\xampp\\htdocs\\AZCKeeper\\.gitignore",
+              "RelativeToolTip": ".gitignore",
+              "ViewState": "AgIAABEAAAAAAAAAAIBJwAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-02-19T16:55:32.163Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "UpdateManager.cs",
+              "DocumentMoniker": "C:\\xampp\\htdocs\\AZCKeeper\\Update\\UpdateManager.cs",
+              "RelativeDocumentMoniker": "Update\\UpdateManager.cs",
+              "ToolTip": "C:\\xampp\\htdocs\\AZCKeeper\\Update\\UpdateManager.cs",
+              "RelativeToolTip": "Update\\UpdateManager.cs",
+              "ViewState": "AgIAAJQAAAAAAAAAAAAqwKEAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-02-16T16:18:00.48Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "AuthManager.cs",
+              "DocumentMoniker": "C:\\xampp\\htdocs\\AZCKeeper\\Auth\\AuthManager.cs",
+              "RelativeDocumentMoniker": "Auth\\AuthManager.cs",
+              "ToolTip": "C:\\xampp\\htdocs\\AZCKeeper\\Auth\\AuthManager.cs",
+              "RelativeToolTip": "Auth\\AuthManager.cs",
+              "ViewState": "AgIAAC8AAAAAAAAAAABQwDsBAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-02-18T00:42:14.969Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "ApiClient.cs",
+              "DocumentMoniker": "C:\\xampp\\htdocs\\AZCKeeper\\Network\\ApiClient.cs",
+              "RelativeDocumentMoniker": "Network\\ApiClient.cs",
+              "ToolTip": "C:\\xampp\\htdocs\\AZCKeeper\\Network\\ApiClient.cs",
+              "RelativeToolTip": "Network\\ApiClient.cs",
+              "ViewState": "AgIAABkEAAAAAAAAAAAkwAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-02-18T00:18:39.724Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "LocalLogger.cs",
+              "DocumentMoniker": "C:\\xampp\\htdocs\\AZCKeeper\\Logging\\LocalLogger.cs",
+              "RelativeDocumentMoniker": "Logging\\LocalLogger.cs",
+              "ToolTip": "C:\\xampp\\htdocs\\AZCKeeper\\Logging\\LocalLogger.cs",
+              "RelativeToolTip": "Logging\\LocalLogger.cs",
+              "ViewState": "AgIAAEQBAAAAAAAAAAAwwAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-02-18T00:16:33.833Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "CHANGELOG.md",
+              "DocumentMoniker": "C:\\xampp\\htdocs\\AZCKeeper\\Docs\\CHANGELOG.md",
+              "RelativeDocumentMoniker": "Docs\\CHANGELOG.md",
+              "ToolTip": "C:\\xampp\\htdocs\\AZCKeeper\\Docs\\CHANGELOG.md",
+              "RelativeToolTip": "Docs\\CHANGELOG.md",
+              "ViewState": "AgIAAFUCAAAAAAAAAAAIwHMCAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-02-18T00:11:16.506Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 6,
+              "Title": "CoreService.cs",
+              "DocumentMoniker": "C:\\xampp\\htdocs\\AZCKeeper\\Core\\CoreService.cs",
+              "RelativeDocumentMoniker": "Core\\CoreService.cs",
+              "ToolTip": "C:\\xampp\\htdocs\\AZCKeeper\\Core\\CoreService.cs",
+              "RelativeToolTip": "Core\\CoreService.cs",
+              "ViewState": "AgIAALkCAAAAAAAAAMBdwFUAAAA6AAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-02-17T22:35:58.644Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "ClientHandshake.php",
+              "DocumentMoniker": "C:\\xampp\\htdocs\\AZCKeeper\\Web\\src\\Endpoints\\ClientHandshake.php",
+              "RelativeDocumentMoniker": "Web\\src\\Endpoints\\ClientHandshake.php",
+              "ToolTip": "C:\\xampp\\htdocs\\AZCKeeper\\Web\\src\\Endpoints\\ClientHandshake.php",
+              "RelativeToolTip": "Web\\src\\Endpoints\\ClientHandshake.php",
+              "ViewState": "AgIAAE4AAAAAAAAAAAAQwFgAAAAPAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002338|",
+              "WhenOpened": "2026-02-18T00:48:22.304Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 7,
+              "Title": "ActivityTracker.cs",
+              "DocumentMoniker": "C:\\xampp\\htdocs\\AZCKeeper\\Tracking\\ActivityTracker.cs",
+              "RelativeDocumentMoniker": "Tracking\\ActivityTracker.cs",
+              "ToolTip": "C:\\xampp\\htdocs\\AZCKeeper\\Tracking\\ActivityTracker.cs",
+              "RelativeToolTip": "Tracking\\ActivityTracker.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-02-17T22:34:43.067Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

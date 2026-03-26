@@ -1,0 +1,10 @@
+-- ============================================================
+-- add_sociedades.sql  [SUPERSEDED]
+--
+-- *** ESTE ARCHIVO HA SIDO REEMPLAZADO ***
+-- Usar: keeper_org_independence.sql
+--
+-- Ese archivo crea TODAS las tablas organizacionales propias
+-- (keeper_sociedades, keeper_firmas, keeper_areas, keeper_cargos,
+-- keeper_sedes) con seed desde legacy y sociedad_id en assignments.
+-- ============================================================
