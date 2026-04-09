@@ -18,14 +18,13 @@ use Keeper\Repos\DeviceRepo;
  *   - Horario laboral (keeper_work_schedules)
  *   - Estado del dispositivo (active/away/inactive) para el panel admin
  *
- * Queries ejecutadas por request (m�nimo posible):
- *   1. SELECT keeper_sessions          (auth)
- *   2. SELECT keeper_devices           (device lookup + last_seen UPDATE en 1 op)
- *   3. SELECT keeper_policy_assignments (global cacheada en memoria)
- *   4. SELECT keeper_policy_assignments (user + device en 1 UNION)
- *   5. SELECT keeper_work_schedules    (user + global en 1 UNION)
- *   6. SELECT keeper_activity_day      (estado del d�a para panel)
- *   Total: 6 queries, de las cuales #3 usa cache en memoria.
+ * Queries ejecutadas por request (mínimo posible):
+ *   1. SELECT keeper_sessions + keeper_users  (auth + display_name en 1 JOIN)
+ *   2. SELECT/UPDATE keeper_devices           (device lookup + last_seen throttled)
+ *   3. SELECT keeper_policy_assignments       (global — cacheada en memoria 60s)
+ *   4. SELECT keeper_policy_assignments       (user + device en 1 UNION)
+ *   5. SELECT keeper_work_schedules           (cacheada en memoria 300s por userId)
+ *   Total: 5 queries reales (3+4 son 1 si global está cacheada, 5 si schedule cacheado).
  */
 class ClientHandshake {
 
@@ -117,12 +116,7 @@ class ClientHandshake {
     // 5. Horario laboral (1 UNION)
     $workSchedule = PolicyRepo::getWorkSchedule($pdo, $userId);
 
-    // 6. Estado del dispositivo para panel admin (activo/ausente/inactivo)
-    //    Se calcula con last_event_at de keeper_activity_day del d�a actual.
-    //    El panel solo lee este campo del handshake � sin query propia.
-    $deviceStatus = self::computeDeviceStatus($pdo, $userId, $deviceId);
-
-    // 7. Display name — viene del JOIN en SessionRepo::validateBearer(), sin query extra
+    // 6. Display name — viene del JOIN en SessionRepo::validateBearer(), sin query extra
     $displayName = $sess['display_name'] ?: null;
 
     Http::json(200, [
@@ -136,67 +130,6 @@ class ClientHandshake {
       ],
       'effectiveConfig' => $effective,
       'workSchedule'    => $workSchedule,
-      // Estado calculado en servidor � el panel admin lo lee desde keeper_devices
-      // (guardado en la columna que a�adiremos: device_status)
-      'deviceStatus'    => $deviceStatus,
     ]);
-  }
-
-  /**
-   * Calcula el estado del dispositivo basado en actividad del d�a.
-   * Resultado: 'active' | 'away' | 'inactive'
-   *
-   * L�gica:
-   *   active   ? last_event_at hace < 2 min (usuario trabajando ahora)
-   *   away     ? app conectada pero sin actividad reciente (idle o pausa)
-   *   inactive ? no hay registro de actividad hoy
-   *
-   * Este valor se guarda en keeper_devices.device_status para que
-   * realtime-status.php solo haga 1 SELECT en vez de m�ltiples queries.
-   */
-  private static function computeDeviceStatus(
-    \PDO $pdo, int $userId, int $deviceId
-  ): string {
-    $st = $pdo->prepare("
-      SELECT last_event_at, active_seconds, idle_seconds, call_seconds,
-             work_hours_active_seconds, lunch_active_seconds, after_hours_active_seconds
-      FROM keeper_activity_day
-      WHERE user_id = :u AND device_id = :d AND day_date = CURDATE()
-      LIMIT 1
-    ");
-    $st->execute([':u' => $userId, ':d' => $deviceId]);
-    $row = $st->fetch();
-
-    if (!$row || !$row['last_event_at'] || (int)$row['active_seconds'] === 0) {
-      $status = 'inactive';
-      $summary = null;
-    } else {
-      $secondsSince = time() - strtotime($row['last_event_at']);
-      $status = $secondsSince < 120 ? 'active' : 'away';
-      $summary = json_encode([
-        'active_seconds'      => (int)$row['active_seconds'],
-        'idle_seconds'        => (int)$row['idle_seconds'],
-        'call_seconds'        => (int)$row['call_seconds'],
-        'work_active_seconds' => (int)$row['work_hours_active_seconds'],
-        'lunch_active_seconds'=> (int)$row['lunch_active_seconds'],
-        'after_active_seconds'=> (int)$row['after_hours_active_seconds'],
-        'last_event_at'       => $row['last_event_at'],
-      ]);
-    }
-
-    // Guardar estado + resumen del d�a en keeper_devices para lectura del panel
-    try {
-      $pdo->prepare("
-        UPDATE keeper_devices
-        SET device_status = :s, day_summary_json = :j
-        WHERE id = :id
-      ")->execute([':s' => $status, ':j' => $summary, ':id' => $deviceId]);
-    } catch (\PDOException $e) {
-      // Columnas device_status/day_summary_json no existen aún — ignorar
-      // hasta que se ejecute la migración add_device_status_columns.sql
-      error_log("[KEEPER] computeDeviceStatus UPDATE ignorado: " . $e->getMessage());
-    }
-
-    return $status;
   }
 }
