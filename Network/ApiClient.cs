@@ -28,8 +28,6 @@ namespace AZCKeeper_Cliente.Network
         private readonly ConfigManager _configManager; // base URL, versión, config general
         private readonly AuthManager _authManager;     // token para Authorization
         private readonly HttpClient _httpClient;       // cliente HTTP reutilizable (HTTPS)
-        private HttpClient _httpFallbackClient;        // fallback HTTP (puerto 80) si HTTPS falla
-        private bool _usingFallback;                   // true si estamos usando HTTP fallback
         private readonly OfflineQueue _offlineQueue;   // cola persistente de reintentos
         private System.Timers.Timer _retryTimer;       // timer para reintentar cola offline
 
@@ -72,22 +70,9 @@ namespace AZCKeeper_Cliente.Network
 
                 _httpClient.BaseAddress = new Uri(baseUrl);
 
-                // Crear fallback HTTP si la URL es HTTPS
-                if (baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                {
-                    string httpUrl = "http://" + baseUrl.Substring("https://".Length);
-                    var fallbackHandler = new System.Net.Http.SocketsHttpHandler
-                    {
-                        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-                        ConnectTimeout = TimeSpan.FromSeconds(15)
-                    };
-                    _httpFallbackClient = new HttpClient(fallbackHandler);
-                    _httpFallbackClient.BaseAddress = new Uri(httpUrl);
-                    _httpFallbackClient.Timeout = TimeSpan.FromSeconds(30);
-                    string ver = _configManager.CurrentConfig?.Version ?? "0.0.0.0";
-                    _httpFallbackClient.DefaultRequestHeaders.UserAgent.ParseAdd($"AZCKeeper-Cliente/{ver}");
-                    LocalLogger.Info($"ApiClient: HTTP fallback configurado → {httpUrl}");
-                }
+                // Sin fallback HTTP: si HTTPS falla, el cliente va a offline queue.
+                // El fallback HTTP duplicaba conexiones desde la misma IP pública
+                // (NAT de oficina) y activaba el firewall anti-DDoS del hosting.
             }
 
             // Timeout más generoso para evitar "response ended prematurely"
@@ -126,7 +111,7 @@ namespace AZCKeeper_Cliente.Network
 
                 using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
 
-                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
+                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
                 result.StatusCode = (int)response.StatusCode;
 
                 string responseBody = await SafeReadBodyAsync(response).ConfigureAwait(false);
@@ -197,7 +182,7 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
 
-                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
+                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
                 result.StatusCode = (int)response.StatusCode;
 
                 string responseBody = await SafeReadBodyAsync(response).ConfigureAwait(false);
@@ -261,7 +246,7 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = CreateRequest(HttpMethod.Post, url, content);
 
-                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
+                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
 
                 result.StatusCode = (int)response.StatusCode;
 
@@ -354,7 +339,7 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = CreateRequest(HttpMethod.Post, url, content);
 
-                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
+                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -420,7 +405,7 @@ namespace AZCKeeper_Cliente.Network
                 string url = $"client/activity-day?deviceId={Uri.EscapeDataString(deviceId)}&dayDate={Uri.EscapeDataString(dayDate)}";
                 using var httpRequest = CreateRequest(HttpMethod.Get, url, content: null);
 
-                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
+                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
                 result.StatusCode = (int)response.StatusCode;
 
                 string body = await SafeReadBodyAsync(response).ConfigureAwait(false);
@@ -524,7 +509,7 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = CreateRequest(HttpMethod.Post, url, content);
 
-                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
+                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -582,7 +567,7 @@ namespace AZCKeeper_Cliente.Network
                 }
 
                 using var httpRequest = CreateRequest(HttpMethod.Get, relativeUrl, content: null);
-                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
+                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -618,7 +603,7 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = CreateRequest(HttpMethod.Post, relativeUrl, content);
 
-                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
+                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -637,55 +622,6 @@ namespace AZCKeeper_Cliente.Network
         }
 
         // -------------------- Helpers --------------------
-
-        /// <summary>
-        /// Devuelve el HttpClient activo (HTTPS o fallback HTTP).
-        /// </summary>
-        private HttpClient ActiveClient => _usingFallback && _httpFallbackClient != null
-            ? _httpFallbackClient
-            : _httpClient;
-
-        /// <summary>
-        /// Envía request con auto-fallback HTTPS→HTTP si hay error de conexión.
-        /// </summary>
-        private async Task<HttpResponseMessage> SendWithFallbackAsync(HttpRequestMessage request)
-        {
-            var client = ActiveClient;
-            try
-            {
-                return await client.SendAsync(request).ConfigureAwait(false);
-            }
-            catch (HttpRequestException) when (!_usingFallback && _httpFallbackClient != null)
-            {
-                // HTTPS falló por error de red → intentar HTTP
-                LocalLogger.Warn("ApiClient: HTTPS falló, intentando fallback HTTP...");
-                _usingFallback = true;
-
-                // Recrear request (no se puede reusar después de SendAsync)
-                var fallbackRequest = await CloneRequestAsync(request).ConfigureAwait(false);
-                var result = await _httpFallbackClient.SendAsync(fallbackRequest).ConfigureAwait(false);
-                LocalLogger.Info("ApiClient: fallback HTTP exitoso.");
-                return result;
-            }
-        }
-
-        /// <summary>
-        /// Clona un HttpRequestMessage (necesario porque no se puede reusar tras SendAsync).
-        /// </summary>
-        private static async Task<HttpRequestMessage> CloneRequestAsync(HttpRequestMessage original)
-        {
-            var clone = new HttpRequestMessage(original.Method, original.RequestUri);
-            if (original.Content != null)
-            {
-                var body = await original.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-                clone.Content = new ByteArrayContent(body);
-                if (original.Content.Headers.ContentType != null)
-                    clone.Content.Headers.ContentType = original.Content.Headers.ContentType;
-            }
-            foreach (var header in original.Headers)
-                clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
-            return clone;
-        }
 
         // Ajuste helper: permitir content null
         /// <summary>

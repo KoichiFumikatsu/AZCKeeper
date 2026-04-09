@@ -89,9 +89,9 @@ namespace AZCKeeper_Cliente.Core
 
                 _apiClient = new ApiClient(_configManager, _authManager);
 
-                // Handshake solo será válido si hay token.
-                PerformHandshake();
-
+                // Handshake se ejecuta en Start() → evita doble handshake en startup
+                // que genera ráfaga de 40 requests simultáneos cuando todos los clientes
+                // arrancan a la misma hora (thundering herd).
                 InitializeModules();
                 // Habilitar startup automático
                 if (!StartupManager.IsEnabled())
