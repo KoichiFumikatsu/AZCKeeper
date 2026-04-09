@@ -9,9 +9,11 @@ class SessionRepo {
   public static function validateBearer(PDO $pdo, string $token): ?array {
     $hash = Http::sha256Hex($token);
     $st = $pdo->prepare("
-      SELECT id, user_id, device_id, expires_at, revoked_at
-      FROM keeper_sessions
-      WHERE token_hash=:h
+      SELECT s.id, s.user_id, s.device_id, s.expires_at, s.revoked_at,
+             u.display_name
+      FROM keeper_sessions s
+      LEFT JOIN keeper_users u ON u.id = s.user_id
+      WHERE s.token_hash = :h
       LIMIT 1
     ");
     $st->execute([':h' => $hash]);

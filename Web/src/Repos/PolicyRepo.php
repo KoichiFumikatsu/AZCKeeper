@@ -6,21 +6,29 @@ use PDO;
 class PolicyRepo {
 
   /**
-   * Cache en memoria del proceso FastCGI para política global.
-   * TTL de 60s alineado con el nuevo intervalo de handshake (1 min).
+   * Cache en memoria del proceso FastCGI para polÃ­tica global.
+   * TTL de 60s alineado con el intervalo de handshake.
    */
   private static ?array $_globalCache = null;
   private static int $_globalCacheAt = 0;
   private const GLOBAL_CACHE_TTL = 60;
 
   /**
-   * Resuelve la política efectiva final en UNA sola query con UNION.
-   * Orden de prioridad: device > user > global (el último en el UNION gana en deepMerge).
+   * Cache en memoria para work schedules por userId.
+   * TTL de 300s â€” los horarios cambian raramente (configuraciÃ³n anual).
+   */
+  private static array $_scheduleCache = [];
+  private static array $_scheduleCacheAt = [];
+  private const SCHEDULE_CACHE_TTL = 300;
+
+  /**
+   * Resuelve la polï¿½tica efectiva final en UNA sola query con UNION.
+   * Orden de prioridad: device > user > global (el ï¿½ltimo en el UNION gana en deepMerge).
    * Retorna array con las 3 filas ordenadas [global, user, device] para hacer merge en PHP.
-   * Así pasamos de 3 SELECTs separados a 1 sola ida a la BD.
+   * Asï¿½ pasamos de 3 SELECTs separados a 1 sola ida a la BD.
    */
   public static function getAllPolicies(PDO $pdo, int $userId, int $deviceId): array {
-    // Política global: puede usar cache
+    // Polï¿½tica global: puede usar cache
     $global = self::getActiveGlobal($pdo);
 
     // User + device en 1 query
@@ -72,9 +80,16 @@ class PolicyRepo {
 
   /**
    * Obtiene el horario laboral activo para el usuario en 1 query con UNION.
-   * Prioridad: usuario específico > global (user_id IS NULL) > defaults.
+   * Prioridad: usuario especÃ­fico > global (user_id IS NULL) > defaults.
+   * Cache en memoria de 300s: los horarios cambian raramente.
    */
   public static function getWorkSchedule(PDO $pdo, int $userId): array {
+    $now = time();
+    if (isset(self::$_scheduleCache[$userId])
+        && ($now - self::$_scheduleCacheAt[$userId]) < self::SCHEDULE_CACHE_TTL) {
+      return self::$_scheduleCache[$userId];
+    }
+
     $st = $pdo->prepare("
       (SELECT work_start_time, work_end_time, lunch_start_time, lunch_end_time, timezone, 1 AS priority
        FROM keeper_work_schedules WHERE user_id = :u AND is_active = 1 LIMIT 1)
@@ -85,13 +100,19 @@ class PolicyRepo {
     ");
     $st->execute([':u' => $userId]);
     $row = $st->fetch();
-    return [
+
+    $schedule = [
       'workStartTime'  => $row['work_start_time']  ?? '07:00:00',
       'workEndTime'    => $row['work_end_time']     ?? '19:00:00',
       'lunchStartTime' => $row['lunch_start_time']  ?? '12:00:00',
       'lunchEndTime'   => $row['lunch_end_time']    ?? '13:00:00',
       'timezone'       => $row['timezone']           ?? 'America/Bogota',
     ];
+
+    self::$_scheduleCache[$userId]   = $schedule;
+    self::$_scheduleCacheAt[$userId] = $now;
+
+    return $schedule;
   }
 
 }
