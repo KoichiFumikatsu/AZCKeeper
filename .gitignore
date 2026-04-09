@@ -1,5 +1,29 @@
 node_modules/
+
+# Credenciales
 .env
-AZCKeeper_Client/Web/pipezafra_soporte_db.sql
-AZCKeeper_Client/Web/pipezafra_soporte_db.sql
-.git-backup
+.env.backup
+.env.production
+.env.local
+
+# SQL dumps
+*.sql
+
+# C# Build Artifacts
+bin/
+obj/
+*.user
+*.suo
+
+# Build outputs
+Web/Web.zip
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+*.swp

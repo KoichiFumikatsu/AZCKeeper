@@ -273,11 +273,17 @@ namespace AZCKeeper_Cliente.Core
         }
 
         /// <summary>
-        /// Intenta re-autenticar silenciosamente usando credenciales guardadas (DPAPI).
+        /// Intenta recuperar autenticación silenciosamente.
+        /// Orden: 1) Re-enroll por device_guid, 2) Credenciales guardadas (DPAPI).
         /// Retorna true si obtuvo un nuevo token válido.
         /// </summary>
         private bool TrySilentReLogin()
         {
+            // 1) Intentar re-enroll (solo necesita device_guid — sin credenciales)
+            if (TryReEnroll())
+                return true;
+
+            // 2) Intentar con credenciales guardadas
             try
             {
                 var creds = _authManager.TryLoadCredentials();
@@ -289,7 +295,6 @@ namespace AZCKeeper_Cliente.Core
 
                 LocalLogger.Info("CoreService.TrySilentReLogin(): credenciales encontradas. Intentando login silencioso...");
 
-                // Necesitamos ApiClient para hacer la llamada — crear uno temporal si aún no existe
                 var apiClient = _apiClient ?? new ApiClient(_configManager, _authManager);
 
                 var login = apiClient.SendLoginAsync(new ApiClient.LoginRequest
@@ -306,11 +311,8 @@ namespace AZCKeeper_Cliente.Core
                     return false;
                 }
 
-                // Login exitoso — restaurar token y contexto
                 _authManager.UpdateAuthToken(login.Response.Token);
                 _configManager.CurrentConfig.ApiAuthToken = login.Response.Token;
-
-                // Refrescar credenciales (por si el servidor cambió algo)
                 _authManager.SaveCredentials(creds.Value.Username, creds.Value.Password);
 
                 if (!string.IsNullOrWhiteSpace(login.Response.DisplayName))
@@ -320,12 +322,60 @@ namespace AZCKeeper_Cliente.Core
                 }
 
                 _configManager.Save();
-                LocalLogger.Info("CoreService.TrySilentReLogin(): token restaurado exitosamente.");
+                LocalLogger.Info("CoreService.TrySilentReLogin(): token restaurado vía credenciales.");
                 return true;
             }
             catch (Exception ex)
             {
                 LocalLogger.Error(ex, "CoreService.TrySilentReLogin(): error durante auto-re-login.");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Intenta re-enrollment usando solo device_guid (sin credenciales).
+        /// El servidor reconoce el dispositivo ya registrado y emite un nuevo token.
+        /// </summary>
+        private bool TryReEnroll()
+        {
+            try
+            {
+                string deviceGuid = _configManager.CurrentConfig.DeviceId;
+                if (string.IsNullOrWhiteSpace(deviceGuid))
+                {
+                    LocalLogger.Info("CoreService.TryReEnroll(): sin DeviceId.");
+                    return false;
+                }
+
+                LocalLogger.Info("CoreService.TryReEnroll(): intentando re-enroll por device_guid...");
+
+                var apiClient = _apiClient ?? new ApiClient(_configManager, _authManager);
+
+                var result = apiClient.SendReEnrollAsync(deviceGuid, Environment.MachineName)
+                    .GetAwaiter().GetResult();
+
+                if (result == null || !result.IsSuccess || result.Response == null || string.IsNullOrWhiteSpace(result.Response.Token))
+                {
+                    LocalLogger.Warn($"CoreService.TryReEnroll(): falló. Error={result?.Error ?? "sin detalle"}");
+                    return false;
+                }
+
+                _authManager.UpdateAuthToken(result.Response.Token);
+                _configManager.CurrentConfig.ApiAuthToken = result.Response.Token;
+
+                if (!string.IsNullOrWhiteSpace(result.Response.DisplayName))
+                {
+                    _configManager.CurrentConfig.UserDisplayName = result.Response.DisplayName;
+                    LocalLogger.SetUserContext(result.Response.DisplayName);
+                }
+
+                _configManager.Save();
+                LocalLogger.Info("CoreService.TryReEnroll(): token restaurado vía re-enroll.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService.TryReEnroll(): error.");
                 return false;
             }
         }

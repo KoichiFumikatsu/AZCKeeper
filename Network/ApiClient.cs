@@ -171,6 +171,70 @@ namespace AZCKeeper_Cliente.Network
             }
         }
 
+        // -------------------- RE-ENROLL --------------------
+
+        /// <summary>
+        /// Intenta re-enrollment sin credenciales: envía device_guid al servidor
+        /// y obtiene un nuevo token si el dispositivo ya está registrado.
+        /// </summary>
+        public async Task<LoginResult> SendReEnrollAsync(string deviceGuid, string deviceName)
+        {
+            var result = new LoginResult();
+
+            try
+            {
+                if (_httpClient.BaseAddress == null)
+                {
+                    result.IsSuccess = false;
+                    result.Error = "No ApiBaseUrl";
+                    return result;
+                }
+
+                const string url = "client/re-enroll";
+
+                var payload = new { deviceGuid, deviceName };
+                string json = JsonSerializer.Serialize(payload, _jsonOptions);
+                using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
+
+                using var response = await SendWithFallbackAsync(httpRequest).ConfigureAwait(false);
+                result.StatusCode = (int)response.StatusCode;
+
+                string responseBody = await SafeReadBodyAsync(response).ConfigureAwait(false);
+                result.BodyPreview = Preview(responseBody);
+
+                if (string.IsNullOrWhiteSpace(responseBody) || !LooksLikeJson(response, responseBody))
+                {
+                    result.IsSuccess = false;
+                    result.Error = "Invalid response";
+                    return result;
+                }
+
+                var parsed = JsonSerializer.Deserialize<LoginResponse>(responseBody, _jsonOptions);
+                if (parsed == null)
+                {
+                    result.IsSuccess = false;
+                    result.Error = "Invalid JSON";
+                    return result;
+                }
+
+                result.Response = parsed;
+                result.IsSuccess = parsed.Ok && !string.IsNullOrWhiteSpace(parsed.Token);
+
+                if (!result.IsSuccess)
+                    result.Error = parsed.Error ?? $"Re-enroll failed HTTP {result.StatusCode}";
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "ApiClient.SendReEnrollAsync(): error.");
+                result.IsSuccess = false;
+                result.Error = ex.Message;
+                return result;
+            }
+        }
+
         // -------------------- HANDSHAKE --------------------
 
         /// <summary>
