@@ -114,6 +114,13 @@ $modulePermissions = [
             'can_review' => 'Clasificar alertas',
         ],
     ],
+    'pending_users' => [
+        'label' => 'Accesos Pendientes',
+        'actions' => [
+            'can_view' => 'Ver solicitudes',
+            'can_edit' => 'Aprobar / Rechazar',
+        ],
+    ],
 ];
 
 /* ───── POST actions ───── */

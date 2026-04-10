@@ -22,6 +22,7 @@ require_once __DIR__ . '/Repos/LegacyAuthRepo.php';
 require_once __DIR__ . '/Repos/ReleaseRepo.php';
 require_once __DIR__ . '/Repos/AdminAuthRepo.php';
 require_once __DIR__ . '/Repos/ProductivityRepo.php';
+require_once __DIR__ . '/Repos/PendingEnrollmentRepo.php';
 
 // Services
 require_once __DIR__ . '/Services/ProductivityCalculator.php';

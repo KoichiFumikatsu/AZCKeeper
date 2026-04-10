@@ -5,6 +5,13 @@ use PDO;
 
 class UserRepo {
 
+  public static function findByCc(PDO $pdo, string $cc): ?array {
+    $st = $pdo->prepare("SELECT * FROM keeper_users WHERE cc = :cc LIMIT 1");
+    $st->execute([':cc' => $cc]);
+    $row = $st->fetch();
+    return $row ?: null;
+  }
+
   public static function findByLegacyEmployeeId(PDO $pdo, int $legacyId): ?array {
     $st = $pdo->prepare("SELECT * FROM keeper_users WHERE legacy_employee_id=:id LIMIT 1");
     $st->execute([':id' => $legacyId]);

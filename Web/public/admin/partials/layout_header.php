@@ -103,6 +103,21 @@
                     Usuarios
                 </a>
                 <?php endif; ?>
+                <?php if (canAccessModule('pending_users')): ?>
+                <a href="pending-users.php" class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-600 transition-colors <?= ($currentPage ?? '') === 'pending_users' ? 'active' : '' ?>">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/></svg>
+                    Accesos Pendientes
+                    <?php
+                    try {
+                        $pendingCount = (int)$pdo->query("SELECT COUNT(*) FROM keeper_enrollment_requests WHERE status='pending'")->fetchColumn();
+                    } catch (\Throwable $e) {
+                        $pendingCount = 0;
+                    }
+                    if ($pendingCount > 0): ?>
+                    <span class="ml-auto inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-xs rounded-full bg-red-500 text-white"><?= $pendingCount ?></span>
+                    <?php endif; ?>
+                </a>
+                <?php endif; ?>
                 <?php if (canAccessModule('devices')): ?>
                 <a href="devices.php" class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-600 transition-colors <?= ($currentPage ?? '') === 'devices' ? 'active' : '' ?>">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>

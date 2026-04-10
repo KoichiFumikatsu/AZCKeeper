@@ -26,7 +26,8 @@ $allModules = [
     'roles'        => ['label' => 'Roles',             'icon' => 'users-cog','description' => 'Gestión de roles y permisos del panel'],
     'settings'    => ['label' => 'Configuración',    'icon' => 'sliders',  'description' => 'Esta misma página de ajustes'],
     'server-health'=> ['label' => 'Salud del Servidor', 'icon' => 'activity', 'description' => 'Recursos del servidor, queries y estado de la API'],
-    'dual_job'    => ['label' => 'Alertas de Actividades', 'icon' => 'alert-triangle', 'description' => 'Detección y clasificación de actividades'],
+    'dual_job'      => ['label' => 'Alertas de Actividades', 'icon' => 'alert-triangle', 'description' => 'Detección y clasificación de actividades'],
+    'pending_users' => ['label' => 'Accesos Pendientes',    'icon' => 'user-plus',      'description' => 'Solicitudes de acceso de usuarios no encontrados en BD'],
 ];
 
 /* Cargar roles dinámicamente desde keeper_panel_roles */
@@ -262,8 +263,10 @@ require __DIR__ . '/partials/layout_header.php';
                 'assignments'   => ['superadmin'],
                 'organization'  => ['superadmin'],
                 'roles'         => ['superadmin'],
-                'settings'    => ['superadmin'],
+                'settings'      => ['superadmin'],
                 'server-health' => ['superadmin'],
+                'dual_job'      => ['superadmin', 'admin'],
+                'pending_users' => ['superadmin'],
             ];
             foreach ($defaults as $dmod => $droles):
                 $dname = 'mod_' . str_replace('-', '_', $dmod);
