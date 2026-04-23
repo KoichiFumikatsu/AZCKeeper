@@ -52,6 +52,7 @@ $routes = [
     '/client/login' => [Keeper\Endpoints\ClientLogin::class, 'handle'],
     '/client/activity-day' => [Keeper\Endpoints\ActivityDay::class, 'handle'],
     '/client/window-episode' => [Keeper\Endpoints\WindowEpisode::class, 'handle'],
+    '/client/window-episodes/batch' => [Keeper\Endpoints\WindowEpisodeBatch::class, 'handle'],
     '/client/event' => [Keeper\Endpoints\EventIngest::class, 'handle'],
     '/client/force-handshake' => [Keeper\Endpoints\ForceHandshake::class, 'handle'],
     '/client/re-enroll' => [Keeper\Endpoints\ClientReEnroll::class, 'handle'],

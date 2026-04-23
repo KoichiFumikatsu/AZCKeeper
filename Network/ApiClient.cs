@@ -553,6 +553,122 @@ namespace AZCKeeper_Cliente.Network
         // -------------------- GET GENÉRICO --------------------
 
         /// <summary>
+        /// Envía múltiples episodios de ventana en una sola petición HTTP a
+        /// /client/window-episodes/batch. Reduce drásticamente el número de requests
+        /// cuando el usuario cambia de ventana con frecuencia.
+        ///
+        /// Contrato:
+        /// - Máx. 50 episodios por batch (validado en backend).
+        /// - Payload: { deviceId, episodes: [...] }
+        /// - Respuesta 200: { ok, inserted, skipped, errors, firstId }
+        ///
+        /// Si falla el envío HTTP, encola cada episodio individualmente en la
+        /// offline queue (ruta del endpoint single) para preservar la semántica
+        /// de reintento existente.
+        /// </summary>
+        public async Task<bool> SendWindowEpisodesBatchAsync(
+            string deviceGuid,
+            System.Collections.Generic.IList<WindowEpisodePayload> episodes,
+            bool fromQueue = false)
+        {
+            if (episodes == null || episodes.Count == 0) return true;
+            if (string.IsNullOrWhiteSpace(deviceGuid)) throw new ArgumentNullException(nameof(deviceGuid));
+
+            try
+            {
+                if (_httpClient.BaseAddress == null)
+                {
+                    if (!fromQueue)
+                    {
+                        foreach (var ep in episodes)
+                            _offlineQueue.Enqueue("client/window-episode", ep);
+                    }
+                    return false;
+                }
+
+                // Sanitizar cada episodio
+                foreach (var ep in episodes)
+                {
+                    ep.ProcessName = SanitizeString(ep.ProcessName, 190);
+                    ep.WindowTitle = SanitizeString(ep.WindowTitle, 500);
+                }
+
+                const string url = "client/window-episodes/batch";
+
+                var body = new { deviceId = deviceGuid, episodes };
+                string json = JsonSerializer.Serialize(body, _jsonOptions);
+                using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                using var httpRequest = CreateRequest(HttpMethod.Post, url, content);
+
+                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    string respBody = await SafeReadBodyAsync(response).ConfigureAwait(false);
+                    LocalLogger.Warn($"ApiClient.SendWindowEpisodesBatchAsync(): HTTP {(int)response.StatusCode}. Count={episodes.Count} BodyPreview={Preview(respBody)}");
+
+                    // 404 = backend sin soporte de batch → fallback a envíos single (solo si no venía de cola)
+                    if (!fromQueue && (int)response.StatusCode == 404)
+                    {
+                        LocalLogger.Warn("ApiClient.SendWindowEpisodesBatchAsync(): endpoint batch no disponible, fallback a single.");
+                        bool allOk = true;
+                        foreach (var ep in episodes)
+                        {
+                            bool okSingle = await SendWindowEpisodeAsync(ep, fromQueue: false).ConfigureAwait(false);
+                            if (!okSingle) allOk = false;
+                        }
+                        return allOk;
+                    }
+
+                    if (!fromQueue)
+                    {
+                        foreach (var ep in episodes)
+                            _offlineQueue.Enqueue("client/window-episode", ep);
+                    }
+                    return false;
+                }
+
+                return true;
+            }
+            catch (TaskCanceledException)
+            {
+                LocalLogger.Warn($"ApiClient.SendWindowEpisodesBatchAsync(): timeout. Count={episodes.Count} Encolando...");
+                if (!fromQueue)
+                {
+                    foreach (var ep in episodes)
+                        _offlineQueue.Enqueue("client/window-episode", ep);
+                }
+                return false;
+            }
+            catch (HttpRequestException ex)
+            {
+                string errorMsg = ex.InnerException?.Message ?? ex.Message;
+                if (!errorMsg.Contains("ResponseEnded") && !errorMsg.Contains("connection was closed"))
+                {
+                    LocalLogger.Warn($"ApiClient.SendWindowEpisodesBatchAsync(): error de red. Count={episodes.Count} Error: {errorMsg}");
+                }
+                if (!fromQueue)
+                {
+                    foreach (var ep in episodes)
+                        _offlineQueue.Enqueue("client/window-episode", ep);
+                }
+                return false;
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "ApiClient.SendWindowEpisodesBatchAsync(): error inesperado.");
+                if (!fromQueue)
+                {
+                    foreach (var ep in episodes)
+                        _offlineQueue.Enqueue("client/window-episode", ep);
+                }
+                return false;
+            }
+        }
+
+        // -------------------- GET GENÉRICO --------------------
+
+        /// <summary>
         /// Realiza un GET genérico y retorna el body como string.
         /// Útil para endpoints simples como /client/version.
         /// </summary>

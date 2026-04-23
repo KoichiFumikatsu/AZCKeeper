@@ -121,7 +121,7 @@ class ActivityDay
               active_seconds = GREATEST(active_seconds, VALUES(active_seconds)),
               idle_seconds   = GREATEST(idle_seconds, VALUES(idle_seconds)),
               call_seconds   = GREATEST(call_seconds, VALUES(call_seconds)),
-              samples_count  = samples_count + VALUES(samples_count),
+              samples_count  = GREATEST(samples_count, VALUES(samples_count)),
               last_event_at  = VALUES(last_event_at),
               payload_json   = VALUES(payload_json),
               work_hours_active_seconds = GREATEST(work_hours_active_seconds, VALUES(work_hours_active_seconds)),

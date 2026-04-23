@@ -54,6 +54,16 @@ namespace AZCKeeper_Cliente.Core
         private DateTime _lastHandshakeTime = DateTime.MinValue; // último handshake ok
         private bool _hasSuccessfulHandshake = false; // flag para primer handshake exitoso
 
+        // Buffer para batch de window-episodes (Fix #4 anti-DDoS).
+        // Evita 1 POST por cada Alt+Tab. Se vacía cada WindowEpisodeBatchIntervalSeconds
+        // o cuando llega al límite _windowEpisodeBatchMaxSize.
+        private readonly System.Collections.Generic.List<ApiClient.WindowEpisodePayload> _windowEpisodeBuffer
+            = new System.Collections.Generic.List<ApiClient.WindowEpisodePayload>();
+        private readonly object _windowEpisodeBufferLock = new object();
+        private System.Timers.Timer _windowEpisodeFlushTimer;
+        private const int _windowEpisodeBatchMaxSize = 40; // backend acepta 50
+        private const int _windowEpisodeBatchIntervalSeconds = 30;
+
         /// <summary>
         /// Inicializa servicios base, carga config/token, crea ApiClient y módulos.
         /// También prepara UI de login si no hay token.
@@ -140,6 +150,7 @@ namespace AZCKeeper_Cliente.Core
                 // 3) Flush periódico
                 StartActivityFlushTimer();
                 StartHandshakeTimer();
+                StartWindowEpisodeFlushTimer();
                 if (_debugWindow != null && !_debugWindow.IsDisposed)
                 {
                     try { _debugWindow.Show(); }
@@ -174,6 +185,7 @@ namespace AZCKeeper_Cliente.Core
                 // En contexto de shutdown, bloqueamos para garantizar envío
                 FinalFlushBeforeShutdownAsync().Wait();
                 StopActivityFlushTimer();
+                StopWindowEpisodeFlushTimer();
 
                 _handshakeTimer?.Stop();
                 _handshakeTimer?.Dispose();
@@ -813,11 +825,12 @@ namespace AZCKeeper_Cliente.Core
                 {
                     try
                     {
-                        // Validar que la duración sea >= 1 segundo para evitar errores de redondeo
-                        // al serializar sin milisegundos (backend espera YYYY-MM-DD HH:MM:SS)
-                        if (episode.DurationSeconds < 1.0)
+                        // Descarta episodios <2s: son ruido (Alt+Tab rápido, popups transitorios,
+                        // cambios de foreground forzados por notificaciones) que no aportan valor
+                        // al monitoreo y representan ~10% del tráfico histórico.
+                        // Umbral elegido tras auditoría: episodios reales de trabajo duran >2s.
+                        if (episode.DurationSeconds < 2.0)
                         {
-                            LocalLogger.Info($"CoreService: episodio ignorado por duración <1s ({episode.DurationSeconds:F3}s): {episode.ProcessName}");
                             return;
                         }
 
@@ -832,11 +845,12 @@ namespace AZCKeeper_Cliente.Core
                             IsCallApp = episode.IsCallApp
                         };
 
-                        _ = _apiClient.SendWindowEpisodeAsync(payload);
+                        // Encolar en buffer local. Se flushea por timer o por tamaño.
+                        EnqueueWindowEpisode(payload);
                     }
                     catch (Exception ex)
                     {
-                        LocalLogger.Error(ex, "CoreService: error al enviar window-episode.");
+                        LocalLogger.Error(ex, "CoreService: error al encolar window-episode.");
                     }
                 };
 
@@ -1130,6 +1144,9 @@ namespace AZCKeeper_Cliente.Core
                 // Envío asíncrono con ConfigureAwait(false) para evitar deadlocks
                 await _apiClient.SendActivityDayAsync(payload).ConfigureAwait(false);
 
+                // Vaciar también el buffer de episodios pendientes
+                await FlushWindowEpisodeBufferAsync(forceAll: true).ConfigureAwait(false);
+
                 LocalLogger.Info("CoreService.FinalFlushBeforeShutdown(): datos enviados correctamente.");
             }
             catch (Exception ex)
@@ -1184,6 +1201,127 @@ namespace AZCKeeper_Cliente.Core
             {
                 LocalLogger.Warn($"CoreService.ApplyWorkSchedule(): error al aplicar horario. Se usan valores anteriores. {ex.Message}");
             }
+        }
+
+        // ================== Buffer de Window Episodes (Fix #4) ==================
+
+        /// <summary>
+        /// Encola un episodio en el buffer local. Si el buffer alcanza el tamaño máximo,
+        /// dispara un flush inmediato en background. El timer periódico también vacía
+        /// el buffer cada _windowEpisodeBatchIntervalSeconds.
+        /// </summary>
+        private void EnqueueWindowEpisode(ApiClient.WindowEpisodePayload payload)
+        {
+            bool needsImmediateFlush = false;
+
+            lock (_windowEpisodeBufferLock)
+            {
+                _windowEpisodeBuffer.Add(payload);
+                if (_windowEpisodeBuffer.Count >= _windowEpisodeBatchMaxSize)
+                {
+                    needsImmediateFlush = true;
+                }
+            }
+
+            if (needsImmediateFlush)
+            {
+                // Fire-and-forget: no bloquear el hilo de captura de ventanas
+                _ = FlushWindowEpisodeBufferAsync(forceAll: false);
+            }
+        }
+
+        /// <summary>
+        /// Extrae episodios del buffer y los envía en batches. Retorna sin hacer nada
+        /// si el buffer está vacío.
+        ///
+        /// - forceAll=true: vacía todo el buffer (usado en shutdown).
+        /// - forceAll=false: envía solo hasta _windowEpisodeBatchMaxSize por llamada.
+        /// </summary>
+        private async Task FlushWindowEpisodeBufferAsync(bool forceAll)
+        {
+            if (_apiClient == null) return;
+            if (_authManager == null || !_authManager.HasToken) return;
+
+            while (true)
+            {
+                System.Collections.Generic.List<ApiClient.WindowEpisodePayload> batch;
+
+                lock (_windowEpisodeBufferLock)
+                {
+                    if (_windowEpisodeBuffer.Count == 0) return;
+
+                    int take = Math.Min(_windowEpisodeBuffer.Count, _windowEpisodeBatchMaxSize);
+                    batch = _windowEpisodeBuffer.GetRange(0, take);
+                    _windowEpisodeBuffer.RemoveRange(0, take);
+                }
+
+                try
+                {
+                    string deviceGuid = _configManager.CurrentConfig.DeviceId;
+                    bool ok = await _apiClient.SendWindowEpisodesBatchAsync(deviceGuid, batch).ConfigureAwait(false);
+
+                    if (!ok)
+                    {
+                        // El batch ya encoló cada episodio individualmente en offline queue.
+                        LocalLogger.Warn($"CoreService.FlushWindowEpisodeBufferAsync(): batch falló, {batch.Count} episodios encolados en offline queue.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LocalLogger.Error(ex, "CoreService.FlushWindowEpisodeBufferAsync(): error enviando batch.");
+                }
+
+                if (!forceAll) break;
+            }
+        }
+
+        /// <summary>
+        /// Inicia el timer periódico de flush del buffer de window-episodes.
+        /// </summary>
+        private void StartWindowEpisodeFlushTimer()
+        {
+            try
+            {
+                if (_windowEpisodeFlushTimer != null) return;
+                if (_apiClient == null) return;
+
+                _windowEpisodeFlushTimer = new System.Timers.Timer(_windowEpisodeBatchIntervalSeconds * 1000);
+                _windowEpisodeFlushTimer.AutoReset = true;
+                _windowEpisodeFlushTimer.Elapsed += async (s, e) =>
+                {
+                    try
+                    {
+                        await FlushWindowEpisodeBufferAsync(forceAll: false).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Error(ex, "CoreService: error en flush periódico de window-episodes.");
+                    }
+                };
+                _windowEpisodeFlushTimer.Start();
+
+                LocalLogger.Info($"CoreService: WindowEpisodeFlushTimer iniciado (cada {_windowEpisodeBatchIntervalSeconds}s, batch max={_windowEpisodeBatchMaxSize}).");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error al iniciar WindowEpisodeFlushTimer.");
+            }
+        }
+
+        /// <summary>
+        /// Detiene el timer de flush de window-episodes.
+        /// </summary>
+        private void StopWindowEpisodeFlushTimer()
+        {
+            try
+            {
+                if (_windowEpisodeFlushTimer == null) return;
+                _windowEpisodeFlushTimer.Stop();
+                _windowEpisodeFlushTimer.Dispose();
+                _windowEpisodeFlushTimer = null;
+                LocalLogger.Info("CoreService: WindowEpisodeFlushTimer detenido.");
+            }
+            catch { }
         }
     }
 
