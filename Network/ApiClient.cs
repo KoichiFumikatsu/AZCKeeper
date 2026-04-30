@@ -1025,8 +1025,18 @@ namespace AZCKeeper_Cliente.Network
             public EffectiveModules Modules { get; set; }
             public EffectiveStartup Startup { get; set; }     
             public EffectiveUpdates Updates { get; set; }
+            public EffectiveWebBlocking WebBlocking { get; set; }
             public EffectiveBlocking Blocking { get; set; }
             public EffectiveTimers Timers { get; set; }
+        }
+        /// <summary>
+        /// Config efectiva de bloqueo web recibida en handshake.
+        /// </summary>
+        internal class EffectiveWebBlocking
+        {
+            public bool Enabled { get; set; }
+            public string[] BlockedDomains { get; set; }
+            public string Source { get; set; }
         }
         /// <summary>
         /// Config efectiva de bloqueo remoto.

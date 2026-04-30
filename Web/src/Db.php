@@ -65,10 +65,10 @@ class Db {
     $host = Config::get('DB_HOST');
     $db   = Config::get('DB_NAME');
     $user = Config::get('DB_USER');
-    $pass = Config::get('DB_PASS');
+    $pass = (string)Config::get('DB_PASS', '');
 
-    if (!$host || !$db || !$user || !$pass) {
-      throw new PDOException("Credenciales incompletas en .env");
+    if (!$host || !$db || !$user) {
+      throw new PDOException("Credenciales incompletas en .env (DB_HOST, DB_NAME, DB_USER)");
     }
 
     return self::createConnection($host, $db, $user, $pass);
@@ -88,15 +88,15 @@ class Db {
     $backupConfig = self::loadBackupEnv($backupEnvPath);
     
     if (!isset($backupConfig['DB_HOST'], $backupConfig['DB_NAME'], 
-               $backupConfig['DB_USER'], $backupConfig['DB_PASS'])) {
-      throw new PDOException("Credenciales incompletas en .env.backup");
+               $backupConfig['DB_USER'])) {
+      throw new PDOException("Credenciales incompletas en .env.backup (DB_HOST, DB_NAME, DB_USER)");
     }
 
     return self::createConnection(
       $backupConfig['DB_HOST'],
       $backupConfig['DB_NAME'],
       $backupConfig['DB_USER'],
-      $backupConfig['DB_PASS']
+      (string)($backupConfig['DB_PASS'] ?? '')
     );
   }
 
@@ -188,12 +188,12 @@ class Db {
 
     // Fallback: si no hay LEGACY_DB_* configurados, usar la conexión principal
     // Esto permite migración gradual sin romper nada
-    if (!$db || !$user || !$pass) {
+    if (!$db || !$user) {
       self::$legacyPdo = self::pdo();
       return self::$legacyPdo;
     }
 
-    self::$legacyPdo = self::createConnection($host, $db, $user, $pass);
+    self::$legacyPdo = self::createConnection($host, $db, $user, (string)$pass);
     return self::$legacyPdo;
   }
 

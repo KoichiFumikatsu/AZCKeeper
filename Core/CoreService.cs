@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Windows.Forms;
 using AZCKeeper_Cliente.Auth;
 using AZCKeeper_Cliente.Blocking;
@@ -10,6 +11,7 @@ using AZCKeeper_Cliente.Network;
 using AZCKeeper_Cliente.Startup;
 using AZCKeeper_Cliente.Tracking;
 using AZCKeeper_Cliente.Update;
+using AZCKeeper_Cliente.WebBlocking;
 
 namespace AZCKeeper_Cliente.Core
 {
@@ -39,6 +41,7 @@ namespace AZCKeeper_Cliente.Core
         // --- Control/updates ---
         private KeyBlocker _keyBlocker;        // bloqueo por política
         private UpdateManager _updateManager;  // actualización automática
+        private WebBlockService _webBlockService; // bloqueo web (PAC/proxy)
 
         // --- UI ---
         private DebugWindowForm _debugWindow; // ventana de diagnóstico
@@ -98,6 +101,8 @@ namespace AZCKeeper_Cliente.Core
                 }
 
                 _apiClient = new ApiClient(_configManager, _authManager);
+                _webBlockService = new WebBlockService();
+                _webBlockService.UpdateConfiguration(_configManager.CurrentConfig.WebBlocking);
 
                 // Handshake se ejecuta en Start() → evita doble handshake en startup
                 // que genera ráfaga de 40 requests simultáneos cuando todos los clientes
@@ -193,6 +198,7 @@ namespace AZCKeeper_Cliente.Core
                 _activityTracker?.Stop();
                 _windowTracker?.Stop();
                 _updateManager?.Stop();
+                _webBlockService?.Stop();
 
                 if (_debugWindow != null && !_debugWindow.IsDisposed)
                 {
@@ -576,6 +582,27 @@ namespace AZCKeeper_Cliente.Core
                             LocalLogger.Info("CoreService: Dispositivo ya está bloqueado, manteniendo estado.");
                         }
                     }
+                }
+
+                // -------------------- WebBlocking --------------------
+                if (effective.WebBlocking != null)
+                {
+                    var webBlocking = _configManager.CurrentConfig.WebBlocking ?? new ConfigManager.WebBlockingConfig();
+
+                    webBlocking.Enabled = effective.WebBlocking.Enabled;
+                    webBlocking.Source = effective.WebBlocking.Source;
+                    webBlocking.BlockedDomains = (effective.WebBlocking.BlockedDomains ?? Array.Empty<string>())
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Select(x => x.Trim().ToLowerInvariant())
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+                    webBlocking.LastUpdatedUtc = DateTime.UtcNow.ToString("o");
+
+                    _configManager.CurrentConfig.WebBlocking = webBlocking;
+                    _configManager.Save();
+                    _webBlockService?.UpdateConfiguration(webBlocking);
+
+                    LocalLogger.Info($"CoreService: WebBlocking recibido. Enabled={webBlocking.Enabled}, Domains={webBlocking.BlockedDomains.Length}, Source={webBlocking.Source ?? "null"}");
                 }
 
                 _configManager.Save();

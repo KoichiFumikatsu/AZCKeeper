@@ -259,6 +259,13 @@ namespace AZCKeeper_Cliente.Config
                     AutoDownload = false,
                     AllowBetaVersions = false
                 },
+                WebBlocking = new WebBlockingConfig
+                {
+                    Enabled = false,
+                    BlockedDomains = Array.Empty<string>(),
+                    Source = null,
+                    LastUpdatedUtc = null
+                },
                 Logging = new LoggingConfig
                 {
                     GlobalLevel = "INFO",
@@ -337,6 +344,7 @@ namespace AZCKeeper_Cliente.Config
             public ModulesConfig Modules { get; set; }
             public StartupConfig Startup { get; set; }     
             public UpdatesConfig Updates { get; set; }
+            public WebBlockingConfig WebBlocking { get; set; }
             public BlockingConfig Blocking { get; set; }
             public TimersConfig Timers { get; set; }
         }
@@ -377,6 +385,17 @@ namespace AZCKeeper_Cliente.Config
             public int CheckIntervalMinutes { get; set; } = 60;
             public bool AutoDownload { get; set; } = false;
             public bool AllowBetaVersions { get; set; } = false;
+        }
+        /// <summary>
+        /// Configuración local cacheada de bloqueo web proveniente del backend.
+        /// Sirve para conservar la última versión válida si la API cae.
+        /// </summary>
+        internal class WebBlockingConfig
+        {
+            public bool Enabled { get; set; } = false;
+            public string[] BlockedDomains { get; set; } = Array.Empty<string>();
+            public string Source { get; set; }
+            public string LastUpdatedUtc { get; set; }
         }
         /// <summary>
         /// Configuración de logging: niveles y destinos.
