@@ -59,7 +59,7 @@ namespace AZCKeeper_Cliente.WebBlocking
         {
             try
             {
-                if (!_current.Enabled)
+                if (!_current.Enabled || _current.BlockedDomains == null || _current.BlockedDomains.Length == 0)
                 {
                     TryDisablePac();
                     return;

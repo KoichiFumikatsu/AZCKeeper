@@ -1110,7 +1110,7 @@ function policiesPage() {
         /* ── Default full policy ── */
         defaultPolicy() {
             return {
-                apiBaseUrl: 'https://one.azclegal.com/keeper/public/index.php/api/',
+                apiBaseUrl: 'https://projects.k.azclegal.com/public/index.php/api/',
                 timers: { handshakeIntervalMinutes: 5, offlineQueueRetrySeconds: 120, activityFlushIntervalSeconds: 60 },
                 logging: { globalLevel: 'Error', discordWebhookUrl: '', enableFileLogging: true, clientOverrideLevel: 'Error', enableDiscordLogging: false },
                 modules: { enableBlocking: true, callTitleKeywords: ['meeting','call','reunión','llamada'], enableDebugWindow: false, countCallsAsActive: true, enableCallTracking: true, callProcessKeywords: ['zoom','teams','skype','meet','webex'], enableUpdateManager: true, enableWindowTracking: true, enableProcessTracking: true, enableActivityTracking: true, activityIntervalSeconds: 30, callActiveMaxIdleSeconds: 1800, windowTrackingIntervalSeconds: 30, activityInactivityThresholdSeconds: 900 },

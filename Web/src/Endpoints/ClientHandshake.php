@@ -123,7 +123,7 @@ class ClientHandshake {
       $effective['webBlocking'] = [];
     }
 
-    $effective['webBlocking']['enabled'] = !empty($effective['modules']['enableBlocking']);
+    $effective['webBlocking']['enabled'] = !empty($effective['modules']['enableBlocking']) && !empty($blockedDomains);
     $effective['webBlocking']['blockedDomains'] = $blockedDomains;
     $effective['webBlocking']['source'] = 'panel.leisure_apps.windows';
 
