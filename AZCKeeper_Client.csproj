@@ -18,6 +18,11 @@
 		<PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<Compile Remove="scripts\ProxyTestHarness\**\*.cs" />
+		<None Include="scripts\ProxyTestHarness\**\*" />
+	</ItemGroup>
+
 	<!-- ✅ NUEVO: Copiar updater SI existe (el script lo compila antes) -->
 	<Target Name="CopyUpdaterIfExists" AfterTargets="Publish">
 		<PropertyGroup>

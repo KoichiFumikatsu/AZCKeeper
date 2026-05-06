@@ -96,6 +96,12 @@ namespace AZCKeeper_Cliente.Config
                     else
                     {
                         CurrentConfig = config;
+                        bool timersNormalized = NormalizeLegacyTimerValues();
+                        if (timersNormalized)
+                        {
+                            Save();
+                            LocalLogger.Info("ConfigManager.LoadOrCreate(): timers legacy normalizados y guardados.");
+                        }
                         LocalLogger.Info("ConfigManager.LoadOrCreate(): configuración cargada correctamente desde disco.");
                     }
                 }
@@ -114,6 +120,7 @@ namespace AZCKeeper_Cliente.Config
                 LocalLogger.Error(ex, "ConfigManager.LoadOrCreate(): error al cargar/crear configuración local. Se usará configuración por defecto en memoria.");
 
                 CurrentConfig = CreateDefaultConfig();
+                NormalizeLegacyTimerValues();
 
                 SyncVersionFromAssembly();
 
@@ -141,6 +148,29 @@ namespace AZCKeeper_Cliente.Config
                 Save();
                 LocalLogger.Info($"ConfigManager: versión sincronizada desde ensamblado: {asmVersion}");
             }
+        }
+
+        private bool NormalizeLegacyTimerValues()
+        {
+            if (CurrentConfig == null)
+                return false;
+
+            CurrentConfig.Timers ??= new TimersConfig();
+            int originalHandshakeSeconds = CurrentConfig.Timers.HandshakeIntervalSeconds;
+            int originalHandshakeMinutes = CurrentConfig.Timers.HandshakeIntervalMinutes;
+
+            int effectiveHandshakeSeconds = CurrentConfig.Timers.HandshakeIntervalSeconds > 0
+                ? CurrentConfig.Timers.HandshakeIntervalSeconds
+                : CurrentConfig.Timers.HandshakeIntervalMinutes > 0
+                    ? CurrentConfig.Timers.HandshakeIntervalMinutes * 60
+                    : 300;
+
+            effectiveHandshakeSeconds = Math.Max(300, effectiveHandshakeSeconds);
+
+            CurrentConfig.Timers.HandshakeIntervalSeconds = effectiveHandshakeSeconds;
+            CurrentConfig.Timers.HandshakeIntervalMinutes = Math.Max(5, effectiveHandshakeSeconds / 60);
+            return originalHandshakeSeconds != CurrentConfig.Timers.HandshakeIntervalSeconds
+                || originalHandshakeMinutes != CurrentConfig.Timers.HandshakeIntervalMinutes;
         }
 
         /// <summary>
@@ -238,7 +268,7 @@ namespace AZCKeeper_Cliente.Config
             {
                 Version = "3.0.0.0",
                 DeviceId = null, // Se generará posteriormente en EnsureDeviceId.
-                ApiBaseUrl = "https://keep.azclegal.com/public/index.php/api/", // Placeholder para la API real.
+                ApiBaseUrl = "http://localhost/AZCKeeper/Web/public/index.php/api/", // Placeholder para la API real.
                 ApiAuthToken = null,
                 Blocking = new BlockingConfig
                 {
@@ -246,6 +276,14 @@ namespace AZCKeeper_Cliente.Config
                     LockMessage = "Dispositivo bloqueado por políticas de seguridad.",
                     AllowUnlockWithPin = false,
                     UnlockPinHash = null
+                },
+                WebBlocking = new WebBlockingConfig
+                {
+                    Enabled = false,
+                    SyncIntervalSeconds = 600,
+                    PolicyVersion = 0,
+                    LastUpdatedUtc = null,
+                    Domains = Array.Empty<string>()
                 },
                 Startup = new StartupConfig
                 {
@@ -259,13 +297,6 @@ namespace AZCKeeper_Cliente.Config
                     AutoDownload = false,
                     AllowBetaVersions = false
                 },
-                WebBlocking = new WebBlockingConfig
-                {
-                    Enabled = false,
-                    BlockedDomains = Array.Empty<string>(),
-                    Source = null,
-                    LastUpdatedUtc = null
-                },
                 Logging = new LoggingConfig
                 {
                     GlobalLevel = "INFO",
@@ -277,7 +308,7 @@ namespace AZCKeeper_Cliente.Config
                 Timers = new TimersConfig
                 {
                     ActivityFlushIntervalSeconds = 10,
-                    HandshakeIntervalSeconds = 60,
+                    HandshakeIntervalSeconds = 300,
                     HandshakeIntervalMinutes = 5,
                     OfflineQueueRetrySeconds = 30
                 },
@@ -340,12 +371,15 @@ namespace AZCKeeper_Cliente.Config
             public string ApiBaseUrl { get; set; }
             public string ApiAuthToken { get; set; }
             public string UserDisplayName { get; set; }
+            public string LastSuccessfulHandshakeUtc { get; set; }
+            public string NextAllowedUpdateCheckUtc { get; set; }
+            public int ConsecutiveUpdateFailures { get; set; }
             public LoggingConfig Logging { get; set; }
             public ModulesConfig Modules { get; set; }
             public StartupConfig Startup { get; set; }     
             public UpdatesConfig Updates { get; set; }
-            public WebBlockingConfig WebBlocking { get; set; }
             public BlockingConfig Blocking { get; set; }
+            public WebBlockingConfig WebBlocking { get; set; }
             public TimersConfig Timers { get; set; }
         }
         /// <summary>
@@ -387,17 +421,6 @@ namespace AZCKeeper_Cliente.Config
             public bool AllowBetaVersions { get; set; } = false;
         }
         /// <summary>
-        /// Configuración local cacheada de bloqueo web proveniente del backend.
-        /// Sirve para conservar la última versión válida si la API cae.
-        /// </summary>
-        internal class WebBlockingConfig
-        {
-            public bool Enabled { get; set; } = false;
-            public string[] BlockedDomains { get; set; } = Array.Empty<string>();
-            public string Source { get; set; }
-            public string LastUpdatedUtc { get; set; }
-        }
-        /// <summary>
         /// Configuración de logging: niveles y destinos.
         /// </summary>
         internal class LoggingConfig
@@ -418,6 +441,18 @@ namespace AZCKeeper_Cliente.Config
             public bool AllowUnlockWithPin { get; set; } = false;
             public string UnlockPin { get; set; } = null; // PIN en texto plano
             public string UnlockPinHash { get; set; } = null; // Hash SHA256 del PIN (deprecated, para compatibilidad)
+        }
+
+        /// <summary>
+        /// Configuración de bloqueo web por dominios, persistida localmente para operar aun sin API.
+        /// </summary>
+        internal class WebBlockingConfig
+        {
+            public bool Enabled { get; set; } = false;
+            public int SyncIntervalSeconds { get; set; } = 600;
+            public int PolicyVersion { get; set; } = 0;
+            public string LastUpdatedUtc { get; set; }
+            public string[] Domains { get; set; } = Array.Empty<string>();
         }
 
         /// <summary>

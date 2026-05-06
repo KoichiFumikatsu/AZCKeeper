@@ -15,6 +15,41 @@ $currentPage = 'policies';
 $msg     = '';
 $msgType = '';
 
+/**
+ * Sincroniza la lista editable de "Descanso / Despeje -> Por Ventana"
+ * hacia la política global de Web Blocking.
+ */
+function syncGlobalWebBlockingDomains(PDO $pdo, array $domains): void {
+    $domains = array_values(array_unique(array_filter(array_map('trim', $domains))));
+
+    $st = $pdo->prepare("SELECT id, policy_json FROM keeper_policy_assignments WHERE scope='global' AND is_active=1 ORDER BY version DESC LIMIT 1");
+    $st->execute();
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+
+    $policy = $row ? (json_decode($row['policy_json'], true) ?? []) : [];
+    if (!isset($policy['webBlocking']) || !is_array($policy['webBlocking'])) {
+        $policy['webBlocking'] = [];
+    }
+
+    $policy['webBlocking']['domains'] = $domains;
+    $policy['webBlocking']['enabled'] = count($domains) > 0;
+    $policy['webBlocking']['syncIntervalSeconds'] = max(300, (int)($policy['webBlocking']['syncIntervalSeconds'] ?? 600));
+
+    $policyJson = json_encode($policy, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($policyJson === false) {
+        throw new Exception('No se pudo serializar la política global.');
+    }
+
+    if ($row) {
+        $pdo->prepare("UPDATE keeper_policy_assignments SET policy_json=:json, version=version+1 WHERE id=:id")
+            ->execute([':json' => $policyJson, ':id' => (int)$row['id']]);
+        return;
+    }
+
+    $pdo->prepare("INSERT INTO keeper_policy_assignments (scope,user_id,device_id,version,priority,is_active,policy_json) VALUES ('global',NULL,NULL,1,1,1,:json)")
+        ->execute([':json' => $policyJson]);
+}
+
 /* ==================== ACCIONES POST ==================== */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
@@ -194,7 +229,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     $pdo->prepare("INSERT INTO keeper_panel_settings (setting_key, setting_value) VALUES ('leisure_apps', :v)")->execute([':v' => $jsonVal]);
                 }
-                $msg = count($apps) . ' aplicación(es) y ' . count($wins) . ' ventana(s) de descanso guardadas.';
+
+                syncGlobalWebBlockingDomains($pdo, $wins);
+
+                $msg = count($apps) . ' aplicación(es) y ' . count($wins) . ' dominio(s)/ventana(s) guardados y sincronizados con Web Blocking.';
                 $msgType = 'success';
                 break;
 
@@ -769,14 +807,14 @@ $leisureWinsRaw = implode("\n", $leisureData['windows']);
         <input type="hidden" name="action" value="save_leisure_apps">
 
         <!-- Por Aplicación (process_name) -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+            <div class="flex flex-col h-full">
                 <label class="text-xs font-semibold text-dark block mb-1 flex items-center gap-1.5">
                     <svg class="w-4 h-4 text-corp-800" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                     Por Aplicación
                 </label>
-                <p class="text-[10px] text-muted mb-1.5">Nombre del proceso tal como aparece en la columna <b>Aplicación</b> (ej: <code>chrome</code>, <code>spotify</code>). Coincidencia exacta.</p>
-                <textarea name="leisure_apps_raw" rows="5" placeholder="chrome&#10;spotify&#10;WhatsApp" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none resize-y"><?= htmlspecialchars($leisureAppsRaw) ?></textarea>
+                <p class="text-[10px] text-muted mb-1.5 min-h-[3rem]">Nombre del proceso tal como aparece en la columna <b>Aplicación</b> (ej: <code>chrome</code>, <code>spotify</code>). Coincidencia exacta.</p>
+                <textarea name="leisure_apps_raw" rows="5" placeholder="chrome&#10;spotify&#10;WhatsApp" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none resize-y min-h-[140px]"><?= htmlspecialchars($leisureAppsRaw) ?></textarea>
                 <?php if (!empty($leisureData['apps'])): ?>
                 <div class="flex flex-wrap gap-1.5 mt-2">
                     <?php foreach ($leisureData['apps'] as $app): ?>
@@ -790,13 +828,13 @@ $leisureWinsRaw = implode("\n", $leisureData['windows']);
             </div>
 
             <!-- Por Ventana (window_title LIKE) -->
-            <div>
+            <div class="flex flex-col h-full">
                 <label class="text-xs font-semibold text-dark block mb-1 flex items-center gap-1.5">
                     <svg class="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6z"/></svg>
                     Por Ventana
                 </label>
-                <p class="text-[10px] text-muted mb-1.5">Texto que aparece en el <b>título de la ventana</b> (ej: <code>YouTube</code>, <code>Facebook</code>). Coincidencia parcial (contiene).</p>
-                <textarea name="leisure_windows_raw" rows="5" placeholder="YouTube&#10;Facebook&#10;Instagram&#10;TikTok" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none resize-y"><?= htmlspecialchars($leisureWinsRaw) ?></textarea>
+                <p class="text-[10px] text-muted mb-1.5 min-h-[3rem]">Ingresa aquí los <b>dominios</b> que quieres bloquear remotamente (ej: <code>facebook.com</code>, <code>instagram.com</code>). Al guardar, se sincronizan automáticamente con <b>Web Blocking</b> en la política global.</p>
+                <textarea name="leisure_windows_raw" rows="5" placeholder="facebook.com&#10;instagram.com&#10;tiktok.com" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none resize-y min-h-[140px]"><?= htmlspecialchars($leisureWinsRaw) ?></textarea>
                 <?php if (!empty($leisureData['windows'])): ?>
                 <div class="flex flex-wrap gap-1.5 mt-2">
                     <?php foreach ($leisureData['windows'] as $win): ?>
@@ -990,6 +1028,31 @@ $leisureWinsRaw = implode("\n", $leisureData['windows']);
                         </div>
                     </fieldset>
 
+                    <fieldset class="bg-amber-50/60 rounded-xl p-4 space-y-3 border border-amber-100">
+                        <legend class="text-xs font-bold text-amber-700 uppercase tracking-wider flex items-center gap-2"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 17l10-10M7 7h10v10"/></svg> Web Blocking</legend>
+                        <div class="flex flex-wrap gap-4">
+                            <label class="flex items-center gap-2 text-xs"><input type="checkbox" x-model="editData.webBlocking.enabled" class="rounded border-amber-300 text-amber-600" disabled>Enable Domain Blocking</label>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                                <label class="text-[10px] text-muted">Sync interval (seg)</label>
+                                <input type="number" x-model.number="editData.webBlocking.syncIntervalSeconds" min="300" class="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs mt-0.5">
+                            </div>
+                            <div class="sm:col-span-2">
+                                <label class="text-[10px] text-muted">Blocked domains (gestionados desde Descanso / Despeje -> Por Ventana)</label>
+                                <textarea x-model="webBlockingDomainsStr" rows="6" readonly class="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs mt-0.5 resize-y bg-gray-100 text-muted cursor-not-allowed" placeholder="facebook.com&#10;instagram.com&#10;tiktok.com"></textarea>
+                                <div class="mt-2 text-[10px] text-dark" x-show="getNormalizedWebBlockingDomains().length > 0">
+                                    <p class="font-semibold text-amber-700 mb-1">Se bloqueara:</p>
+                                    <p x-text="getNormalizedWebBlockingDomains().join(', ')" class="break-words"></p>
+                                </div>
+                                <div class="mt-2 text-[10px] text-muted" x-show="getNormalizedWebBlockingDomains().length === 0">
+                                    No hay dominios configurados para bloqueo.
+                                </div>
+                                <p class="text-[10px] text-muted mt-1">Uno por línea. También puedes usar <code>*.dominio.com</code>.</p>
+                            </div>
+                        </div>
+                    </fieldset>
+
                 </div><!-- end visual -->
 
                 <!-- ═══ JSON Tab ═══ -->
@@ -1094,13 +1157,15 @@ function policiesPage() {
             modules: { enableBlocking: true, callTitleKeywords: [], enableDebugWindow: false, countCallsAsActive: true, enableCallTracking: true, callProcessKeywords: [], enableUpdateManager: true, enableWindowTracking: true, enableProcessTracking: true, enableActivityTracking: true, activityIntervalSeconds: 30, callActiveMaxIdleSeconds: 1800, windowTrackingIntervalSeconds: 30, activityInactivityThresholdSeconds: 900 },
             startup: { startMinimized: false, enableAutoStartup: true },
             updates: { autoDownload: true, enableAutoUpdate: true, allowBetaVersions: false, checkIntervalMinutes: 360 },
-            blocking: { unlockPin: null, lockMessage: '', enableDeviceLock: false, allowUnlockWithPin: false }
+            blocking: { unlockPin: null, lockMessage: '', enableDeviceLock: false, allowUnlockWithPin: false },
+            webBlocking: { enabled: false, syncIntervalSeconds: 600, domains: [] }
         },
         editJsonRaw: '',
         batchAction: 'apply',
         batchJson: '',
         callProcessKeywordsStr: '',
         callTitleKeywordsStr: '',
+        webBlockingDomainsStr: '',
         currentPage: 1,
         perPage: 15,
 
@@ -1110,13 +1175,14 @@ function policiesPage() {
         /* ── Default full policy ── */
         defaultPolicy() {
             return {
-                apiBaseUrl: 'https://projects.k.azclegal.com/public/index.php/api/',
+                apiBaseUrl: 'https://one.azclegal.com/keeper/public/index.php/api/',
                 timers: { handshakeIntervalMinutes: 5, offlineQueueRetrySeconds: 120, activityFlushIntervalSeconds: 60 },
                 logging: { globalLevel: 'Error', discordWebhookUrl: '', enableFileLogging: true, clientOverrideLevel: 'Error', enableDiscordLogging: false },
                 modules: { enableBlocking: true, callTitleKeywords: ['meeting','call','reunión','llamada'], enableDebugWindow: false, countCallsAsActive: true, enableCallTracking: true, callProcessKeywords: ['zoom','teams','skype','meet','webex'], enableUpdateManager: true, enableWindowTracking: true, enableProcessTracking: true, enableActivityTracking: true, activityIntervalSeconds: 30, callActiveMaxIdleSeconds: 1800, windowTrackingIntervalSeconds: 30, activityInactivityThresholdSeconds: 900 },
                 startup: { startMinimized: false, enableAutoStartup: true },
                 updates: { autoDownload: true, enableAutoUpdate: true, allowBetaVersions: false, checkIntervalMinutes: 360 },
-                blocking: { unlockPin: null, lockMessage: 'Este equipo ha sido bloqueado por Seguridad.\nPor Favor Contacta a tu jefe inmediato o Director de IT.', enableDeviceLock: false, allowUnlockWithPin: false }
+                blocking: { unlockPin: null, lockMessage: 'Este equipo ha sido bloqueado por Seguridad.\nPor Favor Contacta a tu jefe inmediato o Director de IT.', enableDeviceLock: false, allowUnlockWithPin: false },
+                webBlocking: { enabled: false, syncIntervalSeconds: 600, domains: [] }
             };
         },
         defaultOverrideTemplate() {
@@ -1135,6 +1201,32 @@ function policiesPage() {
                 }
             }
             return out;
+        },
+        deepDiff(base, current) {
+            if (Array.isArray(current)) {
+                if (!Array.isArray(base) || JSON.stringify(base) !== JSON.stringify(current)) {
+                    return JSON.parse(JSON.stringify(current));
+                }
+                return undefined;
+            }
+
+            if (current && typeof current === 'object') {
+                if (!base || typeof base !== 'object' || Array.isArray(base)) {
+                    return JSON.parse(JSON.stringify(current));
+                }
+
+                const diff = {};
+                for (const key of Object.keys(current)) {
+                    const valueDiff = this.deepDiff(base[key], current[key]);
+                    if (valueDiff !== undefined) {
+                        diff[key] = valueDiff;
+                    }
+                }
+
+                return Object.keys(diff).length > 0 ? diff : undefined;
+            }
+
+            return base !== current ? current : undefined;
         },
 
         /* ── Filtering ── */
@@ -1215,6 +1307,7 @@ function policiesPage() {
 
             this.callProcessKeywordsStr = (this.editData.modules?.callProcessKeywords || []).join(', ');
             this.callTitleKeywordsStr   = (this.editData.modules?.callTitleKeywords || []).join(', ');
+            this.webBlockingDomainsStr = (this.editData.webBlocking?.domains || []).join('\n');
             this.editorTab = 'visual';
             this.showEditor = true;
         },
@@ -1229,12 +1322,24 @@ function policiesPage() {
         syncToJsonRaw() {
             this.editJsonRaw = JSON.stringify(this.buildEditJson(), null, 2);
         },
+        getNormalizedWebBlockingDomains() {
+            return this.webBlockingDomainsStr
+                .split('\n')
+                .map(s => s.trim())
+                .filter(Boolean);
+        },
         buildEditJson() {
             const d = JSON.parse(JSON.stringify(this.editData));
             if (d.modules) {
                 d.modules.callProcessKeywords = this.callProcessKeywordsStr.split(',').map(s => s.trim()).filter(Boolean);
                 d.modules.callTitleKeywords   = this.callTitleKeywordsStr.split(',').map(s => s.trim()).filter(Boolean);
             }
+            if (!d.webBlocking) {
+                d.webBlocking = { enabled: false, syncIntervalSeconds: 600, domains: [] };
+            }
+            d.webBlocking.syncIntervalSeconds = Math.max(300, parseInt(d.webBlocking.syncIntervalSeconds || 600, 10));
+            d.webBlocking.domains = this.getNormalizedWebBlockingDomains();
+            d.webBlocking.enabled = d.webBlocking.domains.length > 0;
             if (d.blocking && (!d.blocking.unlockPin || d.blocking.unlockPin === 'null')) {
                 d.blocking.unlockPin = null;
             }

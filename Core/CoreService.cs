@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Drawing;
 using System.IO;
-using System.Linq;
 using System.Windows.Forms;
 using AZCKeeper_Cliente.Auth;
 using AZCKeeper_Cliente.Blocking;
@@ -11,7 +10,6 @@ using AZCKeeper_Cliente.Network;
 using AZCKeeper_Cliente.Startup;
 using AZCKeeper_Cliente.Tracking;
 using AZCKeeper_Cliente.Update;
-using AZCKeeper_Cliente.WebBlocking;
 
 namespace AZCKeeper_Cliente.Core
 {
@@ -40,12 +38,11 @@ namespace AZCKeeper_Cliente.Core
 
         // --- Control/updates ---
         private KeyBlocker _keyBlocker;        // bloqueo por política
+        private WebBlockingManager _webBlockingManager; // política local de dominios
         private UpdateManager _updateManager;  // actualización automática
-        private WebBlockService _webBlockService; // bloqueo web (PAC/proxy)
 
         // --- UI ---
         private DebugWindowForm _debugWindow; // ventana de diagnóstico
-        private LoginForm _loginForm;         // UI de login
 
         // --- Timers/flush ---
         private System.Timers.Timer _activityFlushTimer; // envío periódico activity-day
@@ -53,9 +50,13 @@ namespace AZCKeeper_Cliente.Core
         private int _activitySamplesCount;               // muestras enviadas
         private DateTime _lastFlushDayLocalDate = default; // corte de día local
 
-        private System.Timers.Timer _handshakeTimer; // handshake periódico
         private DateTime _lastHandshakeTime = DateTime.MinValue; // último handshake ok
         private bool _hasSuccessfulHandshake = false; // flag para primer handshake exitoso
+        private DateTime _nextAutoReloginAllowedAtUtc = DateTime.MinValue; // backoff para re-login/re-enroll
+        private int _autoReloginFailures = 0; // fallas consecutivas para calcular backoff
+        private System.Threading.CancellationTokenSource _handshakeLoopCts; // ciclo único de handshake
+        private System.Threading.Tasks.Task _handshakeLoopTask; // tarea del ciclo de handshake
+        private int _handshakeInProgress = 0; // evita handshakes solapados
 
         // Buffer para batch de window-episodes (Fix #4 anti-DDoS).
         // Evita 1 POST por cada Alt+Tab. Se vacía cada WindowEpisodeBatchIntervalSeconds
@@ -69,7 +70,7 @@ namespace AZCKeeper_Cliente.Core
 
         /// <summary>
         /// Inicializa servicios base, carga config/token, crea ApiClient y módulos.
-        /// También prepara UI de login si no hay token.
+        /// El flujo es completamente headless: nunca muestra login al usuario final.
         /// </summary>
         public void Initialize()
         {
@@ -80,6 +81,7 @@ namespace AZCKeeper_Cliente.Core
                 _configManager = new ConfigManager();
                 _configManager.LoadOrCreate();
                 _configManager.EnsureDeviceId();
+                RestoreLastSuccessfulHandshake();
 
                 _configManager.ApplyLoggingConfiguration();
 
@@ -95,14 +97,12 @@ namespace AZCKeeper_Cliente.Core
 
                 if (!_authManager.HasToken)
                 {
-                    // Intentar auto-re-login silencioso con credenciales guardadas
-                    if (!TrySilentReLogin())
-                        PrepareLoginUi();
+                    // Intentar recuperación silenciosa. Si falla, el cliente seguirá
+                    // corriendo y reintentará en background sin mostrar UI.
+                    TrySilentReLogin();
                 }
 
                 _apiClient = new ApiClient(_configManager, _authManager);
-                _webBlockService = new WebBlockService();
-                _webBlockService.UpdateConfiguration(_configManager.CurrentConfig.WebBlocking);
 
                 // Handshake se ejecuta en Start() → evita doble handshake en startup
                 // que genera ráfaga de 40 requests simultáneos cuando todos los clientes
@@ -162,12 +162,6 @@ namespace AZCKeeper_Cliente.Core
                     catch (Exception ex) { LocalLogger.Error(ex, "CoreService.Start(): error DebugWindow."); }
                 }
 
-                if (_loginForm != null && !_loginForm.IsDisposed)
-                {
-                    try { _loginForm.Show(); }
-                    catch (Exception ex) { LocalLogger.Error(ex, "CoreService.Start(): error LoginForm."); }
-                }
-
                 LocalLogger.Info("CoreService.Start(): OK.");
             }
             catch (Exception ex)
@@ -192,13 +186,12 @@ namespace AZCKeeper_Cliente.Core
                 StopActivityFlushTimer();
                 StopWindowEpisodeFlushTimer();
 
-                _handshakeTimer?.Stop();
-                _handshakeTimer?.Dispose();
+                StopHandshakeTimer();
                 // _lockStatusTimer eliminado: bloqueo va por handshake
+                _webBlockingManager?.Shutdown();
                 _activityTracker?.Stop();
                 _windowTracker?.Stop();
                 _updateManager?.Stop();
-                _webBlockService?.Stop();
 
                 if (_debugWindow != null && !_debugWindow.IsDisposed)
                 {
@@ -206,16 +199,6 @@ namespace AZCKeeper_Cliente.Core
                     {
                         if (_debugWindow.IsHandleCreated) _debugWindow.BeginInvoke(new Action(() => _debugWindow.Close()));
                         else _debugWindow.Close();
-                    }
-                    catch { }
-                }
-
-                if (_loginForm != null && !_loginForm.IsDisposed)
-                {
-                    try
-                    {
-                        if (_loginForm.IsHandleCreated) _loginForm.BeginInvoke(new Action(() => _loginForm.Close()));
-                        else _loginForm.Close();
                     }
                     catch { }
                 }
@@ -229,74 +212,19 @@ namespace AZCKeeper_Cliente.Core
         }
 
         /// <summary>
-        /// Prepara formulario de login y flujo de autenticación.
-        /// Comunica con ApiClient.SendLoginAsync y actualiza AuthManager/Config.
-        /// </summary>
-        private void PrepareLoginUi()
-        {
-            _loginForm = new AZCKeeper_Cliente.Auth.LoginForm();
-
-            _loginForm.OnLoginSubmitted += async (user, pass) =>
-            {
-                try
-                {
-                    _loginForm.SetBusy(true, "Validando credenciales...");
-
-                    var login = await _apiClient.SendLoginAsync(new ApiClient.LoginRequest
-                    {
-                        Username = user,
-                        Password = pass,
-                        DeviceId = _configManager.CurrentConfig.DeviceId,
-                        DeviceName = Environment.MachineName
-                    }).ConfigureAwait(false);
-
-                    if (login == null || !login.IsSuccess || login.Response == null || string.IsNullOrWhiteSpace(login.Response.Token))
-                    {
-                        _loginForm.SetBusy(false, $"Login falló: {login?.Error ?? login?.Response?.Error ?? "sin detalle"}");
-                        return;
-                    }
-
-                    _authManager.UpdateAuthToken(login.Response.Token);
-                    _configManager.CurrentConfig.ApiAuthToken = login.Response.Token;
-
-                    // Guardar credenciales para auto-re-login futuro
-                    _authManager.SaveCredentials(user, pass);
-
-                    if (!string.IsNullOrWhiteSpace(login.Response.DisplayName))
-                    {
-                        _configManager.CurrentConfig.UserDisplayName = login.Response.DisplayName;
-                        LocalLogger.SetUserContext(login.Response.DisplayName);
-                    }
-
-                    _configManager.Save();
-
-                    _loginForm.SetBusy(true, "Sincronizando configuración...");
-                    PerformHandshake();
-
-                    // Seed del día (antes de activity start, si el cliente ya estaba corriendo sin tracker)
-                    TryResumeTodayActivityFromServer();
-
-                    // Si el tracker ya estaba iniciado, el SeedDayTotals se aplica "en caliente" (por el ActivityTracker actualizado).
-                    // Si el tracker no se ha iniciado aún, quedará listo para Start().
-                    StartActivityFlushTimer();
-
-                    _loginForm.SetBusy(false, "OK");
-                    _loginForm.BeginInvoke(new Action(() => _loginForm.Close()));
-                }
-                catch (Exception ex)
-                {
-                    _loginForm.SetBusy(false, $"Error en login: {ex.Message}");
-                }
-            };
-        }
-
-        /// <summary>
         /// Intenta recuperar autenticación silenciosamente.
         /// Orden: 1) Re-enroll por device_guid, 2) Credenciales guardadas (DPAPI).
         /// Retorna true si obtuvo un nuevo token válido.
         /// </summary>
         private bool TrySilentReLogin()
         {
+            if (DateTime.UtcNow < _nextAutoReloginAllowedAtUtc)
+            {
+                var waitSeconds = Math.Max(1, (int)Math.Ceiling((_nextAutoReloginAllowedAtUtc - DateTime.UtcNow).TotalSeconds));
+                LocalLogger.Warn($"CoreService.TrySilentReLogin(): backoff activo. Esperando {waitSeconds}s antes de reintentar.");
+                return false;
+            }
+
             // 1) Intentar re-enroll (solo necesita device_guid — sin credenciales)
             if (TryReEnroll())
                 return true;
@@ -398,6 +326,17 @@ namespace AZCKeeper_Cliente.Core
             }
         }
 
+        private void RegisterAutoReloginFailure()
+        {
+            _autoReloginFailures++;
+            int exp = Math.Min(_autoReloginFailures - 1, 4);
+            int baseDelaySeconds = 30 * (int)Math.Pow(2, exp);
+            int jitterSeconds = new Random().Next(0, 16);
+            int totalDelaySeconds = baseDelaySeconds + jitterSeconds;
+            _nextAutoReloginAllowedAtUtc = DateTime.UtcNow.AddSeconds(totalDelaySeconds);
+            LocalLogger.Warn($"CoreService: backoff de auto-re-login activado por {totalDelaySeconds}s tras {_autoReloginFailures} falla(s) consecutiva(s).");
+        }
+
         /// <summary>
         /// Inicia handshake periódico para refrescar config y políticas.
         /// </summary>
@@ -405,114 +344,293 @@ namespace AZCKeeper_Cliente.Core
         {
             try
             {
-                if (_handshakeTimer != null) return;
+                if (_handshakeLoopCts != null) return;
 
-                int intervalSeconds = _configManager.CurrentConfig.Timers?.HandshakeIntervalSeconds ?? 300;
-                intervalSeconds = Math.Max(120, intervalSeconds);
-
-                // Jitter: retraso aleatorio de 0 a intervalSeconds antes del primer tick.
-                // Evita que 500 clientes que arrancan al mismo tiempo (ej: 8:00 AM)
-                // disparen todos sus handshakes en el mismo segundo → thundering herd.
-                // Ejemplo con 60s: clientes se distribuyen en una ventana de 60s
-                // → máximo ~9 req/s en lugar de 500 simultáneos.
+                int intervalSeconds = GetHandshakeIntervalSeconds(_configManager.CurrentConfig.Timers);
                 int jitterMs = new Random().Next(0, intervalSeconds * 1000);
 
-                _handshakeTimer = new System.Timers.Timer(intervalSeconds * 1000);
-                _handshakeTimer.AutoReset = true;
-                _handshakeTimer.Elapsed += (s, e) =>
-                {
-                    try
-                    {
-                        LocalLogger.Info("CoreService: ejecutando handshake periódico...");
-                        PerformHandshake();
-                        _lastHandshakeTime = DateTime.Now;
-                    }
-                    catch (Exception ex)
-                    {
-                        LocalLogger.Error(ex, "CoreService: error en handshake periódico.");
-                    }
-                };
+                _handshakeLoopCts = new System.Threading.CancellationTokenSource();
+                var ct = _handshakeLoopCts.Token;
+                _handshakeLoopTask = System.Threading.Tasks.Task.Run(() => RunHandshakeLoopAsync(jitterMs, ct), ct);
 
-                // Primer tick retrasado por jitter, luego AutoReset se encarga
-                System.Threading.Tasks.Task.Delay(jitterMs).ContinueWith(_ =>
-                {
-                    try
-                    {
-                        PerformHandshake();
-                        _lastHandshakeTime = DateTime.Now;
-                    }
-                    catch { }
-                    _handshakeTimer?.Start();
-                });
-
-                LocalLogger.Info($"CoreService: HandshakeTimer iniciado (cada {intervalSeconds}s, jitter={jitterMs}ms).");
+                LocalLogger.Info($"CoreService: HandshakeLoop iniciado (cada {intervalSeconds}s, jitter inicial={jitterMs}ms).");
             }
             catch (Exception ex)
             {
                 LocalLogger.Error(ex, "CoreService: error al iniciar HandshakeTimer.");
             }
         }
+
+        private async System.Threading.Tasks.Task RunHandshakeLoopAsync(int initialJitterMs, System.Threading.CancellationToken ct)
+        {
+            int consecutiveFailures = 0;
+
+            try
+            {
+                TimeSpan startupDelay = GetHandshakeStartupDelay(initialJitterMs);
+                if (startupDelay > TimeSpan.Zero)
+                {
+                    LocalLogger.Info($"CoreService: próximo handshake periódico en {startupDelay.TotalSeconds:F0}s.");
+                }
+                await System.Threading.Tasks.Task.Delay(startupDelay, ct).ConfigureAwait(false);
+
+                while (!ct.IsCancellationRequested)
+                {
+                    bool success = false;
+
+                    try
+                    {
+                        LocalLogger.Info("CoreService: ejecutando handshake periódico...");
+                        success = PerformHandshake();
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Error(ex, "CoreService: error en handshake periódico.");
+                    }
+
+                    int configuredIntervalSeconds = GetHandshakeIntervalSeconds(_configManager.CurrentConfig.Timers);
+                    if (success)
+                    {
+                        consecutiveFailures = 0;
+                    }
+                    else
+                    {
+                        consecutiveFailures = Math.Min(consecutiveFailures + 1, 4);
+                    }
+
+                    int nextDelaySeconds = success
+                        ? configuredIntervalSeconds
+                        : Math.Min(configuredIntervalSeconds * (int)Math.Pow(2, consecutiveFailures), 1800);
+
+                    if (!success)
+                    {
+                        LocalLogger.Warn($"CoreService: handshake falló. Próximo intento en {nextDelaySeconds}s (base={configuredIntervalSeconds}s, fallas={consecutiveFailures}).");
+                    }
+
+                    await System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(nextDelaySeconds), ct).ConfigureAwait(false);
+                }
+            }
+            catch (System.OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error fatal en HandshakeLoop.");
+            }
+        }
+
+        private int GetHandshakeIntervalSeconds(ConfigManager.TimersConfig timers)
+        {
+            if (timers == null)
+                return 300;
+
+            if (timers.HandshakeIntervalSeconds > 0)
+                return Math.Max(300, timers.HandshakeIntervalSeconds);
+
+            if (timers.HandshakeIntervalMinutes > 0)
+                return Math.Max(300, timers.HandshakeIntervalMinutes * 60);
+
+            return 300;
+        }
+
+        private void RestoreLastSuccessfulHandshake()
+        {
+            try
+            {
+                string raw = _configManager?.CurrentConfig?.LastSuccessfulHandshakeUtc;
+                if (string.IsNullOrWhiteSpace(raw))
+                    return;
+
+                if (!DateTime.TryParse(raw, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsedUtc))
+                {
+                    LocalLogger.Warn($"CoreService: no se pudo parsear LastSuccessfulHandshakeUtc='{raw}'.");
+                    return;
+                }
+
+                _lastHandshakeTime = parsedUtc.Kind == DateTimeKind.Utc
+                    ? parsedUtc.ToLocalTime()
+                    : parsedUtc;
+
+                LocalLogger.Info($"CoreService: último handshake restaurado desde config ({parsedUtc.ToUniversalTime():O}).");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error restaurando LastSuccessfulHandshakeUtc.");
+            }
+        }
+
+        private TimeSpan GetHandshakeStartupDelay(int initialJitterMs)
+        {
+            int intervalSeconds = GetHandshakeIntervalSeconds(_configManager.CurrentConfig.Timers);
+            var elapsed = GetElapsedSinceLastSuccessfulHandshakeUtc();
+
+            if (elapsed.HasValue && elapsed.Value < TimeSpan.FromSeconds(intervalSeconds))
+            {
+                return TimeSpan.FromSeconds(intervalSeconds) - elapsed.Value;
+            }
+
+            return TimeSpan.FromMilliseconds(initialJitterMs);
+        }
+
+        private TimeSpan? GetElapsedSinceLastSuccessfulHandshakeUtc()
+        {
+            string raw = _configManager?.CurrentConfig?.LastSuccessfulHandshakeUtc;
+            if (string.IsNullOrWhiteSpace(raw))
+                return null;
+
+            if (!DateTime.TryParse(raw, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsedUtc))
+                return null;
+
+            return DateTime.UtcNow - parsedUtc.ToUniversalTime();
+        }
+
+        private bool IsHandshakeAllowedNow(out TimeSpan remaining)
+        {
+            remaining = TimeSpan.Zero;
+
+            int intervalSeconds = GetHandshakeIntervalSeconds(_configManager.CurrentConfig.Timers);
+            var elapsed = GetElapsedSinceLastSuccessfulHandshakeUtc();
+
+            if (!elapsed.HasValue)
+                return true;
+
+            if (elapsed.Value >= TimeSpan.FromSeconds(intervalSeconds))
+                return true;
+
+            remaining = TimeSpan.FromSeconds(intervalSeconds) - elapsed.Value;
+            return false;
+        }
+
+        private void PersistSuccessfulHandshakeTimestamp()
+        {
+            _lastHandshakeTime = DateTime.Now;
+            _configManager.CurrentConfig.LastSuccessfulHandshakeUtc = DateTime.UtcNow.ToString("O");
+            _configManager.Save();
+        }
+
+        private void StopHandshakeTimer()
+        {
+            try
+            {
+                var cts = _handshakeLoopCts;
+                var task = _handshakeLoopTask;
+
+                _handshakeLoopCts = null;
+                _handshakeLoopTask = null;
+
+                if (cts == null)
+                    return;
+
+                cts.Cancel();
+
+                try
+                {
+                    task?.Wait(TimeSpan.FromSeconds(5));
+                }
+                catch (AggregateException ex)
+                {
+                    foreach (var inner in ex.InnerExceptions)
+                    {
+                        if (!(inner is System.OperationCanceledException))
+                            LocalLogger.Error(inner, "CoreService: error esperando el cierre de HandshakeLoop.");
+                    }
+                }
+                finally
+                {
+                    cts.Dispose();
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error al detener HandshakeLoop.");
+            }
+        }
         /// <summary>
         /// Ejecuta handshake con backend y aplica effectiveConfig local.
         /// Puede habilitar/deshabilitar módulos y políticas en caliente.
         /// </summary>
-        private void PerformHandshake()
+        private bool PerformHandshake()
         {
+            if (System.Threading.Interlocked.CompareExchange(ref _handshakeInProgress, 1, 0) != 0)
+            {
+                LocalLogger.Warn("CoreService.PerformHandshake(): ya hay un handshake en progreso. Se omite el duplicado.");
+                return false;
+            }
+
             try
             {
+                if (!IsHandshakeAllowedNow(out var remaining))
+                {
+                    LocalLogger.Info($"CoreService.PerformHandshake(): omitido. Último handshake exitoso hace menos de {GetHandshakeIntervalSeconds(_configManager.CurrentConfig.Timers)}s. Restante={remaining.TotalSeconds:F0}s.");
+                    return true;
+                }
+
                 LocalLogger.Info("CoreService.PerformHandshake(): iniciando.");
+                bool reloginAttempted = false;
+                ApiClient.HandshakeResult hs = null;
 
-                if (!_authManager.HasToken)
+                while (true)
                 {
-                    LocalLogger.Warn("CoreService.PerformHandshake(): sin token. Se omitirá handshake hasta login.");
-                    return;
-                }
+                    if (!_authManager.HasToken)
+                    {
+                        LocalLogger.Warn("CoreService.PerformHandshake(): sin token. Intentando recuperación silenciosa antes de omitir handshake.");
+                        if (!TrySilentReLogin())
+                            return false;
+                    }
 
-                var request = new ApiClient.HandshakeRequest
-                {
-                    DeviceId = _configManager.CurrentConfig.DeviceId,
-                    Version = _configManager.CurrentConfig.Version,
-                    DeviceName = Environment.MachineName
-                };
+                    var request = new ApiClient.HandshakeRequest
+                    {
+                        DeviceId = _configManager.CurrentConfig.DeviceId,
+                        Version = _configManager.CurrentConfig.Version,
+                        DeviceName = Environment.MachineName
+                    };
 
-                var hs = _apiClient.SendHandshakeAsync(request)
-                    .GetAwaiter()
-                    .GetResult();
+                    hs = _apiClient.SendHandshakeAsync(request)
+                        .GetAwaiter()
+                        .GetResult();
 
-                if (hs == null)
-                {
-                    LocalLogger.Warn("CoreService.PerformHandshake(): resultado null.");
-                    return;
-                }
+                    if (hs == null)
+                    {
+                        LocalLogger.Warn("CoreService.PerformHandshake(): resultado null.");
+                        return false;
+                    }
 
-                if (hs.IsUnauthorized)
-                {
+                    if (!hs.IsUnauthorized)
+                        break;
+
                     LocalLogger.Warn("CoreService.PerformHandshake(): 401/403. Intentando auto-re-login...");
                     _authManager.ClearToken(deleteFromDisk: true);
 
-                    if (TrySilentReLogin())
+                    if (reloginAttempted)
                     {
-                        LocalLogger.Info("CoreService.PerformHandshake(): auto-re-login exitoso. Reintentando handshake...");
-                        // Reintentar handshake con el nuevo token (recursión controlada: solo 1 nivel)
-                        return;
+                        RegisterAutoReloginFailure();
+                        LocalLogger.Warn("CoreService.PerformHandshake(): el token siguió inválido tras reintento de autenticación.");
+                        return false;
                     }
 
-                    // Auto-re-login falló — mostrar formulario
-                    LocalLogger.Warn("CoreService.PerformHandshake(): auto-re-login falló. Se solicitará login manual.");
-                    _authManager.ClearCredentials();
-                    StopActivityFlushTimer();
+                    if (TrySilentReLogin())
+                    {
+                        reloginAttempted = true;
+                        _autoReloginFailures = 0;
+                        _nextAutoReloginAllowedAtUtc = DateTime.MinValue;
+                        LocalLogger.Info("CoreService.PerformHandshake(): auto-re-login exitoso. Reintentando handshake una vez...");
+                        continue;
+                    }
 
-                    if (_loginForm == null || _loginForm.IsDisposed)
-                        PrepareLoginUi();
-
-                    return;
+                    RegisterAutoReloginFailure();
+                    LocalLogger.Warn("CoreService.PerformHandshake(): auto-re-login falló. Se continuará en modo silencioso con reintentos en background.");
+                    return false;
                 }
 
                 if (!hs.IsSuccess || hs.Response == null || hs.Response.EffectiveConfig == null)
                 {
                     LocalLogger.Warn($"CoreService.PerformHandshake(): no aplicado. Status={hs.StatusCode?.ToString() ?? "null"}, NonJson={hs.IsNonJsonResponse}, BodyPreview={hs.BodyPreview}");
-                    return;
+                    return false;
                 }
+
+                _autoReloginFailures = 0;
+                _nextAutoReloginAllowedAtUtc = DateTime.MinValue;
+                PersistSuccessfulHandshakeTimestamp();
 
                 if (!string.IsNullOrWhiteSpace(hs.Response.ServerTimeUtc))
                 {
@@ -584,28 +702,32 @@ namespace AZCKeeper_Cliente.Core
                     }
                 }
 
-                // -------------------- WebBlocking --------------------
                 if (effective.WebBlocking != null)
                 {
                     var webBlocking = _configManager.CurrentConfig.WebBlocking ?? new ConfigManager.WebBlockingConfig();
-
                     webBlocking.Enabled = effective.WebBlocking.Enabled;
-                    webBlocking.Source = effective.WebBlocking.Source;
-                    webBlocking.BlockedDomains = (effective.WebBlocking.BlockedDomains ?? Array.Empty<string>())
-                        .Where(x => !string.IsNullOrWhiteSpace(x))
-                        .Select(x => x.Trim().ToLowerInvariant())
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToArray();
-                    webBlocking.LastUpdatedUtc = DateTime.UtcNow.ToString("o");
-
+                    webBlocking.SyncIntervalSeconds = effective.WebBlocking.SyncIntervalSeconds > 0
+                        ? Math.Max(300, effective.WebBlocking.SyncIntervalSeconds)
+                        : 600;
+                    webBlocking.Domains = effective.WebBlocking.Domains ?? Array.Empty<string>();
+                    webBlocking.PolicyVersion = hs.Response.PolicyApplied?.Version ?? 0;
+                    webBlocking.LastUpdatedUtc = DateTime.UtcNow.ToString("O");
                     _configManager.CurrentConfig.WebBlocking = webBlocking;
-                    _configManager.Save();
-                    _webBlockService?.UpdateConfiguration(webBlocking);
 
-                    LocalLogger.Info($"CoreService: WebBlocking recibido. Enabled={webBlocking.Enabled}, Domains={webBlocking.BlockedDomains.Length}, Source={webBlocking.Source ?? "null"}");
+                    _webBlockingManager?.ApplyRemotePolicy(webBlocking, webBlocking.PolicyVersion, _configManager.CurrentConfig.ApiBaseUrl);
                 }
+                else
+                {
+                    var webBlocking = _configManager.CurrentConfig.WebBlocking ?? new ConfigManager.WebBlockingConfig();
+                    webBlocking.Enabled = false;
+                    webBlocking.SyncIntervalSeconds = 600;
+                    webBlocking.Domains = Array.Empty<string>();
+                    webBlocking.PolicyVersion = hs.Response.PolicyApplied?.Version ?? 0;
+                    webBlocking.LastUpdatedUtc = DateTime.UtcNow.ToString("O");
+                    _configManager.CurrentConfig.WebBlocking = webBlocking;
 
-                _configManager.Save();
+                    _webBlockingManager?.ApplyRemotePolicy(webBlocking, webBlocking.PolicyVersion, _configManager.CurrentConfig.ApiBaseUrl);
+                }
 
                 if (effective.Updates != null)
                 {
@@ -681,15 +803,17 @@ namespace AZCKeeper_Cliente.Core
                 if (effective.Timers != null)
                 {
                     var timers = _configManager.CurrentConfig.Timers ?? new ConfigManager.TimersConfig();
+                    int handshakeSeconds = effective.Timers.HandshakeIntervalSeconds > 0
+                        ? Math.Max(300, effective.Timers.HandshakeIntervalSeconds)
+                        : Math.Max(300, effective.Timers.HandshakeIntervalMinutes * 60);
 
                     // Mínimo 10s para flush de actividad (evitar saturar servidor)
                     timers.ActivityFlushIntervalSeconds = effective.Timers.ActivityFlushIntervalSeconds > 0
                         ? Math.Max(10, effective.Timers.ActivityFlushIntervalSeconds)
                         : 10;
 
-                    timers.HandshakeIntervalMinutes = effective.Timers.HandshakeIntervalMinutes > 0
-                        ? effective.Timers.HandshakeIntervalMinutes
-                        : 5;
+                    timers.HandshakeIntervalSeconds = handshakeSeconds;
+                    timers.HandshakeIntervalMinutes = Math.Max(5, handshakeSeconds / 60);
 
                     timers.OfflineQueueRetrySeconds = effective.Timers.OfflineQueueRetrySeconds > 0
                         ? effective.Timers.OfflineQueueRetrySeconds
@@ -728,10 +852,16 @@ namespace AZCKeeper_Cliente.Core
                 }
 
                 LocalLogger.Info("CoreService.PerformHandshake(): configuración aplicada desde effectiveConfig.");
+                return true;
             }
             catch (Exception ex)
             {
                 LocalLogger.Error(ex, "CoreService.PerformHandshake(): error. Se continúa con config local.");
+                return false;
+            }
+            finally
+            {
+                System.Threading.Interlocked.Exchange(ref _handshakeInProgress, 0);
             }
         }
         /// <summary>
@@ -751,17 +881,14 @@ namespace AZCKeeper_Cliente.Core
                 }
 
                 // Reiniciar Handshake con nuevo intervalo (en segundos)
-                // Mínimo absoluto: 120s (2 min). Con 40+ clientes, intervalos menores
-                // generan >240 queries/min solo de handshake y tumban Apache/MySQL.
-                if (_handshakeTimer != null)
+                // Mínimo absoluto: 300s (5 min). Con 40+ clientes, intervalos menores
+                // vuelven a disparar una cantidad de queries innecesaria.
+                if (_handshakeLoopCts != null)
                 {
-                    int hs = timers.HandshakeIntervalSeconds > 0
-                        ? Math.Max(120, timers.HandshakeIntervalSeconds)
-                        : Math.Max(120, timers.HandshakeIntervalMinutes * 60);
-                    _handshakeTimer.Stop();
-                    _handshakeTimer.Interval = hs * 1000;
-                    _handshakeTimer.Start();
-                    LocalLogger.Info($"CoreService: Handshake actualizado a {hs}s");
+                    int hs = GetHandshakeIntervalSeconds(timers);
+                    LocalLogger.Info($"CoreService: Handshake actualizado a {hs}s. Reiniciando ciclo para aplicar intervalo.");
+                    StopHandshakeTimer();
+                    StartHandshakeTimer();
                 }
 
                 // Actualizar OfflineQueue retry
@@ -912,6 +1039,10 @@ namespace AZCKeeper_Cliente.Core
             // -------------------- Hooks / Blocking / Debug --------------------
             // KeyboardHook y MouseHook eliminados - no son necesarios (ActivityTracker usa GetLastInputInfo)
             if (modulesConfig.EnableBlocking) _keyBlocker = new KeyBlocker(_apiClient);
+            _webBlockingManager = new WebBlockingManager();
+            _webBlockingManager.Initialize(
+                _configManager.CurrentConfig.WebBlocking ?? new ConfigManager.WebBlockingConfig(),
+                _configManager.CurrentConfig.ApiBaseUrl);
             
             // -------------------- UpdateManager --------------------
             if (modulesConfig.EnableUpdateManager)

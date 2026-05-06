@@ -27,6 +27,10 @@ namespace AZCKeeper_Cliente.Update
         private int _intervalMinutes;
         private bool _isDownloading = false;
         private readonly SemaphoreSlim _checkGate = new SemaphoreSlim(1, 1);
+        private DateTime _nextAllowedCheckUtc = DateTime.MinValue;
+        private int _consecutiveFailures = 0;
+        private const int CircuitBreakerFailureThreshold = 3;
+        private const int CircuitBreakerDelayMinutes = 360;
 
         /// <summary>
         /// Crea el manager con config, ApiClient y el intervalo en minutos.
@@ -36,6 +40,7 @@ namespace AZCKeeper_Cliente.Update
             _config = config;
             _apiClient = apiClient;
             _intervalMinutes = intervalMinutes;
+            RestoreFailureState();
         }
 
         /// <summary>
@@ -52,6 +57,9 @@ namespace AZCKeeper_Cliente.Update
                 LocalLogger.Info("UpdateManager: creado pero no iniciado (EnableAutoUpdate=false). Modo manual.");
                 return;
             }
+
+            if (_timer != null)
+                return;
 
             _intervalMinutes = Math.Max(1, _intervalMinutes);
             _timer = new System.Timers.Timer(_intervalMinutes * 60_000);
@@ -72,6 +80,7 @@ namespace AZCKeeper_Cliente.Update
         {
             _timer?.Stop();
             _timer?.Dispose();
+            _timer = null;
         }
 
         /// <summary>
@@ -97,12 +106,19 @@ namespace AZCKeeper_Cliente.Update
 
             try
             {
+                if (!IsUpdateCheckAllowedNow(out var remaining))
+                {
+                    LocalLogger.Info($"UpdateManager: verificación omitida por backoff. Próximo intento en {remaining.TotalMinutes:F1}min.");
+                    return;
+                }
+
                 var allowBeta = _config.CurrentConfig.Updates?.AllowBetaVersions == true;
                 var url = allowBeta ? "client/version?allowBeta=true" : "client/version";
                 var response = await _apiClient.GetAsync(url);
                 if (string.IsNullOrWhiteSpace(response))
                 {
                     LocalLogger.Warn("UpdateManager: respuesta vacía del servidor.");
+                    RegisterFailure("respuesta vacía del servidor");
                     return;
                 }
 
@@ -114,6 +130,7 @@ namespace AZCKeeper_Cliente.Update
                 if (data == null || !data.Ok)
                 {
                     LocalLogger.Warn("UpdateManager: respuesta inválida del servidor.");
+                    RegisterFailure("respuesta inválida del servidor");
                     return;
                 }
 
@@ -138,16 +155,24 @@ namespace AZCKeeper_Cliente.Update
                     // - ForceUpdate está activo
                     if (isCritical || updatesConfig?.AutoDownload == true || data.ForceUpdate)
                     {
-                        await DownloadAndInstallAsync(data.DownloadUrl, data.LatestVersion);
+                        bool installed = await DownloadAndInstallAsync(data.DownloadUrl, data.LatestVersion);
+                        if (!installed)
+                            return;
                     }
                     else
                     {
+                        ClearFailureState();
                         LocalLogger.Info("UpdateManager: actualización disponible pero no configurada para descarga automática.");
                     }
+                }
+                else
+                {
+                    ClearFailureState();
                 }
             }
             catch (Exception ex)
             {
+                RegisterFailure("error al verificar actualizaciones", ex);
                 LocalLogger.Error(ex, "UpdateManager: error al verificar actualizaciones.");
             }
             finally
@@ -158,12 +183,19 @@ namespace AZCKeeper_Cliente.Update
         /// <summary>
         /// Descarga el paquete ZIP, extrae y lanza el updater externo.
         /// </summary>
-        private async Task DownloadAndInstallAsync(string url, string version)
+        private async Task<bool> DownloadAndInstallAsync(string url, string version)
         {
             _isDownloading = true;
 
             try
             {
+                if (string.IsNullOrWhiteSpace(url))
+                {
+                    RegisterFailure("downloadUrl vacío");
+                    LocalLogger.Warn("UpdateManager: DownloadUrl vacío. Se pospone el reintento.");
+                    return false;
+                }
+
                 LocalLogger.Info($"UpdateManager: descargando actualización desde {url}...");
 
                 // ✅ USAR APPDATA en lugar de TEMP
@@ -176,7 +208,11 @@ namespace AZCKeeper_Cliente.Update
                 string zipPath = Path.Combine(updateDir, $"AZCKeeper_v{version}.zip");
 
                 // Descargar ZIP
-                using (var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) })
+                var handler = new HttpClientHandler
+                {
+                    UseProxy = false
+                };
+                using (var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(5) })
                 {
                     var bytes = await client.GetByteArrayAsync(url);
                     await File.WriteAllBytesAsync(zipPath, bytes);
@@ -195,8 +231,9 @@ namespace AZCKeeper_Cliente.Update
                 string updaterPath = Path.Combine(extractPath, "AZCKeeperUpdater.exe");
                 if (!File.Exists(updaterPath))
                 {
+                    RegisterFailure("updater no encontrado en el paquete");
                     LocalLogger.Error("UpdateManager: updater no encontrado en el paquete de actualización.");
-                    return;
+                    return false;
                 }
 
                 // Lanzar updater con parámetros
@@ -217,14 +254,86 @@ namespace AZCKeeper_Cliente.Update
                 // Cerrar aplicación para permitir actualización
                 await Task.Delay(1000);
                 System.Windows.Forms.Application.Exit();
+                return true;
             }
             catch (Exception ex)
             {
+                RegisterFailure("error al descargar/instalar actualización", ex);
                 LocalLogger.Error(ex, "UpdateManager: error al descargar/instalar actualización.");
+                return false;
             }
             finally
             {
                 _isDownloading = false;
+            }
+        }
+
+        private void RestoreFailureState()
+        {
+            try
+            {
+                _consecutiveFailures = Math.Max(0, _config.CurrentConfig?.ConsecutiveUpdateFailures ?? 0);
+
+                string raw = _config.CurrentConfig?.NextAllowedUpdateCheckUtc;
+                if (string.IsNullOrWhiteSpace(raw))
+                    return;
+
+                if (DateTime.TryParse(raw, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsedUtc))
+                {
+                    _nextAllowedCheckUtc = parsedUtc.ToUniversalTime();
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "UpdateManager: error restaurando estado de backoff.");
+            }
+        }
+
+        private bool IsUpdateCheckAllowedNow(out TimeSpan remaining)
+        {
+            remaining = TimeSpan.Zero;
+
+            if (_nextAllowedCheckUtc <= DateTime.UtcNow)
+                return true;
+
+            remaining = _nextAllowedCheckUtc - DateTime.UtcNow;
+            return false;
+        }
+
+        private void RegisterFailure(string reason, Exception ex = null)
+        {
+            _consecutiveFailures = Math.Min(_consecutiveFailures + 1, 6);
+            bool circuitBreakerActive = _consecutiveFailures >= CircuitBreakerFailureThreshold;
+            int delayMinutes = circuitBreakerActive
+                ? CircuitBreakerDelayMinutes
+                : Math.Min(15 * (int)Math.Pow(2, _consecutiveFailures - 1), 180);
+            _nextAllowedCheckUtc = DateTime.UtcNow.AddMinutes(delayMinutes);
+
+            if (_config.CurrentConfig != null)
+            {
+                _config.CurrentConfig.ConsecutiveUpdateFailures = _consecutiveFailures;
+                _config.CurrentConfig.NextAllowedUpdateCheckUtc = _nextAllowedCheckUtc.ToString("O");
+                _config.Save();
+            }
+
+            string extra = ex == null ? string.Empty : $" Error={ex.GetType().Name}: {ex.Message}";
+            string mode = circuitBreakerActive ? "circuit-breaker" : "backoff";
+            LocalLogger.Warn($"UpdateManager: {mode} activado por '{reason}'. Fallas={_consecutiveFailures}, próximo intento en {delayMinutes}min.{extra}");
+        }
+
+        private void ClearFailureState()
+        {
+            if (_consecutiveFailures == 0 && string.IsNullOrWhiteSpace(_config.CurrentConfig?.NextAllowedUpdateCheckUtc))
+                return;
+
+            _consecutiveFailures = 0;
+            _nextAllowedCheckUtc = DateTime.MinValue;
+
+            if (_config.CurrentConfig != null)
+            {
+                _config.CurrentConfig.ConsecutiveUpdateFailures = 0;
+                _config.CurrentConfig.NextAllowedUpdateCheckUtc = null;
+                _config.Save();
             }
         }
         /// <summary>

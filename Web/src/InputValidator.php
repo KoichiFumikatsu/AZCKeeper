@@ -9,10 +9,10 @@ class InputValidator
     /**
      * Valida que una fecha tenga formato YYYY-MM-DD
      * @param string $date Fecha a validar
-     * @param string $default Valor por defecto si es inválida
+     * @param ?string $default Valor por defecto si es inválida
      * @return string Fecha validada o default
      */
-    public static function validateDate(string $date, string $default = null): string
+    public static function validateDate(string $date, ?string $default = null): string
     {
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
             return $default ?? date('Y-m-d');
@@ -77,5 +77,51 @@ class InputValidator
         return array_filter(array_map('intval', $ids), function($id) {
             return $id > 0;
         });
+    }
+
+    /**
+     * Normaliza una lista de dominios para bloqueo web.
+     * - trim
+     * - lowercase
+     * - sin esquemas/rutas
+     * - elimina duplicados y entradas inválidas
+     *
+     * @param mixed $domains
+     * @return array
+     */
+    public static function validateDomainArray($domains): array
+    {
+        if (!is_array($domains)) {
+            return [];
+        }
+
+        $clean = [];
+        foreach ($domains as $domain) {
+            if (!is_string($domain)) {
+                continue;
+            }
+
+            $domain = trim(strtolower($domain));
+            if ($domain === '') {
+                continue;
+            }
+
+            $domain = preg_replace('#^https?://#', '', $domain);
+            $domain = preg_replace('#/.*$#', '', $domain);
+
+            if ($domain === '' || strlen($domain) > 255) {
+                continue;
+            }
+
+            if (!preg_match('/^\*?\.?[a-z0-9.-]+$/', $domain)) {
+                continue;
+            }
+
+            $clean[$domain] = true;
+        }
+
+        $domains = array_keys($clean);
+        sort($domains, SORT_NATURAL | SORT_FLAG_CASE);
+        return $domains;
     }
 }

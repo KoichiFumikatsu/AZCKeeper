@@ -3,6 +3,7 @@ namespace Keeper\Endpoints;
 
 use Keeper\Db;
 use Keeper\Http;
+use Keeper\InputValidator;
 use Keeper\PolicyService;
 use Keeper\Repos\PolicyRepo;
 use Keeper\Repos\SessionRepo;
@@ -113,19 +114,16 @@ class ClientHandshake {
       }
     }
 
-    // 5. Horario laboral (1 UNION)
-    $workSchedule = PolicyRepo::getWorkSchedule($pdo, $userId);
-
-    // 5.1 Bloqueo web: reutiliza la sección "Por ventana" del panel.
-    $blockedDomains = PolicyRepo::getWebBlockedDomains($pdo);
-
-    if (!isset($effective['webBlocking']) || !is_array($effective['webBlocking'])) {
-      $effective['webBlocking'] = [];
+    if (isset($effective['webBlocking']) && is_array($effective['webBlocking'])) {
+      $wb = $effective['webBlocking'];
+      $wb['enabled'] = !empty($wb['enabled']);
+      $wb['syncIntervalSeconds'] = max(300, (int)($wb['syncIntervalSeconds'] ?? 600));
+      $wb['domains'] = InputValidator::validateDomainArray($wb['domains'] ?? []);
+      $effective['webBlocking'] = $wb;
     }
 
-    $effective['webBlocking']['enabled'] = !empty($effective['modules']['enableBlocking']) && !empty($blockedDomains);
-    $effective['webBlocking']['blockedDomains'] = $blockedDomains;
-    $effective['webBlocking']['source'] = 'panel.leisure_apps.windows';
+    // 5. Horario laboral (1 UNION)
+    $workSchedule = PolicyRepo::getWorkSchedule($pdo, $userId);
 
     // 6. Display name — viene del JOIN en SessionRepo::validateBearer(), sin query extra
     $displayName = $sess['display_name'] ?: null;

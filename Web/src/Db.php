@@ -13,48 +13,27 @@ class Db {
   private static array $firmConnections = [];
 
   /**
-   * Obtiene conexión PDO con sistema de fallback automático
-   * 
-   * Orden de prioridad:
-   * 1. .env (base de datos principal)
-   * 2. .env.backup (base de datos de respaldo)
-   * 3. Exception si ambas fallan
+   * Obtiene conexión PDO usando exclusivamente Web/.env.
+   *
+   * No usa .env.backup ni otras fuentes automáticas.
    * 
    * @return PDO
-   * @throws Exception Si no puede conectar a ninguna base de datos
+   * @throws Exception Si no puede conectar a la base configurada en .env
    */
   public static function pdo(): PDO {
     if (self::$pdo) return self::$pdo;
 
-    // Intentar conexión primaria
     try {
       self::$pdo = self::connectPrimary();
       self::$activeSource = 'primary';
-      // No loguear SUCCESS en cada request — con 100+ usuarios genera miles de
-      // líneas/min en error_log y mata el I/O del servidor.
       return self::$pdo;
-    } catch (PDOException $primaryEx) {
-      self::logConnection('primary', false, $primaryEx->getMessage());
-      
-      // Intentar conexión de respaldo
-      try {
-        self::$pdo = self::connectBackup();
-        self::$activeSource = 'backup';
-        // Solo loguear fallback, no success normal
-        self::logConnection('backup', true, 'FALLBACK ACTIVO');
-        error_log("[KEEPER WARNING] Usando BD de RESPALDO - Primaria no disponible");
-        return self::$pdo;
-      } catch (PDOException $backupEx) {
-        self::logConnection('backup', false, $backupEx->getMessage());
-        
-        // Ambas conexiones fallaron
-        throw new Exception(
-          "KEEPER CRITICAL: No se puede conectar a ninguna base de datos.\n" .
-          "Primaria: {$primaryEx->getMessage()}\n" .
-          "Respaldo: {$backupEx->getMessage()}\n" .
-          "Verifique archivos .env y .env.backup"
-        );
-      }
+    } catch (PDOException $ex) {
+      self::logConnection('primary', false, $ex->getMessage());
+      throw new Exception(
+        "KEEPER CRITICAL: No se puede conectar a la base configurada en Web/.env.\n" .
+        "Error: {$ex->getMessage()}\n" .
+        "Verifique DB_HOST, DB_NAME, DB_USER y DB_PASS en .env"
+      );
     }
   }
 
@@ -65,39 +44,17 @@ class Db {
     $host = Config::get('DB_HOST');
     $db   = Config::get('DB_NAME');
     $user = Config::get('DB_USER');
-    $pass = (string)Config::get('DB_PASS', '');
+    $pass = Config::get('DB_PASS');
 
-    if (!$host || !$db || !$user) {
-      throw new PDOException("Credenciales incompletas en .env (DB_HOST, DB_NAME, DB_USER)");
+    if (!$host || !$db || !$user || $pass === null) {
+      throw new PDOException("Credenciales incompletas en .env");
+    }
+
+    if ($db !== 'azckeeper_local') {
+      throw new PDOException("DB_NAME debe ser exactamente 'azckeeper_local' en .env. Actual={$db}");
     }
 
     return self::createConnection($host, $db, $user, $pass);
-  }
-
-  /**
-   * Conecta a la base de datos de respaldo desde .env.backup
-   */
-  private static function connectBackup(): PDO {
-    // Cargar configuración de respaldo
-    $backupEnvPath = __DIR__ . '/../.env.backup';
-    if (!file_exists($backupEnvPath)) {
-      throw new PDOException("Archivo .env.backup no existe");
-    }
-
-    // Cargar variables de respaldo en contexto temporal
-    $backupConfig = self::loadBackupEnv($backupEnvPath);
-    
-    if (!isset($backupConfig['DB_HOST'], $backupConfig['DB_NAME'], 
-               $backupConfig['DB_USER'])) {
-      throw new PDOException("Credenciales incompletas en .env.backup (DB_HOST, DB_NAME, DB_USER)");
-    }
-
-    return self::createConnection(
-      $backupConfig['DB_HOST'],
-      $backupConfig['DB_NAME'],
-      $backupConfig['DB_USER'],
-      (string)($backupConfig['DB_PASS'] ?? '')
-    );
   }
 
   /**
@@ -120,35 +77,6 @@ class Db {
     $pdo->exec("SET NAMES {$charset} COLLATE {$collation}");
     
     return $pdo;
-  }
-
-  /**
-   * Carga variables de .env.backup sin modificar Config global
-   */
-  private static function loadBackupEnv(string $path): array {
-    $config = [];
-    $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-    
-    foreach ($lines as $line) {
-      $line = trim($line);
-      if ($line === '' || str_starts_with($line, '#')) continue;
-      
-      $pos = strpos($line, '=');
-      if ($pos === false) continue;
-      
-      $key = trim(substr($line, 0, $pos));
-      $value = trim(substr($line, $pos + 1));
-      
-      // Remover comillas
-      if ((str_starts_with($value, '"') && str_ends_with($value, '"')) || 
-          (str_starts_with($value, "'") && str_ends_with($value, "'"))) {
-        $value = substr($value, 1, -1);
-      }
-      
-      $config[$key] = $value;
-    }
-    
-    return $config;
   }
 
   /**
@@ -188,12 +116,12 @@ class Db {
 
     // Fallback: si no hay LEGACY_DB_* configurados, usar la conexión principal
     // Esto permite migración gradual sin romper nada
-    if (!$db || !$user) {
+    if (!$db || !$user || $pass === null) {
       self::$legacyPdo = self::pdo();
       return self::$legacyPdo;
     }
 
-    self::$legacyPdo = self::createConnection($host, $db, $user, (string)$pass);
+    self::$legacyPdo = self::createConnection($host, $db, $user, $pass);
     return self::$legacyPdo;
   }
 

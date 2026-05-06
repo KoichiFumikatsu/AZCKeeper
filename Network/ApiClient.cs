@@ -1025,18 +1025,9 @@ namespace AZCKeeper_Cliente.Network
             public EffectiveModules Modules { get; set; }
             public EffectiveStartup Startup { get; set; }     
             public EffectiveUpdates Updates { get; set; }
-            public EffectiveWebBlocking WebBlocking { get; set; }
             public EffectiveBlocking Blocking { get; set; }
+            public EffectiveWebBlocking WebBlocking { get; set; }
             public EffectiveTimers Timers { get; set; }
-        }
-        /// <summary>
-        /// Config efectiva de bloqueo web recibida en handshake.
-        /// </summary>
-        internal class EffectiveWebBlocking
-        {
-            public bool Enabled { get; set; }
-            public string[] BlockedDomains { get; set; }
-            public string Source { get; set; }
         }
         /// <summary>
         /// Config efectiva de bloqueo remoto.
@@ -1047,6 +1038,15 @@ namespace AZCKeeper_Cliente.Network
             public string LockMessage { get; set; }
             public bool AllowUnlockWithPin { get; set; }
             public string UnlockPin { get; set; }
+        }
+        /// <summary>
+        /// Config efectiva de bloqueo web por dominios.
+        /// </summary>
+        internal class EffectiveWebBlocking
+        {
+            public bool Enabled { get; set; }
+            public int SyncIntervalSeconds { get; set; }
+            public string[] Domains { get; set; }
         }
         /// <summary>
         /// Config efectiva de logging.
@@ -1067,7 +1067,7 @@ namespace AZCKeeper_Cliente.Network
             public int ActivityFlushIntervalSeconds { get; set; }
             /// <summary>
             /// Intervalo de handshake en segundos (reemplaza HandshakeIntervalMinutes).
-            /// Default 60s. El handshake centraliza: bloqueo + estado + políticas + horario.
+            /// Default 300s. El handshake centraliza: bloqueo + estado + políticas + horario.
             /// </summary>
             public int HandshakeIntervalSeconds { get; set; }
             public int HandshakeIntervalMinutes { get; set; } // legacy — ignorado si HandshakeIntervalSeconds > 0
