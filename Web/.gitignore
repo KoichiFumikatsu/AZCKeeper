@@ -1,0 +1,27 @@
+# Archivos de configuración con credenciales
+.env
+.env.backup
+.env.production
+.env.local
+
+# Logs
+*.log
+error.log
+keeper.log
+
+# Cache
+cache/
+temp/
+tmp/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

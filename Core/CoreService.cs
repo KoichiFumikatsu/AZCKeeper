@@ -1,0 +1,1713 @@
+﻿using System;
+using System.Drawing;
+using System.IO;
+using System.Windows.Forms;
+using AZCKeeper_Cliente.Auth;
+using AZCKeeper_Cliente.Blocking;
+using AZCKeeper_Cliente.Config;
+using AZCKeeper_Cliente.Logging;
+using AZCKeeper_Cliente.Network;
+using AZCKeeper_Cliente.Startup;
+using AZCKeeper_Cliente.Tracking;
+using AZCKeeper_Cliente.Update;
+
+namespace AZCKeeper_Cliente.Core
+{
+    /// <summary>
+    /// CoreService:
+    /// Orquesta el ciclo de vida del cliente: configuración, autenticación, handshake,
+    /// inicialización de módulos (tracking, blocking, updates) y timers de sincronización.
+    ///
+    /// Comunicación principal:
+    /// - ConfigManager: lee/escribe config.json y aplica logging.
+    /// - AuthManager: carga/guarda token y valida sesión.
+    /// - ApiClient: handshake, login, envío de actividad y ventanas.
+    /// - ActivityTracker/WindowTracker: producen eventos y snapshots locales.
+    /// - StartupManager/UpdateManager/KeyBlocker: acciones del sistema.
+    /// </summary>
+    internal class CoreService
+    {
+        // --- Servicios base ---
+        private ConfigManager _configManager; // config.json, logging, device id
+        private AuthManager _authManager;     // token en memoria/disco
+        private ApiClient _apiClient;         // HTTP hacia backend
+
+        // --- Tracking ---
+        private ActivityTracker _activityTracker; // actividad/idle por día
+        private WindowTracker _windowTracker;     // procesos/ventanas y llamadas
+
+        // --- Control/updates ---
+        private KeyBlocker _keyBlocker;        // bloqueo por política
+        private WebBlockingManager _webBlockingManager; // política local de dominios
+        private UpdateManager _updateManager;  // actualización automática
+
+        // --- UI ---
+        private DebugWindowForm _debugWindow; // ventana de diagnóstico
+
+        // --- Timers/flush ---
+        private System.Timers.Timer _activityFlushTimer; // envío periódico activity-day
+        private DateTime? _activityFirstEventLocal;      // primera muestra del día
+        private int _activitySamplesCount;               // muestras enviadas
+        private DateTime _lastFlushDayLocalDate = default; // corte de día local
+
+        private DateTime _lastHandshakeTime = DateTime.MinValue; // último handshake ok
+        private bool _hasSuccessfulHandshake = false; // flag para primer handshake exitoso
+        private DateTime _nextAutoReloginAllowedAtUtc = DateTime.MinValue; // backoff para re-login/re-enroll
+        private int _autoReloginFailures = 0; // fallas consecutivas para calcular backoff
+        private System.Threading.CancellationTokenSource _handshakeLoopCts; // ciclo único de handshake
+        private System.Threading.Tasks.Task _handshakeLoopTask; // tarea del ciclo de handshake
+        private int _handshakeInProgress = 0; // evita handshakes solapados
+
+        // Buffer para batch de window-episodes (Fix #4 anti-DDoS).
+        // Evita 1 POST por cada Alt+Tab. Se vacía cada WindowEpisodeBatchIntervalSeconds
+        // o cuando llega al límite _windowEpisodeBatchMaxSize.
+        private readonly System.Collections.Generic.List<ApiClient.WindowEpisodePayload> _windowEpisodeBuffer
+            = new System.Collections.Generic.List<ApiClient.WindowEpisodePayload>();
+        private readonly object _windowEpisodeBufferLock = new object();
+        private System.Timers.Timer _windowEpisodeFlushTimer;
+        private const int _windowEpisodeBatchMaxSize = 40; // backend acepta 50
+        private const int _windowEpisodeBatchIntervalSeconds = 30;
+
+        /// <summary>
+        /// Inicializa servicios base, carga config/token, crea ApiClient y módulos.
+        /// El flujo es completamente headless: nunca muestra login al usuario final.
+        /// </summary>
+        public void Initialize()
+        {
+            try
+            {
+                LocalLogger.Info("CoreService.Initialize(): inicio.");
+
+                _configManager = new ConfigManager();
+                _configManager.LoadOrCreate();
+                _configManager.EnsureDeviceId();
+                RestoreLastSuccessfulHandshake();
+
+                _configManager.ApplyLoggingConfiguration();
+
+                LocalLogger.Info($"Versión cliente: {_configManager.CurrentConfig.Version}");
+                LocalLogger.Info($"DeviceId: {_configManager.CurrentConfig.DeviceId}");
+                LocalLogger.Info($"ApiBaseUrl: {_configManager.CurrentConfig.ApiBaseUrl}");
+
+                if (!string.IsNullOrWhiteSpace(_configManager.CurrentConfig.UserDisplayName))
+                    LocalLogger.SetUserContext(_configManager.CurrentConfig.UserDisplayName);
+
+                _authManager = new AuthManager();
+                _authManager.TryLoadTokenFromDisk();
+
+                if (!_authManager.HasToken)
+                {
+                    // Intentar recuperación silenciosa. Si falla, el cliente seguirá
+                    // corriendo y reintentará en background sin mostrar UI.
+                    TrySilentReLogin();
+                }
+
+                _apiClient = new ApiClient(_configManager, _authManager);
+
+                // Handshake se ejecuta en Start() → evita doble handshake en startup
+                // que genera ráfaga de 40 requests simultáneos cuando todos los clientes
+                // arrancan a la misma hora (thundering herd).
+                InitializeModules();
+                // Habilitar startup automático
+                if (!StartupManager.IsEnabled())
+                {
+                    StartupManager.EnableStartup();
+                }
+
+                LocalLogger.Info("CoreService.Initialize(): OK.");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService.Initialize(): error.");
+                throw;
+            }
+
+            Microsoft.Win32.SystemEvents.SessionEnding += OnSessionEnding;
+        }
+
+        /// <summary>
+        /// Handler de cierre de sesión Windows: dispara flush final.
+        /// </summary>
+        private void OnSessionEnding(object sender, Microsoft.Win32.SessionEndingEventArgs e)
+        {
+            LocalLogger.Warn($"CoreService: Windows cerrando sesión ({e.Reason}). Flush final...");
+            // En contexto de shutdown, bloqueamos para garantizar envío
+            FinalFlushBeforeShutdownAsync().Wait();
+        }
+        /// <summary>
+        /// Inicia trackers, timers y UI; realiza handshake y retoma actividad del día.
+        /// </summary>
+        public void Start()
+        {
+            LocalLogger.Info("CoreService.Start(): iniciando.");
+
+            try
+            {
+                PerformHandshake();
+                // 1) Retomar ANTES de iniciar ActivityTracker (tu SeedDayTotals lo exige)
+                TryResumeTodayActivityFromServer();
+
+                // 2) Start trackers
+                _activityTracker?.Start();
+                _windowTracker?.Start();
+                _updateManager?.Start();
+
+                // 3) Flush periódico
+                StartActivityFlushTimer();
+                StartHandshakeTimer();
+                StartWindowEpisodeFlushTimer();
+                if (_debugWindow != null && !_debugWindow.IsDisposed)
+                {
+                    try { _debugWindow.Show(); }
+                    catch (Exception ex) { LocalLogger.Error(ex, "CoreService.Start(): error DebugWindow."); }
+                }
+
+                LocalLogger.Info("CoreService.Start(): OK.");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService.Start(): error.");
+            }
+        }
+
+        /// <summary>
+        /// Detiene trackers/timers/UI y fuerza flush final.
+        /// </summary>
+        public void Stop()
+        {
+            Microsoft.Win32.SystemEvents.SessionEnding -= OnSessionEnding;
+            LocalLogger.Info("CoreService.Stop(): deteniendo.");
+
+            try
+            {        
+                // FLUSH FINAL ANTES DE DETENER TRACKERS
+                // En contexto de shutdown, bloqueamos para garantizar envío
+                FinalFlushBeforeShutdownAsync().Wait();
+                StopActivityFlushTimer();
+                StopWindowEpisodeFlushTimer();
+
+                StopHandshakeTimer();
+                // _lockStatusTimer eliminado: bloqueo va por handshake
+                _webBlockingManager?.Shutdown();
+                _activityTracker?.Stop();
+                _windowTracker?.Stop();
+                _updateManager?.Stop();
+
+                if (_debugWindow != null && !_debugWindow.IsDisposed)
+                {
+                    try
+                    {
+                        if (_debugWindow.IsHandleCreated) _debugWindow.BeginInvoke(new Action(() => _debugWindow.Close()));
+                        else _debugWindow.Close();
+                    }
+                    catch { }
+                }
+
+                LocalLogger.Info("CoreService.Stop(): OK.");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService.Stop(): error.");
+            }
+        }
+
+        /// <summary>
+        /// Intenta recuperar autenticación silenciosamente.
+        /// Orden: 1) Re-enroll por device_guid, 2) Credenciales guardadas (DPAPI).
+        /// Retorna true si obtuvo un nuevo token válido.
+        /// </summary>
+        private bool TrySilentReLogin()
+        {
+            if (DateTime.UtcNow < _nextAutoReloginAllowedAtUtc)
+            {
+                var waitSeconds = Math.Max(1, (int)Math.Ceiling((_nextAutoReloginAllowedAtUtc - DateTime.UtcNow).TotalSeconds));
+                LocalLogger.Warn($"CoreService.TrySilentReLogin(): backoff activo. Esperando {waitSeconds}s antes de reintentar.");
+                return false;
+            }
+
+            // 1) Intentar re-enroll (solo necesita device_guid — sin credenciales)
+            if (TryReEnroll())
+                return true;
+
+            // 2) Intentar con credenciales guardadas
+            try
+            {
+                var creds = _authManager.TryLoadCredentials();
+                if (creds == null)
+                {
+                    LocalLogger.Info("CoreService.TrySilentReLogin(): sin credenciales guardadas.");
+                    return false;
+                }
+
+                LocalLogger.Info("CoreService.TrySilentReLogin(): credenciales encontradas. Intentando login silencioso...");
+
+                var apiClient = _apiClient ?? new ApiClient(_configManager, _authManager);
+
+                var login = apiClient.SendLoginAsync(new ApiClient.LoginRequest
+                {
+                    Username = creds.Value.Username,
+                    Password = creds.Value.Password,
+                    DeviceId = _configManager.CurrentConfig.DeviceId,
+                    DeviceName = Environment.MachineName
+                }).GetAwaiter().GetResult();
+
+                if (login == null || !login.IsSuccess || login.Response == null || string.IsNullOrWhiteSpace(login.Response.Token))
+                {
+                    LocalLogger.Warn($"CoreService.TrySilentReLogin(): login falló. Error={login?.Error ?? login?.Response?.Error ?? "sin detalle"}");
+                    return false;
+                }
+
+                _authManager.UpdateAuthToken(login.Response.Token);
+                _configManager.CurrentConfig.ApiAuthToken = login.Response.Token;
+                _authManager.SaveCredentials(creds.Value.Username, creds.Value.Password);
+
+                if (!string.IsNullOrWhiteSpace(login.Response.DisplayName))
+                {
+                    _configManager.CurrentConfig.UserDisplayName = login.Response.DisplayName;
+                    LocalLogger.SetUserContext(login.Response.DisplayName);
+                }
+
+                _configManager.Save();
+                LocalLogger.Info("CoreService.TrySilentReLogin(): token restaurado vía credenciales.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService.TrySilentReLogin(): error durante auto-re-login.");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Intenta re-enrollment usando solo device_guid (sin credenciales).
+        /// El servidor reconoce el dispositivo ya registrado y emite un nuevo token.
+        /// </summary>
+        private bool TryReEnroll()
+        {
+            try
+            {
+                string deviceGuid = _configManager.CurrentConfig.DeviceId;
+                if (string.IsNullOrWhiteSpace(deviceGuid))
+                {
+                    LocalLogger.Info("CoreService.TryReEnroll(): sin DeviceId.");
+                    return false;
+                }
+
+                LocalLogger.Info("CoreService.TryReEnroll(): intentando re-enroll por device_guid...");
+
+                var apiClient = _apiClient ?? new ApiClient(_configManager, _authManager);
+
+                var result = apiClient.SendReEnrollAsync(deviceGuid, Environment.MachineName)
+                    .GetAwaiter().GetResult();
+
+                if (result == null || !result.IsSuccess || result.Response == null || string.IsNullOrWhiteSpace(result.Response.Token))
+                {
+                    LocalLogger.Warn($"CoreService.TryReEnroll(): falló. Error={result?.Error ?? "sin detalle"}");
+                    return false;
+                }
+
+                _authManager.UpdateAuthToken(result.Response.Token);
+                _configManager.CurrentConfig.ApiAuthToken = result.Response.Token;
+
+                if (!string.IsNullOrWhiteSpace(result.Response.DisplayName))
+                {
+                    _configManager.CurrentConfig.UserDisplayName = result.Response.DisplayName;
+                    LocalLogger.SetUserContext(result.Response.DisplayName);
+                }
+
+                _configManager.Save();
+                LocalLogger.Info("CoreService.TryReEnroll(): token restaurado vía re-enroll.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService.TryReEnroll(): error.");
+                return false;
+            }
+        }
+
+        private void RegisterAutoReloginFailure()
+        {
+            _autoReloginFailures++;
+            int exp = Math.Min(_autoReloginFailures - 1, 4);
+            int baseDelaySeconds = 30 * (int)Math.Pow(2, exp);
+            int jitterSeconds = new Random().Next(0, 16);
+            int totalDelaySeconds = baseDelaySeconds + jitterSeconds;
+            _nextAutoReloginAllowedAtUtc = DateTime.UtcNow.AddSeconds(totalDelaySeconds);
+            LocalLogger.Warn($"CoreService: backoff de auto-re-login activado por {totalDelaySeconds}s tras {_autoReloginFailures} falla(s) consecutiva(s).");
+        }
+
+        /// <summary>
+        /// Inicia handshake periódico para refrescar config y políticas.
+        /// </summary>
+        private void StartHandshakeTimer()
+        {
+            try
+            {
+                if (_handshakeLoopCts != null) return;
+
+                int intervalSeconds = GetHandshakeIntervalSeconds(_configManager.CurrentConfig.Timers);
+                int jitterMs = new Random().Next(0, intervalSeconds * 1000);
+
+                _handshakeLoopCts = new System.Threading.CancellationTokenSource();
+                var ct = _handshakeLoopCts.Token;
+                _handshakeLoopTask = System.Threading.Tasks.Task.Run(() => RunHandshakeLoopAsync(jitterMs, ct), ct);
+
+                LocalLogger.Info($"CoreService: HandshakeLoop iniciado (cada {intervalSeconds}s, jitter inicial={jitterMs}ms).");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error al iniciar HandshakeTimer.");
+            }
+        }
+
+        private async System.Threading.Tasks.Task RunHandshakeLoopAsync(int initialJitterMs, System.Threading.CancellationToken ct)
+        {
+            int consecutiveFailures = 0;
+
+            try
+            {
+                TimeSpan startupDelay = GetHandshakeStartupDelay(initialJitterMs);
+                if (startupDelay > TimeSpan.Zero)
+                {
+                    LocalLogger.Info($"CoreService: próximo handshake periódico en {startupDelay.TotalSeconds:F0}s.");
+                }
+                await System.Threading.Tasks.Task.Delay(startupDelay, ct).ConfigureAwait(false);
+
+                while (!ct.IsCancellationRequested)
+                {
+                    bool success = false;
+
+                    try
+                    {
+                        LocalLogger.Info("CoreService: ejecutando handshake periódico...");
+                        success = PerformHandshake();
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Error(ex, "CoreService: error en handshake periódico.");
+                    }
+
+                    int configuredIntervalSeconds = GetHandshakeIntervalSeconds(_configManager.CurrentConfig.Timers);
+                    if (success)
+                    {
+                        consecutiveFailures = 0;
+                    }
+                    else
+                    {
+                        consecutiveFailures = Math.Min(consecutiveFailures + 1, 4);
+                    }
+
+                    int nextDelaySeconds = success
+                        ? configuredIntervalSeconds
+                        : Math.Min(configuredIntervalSeconds * (int)Math.Pow(2, consecutiveFailures), 1800);
+
+                    if (!success)
+                    {
+                        LocalLogger.Warn($"CoreService: handshake falló. Próximo intento en {nextDelaySeconds}s (base={configuredIntervalSeconds}s, fallas={consecutiveFailures}).");
+                    }
+
+                    await System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(nextDelaySeconds), ct).ConfigureAwait(false);
+                }
+            }
+            catch (System.OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error fatal en HandshakeLoop.");
+            }
+        }
+
+        private int GetHandshakeIntervalSeconds(ConfigManager.TimersConfig timers)
+        {
+            if (timers == null)
+                return 300;
+
+            if (timers.HandshakeIntervalSeconds > 0)
+                return Math.Max(300, timers.HandshakeIntervalSeconds);
+
+            if (timers.HandshakeIntervalMinutes > 0)
+                return Math.Max(300, timers.HandshakeIntervalMinutes * 60);
+
+            return 300;
+        }
+
+        private void RestoreLastSuccessfulHandshake()
+        {
+            try
+            {
+                string raw = _configManager?.CurrentConfig?.LastSuccessfulHandshakeUtc;
+                if (string.IsNullOrWhiteSpace(raw))
+                    return;
+
+                if (!DateTime.TryParse(raw, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsedUtc))
+                {
+                    LocalLogger.Warn($"CoreService: no se pudo parsear LastSuccessfulHandshakeUtc='{raw}'.");
+                    return;
+                }
+
+                _lastHandshakeTime = parsedUtc.Kind == DateTimeKind.Utc
+                    ? parsedUtc.ToLocalTime()
+                    : parsedUtc;
+
+                LocalLogger.Info($"CoreService: último handshake restaurado desde config ({parsedUtc.ToUniversalTime():O}).");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error restaurando LastSuccessfulHandshakeUtc.");
+            }
+        }
+
+        private TimeSpan GetHandshakeStartupDelay(int initialJitterMs)
+        {
+            int intervalSeconds = GetHandshakeIntervalSeconds(_configManager.CurrentConfig.Timers);
+            var elapsed = GetElapsedSinceLastSuccessfulHandshakeUtc();
+
+            if (elapsed.HasValue && elapsed.Value < TimeSpan.FromSeconds(intervalSeconds))
+            {
+                return TimeSpan.FromSeconds(intervalSeconds) - elapsed.Value;
+            }
+
+            return TimeSpan.FromMilliseconds(initialJitterMs);
+        }
+
+        private TimeSpan? GetElapsedSinceLastSuccessfulHandshakeUtc()
+        {
+            string raw = _configManager?.CurrentConfig?.LastSuccessfulHandshakeUtc;
+            if (string.IsNullOrWhiteSpace(raw))
+                return null;
+
+            if (!DateTime.TryParse(raw, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsedUtc))
+                return null;
+
+            return DateTime.UtcNow - parsedUtc.ToUniversalTime();
+        }
+
+        private bool IsHandshakeAllowedNow(out TimeSpan remaining)
+        {
+            remaining = TimeSpan.Zero;
+
+            int intervalSeconds = GetHandshakeIntervalSeconds(_configManager.CurrentConfig.Timers);
+            var elapsed = GetElapsedSinceLastSuccessfulHandshakeUtc();
+
+            if (!elapsed.HasValue)
+                return true;
+
+            if (elapsed.Value >= TimeSpan.FromSeconds(intervalSeconds))
+                return true;
+
+            remaining = TimeSpan.FromSeconds(intervalSeconds) - elapsed.Value;
+            return false;
+        }
+
+        private void PersistSuccessfulHandshakeTimestamp()
+        {
+            _lastHandshakeTime = DateTime.Now;
+            _configManager.CurrentConfig.LastSuccessfulHandshakeUtc = DateTime.UtcNow.ToString("O");
+            _configManager.Save();
+        }
+
+        private void StopHandshakeTimer()
+        {
+            try
+            {
+                var cts = _handshakeLoopCts;
+                var task = _handshakeLoopTask;
+
+                _handshakeLoopCts = null;
+                _handshakeLoopTask = null;
+
+                if (cts == null)
+                    return;
+
+                cts.Cancel();
+
+                try
+                {
+                    task?.Wait(TimeSpan.FromSeconds(5));
+                }
+                catch (AggregateException ex)
+                {
+                    foreach (var inner in ex.InnerExceptions)
+                    {
+                        if (!(inner is System.OperationCanceledException))
+                            LocalLogger.Error(inner, "CoreService: error esperando el cierre de HandshakeLoop.");
+                    }
+                }
+                finally
+                {
+                    cts.Dispose();
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error al detener HandshakeLoop.");
+            }
+        }
+        /// <summary>
+        /// Ejecuta handshake con backend y aplica effectiveConfig local.
+        /// Puede habilitar/deshabilitar módulos y políticas en caliente.
+        /// </summary>
+        private bool PerformHandshake()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref _handshakeInProgress, 1, 0) != 0)
+            {
+                LocalLogger.Warn("CoreService.PerformHandshake(): ya hay un handshake en progreso. Se omite el duplicado.");
+                return false;
+            }
+
+            try
+            {
+                if (!IsHandshakeAllowedNow(out var remaining))
+                {
+                    LocalLogger.Info($"CoreService.PerformHandshake(): omitido. Último handshake exitoso hace menos de {GetHandshakeIntervalSeconds(_configManager.CurrentConfig.Timers)}s. Restante={remaining.TotalSeconds:F0}s.");
+                    return true;
+                }
+
+                LocalLogger.Info("CoreService.PerformHandshake(): iniciando.");
+                bool reloginAttempted = false;
+                ApiClient.HandshakeResult hs = null;
+
+                while (true)
+                {
+                    if (!_authManager.HasToken)
+                    {
+                        LocalLogger.Warn("CoreService.PerformHandshake(): sin token. Intentando recuperación silenciosa antes de omitir handshake.");
+                        if (!TrySilentReLogin())
+                            return false;
+                    }
+
+                    var request = new ApiClient.HandshakeRequest
+                    {
+                        DeviceId = _configManager.CurrentConfig.DeviceId,
+                        Version = _configManager.CurrentConfig.Version,
+                        DeviceName = Environment.MachineName
+                    };
+
+                    hs = _apiClient.SendHandshakeAsync(request)
+                        .GetAwaiter()
+                        .GetResult();
+
+                    if (hs == null)
+                    {
+                        LocalLogger.Warn("CoreService.PerformHandshake(): resultado null.");
+                        return false;
+                    }
+
+                    if (!hs.IsUnauthorized)
+                        break;
+
+                    LocalLogger.Warn("CoreService.PerformHandshake(): 401/403. Intentando auto-re-login...");
+                    _authManager.ClearToken(deleteFromDisk: true);
+
+                    if (reloginAttempted)
+                    {
+                        RegisterAutoReloginFailure();
+                        LocalLogger.Warn("CoreService.PerformHandshake(): el token siguió inválido tras reintento de autenticación.");
+                        return false;
+                    }
+
+                    if (TrySilentReLogin())
+                    {
+                        reloginAttempted = true;
+                        _autoReloginFailures = 0;
+                        _nextAutoReloginAllowedAtUtc = DateTime.MinValue;
+                        LocalLogger.Info("CoreService.PerformHandshake(): auto-re-login exitoso. Reintentando handshake una vez...");
+                        continue;
+                    }
+
+                    RegisterAutoReloginFailure();
+                    LocalLogger.Warn("CoreService.PerformHandshake(): auto-re-login falló. Se continuará en modo silencioso con reintentos en background.");
+                    return false;
+                }
+
+                if (!hs.IsSuccess || hs.Response == null || hs.Response.EffectiveConfig == null)
+                {
+                    LocalLogger.Warn($"CoreService.PerformHandshake(): no aplicado. Status={hs.StatusCode?.ToString() ?? "null"}, NonJson={hs.IsNonJsonResponse}, BodyPreview={hs.BodyPreview}");
+                    return false;
+                }
+
+                _autoReloginFailures = 0;
+                _nextAutoReloginAllowedAtUtc = DateTime.MinValue;
+                PersistSuccessfulHandshakeTimestamp();
+
+                if (!string.IsNullOrWhiteSpace(hs.Response.ServerTimeUtc))
+                {
+                    TimeSync.UpdateFromServer(hs.Response.ServerTimeUtc);
+                }
+
+                var effective = hs.Response.EffectiveConfig;
+
+                if (!string.IsNullOrWhiteSpace(effective.ApiBaseUrl))
+                    _configManager.CurrentConfig.ApiBaseUrl = effective.ApiBaseUrl;
+                if (effective.Startup != null)
+                {
+                    var startup = _configManager.CurrentConfig.Startup ?? new ConfigManager.StartupConfig();
+
+                    startup.EnableAutoStartup = effective.Startup.EnableAutoStartup;
+                    startup.StartMinimized = effective.Startup.StartMinimized;
+
+                    _configManager.CurrentConfig.Startup = startup;
+
+                    // Aplicar cambio inmediatamente
+                    if (startup.EnableAutoStartup)
+                        Startup.StartupManager.EnableStartup();
+                    else
+                        Startup.StartupManager.DisableStartup();
+                }
+                // -------------------- Blocking --------------------
+                if (effective.Blocking != null)
+                {
+                    var blocking = _configManager.CurrentConfig.Blocking ?? new ConfigManager.BlockingConfig();
+
+                    bool wasLocked = blocking.EnableDeviceLock;
+                    blocking.EnableDeviceLock = effective.Blocking.EnableDeviceLock;
+                    blocking.LockMessage = effective.Blocking.LockMessage ?? blocking.LockMessage;
+                    blocking.AllowUnlockWithPin = effective.Blocking.AllowUnlockWithPin;
+                    blocking.UnlockPin = effective.Blocking.UnlockPin ?? null;
+
+                    LocalLogger.Info($"CoreService: Blocking recibido. EnableDeviceLock={blocking.EnableDeviceLock}, UnlockPin='{(blocking.UnlockPin ?? "NULL")}'");
+
+                    _configManager.CurrentConfig.Blocking = blocking;
+                    _configManager.Save();
+                    LocalLogger.Info($"CoreService: Blocking guardado en config.json. UnlockPin='" +
+                        $"{(blocking.UnlockPin ?? "NULL")}'");
+
+                    // Aplicar bloqueo: cambio de false→true
+                    if (!wasLocked && blocking.EnableDeviceLock && _keyBlocker != null)
+                    {
+                        LocalLogger.Warn($"CoreService: BLOQUEANDO dispositivo. PIN='{(blocking.UnlockPin ?? "NULL")}'");
+                        _keyBlocker.ActivateLock(blocking.LockMessage, blocking.AllowUnlockWithPin, blocking.UnlockPin);
+                    }
+                    // Aplicar desbloqueo: cambio de true→false
+                    else if (wasLocked && !blocking.EnableDeviceLock && _keyBlocker != null)
+                    {
+                        LocalLogger.Info("CoreService: DESBLOQUEANDO dispositivo por política remota...");
+                        _keyBlocker.DeactivateLock();
+                    }
+                    // Si sigue bloqueado: verificar que esté REALMENTE activo (caso de reinicio)
+                    else if (blocking.EnableDeviceLock && _keyBlocker != null)
+                    {
+                        if (!_keyBlocker.IsLocked())
+                        {
+                            // El bloqueo debería estar activo pero no lo está (caso reinicio)
+                            LocalLogger.Warn($"CoreService: REACTIVANDO bloqueo post-reinicio. PIN='{(blocking.UnlockPin ?? "NULL")}'");
+                            _keyBlocker.ActivateLock(blocking.LockMessage, blocking.AllowUnlockWithPin, blocking.UnlockPin);
+                        }
+                        else
+                        {
+                            LocalLogger.Info("CoreService: Dispositivo ya está bloqueado, manteniendo estado.");
+                        }
+                    }
+                }
+
+                if (effective.WebBlocking != null)
+                {
+                    var webBlocking = _configManager.CurrentConfig.WebBlocking ?? new ConfigManager.WebBlockingConfig();
+                    webBlocking.Enabled = effective.WebBlocking.Enabled;
+                    webBlocking.SyncIntervalSeconds = effective.WebBlocking.SyncIntervalSeconds > 0
+                        ? Math.Max(300, effective.WebBlocking.SyncIntervalSeconds)
+                        : 600;
+                    webBlocking.Domains = effective.WebBlocking.Domains ?? Array.Empty<string>();
+                    webBlocking.PolicyVersion = hs.Response.PolicyApplied?.Version ?? 0;
+                    webBlocking.LastUpdatedUtc = DateTime.UtcNow.ToString("O");
+                    _configManager.CurrentConfig.WebBlocking = webBlocking;
+
+                    _webBlockingManager?.ApplyRemotePolicy(webBlocking, webBlocking.PolicyVersion, _configManager.CurrentConfig.ApiBaseUrl);
+                }
+                else
+                {
+                    var webBlocking = _configManager.CurrentConfig.WebBlocking ?? new ConfigManager.WebBlockingConfig();
+                    webBlocking.Enabled = false;
+                    webBlocking.SyncIntervalSeconds = 600;
+                    webBlocking.Domains = Array.Empty<string>();
+                    webBlocking.PolicyVersion = hs.Response.PolicyApplied?.Version ?? 0;
+                    webBlocking.LastUpdatedUtc = DateTime.UtcNow.ToString("O");
+                    _configManager.CurrentConfig.WebBlocking = webBlocking;
+
+                    _webBlockingManager?.ApplyRemotePolicy(webBlocking, webBlocking.PolicyVersion, _configManager.CurrentConfig.ApiBaseUrl);
+                }
+
+                if (effective.Updates != null)
+                {
+                    var updates = _configManager.CurrentConfig.Updates ?? new ConfigManager.UpdatesConfig();
+
+                    updates.EnableAutoUpdate = effective.Updates.EnableAutoUpdate;
+                    updates.CheckIntervalMinutes = effective.Updates.CheckIntervalMinutes;
+                    updates.AutoDownload = effective.Updates.AutoDownload;
+                    updates.AllowBetaVersions = effective.Updates.AllowBetaVersions;
+
+                    _configManager.CurrentConfig.Updates = updates;
+
+                    // Reiniciar UpdateManager si cambió configuración
+                    if (_updateManager != null)
+                    {
+                        _updateManager.Stop();
+                        if (updates.EnableAutoUpdate)
+                        {
+                            _updateManager.UpdateInterval(updates.CheckIntervalMinutes);
+                            _updateManager.Start();
+                        }
+                    }
+                }
+
+                if (effective.Logging != null)
+                {
+                    var logging = _configManager.CurrentConfig.Logging ?? new ConfigManager.LoggingConfig();
+
+                    if (!string.IsNullOrWhiteSpace(effective.Logging.GlobalLevel))
+                        logging.GlobalLevel = effective.Logging.GlobalLevel;
+
+                    if (!string.IsNullOrWhiteSpace(effective.Logging.ClientOverrideLevel))
+                        logging.ClientOverrideLevel = effective.Logging.ClientOverrideLevel;
+
+                    logging.EnableFileLogging = effective.Logging.EnableFileLogging;
+                    logging.EnableDiscordLogging = effective.Logging.EnableDiscordLogging;
+                    logging.DiscordWebhookUrl = effective.Logging.DiscordWebhookUrl;
+
+                    _configManager.CurrentConfig.Logging = logging;
+                }
+
+                if (effective.Modules != null)
+                {
+                    var modules = _configManager.CurrentConfig.Modules ?? new ConfigManager.ModulesConfig();
+
+                    modules.EnableActivityTracking = effective.Modules.EnableActivityTracking;
+                    modules.EnableWindowTracking = effective.Modules.EnableWindowTracking;
+                    modules.EnableProcessTracking = effective.Modules.EnableProcessTracking;
+                    modules.EnableBlocking = effective.Modules.EnableBlocking;
+                    modules.EnableUpdateManager = effective.Modules.EnableUpdateManager;
+                    modules.EnableDebugWindow = effective.Modules.EnableDebugWindow;
+
+                    modules.CountCallsAsActive = effective.Modules.CountCallsAsActive;
+                    if (effective.Modules.CallActiveMaxIdleSeconds > 0)
+                        modules.CallActiveMaxIdleSeconds = effective.Modules.CallActiveMaxIdleSeconds;
+
+                    if (effective.Modules.ActivityIntervalSeconds > 0)
+                        modules.ActivityIntervalSeconds = effective.Modules.ActivityIntervalSeconds;
+
+                    if (effective.Modules.ActivityInactivityThresholdSeconds > 0)
+                        modules.ActivityInactivityThresholdSeconds = effective.Modules.ActivityInactivityThresholdSeconds;
+
+                    if (effective.Modules.WindowTrackingIntervalSeconds > 0)
+                        modules.WindowTrackingIntervalSeconds = effective.Modules.WindowTrackingIntervalSeconds;
+
+                    modules.EnableCallTracking = effective.Modules.EnableCallTracking;
+                    modules.CallProcessKeywords = effective.Modules.CallProcessKeywords ?? modules.CallProcessKeywords;
+                    modules.CallTitleKeywords = effective.Modules.CallTitleKeywords ?? modules.CallTitleKeywords;
+
+                    _configManager.CurrentConfig.Modules = modules;
+                }
+                // -------------------- Timers --------------------
+                if (effective.Timers != null)
+                {
+                    var timers = _configManager.CurrentConfig.Timers ?? new ConfigManager.TimersConfig();
+                    int handshakeSeconds = effective.Timers.HandshakeIntervalSeconds > 0
+                        ? Math.Max(300, effective.Timers.HandshakeIntervalSeconds)
+                        : Math.Max(300, effective.Timers.HandshakeIntervalMinutes * 60);
+
+                    // Mínimo 10s para flush de actividad (evitar saturar servidor)
+                    timers.ActivityFlushIntervalSeconds = effective.Timers.ActivityFlushIntervalSeconds > 0
+                        ? Math.Max(10, effective.Timers.ActivityFlushIntervalSeconds)
+                        : 10;
+
+                    timers.HandshakeIntervalSeconds = handshakeSeconds;
+                    timers.HandshakeIntervalMinutes = Math.Max(5, handshakeSeconds / 60);
+
+                    timers.OfflineQueueRetrySeconds = effective.Timers.OfflineQueueRetrySeconds > 0
+                        ? effective.Timers.OfflineQueueRetrySeconds
+                        : 30;
+
+                    _configManager.CurrentConfig.Timers = timers;
+
+                    // Aplicar cambios inmediatamente
+                    ApplyTimerChanges(timers);
+                }
+
+                _configManager.Save();
+                _configManager.ApplyLoggingConfiguration();
+
+                // Si es el primer handshake exitoso después del inicio, intentar resumir actividad
+                if (!_hasSuccessfulHandshake)
+                {
+                    _hasSuccessfulHandshake = true;
+                    LocalLogger.Info("CoreService.PerformHandshake(): primer handshake exitoso. Intentando resumir actividad del día...");
+                    TryResumeTodayActivityFromServer();
+                }
+
+                // Aplicar horario laboral desde keeper_work_schedules si el servidor lo retornó
+                // Reemplaza los valores hardcodeados en WorkSchedule.cs (07:00, 19:00, 12:00, 13:00)
+                if (hs.Response.WorkSchedule != null && _activityTracker != null)
+                {
+                    ApplyWorkSchedule(hs.Response.WorkSchedule);
+                }
+
+                // Refrescar UserDisplayName desde el servidor
+                if (!string.IsNullOrWhiteSpace(hs.Response.DisplayName))
+                {
+                    _configManager.CurrentConfig.UserDisplayName = hs.Response.DisplayName;
+                    _configManager.Save();
+                    LocalLogger.SetUserContext(hs.Response.DisplayName);
+                }
+
+                LocalLogger.Info("CoreService.PerformHandshake(): configuración aplicada desde effectiveConfig.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService.PerformHandshake(): error. Se continúa con config local.");
+                return false;
+            }
+            finally
+            {
+                System.Threading.Interlocked.Exchange(ref _handshakeInProgress, 0);
+            }
+        }
+        /// <summary>
+        /// Aplica cambios de intervalos (flush, handshake, offline queue).
+        /// </summary>
+        private void ApplyTimerChanges(ConfigManager.TimersConfig timers)
+        {
+            try
+            {
+                // Reiniciar ActivityFlush con nuevo intervalo
+                if (_activityFlushTimer != null)
+                {
+                    _activityFlushTimer.Stop();
+                    _activityFlushTimer.Interval = timers.ActivityFlushIntervalSeconds * 1000;
+                    _activityFlushTimer.Start();
+                    LocalLogger.Info($"CoreService: ActivityFlush actualizado a {timers.ActivityFlushIntervalSeconds}s");
+                }
+
+                // Reiniciar Handshake con nuevo intervalo (en segundos)
+                // Mínimo absoluto: 300s (5 min). Con 40+ clientes, intervalos menores
+                // vuelven a disparar una cantidad de queries innecesaria.
+                if (_handshakeLoopCts != null)
+                {
+                    int hs = GetHandshakeIntervalSeconds(timers);
+                    LocalLogger.Info($"CoreService: Handshake actualizado a {hs}s. Reiniciando ciclo para aplicar intervalo.");
+                    StopHandshakeTimer();
+                    StartHandshakeTimer();
+                }
+
+                // Actualizar OfflineQueue retry
+                if (_apiClient != null)
+                {
+                    _apiClient.UpdateRetryInterval(timers.OfflineQueueRetrySeconds);
+                    LocalLogger.Info($"CoreService: OfflineQueue retry actualizado a {timers.OfflineQueueRetrySeconds}s");
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService.ApplyTimerChanges(): error.");
+            }
+        }
+        /// <summary>
+        /// Inicializa módulos según configuración (tracking, hooks, blocking, updates).
+        /// Conecta callbacks para enviar eventos a ApiClient.
+        /// </summary>
+        private void InitializeModules()
+        {
+            var modulesConfig = _configManager.CurrentConfig.Modules;
+            var startupConfig = _configManager.CurrentConfig.Startup;
+            var updatesConfig = _configManager.CurrentConfig.Updates;
+
+            if (modulesConfig == null)
+            {
+                LocalLogger.Warn("CoreService.InitializeModules(): ModulesConfig null.");
+                return;
+            }
+
+            // -------------------- ActivityTracker --------------------
+            if (modulesConfig.EnableActivityTracking)
+            {
+                double activityInterval = modulesConfig.ActivityIntervalSeconds > 0 ? modulesConfig.ActivityIntervalSeconds : 1.0;
+                double inactivityThreshold = modulesConfig.ActivityInactivityThresholdSeconds > 0 ? modulesConfig.ActivityInactivityThresholdSeconds : 15.0;
+
+                _activityTracker = new ActivityTracker(activityInterval, inactivityThreshold);
+
+                _activityTracker.OnDayClosed = (day, activeSeconds, inactiveSeconds) =>
+                {
+                    try
+                    {
+                        LocalLogger.Info($"CoreService: cierre de día {day:yyyy-MM-dd}, activo={activeSeconds:F3}s, inactivo={inactiveSeconds:F3}s.");
+
+                        int tzOffsetMinutes = (int)TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow).TotalMinutes;
+
+                        var payload = new ApiClient.ActivityDayPayload
+                        {
+                            DeviceId = _configManager.CurrentConfig.DeviceId,
+                            DayDate = day.ToString("yyyy-MM-dd"),
+                            TzOffsetMinutes = tzOffsetMinutes,
+                            ActiveSeconds = activeSeconds,
+                            IdleSeconds = inactiveSeconds,
+                            CallSeconds = _windowTracker?.CallSessionSeconds ?? 0,
+                            SamplesCount = _activitySamplesCount,
+                            FirstEventAt = _activityFirstEventLocal?.ToString("yyyy-MM-dd HH:mm:ss"),
+                            // Categorías de tiempo
+                            WorkHoursActiveSeconds = _activityTracker.CurrentDayWorkActiveSeconds,
+                            WorkHoursIdleSeconds = _activityTracker.CurrentDayWorkIdleSeconds,
+                            LunchActiveSeconds = _activityTracker.CurrentDayLunchActiveSeconds,
+                            LunchIdleSeconds = _activityTracker.CurrentDayLunchIdleSeconds,
+                            AfterHoursActiveSeconds = _activityTracker.CurrentDayAfterHoursActiveSeconds,
+                            AfterHoursIdleSeconds = _activityTracker.CurrentDayAfterHoursIdleSeconds,
+                            IsWorkday = day.DayOfWeek != DayOfWeek.Saturday && day.DayOfWeek != DayOfWeek.Sunday
+                        };
+
+                        _ = _apiClient.SendActivityDayAsync(payload);
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Error(ex, "CoreService.OnDayClosed(): error al enviar activityday.");
+                    }
+                };
+            }
+
+            // -------------------- WindowTracker --------------------
+            if (modulesConfig.EnableWindowTracking)
+            {
+                double windowInterval = modulesConfig.WindowTrackingIntervalSeconds > 0 ? modulesConfig.WindowTrackingIntervalSeconds : 2.0;
+
+                bool enableCallTracking = modulesConfig.EnableCallTracking;
+                var callProcKeywords = modulesConfig.CallProcessKeywords ?? Array.Empty<string>();
+                var callTitleKeywords = modulesConfig.CallTitleKeywords ?? Array.Empty<string>();
+
+                _windowTracker = new WindowTracker(windowInterval, enableCallTracking, callProcKeywords, callTitleKeywords);
+
+                _windowTracker.OnEpisodeClosed = (episode) =>
+                {
+                    try
+                    {
+                        // Descarta episodios <2s: son ruido (Alt+Tab rápido, popups transitorios,
+                        // cambios de foreground forzados por notificaciones) que no aportan valor
+                        // al monitoreo y representan ~10% del tráfico histórico.
+                        // Umbral elegido tras auditoría: episodios reales de trabajo duran >2s.
+                        if (episode.DurationSeconds < 2.0)
+                        {
+                            return;
+                        }
+
+                        var payload = new ApiClient.WindowEpisodePayload
+                        {
+                            DeviceId = _configManager.CurrentConfig.DeviceId,
+                            StartLocalTime = episode.StartLocalTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                            EndLocalTime = episode.EndLocalTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                            DurationSeconds = episode.DurationSeconds,
+                            ProcessName = episode.ProcessName,
+                            WindowTitle = episode.WindowTitle,
+                            IsCallApp = episode.IsCallApp
+                        };
+
+                        // Encolar en buffer local. Se flushea por timer o por tamaño.
+                        EnqueueWindowEpisode(payload);
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Error(ex, "CoreService: error al encolar window-episode.");
+                    }
+                };
+
+                _windowTracker.OnWindowSnapshot = (timestamp, processName, windowTitle) =>
+                {
+                    // intencionalmente vacío para evitar ruido
+                };
+            }
+
+            // -------------------- Override de actividad por llamada --------------------
+            if (_activityTracker != null)
+            {
+                bool countCallsAsActive = modulesConfig.CountCallsAsActive;
+
+                _activityTracker.ActivityOverridePredicate = () =>
+                    countCallsAsActive &&
+                    _windowTracker != null &&
+                    _windowTracker.CallTrackingEnabled &&
+                    _windowTracker.IsInCallNow;
+
+                double maxIdle = modulesConfig.CallActiveMaxIdleSeconds > 0 ? modulesConfig.CallActiveMaxIdleSeconds : 1800.0;
+                _activityTracker.ActivityOverrideMaxIdleSeconds = maxIdle;
+            }
+
+            // -------------------- Startup --------------------
+            if (startupConfig != null && startupConfig.EnableAutoStartup)
+            {
+                if (!Startup.StartupManager.IsEnabled())
+                    Startup.StartupManager.EnableStartup();
+            }
+
+            // -------------------- Hooks / Blocking / Debug --------------------
+            // KeyboardHook y MouseHook eliminados - no son necesarios (ActivityTracker usa GetLastInputInfo)
+            if (modulesConfig.EnableBlocking) _keyBlocker = new KeyBlocker(_apiClient);
+            _webBlockingManager = new WebBlockingManager();
+            _webBlockingManager.Initialize(
+                _configManager.CurrentConfig.WebBlocking ?? new ConfigManager.WebBlockingConfig(),
+                _configManager.CurrentConfig.ApiBaseUrl);
+            
+            // -------------------- UpdateManager --------------------
+            if (modulesConfig.EnableUpdateManager)
+            {
+                int intervalMinutes = updatesConfig?.CheckIntervalMinutes ?? 60;
+                _updateManager = new UpdateManager(_configManager, _apiClient, intervalMinutes);
+                LocalLogger.Info("CoreService: UpdateManager creado.");
+            }
+
+            if (modulesConfig.EnableDebugWindow)
+            {
+                if (_activityTracker == null)
+                {
+                    LocalLogger.Warn("CoreService.InitializeModules(): EnableDebugWindow activo pero ActivityTracker deshabilitado.");
+                }
+                else
+                {
+                    _debugWindow = new DebugWindowForm(_activityTracker, _windowTracker, () => _lastHandshakeTime);
+                }
+            }
+        }
+        // CheckDeviceLockStatus() eliminado — el bloqueo se aplica dentro de PerformHandshake()
+        // a través del effectiveConfig.blocking que ya retorna el backend.
+        // El handshake se ejecuta cada 5 min (configurable), que es suficiente para
+        // reflejar cambios de bloqueo sin necesidad de un timer separado de 30s.
+
+        /// <summary>
+        /// Si existe registro del día en backend, rehidrata contadores locales.
+        /// </summary>
+        private async void TryResumeTodayActivityFromServer()
+        {
+            try
+            {
+                if (_activityTracker == null) return;
+                if (_apiClient == null) return;
+
+                if (_authManager == null || !_authManager.HasToken)
+                {
+                    LocalLogger.Info("CoreService: no hay token -> no se retoma actividad del día.");
+                    return;
+                }
+
+                string today = DateTime.Now.ToString("yyyy-MM-dd");
+                string deviceId = _configManager.CurrentConfig.DeviceId;
+
+                var res = await _apiClient.GetActivityDayAsync(deviceId, today).ConfigureAwait(false);
+                if (res == null || !res.IsSuccess || res.Response == null)
+                {
+                    LocalLogger.Warn($"CoreService: activity-day/get no exitoso. Err={res?.Error} Preview={res?.BodyPreview}");
+                    return;
+                }
+
+                if (!res.Response.Found)
+                {
+                    LocalLogger.Info("CoreService: no existe registro previo del día para retomar.");
+                    return;
+                }
+
+                _activityTracker.SeedDayTotals(
+                    DateTime.Now.Date,
+                    res.Response.ActiveSeconds,
+                    res.Response.IdleSeconds,
+                    res.Response.WorkHoursActiveSeconds,
+                    res.Response.WorkHoursIdleSeconds,
+                    res.Response.LunchActiveSeconds,
+                    res.Response.LunchIdleSeconds,
+                    res.Response.AfterHoursActiveSeconds,
+                    res.Response.AfterHoursIdleSeconds
+                );
+
+                // Para flush
+                _activityFirstEventLocal = DateTime.Now; // o parsear res.Response.FirstEventAt si quieres
+                _activitySamplesCount = res.Response.SamplesCount;
+
+                LocalLogger.Info($"CoreService: ✅ Seed aplicado exitosamente. dayDate={today} active={res.Response.ActiveSeconds}s idle={res.Response.IdleSeconds}s " +
+                       $"work={res.Response.WorkHoursActiveSeconds}s lunch={res.Response.LunchActiveSeconds}s after={res.Response.AfterHoursActiveSeconds}s samples={res.Response.SamplesCount}");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Warn($"CoreService: ⚠️ No se pudo retomar actividad del día (posible inicio sin internet). Error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Inicia envío periódico de snapshot activity-day.
+        /// </summary>
+        private void StartActivityFlushTimer()
+        {
+            try
+            {
+                if (_activityTracker == null) return;
+                if (_apiClient == null) return;
+                if (_activityFlushTimer != null) return;
+
+                int intervalSeconds = _configManager.CurrentConfig.Timers?.ActivityFlushIntervalSeconds ?? 10;
+
+                // Jitter: 0 a intervalSeconds antes del primer flush.
+                // Con 500 usuarios y flush cada 10s: sin jitter → 500 req simultáneos cada 10s.
+                // Con jitter → máximo ~50 req/s distribuidos, nunca un pico.
+                int jitterMs = new Random().Next(0, intervalSeconds * 1000);
+
+                _activityFlushTimer = new System.Timers.Timer(intervalSeconds * 1000);
+                _activityFlushTimer.AutoReset = true;
+                _activityFlushTimer.Elapsed += (s, e) =>
+                {
+                    try
+                    {
+                        if (_authManager == null || !_authManager.HasToken)
+                            return;
+
+                        var snap = _activityTracker.GetCurrentDaySnapshot();
+                        var dayLocal = snap.DayLocalDate;
+                        var nowLocal = DateTime.Now;
+
+                        if (_lastFlushDayLocalDate != dayLocal)
+                        {
+                            _lastFlushDayLocalDate = dayLocal;
+                            _activitySamplesCount = 0;
+                            _activityFirstEventLocal = nowLocal;
+                        }
+
+                        if (_activityFirstEventLocal == null)
+                            _activityFirstEventLocal = nowLocal;
+
+                        _activitySamplesCount++;
+
+                        int tzOffsetMinutes = (int)TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow).TotalMinutes;
+
+                        var payload = new ApiClient.ActivityDayPayload
+                        {
+                            DeviceId = _configManager.CurrentConfig.DeviceId,
+                            DayDate = dayLocal.ToString("yyyy-MM-dd"),
+                            TzOffsetMinutes = tzOffsetMinutes,
+                            ActiveSeconds = snap.ActiveSeconds,
+                            IdleSeconds = snap.InactiveSeconds,
+                            CallSeconds = _windowTracker?.CallSessionSeconds ?? 0,
+                            SamplesCount = _activitySamplesCount,
+                            FirstEventAt = _activityFirstEventLocal?.ToString("yyyy-MM-dd HH:mm:ss"),
+                            LastEventAt = nowLocal.ToString("yyyy-MM-dd HH:mm:ss"),
+                            WorkHoursActiveSeconds = snap.WorkActive,
+                            WorkHoursIdleSeconds = snap.WorkIdle,
+                            LunchActiveSeconds = snap.LunchActive,
+                            LunchIdleSeconds = snap.LunchIdle,
+                            AfterHoursActiveSeconds = snap.AfterActive,
+                            AfterHoursIdleSeconds = snap.AfterIdle,
+                            IsWorkday = dayLocal.DayOfWeek != DayOfWeek.Saturday && dayLocal.DayOfWeek != DayOfWeek.Sunday
+                        };
+
+                        _ = _apiClient.SendActivityDayAsync(payload);
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Error(ex, "CoreService: error en flush periódico de actividad.");
+                    }
+                };
+
+                // Primer tick retrasado por jitter, luego AutoReset se encarga
+                System.Threading.Tasks.Task.Delay(jitterMs).ContinueWith(_ =>
+                {
+                    try
+                    {
+                        if (_authManager == null || !_authManager.HasToken)
+                            return;
+
+                        var snap = _activityTracker.GetCurrentDaySnapshot();
+                        var nowLocal = DateTime.Now;
+
+                        _activityFirstEventLocal = nowLocal;
+                        _activitySamplesCount = 1;
+
+                        int tzOffsetMinutes = (int)TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow).TotalMinutes;
+
+                        var payload = new ApiClient.ActivityDayPayload
+                        {
+                            DeviceId = _configManager.CurrentConfig.DeviceId,
+                            DayDate = snap.DayLocalDate.ToString("yyyy-MM-dd"),
+                            TzOffsetMinutes = tzOffsetMinutes,
+                            ActiveSeconds = snap.ActiveSeconds,
+                            IdleSeconds = snap.InactiveSeconds,
+                            CallSeconds = _windowTracker?.CallSessionSeconds ?? 0,
+                            SamplesCount = _activitySamplesCount,
+                            FirstEventAt = _activityFirstEventLocal?.ToString("yyyy-MM-dd HH:mm:ss"),
+                            LastEventAt = nowLocal.ToString("yyyy-MM-dd HH:mm:ss"),
+                            WorkHoursActiveSeconds = snap.WorkActive,
+                            WorkHoursIdleSeconds = snap.WorkIdle,
+                            LunchActiveSeconds = snap.LunchActive,
+                            LunchIdleSeconds = snap.LunchIdle,
+                            AfterHoursActiveSeconds = snap.AfterActive,
+                            AfterHoursIdleSeconds = snap.AfterIdle,
+                            IsWorkday = snap.DayLocalDate.DayOfWeek != DayOfWeek.Saturday && snap.DayLocalDate.DayOfWeek != DayOfWeek.Sunday
+                        };
+
+                        _ = _apiClient.SendActivityDayAsync(payload);
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Error(ex, "CoreService: error en primer flush de actividad con jitter.");
+                    }
+                    _activityFlushTimer?.Start();
+                });
+
+                LocalLogger.Info($"CoreService: ActivityFlushTimer iniciado (cada {intervalSeconds}s).");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error al iniciar ActivityFlushTimer.");
+            }
+        }
+
+        /// <summary>
+        /// Envía snapshot final de actividad antes de cerrar.
+        /// Llamar en Stop() para evitar pérdida de datos.
+        /// </summary>
+        private async Task FinalFlushBeforeShutdownAsync()
+        {
+            try
+            {
+                LocalLogger.Info("CoreService.FinalFlushBeforeShutdown(): enviando datos finales...");
+
+                if (_authManager == null || !_authManager.HasToken)
+                {
+                    LocalLogger.Warn("CoreService.FinalFlushBeforeShutdown(): sin token, no se envía.");
+                    return;
+                }
+
+                if (_activityTracker == null || _apiClient == null)
+                {
+                    LocalLogger.Warn("CoreService.FinalFlushBeforeShutdown(): tracker o apiClient null.");
+                    return;
+                }
+
+                var snap = _activityTracker.GetCurrentDaySnapshot();
+                var nowLocal = DateTime.Now;
+
+                int tzOffsetMinutes = (int)TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow).TotalMinutes;
+
+                var payload = new ApiClient.ActivityDayPayload
+                {
+                    DeviceId = _configManager.CurrentConfig.DeviceId,
+                    DayDate = snap.DayLocalDate.ToString("yyyy-MM-dd"),
+                    TzOffsetMinutes = tzOffsetMinutes,
+                    ActiveSeconds = snap.ActiveSeconds,
+                    IdleSeconds = snap.InactiveSeconds,
+                    CallSeconds = _windowTracker?.CallSessionSeconds ?? 0,
+                    SamplesCount = _activitySamplesCount,
+                    FirstEventAt = _activityFirstEventLocal?.ToString("yyyy-MM-dd HH:mm:ss"),
+                    LastEventAt = nowLocal.ToString("yyyy-MM-dd HH:mm:ss"),
+                    WorkHoursActiveSeconds = snap.WorkActive,
+                    WorkHoursIdleSeconds = snap.WorkIdle,
+                    LunchActiveSeconds = snap.LunchActive,
+                    LunchIdleSeconds = snap.LunchIdle,
+                    AfterHoursActiveSeconds = snap.AfterActive,
+                    AfterHoursIdleSeconds = snap.AfterIdle,
+                    IsWorkday = snap.DayLocalDate.DayOfWeek != DayOfWeek.Saturday && snap.DayLocalDate.DayOfWeek != DayOfWeek.Sunday
+                };
+
+                // Envío asíncrono con ConfigureAwait(false) para evitar deadlocks
+                await _apiClient.SendActivityDayAsync(payload).ConfigureAwait(false);
+
+                // Vaciar también el buffer de episodios pendientes
+                await FlushWindowEpisodeBufferAsync(forceAll: true).ConfigureAwait(false);
+
+                LocalLogger.Info("CoreService.FinalFlushBeforeShutdown(): datos enviados correctamente.");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService.FinalFlushBeforeShutdown(): error al enviar flush final.");
+            }
+        }
+        /// <summary>
+        /// Detiene el timer de flush de actividad.
+        /// </summary>
+        private void StopActivityFlushTimer()
+        {
+            try
+            {
+                if (_activityFlushTimer == null) return;
+
+                _activityFlushTimer.Stop();
+                _activityFlushTimer.Dispose();
+                _activityFlushTimer = null;
+
+                LocalLogger.Info("CoreService: ActivityFlushTimer detenido.");
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Aplica el horario laboral recibido del servidor al ActivityTracker.
+        /// El servidor consulta keeper_work_schedules priorizando el registro del usuario
+        /// sobre el registro global (user_id IS NULL).
+        /// Formato de tiempo esperado: "HH:mm:ss" (ej: "07:00:00").
+        /// </summary>
+        private void ApplyWorkSchedule(ApiClient.WorkScheduleConfig ws)
+        {
+            try
+            {
+                var schedule = _activityTracker.WorkSchedule;
+
+                if (TimeSpan.TryParse(ws.WorkStartTime, out var workStart))
+                    schedule.WorkStart = workStart;
+                if (TimeSpan.TryParse(ws.WorkEndTime, out var workEnd))
+                    schedule.WorkEnd = workEnd;
+                if (TimeSpan.TryParse(ws.LunchStartTime, out var lunchStart))
+                    schedule.LunchStart = lunchStart;
+                if (TimeSpan.TryParse(ws.LunchEndTime, out var lunchEnd))
+                    schedule.LunchEnd = lunchEnd;
+
+                LocalLogger.Info($"CoreService: WorkSchedule aplicado desde servidor. " +
+                    $"Work={schedule.WorkStart:hh\\:mm}-{schedule.WorkEnd:hh\\:mm} " +
+                    $"Lunch={schedule.LunchStart:hh\\:mm}-{schedule.LunchEnd:hh\\:mm}");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Warn($"CoreService.ApplyWorkSchedule(): error al aplicar horario. Se usan valores anteriores. {ex.Message}");
+            }
+        }
+
+        // ================== Buffer de Window Episodes (Fix #4) ==================
+
+        /// <summary>
+        /// Encola un episodio en el buffer local. Si el buffer alcanza el tamaño máximo,
+        /// dispara un flush inmediato en background. El timer periódico también vacía
+        /// el buffer cada _windowEpisodeBatchIntervalSeconds.
+        /// </summary>
+        private void EnqueueWindowEpisode(ApiClient.WindowEpisodePayload payload)
+        {
+            bool needsImmediateFlush = false;
+
+            lock (_windowEpisodeBufferLock)
+            {
+                _windowEpisodeBuffer.Add(payload);
+                if (_windowEpisodeBuffer.Count >= _windowEpisodeBatchMaxSize)
+                {
+                    needsImmediateFlush = true;
+                }
+            }
+
+            if (needsImmediateFlush)
+            {
+                // Fire-and-forget: no bloquear el hilo de captura de ventanas
+                _ = FlushWindowEpisodeBufferAsync(forceAll: false);
+            }
+        }
+
+        /// <summary>
+        /// Extrae episodios del buffer y los envía en batches. Retorna sin hacer nada
+        /// si el buffer está vacío.
+        ///
+        /// - forceAll=true: vacía todo el buffer (usado en shutdown).
+        /// - forceAll=false: envía solo hasta _windowEpisodeBatchMaxSize por llamada.
+        /// </summary>
+        private async Task FlushWindowEpisodeBufferAsync(bool forceAll)
+        {
+            if (_apiClient == null) return;
+            if (_authManager == null || !_authManager.HasToken) return;
+
+            while (true)
+            {
+                System.Collections.Generic.List<ApiClient.WindowEpisodePayload> batch;
+
+                lock (_windowEpisodeBufferLock)
+                {
+                    if (_windowEpisodeBuffer.Count == 0) return;
+
+                    int take = Math.Min(_windowEpisodeBuffer.Count, _windowEpisodeBatchMaxSize);
+                    batch = _windowEpisodeBuffer.GetRange(0, take);
+                    _windowEpisodeBuffer.RemoveRange(0, take);
+                }
+
+                try
+                {
+                    string deviceGuid = _configManager.CurrentConfig.DeviceId;
+                    bool ok = await _apiClient.SendWindowEpisodesBatchAsync(deviceGuid, batch).ConfigureAwait(false);
+
+                    if (!ok)
+                    {
+                        // El batch ya encoló cada episodio individualmente en offline queue.
+                        LocalLogger.Warn($"CoreService.FlushWindowEpisodeBufferAsync(): batch falló, {batch.Count} episodios encolados en offline queue.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LocalLogger.Error(ex, "CoreService.FlushWindowEpisodeBufferAsync(): error enviando batch.");
+                }
+
+                if (!forceAll) break;
+            }
+        }
+
+        /// <summary>
+        /// Inicia el timer periódico de flush del buffer de window-episodes.
+        /// </summary>
+        private void StartWindowEpisodeFlushTimer()
+        {
+            try
+            {
+                if (_windowEpisodeFlushTimer != null) return;
+                if (_apiClient == null) return;
+
+                _windowEpisodeFlushTimer = new System.Timers.Timer(_windowEpisodeBatchIntervalSeconds * 1000);
+                _windowEpisodeFlushTimer.AutoReset = true;
+                _windowEpisodeFlushTimer.Elapsed += async (s, e) =>
+                {
+                    try
+                    {
+                        await FlushWindowEpisodeBufferAsync(forceAll: false).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Error(ex, "CoreService: error en flush periódico de window-episodes.");
+                    }
+                };
+                _windowEpisodeFlushTimer.Start();
+
+                LocalLogger.Info($"CoreService: WindowEpisodeFlushTimer iniciado (cada {_windowEpisodeBatchIntervalSeconds}s, batch max={_windowEpisodeBatchMaxSize}).");
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error al iniciar WindowEpisodeFlushTimer.");
+            }
+        }
+
+        /// <summary>
+        /// Detiene el timer de flush de window-episodes.
+        /// </summary>
+        private void StopWindowEpisodeFlushTimer()
+        {
+            try
+            {
+                if (_windowEpisodeFlushTimer == null) return;
+                _windowEpisodeFlushTimer.Stop();
+                _windowEpisodeFlushTimer.Dispose();
+                _windowEpisodeFlushTimer = null;
+                LocalLogger.Info("CoreService: WindowEpisodeFlushTimer detenido.");
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>
+    /// DebugWindowForm:
+    /// UI de diagnóstico en tiempo real para activity/window tracking.
+    /// Lee datos de ActivityTracker/WindowTracker y muestra categorías de tiempo.
+    /// </summary>
+    internal class DebugWindowForm : Form
+    {
+        private readonly ActivityTracker _activityTracker;
+        private readonly WindowTracker _windowTracker;
+        private readonly System.Windows.Forms.Timer _uiTimer;
+
+        private readonly Label _lblStartTime;
+        private readonly Label _lblCurrentDate;
+        private readonly Label _lblSessionActive;
+        private readonly Label _lblSessionInactive;
+        private readonly Label _lblDayActive;
+        private readonly Label _lblDayInactive;
+        private readonly Label _lblWindowInfo;
+        private readonly Label _lblCallTime;
+        private readonly Label _lblQueueStatus;
+        private readonly Label _lblHandshake; 
+        private readonly Func<DateTime> _getLastHandshake;
+        private readonly Label _lblWorkTime;
+        private readonly Label _lblLunchTime;
+        private readonly Label _lblAfterHoursTime;
+        /// <summary>
+        /// Crea ventana de debug con referencias a trackers y función de último handshake.
+        /// </summary>
+        public DebugWindowForm(ActivityTracker activityTracker, WindowTracker windowTracker, Func<DateTime> getLastHandshake)
+        {
+            _activityTracker = activityTracker ?? throw new ArgumentNullException(nameof(activityTracker));
+            _windowTracker = windowTracker; 
+            _getLastHandshake = getLastHandshake;
+
+            Text = "AZCKeeper - Debug Activity";
+            StartPosition = FormStartPosition.CenterScreen;
+            Size = new Size(900, 480); // Era 720x340, ahora más grande
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+
+            var table = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 8,
+                AutoSize = true,
+                Padding = new Padding(8)
+            };
+
+            _lblStartTime = CreateLabel();
+            _lblCurrentDate = CreateLabel();
+            _lblSessionActive = CreateLabel();
+            _lblSessionInactive = CreateLabel();
+            _lblDayActive = CreateLabel();
+            _lblDayInactive = CreateLabel();
+            _lblWindowInfo = CreateLabel();
+            _lblCallTime = CreateLabel();
+            _lblQueueStatus = CreateLabel();
+            _lblHandshake = CreateLabel();
+            _lblWorkTime = CreateLabel();
+            _lblLunchTime = CreateLabel();
+            _lblAfterHoursTime = CreateLabel();
+
+            table.Controls.Add(_lblStartTime, 0, 0);
+            table.Controls.Add(_lblCurrentDate, 0, 1);
+            table.Controls.Add(_lblSessionActive, 0, 2);
+            table.Controls.Add(_lblSessionInactive, 0, 3);
+            table.Controls.Add(_lblDayActive, 0, 4);
+            table.Controls.Add(_lblDayInactive, 0, 5);
+            table.Controls.Add(_lblWindowInfo, 0, 6);
+            table.Controls.Add(_lblCallTime, 0, 7);
+            table.Controls.Add(_lblQueueStatus, 0, 8); 
+            table.Controls.Add(_lblHandshake, 0, 9); 
+            table.Controls.Add(_lblWorkTime, 0, 10);
+            table.Controls.Add(_lblLunchTime, 0, 11);
+            table.Controls.Add(_lblAfterHoursTime, 0, 12);
+
+            table.RowCount = 13; // Era 9, ahora 12
+
+            Controls.Add(table);
+
+            _uiTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+            _uiTimer.Tick += UiTimer_Tick;
+            _uiTimer.Start();
+
+            UpdateLabels();
+        }
+
+        /// <summary>
+        /// Helper de UI: crea labels con estilo estándar.
+        /// </summary>
+        private Label CreateLabel()
+        {
+            return new Label
+            {
+                AutoSize = true,
+                Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
+                Padding = new Padding(4)
+            };
+        }
+
+        /// <summary>
+        /// Tick del timer UI: refresca etiquetas.
+        /// </summary>
+        private void UiTimer_Tick(object sender, EventArgs e) => UpdateLabels();
+
+        /// <summary>
+        /// Actualiza todas las etiquetas con métricas actuales de tracking.
+        /// </summary>
+        private void UpdateLabels()
+        {
+            try
+            {
+                var nowLocal = DateTime.Now;
+
+                DateTime start = _activityTracker.StartLocalTime;
+                _lblStartTime.Text = start == default
+                    ? "Inicio tracker: (aún no inicializado)"
+                    : $"Inicio tracker: {start:yyyy-MM-dd HH:mm:ss}";
+
+                _lblCurrentDate.Text = $"Fecha actual: {nowLocal:yyyy-MM-dd HH:mm:ss}";
+
+                _lblSessionActive.Text = $"Sesión - Activo: {FormatSeconds(_activityTracker.SessionActiveSeconds)}";
+                _lblSessionInactive.Text = $"Sesión - Inactivo: {FormatSeconds(_activityTracker.SessionInactiveSeconds)}";
+
+                _lblDayActive.Text = $"Día {_activityTracker.CurrentDayLocalDate:yyyy-MM-dd} - Activo: {FormatSeconds(_activityTracker.CurrentDayActiveSeconds)}";
+                _lblDayInactive.Text = $"Día {_activityTracker.CurrentDayLocalDate:yyyy-MM-dd} - Inactivo: {FormatSeconds(_activityTracker.CurrentDayInactiveSeconds)}";
+
+                if (_windowTracker != null)
+                {
+                    string time = _windowTracker.LastSnapshotLocalTime == default
+                        ? "sin datos"
+                        : _windowTracker.LastSnapshotLocalTime.ToString("HH:mm:ss");
+
+                    _lblWindowInfo.Text = $"Ventana activa: [{_windowTracker.LastProcessName}] \"{_windowTracker.LastWindowTitle}\" ({time})";
+
+                    if (_windowTracker.CallTrackingEnabled)
+                    {
+                        string inCall = _windowTracker.IsInCallNow ? "Sí" : "No";
+                        _lblCallTime.Text =
+                            $"Llamada (ahora): {inCall} | Sesión - Tiempo en apps de llamada: {FormatSeconds(_windowTracker.CallSessionSeconds)}";
+                    }
+                    else
+                    {
+                        _lblCallTime.Text = "Sesión - Tiempo en apps de llamada: (deshabilitado)";
+                    }
+                }
+                else
+                {
+                    _lblWindowInfo.Text = "Ventana activa: (WindowTracker deshabilitado)";
+                    _lblCallTime.Text = "Sesión - Tiempo en apps de llamada: (no aplica)";
+                }
+
+                // Handshake
+                var lastHs = _getLastHandshake();
+                if (lastHs == DateTime.MinValue)
+                    _lblHandshake.Text = "Último handshake: Nunca";
+                else
+                {
+                    var elapsed = (DateTime.Now - lastHs).TotalSeconds;
+                    _lblHandshake.Text = $"Último handshake: {lastHs:HH:mm:ss} (hace {elapsed:F0}s)";
+                }
+
+                // ==================== CATEGORÍAS DE TIEMPO ====================
+
+                // Determinar categoría actual (validación defensiva)
+                var currentCategory = _activityTracker.WorkSchedule?.GetTimeCategory(nowLocal) ?? Tracking.TimeCategory.AfterHours;
+                string categoryIndicator = currentCategory switch
+                {
+                    Tracking.TimeCategory.WorkHours => "🟢 HORARIO LABORAL",
+                    Tracking.TimeCategory.LunchTime => "🟡 HORA DE ALMUERZO",
+                    Tracking.TimeCategory.AfterHours => "🔴 FUERA DE HORARIO",
+                    _ => "⚪ DESCONOCIDO"
+                };
+
+                // Work Hours
+                double workTotal = _activityTracker.CurrentDayWorkActiveSeconds + _activityTracker.CurrentDayWorkIdleSeconds;
+                string workPercent = workTotal > 0
+                    ? $"({(_activityTracker.CurrentDayWorkActiveSeconds / workTotal * 100):F1}% activo)"
+                    : "";
+                _lblWorkTime.Text = $"🟢 Horario laboral (7am-7pm): {FormatSeconds(_activityTracker.CurrentDayWorkActiveSeconds)} activo / {FormatSeconds(_activityTracker.CurrentDayWorkIdleSeconds)} inactivo {workPercent}";
+
+                // Lunch Time
+                double lunchTotal = _activityTracker.CurrentDayLunchActiveSeconds + _activityTracker.CurrentDayLunchIdleSeconds;
+                string lunchPercent = lunchTotal > 0
+                    ? $"({(_activityTracker.CurrentDayLunchActiveSeconds / lunchTotal * 100):F1}% activo)"
+                    : "";
+                _lblLunchTime.Text = $"🟡 Hora de almuerzo (12pm-1pm): {FormatSeconds(_activityTracker.CurrentDayLunchActiveSeconds)} activo / {FormatSeconds(_activityTracker.CurrentDayLunchIdleSeconds)} inactivo {lunchPercent}";
+
+                // After Hours
+                double afterTotal = _activityTracker.CurrentDayAfterHoursActiveSeconds + _activityTracker.CurrentDayAfterHoursIdleSeconds;
+                string afterPercent = afterTotal > 0
+                    ? $"({(_activityTracker.CurrentDayAfterHoursActiveSeconds / afterTotal * 100):F1}% activo)"
+                    : "";
+                _lblAfterHoursTime.Text = $"🔴 Fuera de horario: {FormatSeconds(_activityTracker.CurrentDayAfterHoursActiveSeconds)} activo / {FormatSeconds(_activityTracker.CurrentDayAfterHoursIdleSeconds)} inactivo {afterPercent}";
+
+                // Actualizar título del form con categoría actual
+                Text = $"AZCKeeper - Debug Activity";
+            }
+            catch (Exception ex)
+            {
+                // No romper UI pero loguear el error
+                LocalLogger.Warn($"DebugWindowForm.UpdateLabels(): error al actualizar UI. {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Formatea segundos como HH:mm:ss.
+        /// </summary>
+        private static string FormatSeconds(double seconds)
+        {
+            if (seconds < 0) seconds = 0;
+            var ts = TimeSpan.FromSeconds(seconds);
+            return $"{(int)ts.TotalHours:00}:{ts.Minutes:00}:{ts.Seconds:00}";
+        }
+
+        /// <summary>
+        /// Libera recursos del timer UI al cerrar el formulario.
+        /// </summary>
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            _uiTimer.Stop();
+            _uiTimer.Tick -= UiTimer_Tick;
+            _uiTimer.Dispose();
+            base.OnFormClosed(e);
+        }
+    }
+}

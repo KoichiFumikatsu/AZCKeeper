@@ -1,0 +1,417 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<diagram program="umlet" version="15.0">
+  <zoom_level>10</zoom_level>
+
+  <!-- ===================== CLASSES ===================== -->
+
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>40</x><y>30</y><w>330</w><h>220</h>
+    </coordinates>
+    <panel_attributes>
+keeper_users
+--
++ id: BIGINT {PK}
++ legacy_employee_id: INT {UQ}
++ email: VARCHAR(190)
++ display_name: VARCHAR(190)
++ status: ENUM('active','inactive','locked')
++ password_hash: VARCHAR(255) [optional]
++ created_at: TIMESTAMP
++ updated_at: TIMESTAMP
+    </panel_attributes>
+    <additional_attributes/>
+  </element>
+
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>420</x><y>30</y><w>360</w><h>240</h>
+    </coordinates>
+    <panel_attributes>
+keeper_devices
+--
++ id: BIGINT {PK}
++ user_id: BIGINT {FK->keeper_users.id}
++ device_guid: CHAR(36) {UQ}
++ device_name: VARCHAR(190)
++ serial_hint: VARCHAR(190)
++ status: ENUM('active','revoked')
++ last_seen_at: TIMESTAMP
++ created_at: TIMESTAMP
++ updated_at: TIMESTAMP
+    </panel_attributes>
+    <additional_attributes/>
+  </element>
+
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>820</x><y>30</y><w>380</w><h>240</h>
+    </coordinates>
+    <panel_attributes>
+keeper_sessions
+--
++ id: BIGINT {PK}
++ user_id: BIGINT {FK->keeper_users.id}
++ device_id: BIGINT {FK->keeper_devices.id, nullable}
++ token_hash: CHAR(64) {UQ}
++ refresh_hash: CHAR(64) [optional]
++ issued_at: TIMESTAMP
++ expires_at: TIMESTAMP [nullable]
++ revoked_at: TIMESTAMP [nullable]
++ ip: VARCHAR(64)
++ user_agent: VARCHAR(255)
+    </panel_attributes>
+    <additional_attributes/>
+  </element>
+
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>40</x><y>300</y><w>520</w><h>260</h>
+    </coordinates>
+    <panel_attributes>
+keeper_policy_assignments
+--
++ id: BIGINT {PK}
++ scope: ENUM('global','user','device')
++ user_id: BIGINT {FK->keeper_users.id, nullable}
++ device_id: BIGINT {FK->keeper_devices.id, nullable}
++ version: INT
++ priority: INT
++ is_active: BOOL
++ policy_json: JSON
++ created_at: TIMESTAMP
+    </panel_attributes>
+    <additional_attributes/>
+  </element>
+
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>600</x><y>300</y><w>360</w><h>200</h>
+    </coordinates>
+    <panel_attributes>
+keeper_module_catalog
+--
++ module_code: VARCHAR(64) {PK}
++ name: VARCHAR(190)
++ default_enabled: BOOL
++ config_schema_json: JSON [optional]
++ active: BOOL
++ created_at: TIMESTAMP
++ updated_at: TIMESTAMP
+    </panel_attributes>
+    <additional_attributes/>
+  </element>
+
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>1000</x><y>300</y><w>420</w><h>220</h>
+    </coordinates>
+    <panel_attributes>
+keeper_handshake_log
+--
++ id: BIGINT {PK}
++ user_id: BIGINT {FK->keeper_users.id}
++ device_id: BIGINT {FK->keeper_devices.id}
++ client_version: VARCHAR(50)
++ request_json: JSON
++ response_json: JSON
++ created_at: TIMESTAMP
+    </panel_attributes>
+    <additional_attributes/>
+  </element>
+
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>40</x><y>610</y><w>520</w><h>260</h>
+    </coordinates>
+    <panel_attributes>
+keeper_activity_day
+--
++ id: BIGINT {PK}
++ user_id: BIGINT {FK->keeper_users.id}
++ device_id: BIGINT {FK->keeper_devices.id}
++ day_date: DATE {UQ(user,device,day)}
++ tz_offset_minutes: SMALLINT
++ active_seconds: INT
++ idle_seconds: INT
++ call_seconds: INT
++ samples_count: INT
++ first_event_at: DATETIME
++ last_event_at: DATETIME
++ payload_json: JSON [optional]
++ created_at: TIMESTAMP
++ updated_at: TIMESTAMP
+    </panel_attributes>
+    <additional_attributes/>
+  </element>
+
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>600</x><y>610</y><w>520</w><h>240</h>
+    </coordinates>
+    <panel_attributes>
+keeper_window_episode
+--
++ id: BIGINT {PK}
++ user_id: BIGINT {FK->keeper_users.id}
++ device_id: BIGINT {FK->keeper_devices.id}
++ start_at: DATETIME
++ end_at: DATETIME
++ duration_seconds: INT
++ process_name: VARCHAR(190)
++ window_title: VARCHAR(512)
++ is_in_call: BOOL
++ call_app_hint: VARCHAR(190)
++ day_date: DATE
++ created_at: TIMESTAMP
+    </panel_attributes>
+    <additional_attributes/>
+  </element>
+
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>1160</x><y>610</y><w>520</w><h>280</h>
+    </coordinates>
+    <panel_attributes>
+keeper_events (generic)
+--
++ id: BIGINT {PK}
++ user_id: BIGINT {FK->keeper_users.id}
++ device_id: BIGINT {FK->keeper_devices.id}
++ module_code: VARCHAR(64)
++ event_type: VARCHAR(100)
++ start_at: DATETIME [nullable]
++ end_at: DATETIME [nullable]
++ duration_seconds: INT [nullable]
++ numeric_1..numeric_4: BIGINT [optional]
++ text_1: VARCHAR(190) [optional]
++ text_2: VARCHAR(190) [optional]
++ payload_json: JSON [optional]
++ day_date: DATE
++ created_at: TIMESTAMP
+    </panel_attributes>
+    <additional_attributes/>
+  </element>
+
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>40</x><y>920</y><w>520</w><h>200</h>
+    </coordinates>
+    <panel_attributes>
+keeper_daily_metrics
+--
++ id: BIGINT {PK}
++ user_id: BIGINT {FK->keeper_users.id}
++ device_id: BIGINT {FK->keeper_devices.id}
++ day_date: DATE
++ metric_key: VARCHAR(120) {UQ(user,device,day,key)}
++ metric_value: BIGINT
++ meta_json: JSON [optional]
++ created_at: TIMESTAMP
+    </panel_attributes>
+    <additional_attributes/>
+  </element>
+
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>600</x><y>920</y><w>520</w><h>220</h>
+    </coordinates>
+    <panel_attributes>
+keeper_audit_log
+--
++ id: BIGINT {PK}
++ user_id: BIGINT {FK->keeper_users.id, nullable}
++ device_id: BIGINT {FK->keeper_devices.id, nullable}
++ event_type: VARCHAR(100)
++ message: VARCHAR(512)
++ meta_json: JSON [optional]
++ created_at: TIMESTAMP
+    </panel_attributes>
+    <additional_attributes/>
+  </element>
+
+  <!-- ===================== CONNECTORS (VISUAL) ===================== -->
+  <!-- UMLet 15.0: Relation needs waypoints in <additional_attributes> as "x1;y1;x2;y2;..." -->
+
+  <!-- users -> devices (horizontal) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>370</x><y>140</y><w>50</w><h>10</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>0;5;50;5</additional_attributes>
+  </element>
+
+  <!-- users -> sessions (horizontal long) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>370</x><y>170</y><w>450</w><h>10</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>0;5;450;5</additional_attributes>
+  </element>
+
+  <!-- devices -> sessions (horizontal) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>780</x><y>140</y><w>40</w><h>10</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>0;5;40;5</additional_attributes>
+  </element>
+
+  <!-- users -> policy_assignments (vertical) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>200</x><y>250</y><w>10</w><h>50</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>5;0;5;50</additional_attributes>
+  </element>
+
+  <!-- devices -> policy_assignments (vertical) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>520</x><y>270</y><w>10</w><h>30</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>5;0;5;30</additional_attributes>
+  </element>
+
+  <!-- users -> handshake_log (diagonal-ish via bounding box; 2-point line) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>360</x><y>260</y><w>650</w><h>60</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>0;50;650;10</additional_attributes>
+  </element>
+
+  <!-- devices -> handshake_log (diagonal-ish) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>740</x><y>260</y><w>270</w><h>60</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>0;50;270;10</additional_attributes>
+  </element>
+
+  <!-- users -> activity_day (vertical) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>180</x><y>560</y><w>10</w><h>50</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>5;0;5;50</additional_attributes>
+  </element>
+
+  <!-- devices -> activity_day (vertical) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>520</x><y>560</y><w>10</w><h>50</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>5;0;5;50</additional_attributes>
+  </element>
+
+  <!-- users -> window_episode (diagonal) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>360</x><y>585</y><w>250</w><h>45</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>0;35;250;10</additional_attributes>
+  </element>
+
+  <!-- devices -> window_episode (vertical-ish small) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>560</x><y>585</y><w>40</w><h>45</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>0;35;40;10</additional_attributes>
+  </element>
+
+  <!-- users -> events (long diagonal) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>360</x><y>620</y><w>800</w><h>40</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>0;30;800;5</additional_attributes>
+  </element>
+
+  <!-- devices -> events (long diagonal shorter) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>740</x><y>620</y><w>420</w><h>40</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>0;30;420;5</additional_attributes>
+  </element>
+
+  <!-- users -> daily_metrics (vertical) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>160</x><y>870</y><w>10</w><h>50</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>5;0;5;50</additional_attributes>
+  </element>
+
+  <!-- devices -> daily_metrics (vertical) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>520</x><y>880</y><w>10</w><h>40</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>5;0;5;40</additional_attributes>
+  </element>
+
+  <!-- users -> audit_log (diagonal) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>360</x><y>890</y><w>250</w><h>50</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>0;40;250;10</additional_attributes>
+  </element>
+
+  <!-- devices -> audit_log (diagonal small) -->
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>560</x><y>890</y><w>40</w><h>50</h>
+    </coordinates>
+    <panel_attributes>lt=-></panel_attributes>
+    <additional_attributes>0;40;40;10</additional_attributes>
+  </element>
+
+</diagram>
