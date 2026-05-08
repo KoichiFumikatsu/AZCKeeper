@@ -90,14 +90,13 @@ namespace AZCKeeper_Cliente.Core
                 _authManager = new AuthManager();
                 _authManager.TryLoadTokenFromDisk();
 
+                _apiClient = new ApiClient(_configManager, _authManager);
+
                 if (!_authManager.HasToken)
                 {
-                    // Intentar auto-re-login silencioso con credenciales guardadas
                     if (!TrySilentReLogin())
                         PrepareLoginUi();
                 }
-
-                _apiClient = new ApiClient(_configManager, _authManager);
 
                 // Handshake se ejecuta en Start() → evita doble handshake en startup
                 // que genera ráfaga de 40 requests simultáneos cuando todos los clientes
@@ -307,9 +306,7 @@ namespace AZCKeeper_Cliente.Core
 
                 LocalLogger.Info("CoreService.TrySilentReLogin(): credenciales encontradas. Intentando login silencioso...");
 
-                var apiClient = _apiClient ?? new ApiClient(_configManager, _authManager);
-
-                var login = apiClient.SendLoginAsync(new ApiClient.LoginRequest
+                var login = _apiClient.SendLoginAsync(new ApiClient.LoginRequest
                 {
                     Username = creds.Value.Username,
                     Password = creds.Value.Password,
@@ -361,9 +358,7 @@ namespace AZCKeeper_Cliente.Core
 
                 LocalLogger.Info("CoreService.TryReEnroll(): intentando re-enroll por device_guid...");
 
-                var apiClient = _apiClient ?? new ApiClient(_configManager, _authManager);
-
-                var result = apiClient.SendReEnrollAsync(deviceGuid, Environment.MachineName)
+                var result = _apiClient.SendReEnrollAsync(deviceGuid, Environment.MachineName)
                     .GetAwaiter().GetResult();
 
                 if (result == null || !result.IsSuccess || result.Response == null || string.IsNullOrWhiteSpace(result.Response.Token))

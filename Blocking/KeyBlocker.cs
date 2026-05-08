@@ -25,7 +25,7 @@ namespace AZCKeeper_Cliente.Blocking
         private readonly ApiClient _apiClient;
         private LowLevelKeyboardHook _keyboardHook;
         private int _isActive = 0; // use as atomic flag
-        private System.Windows.Forms.Timer _keepFrontTimer; // Timer para mantener ventanas al frente
+        private System.Timers.Timer _keepFrontTimer;
 
         /// <summary>
         /// Crea el bloqueador con ApiClient para notificar desbloqueos.
@@ -164,10 +164,9 @@ namespace AZCKeeper_Cliente.Blocking
                 
                 LocalLogger.Info("KeyBlocker: Todos los formularios forzados al frente.");
                 
-                // Iniciar timer para mantener ventanas al frente cada segundo
-                _keepFrontTimer = new System.Windows.Forms.Timer();
-                _keepFrontTimer.Interval = 1000; // 1 segundo
-                _keepFrontTimer.Tick += KeepFormsOnTop;
+                _keepFrontTimer = new System.Timers.Timer(1000);
+                _keepFrontTimer.AutoReset = true;
+                _keepFrontTimer.Elapsed += KeepFormsOnTop;
                 _keepFrontTimer.Start();
                 LocalLogger.Info("KeyBlocker: Timer de mantener ventanas al frente iniciado.");
             }
@@ -256,7 +255,7 @@ namespace AZCKeeper_Cliente.Blocking
         /// <summary>
         /// Evento del timer: mantiene las ventanas de bloqueo al frente.
         /// </summary>
-        private void KeepFormsOnTop(object sender, EventArgs e)
+        private void KeepFormsOnTop(object sender, System.Timers.ElapsedEventArgs e)
         {
             lock (_sync)
             {
@@ -553,7 +552,7 @@ namespace AZCKeeper_Cliente.Blocking
             try
             {
                 // Validación LOCAL: comparar con PIN en config.json
-                LocalLogger.Info($"TryUnlock: Validando. PIN recibido='{pin}', PIN guardado='{(_unlockPin ?? "NULL")}'");
+                LocalLogger.Info("TryUnlock: Validando PIN.");
                 
                 if (!string.IsNullOrEmpty(_unlockPin) && pin == _unlockPin)
                 {
@@ -587,7 +586,7 @@ namespace AZCKeeper_Cliente.Blocking
                 else
                 {
                     // PIN incorrecto
-                    LocalLogger.Warn($"TryUnlock: PIN incorrecto. Recibido='{pin}', Guardado='{(_unlockPin ?? "NULL")}'");
+                    LocalLogger.Warn("TryUnlock: PIN incorrecto.");
                     _lblStatus.Text = "❌ PIN incorrecto";
                     _lblStatus.ForeColor = Color.FromArgb(231, 76, 60);
                     _txtPin.Clear();

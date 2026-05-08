@@ -1,24 +1,26 @@
 <?php
 namespace Keeper\Endpoints;
- 
+
 use Keeper\Http;
 use Keeper\Db;
- 
-/**
- * ForceHandshake:
- * Incrementa el campo `version` de la política global activa.
- * El cliente C# compara el policyVersion recibido en cada handshake:
- * si cambió, sabe que debe re-aplicar la configuración aunque el intervalo
- * normal no haya expirado.
- * 
- * NOTA: Este endpoint debe protegerse con autenticación de admin antes de
- * exponerlo en producción. Por ahora solo se usa internamente desde el panel.
- */
+use Keeper\Repos\AdminAuthRepo;
+
 class ForceHandshake
 {
     public static function handle(): void
     {
+        $token = $_COOKIE['keeper_admin_token'] ?? '';
+        if (!$token) {
+            Http::json(401, ['ok' => false, 'error' => 'Unauthorized']);
+            return;
+        }
+
         $pdo = Db::pdo();
+
+        if (!AdminAuthRepo::validateSession($pdo, $token)) {
+            Http::json(401, ['ok' => false, 'error' => 'Unauthorized']);
+            return;
+        }
         
         // keeper_policy_assignments no tiene updated_at — solo incrementamos version
         $stmt = $pdo->prepare("
