@@ -3,6 +3,7 @@ namespace Keeper\Endpoints;
 
 use Keeper\Db;
 use Keeper\Http;
+use Keeper\InputValidator;
 use Keeper\PolicyService;
 use Keeper\Repos\PolicyRepo;
 use Keeper\Repos\SessionRepo;
@@ -111,6 +112,14 @@ class ClientHandshake {
         $appliedId      = (int)$policies['device']['id'];
         $appliedVersion = (int)$policies['device']['version'];
       }
+    }
+
+    if (isset($effective['webBlocking']) && is_array($effective['webBlocking'])) {
+      $wb = $effective['webBlocking'];
+      $wb['enabled'] = !empty($wb['enabled']);
+      $wb['syncIntervalSeconds'] = max(300, (int)($wb['syncIntervalSeconds'] ?? 600));
+      $wb['domains'] = InputValidator::validateDomainArray($wb['domains'] ?? []);
+      $effective['webBlocking'] = $wb;
     }
 
     // 5. Horario laboral (1 UNION)

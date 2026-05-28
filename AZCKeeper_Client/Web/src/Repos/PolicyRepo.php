@@ -22,6 +22,15 @@ class PolicyRepo {
   private const SCHEDULE_CACHE_TTL = 300;
 
   /**
+   * Cache en memoria para parámetros de bloqueo web.
+   * Se alimenta desde keeper_panel_settings.setting_key = 'leisure_apps',
+   * reutilizando la sección "Por ventana" del panel.
+   */
+  private static ?array $_webBlockCache = null;
+  private static int $_webBlockCacheAt = 0;
+  private const WEB_BLOCK_CACHE_TTL = 60;
+
+  /**
    * Resuelve la pol�tica efectiva final en UNA sola query con UNION.
    * Orden de prioridad: device > user > global (el �ltimo en el UNION gana en deepMerge).
    * Retorna array con las 3 filas ordenadas [global, user, device] para hacer merge en PHP.
@@ -113,6 +122,81 @@ class PolicyRepo {
     self::$_scheduleCacheAt[$userId] = $now;
 
     return $schedule;
+  }
+
+  /**
+   * Obtiene dominios/patrones de bloqueo web definidos en la sección "Por ventana".
+   * Reutiliza keeper_panel_settings.setting_key = 'leisure_apps' y toma solo
+   * el arreglo 'windows'. Si el JSON es legacy (array plano), no se usa para web.
+   */
+  public static function getWebBlockedDomains(PDO $pdo): array {
+    $now = time();
+    if (self::$_webBlockCache !== null && ($now - self::$_webBlockCacheAt) < self::WEB_BLOCK_CACHE_TTL) {
+      return self::$_webBlockCache;
+    }
+
+    $domains = [];
+
+    try {
+      $st = $pdo->prepare("
+        SELECT setting_value
+        FROM keeper_panel_settings
+        WHERE setting_key = 'leisure_apps'
+        LIMIT 1
+      ");
+      $st->execute();
+      $row = $st->fetch(PDO::FETCH_ASSOC);
+
+      if ($row && !empty($row['setting_value'])) {
+        $decoded = json_decode($row['setting_value'], true);
+
+        if (is_array($decoded) && !isset($decoded[0])) {
+          $rawDomains = $decoded['windows'] ?? [];
+          if (is_array($rawDomains)) {
+            foreach ($rawDomains as $value) {
+              $normalized = self::normalizeWebBlockedDomain($value);
+              if ($normalized !== null) {
+                $domains[$normalized] = true;
+              }
+            }
+          }
+        }
+      }
+    } catch (\Throwable $e) {
+      // Fallback silencioso: el handshake no debe fallar por esta configuración opcional.
+    }
+
+    self::$_webBlockCache = array_keys($domains);
+    self::$_webBlockCacheAt = $now;
+
+    return self::$_webBlockCache;
+  }
+
+  private static function normalizeWebBlockedDomain($value): ?string {
+    if (!is_string($value)) return null;
+
+    $value = trim(mb_strtolower($value));
+    if ($value === '') return null;
+
+    // Admite entradas del estilo https://dominio.com/ruta y conserva solo host.
+    if (preg_match('#^[a-z][a-z0-9+.-]*://#i', $value)) {
+      $host = parse_url($value, PHP_URL_HOST);
+      if (!is_string($host) || $host === '') return null;
+      $value = trim(mb_strtolower($host));
+    }
+
+    // Remueve slash final y puerto opcional.
+    $value = preg_replace('#/.*$#', '', $value);
+    $value = preg_replace('#:\d+$#', '', $value);
+
+    if ($value === '') return null;
+
+    // Permite dominios simples y wildcard inicial (*.dominio.com).
+    if (!preg_match('/^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/', $value)) {
+      return null;
+    }
+
+    return $value;
   }
 
 }

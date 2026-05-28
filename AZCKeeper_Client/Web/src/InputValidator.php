@@ -78,4 +78,50 @@ class InputValidator
             return $id > 0;
         });
     }
+
+    /**
+     * Normaliza una lista de dominios para bloqueo web.
+     * - trim
+     * - lowercase
+     * - sin esquemas/rutas
+     * - elimina duplicados y entradas inválidas
+     *
+     * @param mixed $domains
+     * @return array
+     */
+    public static function validateDomainArray($domains): array
+    {
+        if (!is_array($domains)) {
+            return [];
+        }
+
+        $clean = [];
+        foreach ($domains as $domain) {
+            if (!is_string($domain)) {
+                continue;
+            }
+
+            $domain = trim(strtolower($domain));
+            if ($domain === '') {
+                continue;
+            }
+
+            $domain = preg_replace('#^https?://#', '', $domain);
+            $domain = preg_replace('#/.*$#', '', $domain);
+
+            if ($domain === '' || strlen($domain) > 255) {
+                continue;
+            }
+
+            if (!preg_match('/^\*?\.?[a-z0-9.-]+$/', $domain)) {
+                continue;
+            }
+
+            $clean[$domain] = true;
+        }
+
+        $domains = array_keys($clean);
+        sort($domains, SORT_NATURAL | SORT_FLAG_CASE);
+        return $domains;
+    }
 }
