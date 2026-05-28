@@ -1026,6 +1026,7 @@ namespace AZCKeeper_Cliente.Network
             public EffectiveStartup Startup { get; set; }     
             public EffectiveUpdates Updates { get; set; }
             public EffectiveBlocking Blocking { get; set; }
+            public EffectiveWebBlocking WebBlocking { get; set; }
             public EffectiveTimers Timers { get; set; }
         }
         /// <summary>
@@ -1037,6 +1038,15 @@ namespace AZCKeeper_Cliente.Network
             public string LockMessage { get; set; }
             public bool AllowUnlockWithPin { get; set; }
             public string UnlockPin { get; set; }
+        }
+        /// <summary>
+        /// Config efectiva de bloqueo web por dominios.
+        /// </summary>
+        internal class EffectiveWebBlocking
+        {
+            public bool Enabled { get; set; }
+            public int SyncIntervalSeconds { get; set; }
+            public string[] Domains { get; set; }
         }
         /// <summary>
         /// Config efectiva de logging.

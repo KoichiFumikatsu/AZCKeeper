@@ -38,6 +38,7 @@ namespace AZCKeeper_Cliente.Core
 
         // --- Control/updates ---
         private KeyBlocker _keyBlocker;        // bloqueo por política
+        private WebBlockingManager _webBlockingManager; // política local de dominios
         private UpdateManager _updateManager;  // actualización automática
 
         // --- UI ---
@@ -189,6 +190,7 @@ namespace AZCKeeper_Cliente.Core
                 _handshakeTimer?.Stop();
                 _handshakeTimer?.Dispose();
                 // _lockStatusTimer eliminado: bloqueo va por handshake
+                _webBlockingManager?.Shutdown();
                 _activityTracker?.Stop();
                 _windowTracker?.Stop();
                 _updateManager?.Stop();
@@ -573,6 +575,33 @@ namespace AZCKeeper_Cliente.Core
                     }
                 }
 
+                if (effective.WebBlocking != null)
+                {
+                    var webBlocking = _configManager.CurrentConfig.WebBlocking ?? new ConfigManager.WebBlockingConfig();
+                    webBlocking.Enabled = effective.WebBlocking.Enabled;
+                    webBlocking.SyncIntervalSeconds = effective.WebBlocking.SyncIntervalSeconds > 0
+                        ? Math.Max(300, effective.WebBlocking.SyncIntervalSeconds)
+                        : 600;
+                    webBlocking.Domains = effective.WebBlocking.Domains ?? Array.Empty<string>();
+                    webBlocking.PolicyVersion = hs.Response.PolicyApplied?.Version ?? 0;
+                    webBlocking.LastUpdatedUtc = DateTime.UtcNow.ToString("O");
+                    _configManager.CurrentConfig.WebBlocking = webBlocking;
+
+                    _webBlockingManager?.ApplyRemotePolicy(webBlocking, webBlocking.PolicyVersion, _configManager.CurrentConfig.ApiBaseUrl);
+                }
+                else
+                {
+                    var webBlocking = _configManager.CurrentConfig.WebBlocking ?? new ConfigManager.WebBlockingConfig();
+                    webBlocking.Enabled = false;
+                    webBlocking.SyncIntervalSeconds = 600;
+                    webBlocking.Domains = Array.Empty<string>();
+                    webBlocking.PolicyVersion = hs.Response.PolicyApplied?.Version ?? 0;
+                    webBlocking.LastUpdatedUtc = DateTime.UtcNow.ToString("O");
+                    _configManager.CurrentConfig.WebBlocking = webBlocking;
+
+                    _webBlockingManager?.ApplyRemotePolicy(webBlocking, webBlocking.PolicyVersion, _configManager.CurrentConfig.ApiBaseUrl);
+                }
+
                 _configManager.Save();
 
                 if (effective.Updates != null)
@@ -880,7 +909,11 @@ namespace AZCKeeper_Cliente.Core
             // -------------------- Hooks / Blocking / Debug --------------------
             // KeyboardHook y MouseHook eliminados - no son necesarios (ActivityTracker usa GetLastInputInfo)
             if (modulesConfig.EnableBlocking) _keyBlocker = new KeyBlocker(_apiClient);
-            
+            _webBlockingManager = new WebBlockingManager();
+            _webBlockingManager.Initialize(
+                _configManager.CurrentConfig.WebBlocking ?? new ConfigManager.WebBlockingConfig(),
+                _configManager.CurrentConfig.ApiBaseUrl);
+
             // -------------------- UpdateManager --------------------
             if (modulesConfig.EnableUpdateManager)
             {

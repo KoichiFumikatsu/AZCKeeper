@@ -247,6 +247,14 @@ namespace AZCKeeper_Cliente.Config
                     AllowUnlockWithPin = false,
                     UnlockPinHash = null
                 },
+                WebBlocking = new WebBlockingConfig
+                {
+                    Enabled = false,
+                    SyncIntervalSeconds = 600,
+                    PolicyVersion = 0,
+                    LastUpdatedUtc = null,
+                    Domains = Array.Empty<string>()
+                },
                 Startup = new StartupConfig
                 {
                     EnableAutoStartup = true,
@@ -338,6 +346,7 @@ namespace AZCKeeper_Cliente.Config
             public StartupConfig Startup { get; set; }     
             public UpdatesConfig Updates { get; set; }
             public BlockingConfig Blocking { get; set; }
+            public WebBlockingConfig WebBlocking { get; set; }
             public TimersConfig Timers { get; set; }
         }
         /// <summary>
@@ -399,6 +408,18 @@ namespace AZCKeeper_Cliente.Config
             public bool AllowUnlockWithPin { get; set; } = false;
             public string UnlockPin { get; set; } = null; // PIN en texto plano
             public string UnlockPinHash { get; set; } = null; // Hash SHA256 del PIN (deprecated, para compatibilidad)
+        }
+
+        /// <summary>
+        /// Configuración de bloqueo web por dominios, persistida localmente para operar aun sin API.
+        /// </summary>
+        internal class WebBlockingConfig
+        {
+            public bool Enabled { get; set; } = false;
+            public int SyncIntervalSeconds { get; set; } = 600;
+            public int PolicyVersion { get; set; } = 0;
+            public string LastUpdatedUtc { get; set; }
+            public string[] Domains { get; set; } = Array.Empty<string>();
         }
 
         /// <summary>
