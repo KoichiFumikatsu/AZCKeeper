@@ -214,6 +214,7 @@ function getMenuVisibility(): array {
         'productivity'     => ['superadmin', 'admin', 'viewer'],
         'policies'    => ['superadmin'],
         'releases'    => ['superadmin'],
+        'install_coverage' => ['superadmin'],
         'admin-users' => ['superadmin'],
         'assignments' => ['superadmin'],
         'roles'       => ['superadmin'],
