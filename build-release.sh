@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# ════════════════════════════════════════════
+# AZCKeeper Build Script — Linux
+# Equivalente a build-release.bat para Fumilinux.
+# Requisitos: dotnet-sdk-8.0, zip.
+# Uso: ./build-release.sh [version]
+#   Ej: ./build-release.sh 3.0.2.0
+# ════════════════════════════════════════════
+set -euo pipefail
+
+# Forzar SDK de Microsoft (incluye Microsoft.NET.Sdk.WindowsDesktop).
+# El SDK del apt de Ubuntu es subset y NO trae WindowsDesktop → no compila WinForms.
+export PATH="/home/kelsie/.dotnet:$PATH"
+export DOTNET_ROOT="/home/kelsie/.dotnet"
+
+VERSION="${1:-3.0.2.0}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="$SCRIPT_DIR/build"
+CONFIG="Release"
+RUNTIME="win-x64"
+
+echo "╔════════════════════════════════════════╗"
+echo "║  AZCKeeper Build (Linux)               ║"
+echo "║  VERSION = $VERSION                    "
+echo "╚════════════════════════════════════════╝"
+
+# [1/5] Limpiar
+echo ""
+echo "[1/5] Limpiando builds anteriores..."
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR/updater" "$BUILD_DIR/package"
+
+# [2/5] Updater (self-contained single-file trimmed)
+echo ""
+echo "[2/5] Compilando Updater..."
+cd "$SCRIPT_DIR/AZCKeeperUpdater"
+dotnet publish \
+  -c "$CONFIG" \
+  -r "$RUNTIME" \
+  --self-contained true \
+  -p:PublishSingleFile=true \
+  -p:PublishTrimmed=true \
+  -o "$BUILD_DIR/updater" \
+  --nologo -v minimal
+
+# [3/5] Cliente (self-contained, multi-file, ReadyToRun)
+echo ""
+echo "[3/5] Compilando Cliente..."
+cd "$SCRIPT_DIR/AZCKeeper_Client"
+dotnet publish \
+  -c "$CONFIG" \
+  -r "$RUNTIME" \
+  --self-contained true \
+  -p:PublishSingleFile=false \
+  -p:PublishReadyToRun=true \
+  -p:PublishTrimmed=false \
+  -p:EnableWindowsTargeting=true \
+  -o "$BUILD_DIR/package" \
+  --nologo -v minimal
+
+# [4/5] Empaquetar: copiar updater + install.bat, limpiar pdb
+echo ""
+echo "[4/5] Preparando paquete..."
+cp "$BUILD_DIR/updater/AZCKeeperUpdater.exe" "$BUILD_DIR/package/"
+cp "$SCRIPT_DIR/install.bat" "$BUILD_DIR/package/"
+find "$BUILD_DIR/package" -name '*.pdb' -delete
+
+# [5/5] ZIP
+echo ""
+echo "[5/5] Comprimiendo..."
+cd "$BUILD_DIR/package"
+ZIP_NAME="AZCKeeper_v${VERSION}.zip"
+zip -r9 "../$ZIP_NAME" . > /dev/null
+cd "$SCRIPT_DIR"
+
+ZIP_PATH="$BUILD_DIR/$ZIP_NAME"
+SIZE_BYTES=$(stat -c '%s' "$ZIP_PATH")
+SIZE_MB=$(awk "BEGIN {printf \"%.2f\", $SIZE_BYTES / 1048576}")
+
+echo ""
+echo "╔════════════════════════════════════════╗"
+echo "║  ✓ Build OK                            ║"
+echo "╚════════════════════════════════════════╝"
+echo "  Archivo: $ZIP_PATH"
+echo "  Tamaño:  $SIZE_MB MB  ($SIZE_BYTES bytes)"
+echo ""
+echo "Para crear release en GitHub:"
+echo "  gh release create v${VERSION} \"$ZIP_PATH\" \\"
+echo "    --title \"v${VERSION}\" --notes-file release-notes.md"
