@@ -6,17 +6,21 @@ node_modules/
 .env.production
 .env.local
 
-# SQL dumps
+# SQL dumps (legacy DB son enormes — no versionar).
+# Excepción: migraciones del backend PHP SÍ se versionan.
 *.sql
+!AZCKeeper_Client/Web/migrations/*.sql
 
 # C# Build Artifacts
 bin/
 obj/
 *.user
 *.suo
+build/
 
-# Build outputs
-Web/Web.zip
+# Paquetes ZIP — siempre artefactos, nunca fuente. Los builds van a build/
+# y los paquetes deploy PHP ad-hoc (web.zip, webold.zip) se generan a demanda.
+*.zip
 
 # Logs
 *.log
