@@ -175,10 +175,20 @@ namespace AZCKeeper_Cliente.Update
 
                 string zipPath = Path.Combine(updateDir, $"AZCKeeper_v{version}.zip");
 
-                // Descargar ZIP
-                using (var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) })
+                // Descargar ZIP. CRÍTICO: UseProxy = false para bypassear el proxy
+                // del sistema (HKCU\...\Internet Settings). Si el WebBlockingManager
+                // lo configuró a 127.0.0.1:8877, todas las descargas de update
+                // quedan atrapadas en ese proxy. La descarga del update es tráfico
+                // de sistema, nunca debe pasar por el proxy del usuario.
+                using (var handler = new HttpClientHandler { UseProxy = false })
+                using (var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(5) })
                 {
                     var bytes = await client.GetByteArrayAsync(url);
+                    if (bytes.Length < 1_048_576) // < 1 MB → no es nuestro paquete (~75 MB)
+                    {
+                        LocalLogger.Error($"UpdateManager: descarga sospechosa ({bytes.Length} bytes). Esperado ≥ 1MB. Abortando.");
+                        return;
+                    }
                     await File.WriteAllBytesAsync(zipPath, bytes);
                 }
 
