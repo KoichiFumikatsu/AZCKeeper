@@ -24,10 +24,12 @@ echo "║  AZCKeeper Build (Linux)               ║"
 echo "║  VERSION = $VERSION                    "
 echo "╚════════════════════════════════════════╝"
 
-# [1/5] Limpiar
+# [1/5] Limpiar SOLO los intermediarios (updater/ + package/), preservando los
+#       ZIPs ya generados de versiones previas. Útil para encadenar
+#       varias versiones (v3.0.2.0, v3.0.2.1, ...) en un mismo build/.
 echo ""
-echo "[1/5] Limpiando builds anteriores..."
-rm -rf "$BUILD_DIR"
+echo "[1/5] Limpiando intermediarios..."
+rm -rf "$BUILD_DIR/updater" "$BUILD_DIR/package"
 mkdir -p "$BUILD_DIR/updater" "$BUILD_DIR/package"
 
 # [2/5] Updater (self-contained single-file trimmed)
@@ -40,10 +42,14 @@ dotnet publish \
   --self-contained true \
   -p:PublishSingleFile=true \
   -p:PublishTrimmed=true \
+  -p:Version="$VERSION" \
   -o "$BUILD_DIR/updater" \
   --nologo -v minimal
 
 # [3/5] Cliente (self-contained, multi-file, ReadyToRun)
+#       -p:Version es CRÍTICO — el cliente lee Assembly.GetName().Version
+#       en ConfigManager.SyncVersionFromAssembly() y lo reporta al backend
+#       como keeper_devices.client_version. Sin esto, queda en 1.0.0.0.
 echo ""
 echo "[3/5] Compilando Cliente..."
 cd "$SCRIPT_DIR/AZCKeeper_Client"
@@ -55,6 +61,7 @@ dotnet publish \
   -p:PublishReadyToRun=true \
   -p:PublishTrimmed=false \
   -p:EnableWindowsTargeting=true \
+  -p:Version="$VERSION" \
   -o "$BUILD_DIR/package" \
   --nologo -v minimal
 

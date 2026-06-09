@@ -26,6 +26,7 @@ dotnet publish -c %CONFIG% -r %RUNTIME% ^
   --self-contained true ^
   -p:PublishSingleFile=true ^
   -p:PublishTrimmed=true ^
+  -p:Version=%VERSION% ^
   -o "%BUILD_DIR%\updater" ^
   --nologo -v minimal
 if errorlevel 1 (
@@ -43,6 +44,7 @@ dotnet publish -c %CONFIG% -r %RUNTIME% ^
   -p:PublishSingleFile=false ^
   -p:PublishReadyToRun=true ^
   -p:PublishTrimmed=false ^
+  -p:Version=%VERSION% ^
   -o "%BUILD_DIR%\package" ^
   --nologo -v minimal
 if errorlevel 1 (
