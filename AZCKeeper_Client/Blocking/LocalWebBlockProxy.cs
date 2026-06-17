@@ -28,15 +28,25 @@ namespace AZCKeeper_Cliente.Blocking
         private Task _acceptLoopTask;
         private int _port;
         private DomainRuleMatcher _matcher = new DomainRuleMatcher(Array.Empty<string>());
+        private volatile string _pacContent = string.Empty;
 
         public bool IsRunning { get; private set; }
         public int Port => _port;
 
-        public int StartOrUpdate(int preferredPort, string[] domains)
+        /// <summary>
+        /// Publica el contenido del PAC que se sirve en GET /proxy.pac.
+        /// </summary>
+        public void SetPacContent(string pacContent)
+        {
+            _pacContent = pacContent ?? string.Empty;
+        }
+
+        public int StartOrUpdate(int preferredPort, string[] domains, string pacContent)
         {
             lock (_stateLock)
             {
                 _matcher = new DomainRuleMatcher(domains ?? Array.Empty<string>());
+                _pacContent = pacContent ?? string.Empty;
 
                 if (IsRunning)
                 {
@@ -153,6 +163,12 @@ namespace AZCKeeper_Cliente.Blocking
                     if (request == null)
                         return;
 
+                    if (request.IsPacRequest)
+                    {
+                        await WritePacResponseAsync(clientStream, _pacContent).ConfigureAwait(false);
+                        return;
+                    }
+
                     if (request.IsConnect)
                     {
                         await HandleConnectAsync(client, clientStream, request, ct).ConfigureAwait(false);
@@ -237,6 +253,21 @@ namespace AZCKeeper_Cliente.Blocking
 
             byte[] bytes = Encoding.UTF8.GetBytes(response);
             await stream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
+        }
+
+        private static async Task WritePacResponseAsync(NetworkStream stream, string pac)
+        {
+            byte[] body = Encoding.UTF8.GetBytes(pac ?? string.Empty);
+            string headers =
+                "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: application/x-ns-proxy-autoconfig\r\n" +
+                $"Content-Length: {body.Length}\r\n" +
+                "Cache-Control: no-store\r\n" +
+                "Connection: close\r\n\r\n";
+
+            byte[] head = Encoding.ASCII.GetBytes(headers);
+            await stream.WriteAsync(head, 0, head.Length).ConfigureAwait(false);
+            await stream.WriteAsync(body, 0, body.Length).ConfigureAwait(false);
         }
 
         private static async Task WriteGatewayErrorAsync(NetworkStream stream, string host)
@@ -385,6 +416,11 @@ namespace AZCKeeper_Cliente.Blocking
             public int Port { get; private set; }
             public string RelativeTarget { get; private set; }
             public bool IsConnect => string.Equals(Method, "CONNECT", StringComparison.OrdinalIgnoreCase);
+            public bool IsPacRequest =>
+                !IsConnect
+                && string.Equals(Method, "GET", StringComparison.OrdinalIgnoreCase)
+                && RelativeTarget != null
+                && RelativeTarget.StartsWith("/proxy.pac", StringComparison.OrdinalIgnoreCase);
             public List<string> HeaderLines { get; } = new List<string>();
 
             public static ProxyRequest TryParse(string rawHeader)

@@ -9,7 +9,10 @@ using AZCKeeper_Cliente.Logging;
 namespace AZCKeeper_Cliente.Blocking
 {
     /// <summary>
-    /// Gestiona el proxy del sistema a nivel de usuario actual (HKCU).
+    /// Gestiona la autoconfiguración de proxy a nivel de usuario actual (HKCU),
+    /// usando AutoConfigURL (PAC) en lugar de un ProxyServer estático.
+    /// Con PAC, solo los dominios bloqueados se enrutan al proxy local; el resto
+    /// de la navegación queda DIRECT. No requiere permisos elevados (solo HKCU).
     /// Guarda un respaldo local para poder restaurar el estado anterior.
     /// </summary>
     internal sealed class SystemProxyManager
@@ -22,27 +25,38 @@ namespace AZCKeeper_Cliente.Blocking
             _backupFilePath = Path.Combine(cacheDirectory, "system_proxy_backup.json");
         }
 
-        public void Enable(string proxyAddress, string[] bypassHosts)
+        /// <summary>
+        /// Habilita el PAC per-usuario apuntando a la URL indicada (http://127.0.0.1:port/proxy.pac).
+        /// </summary>
+        public void EnablePac(string pacUrl)
         {
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_backupFilePath) ?? ".");
-                BackupCurrentSettingsIfNeeded(proxyAddress);
+                BackupCurrentSettingsIfNeeded(pacUrl);
 
                 using var key = Registry.CurrentUser.OpenSubKey(InternetSettingsPath, writable: true);
                 if (key == null)
                     return;
 
-                key.SetValue("ProxyEnable", 1, RegistryValueKind.DWord);
-                key.SetValue("ProxyServer", $"http={proxyAddress};https={proxyAddress}", RegistryValueKind.String);
-                key.SetValue("ProxyOverride", BuildProxyOverride(bypassHosts), RegistryValueKind.String);
+                // Limpiar cualquier proxy estático heredado de versiones previas que
+                // apuntara a nuestro propio loopback. NO tocamos proxies estáticos
+                // ajenos (corporativos): el backup los restaurará al deshabilitar.
+                string currentProxy = key.GetValue("ProxyServer", string.Empty)?.ToString() ?? string.Empty;
+                if (currentProxy.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
+                    key.SetValue("ProxyServer", string.Empty, RegistryValueKind.String);
+                }
+
+                key.SetValue("AutoConfigURL", pacUrl, RegistryValueKind.String);
 
                 RefreshWinInetSettings();
-                LocalLogger.Info($"SystemProxyManager: proxy del sistema habilitado en {proxyAddress}.");
+                LocalLogger.Info($"SystemProxyManager: PAC habilitado en {pacUrl}.");
             }
             catch (Exception ex)
             {
-                LocalLogger.Error(ex, "SystemProxyManager.Enable(): error habilitando proxy.");
+                LocalLogger.Error(ex, "SystemProxyManager.EnablePac(): error habilitando PAC.");
             }
         }
 
@@ -65,6 +79,15 @@ namespace AZCKeeper_Cliente.Blocking
                 key.SetValue("ProxyServer", backup.ProxyServer ?? string.Empty, RegistryValueKind.String);
                 key.SetValue("ProxyOverride", backup.ProxyOverride ?? string.Empty, RegistryValueKind.String);
 
+                if (string.IsNullOrWhiteSpace(backup.AutoConfigUrl))
+                {
+                    try { key.DeleteValue("AutoConfigURL", throwOnMissingValue: false); } catch { }
+                }
+                else
+                {
+                    key.SetValue("AutoConfigURL", backup.AutoConfigUrl, RegistryValueKind.String);
+                }
+
                 RefreshWinInetSettings();
 
                 try
@@ -73,7 +96,7 @@ namespace AZCKeeper_Cliente.Blocking
                 }
                 catch { }
 
-                LocalLogger.Info("SystemProxyManager: proxy del sistema restaurado.");
+                LocalLogger.Info("SystemProxyManager: configuración de proxy/PAC restaurada.");
             }
             catch (Exception ex)
             {
@@ -81,7 +104,7 @@ namespace AZCKeeper_Cliente.Blocking
             }
         }
 
-        private void BackupCurrentSettingsIfNeeded(string ourProxyAddress)
+        private void BackupCurrentSettingsIfNeeded(string ourPacUrl)
         {
             if (File.Exists(_backupFilePath))
                 return;
@@ -93,16 +116,22 @@ namespace AZCKeeper_Cliente.Blocking
             bool proxyEnable = Convert.ToInt32(key.GetValue("ProxyEnable", 0)) == 1;
             string proxyServer = key.GetValue("ProxyServer", string.Empty)?.ToString() ?? string.Empty;
             string proxyOverride = key.GetValue("ProxyOverride", string.Empty)?.ToString() ?? string.Empty;
+            string autoConfigUrl = key.GetValue("AutoConfigURL", string.Empty)?.ToString() ?? string.Empty;
 
-            // Si ya está usando exactamente nuestro proxy, no sobreescribir backup.
-            if (proxyEnable && proxyServer.IndexOf(ourProxyAddress, StringComparison.OrdinalIgnoreCase) >= 0)
+            // Si el estado actual ya es "nuestro" (PAC en loopback o proxy estático en
+            // 127.0.0.1 de una versión previa), no sobreescribir el backup real.
+            bool alreadyOurs =
+                autoConfigUrl.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (proxyEnable && proxyServer.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (alreadyOurs)
                 return;
 
             var backup = new ProxyBackup
             {
                 ProxyEnable = proxyEnable,
                 ProxyServer = proxyServer,
-                ProxyOverride = proxyOverride
+                ProxyOverride = proxyOverride,
+                AutoConfigUrl = autoConfigUrl
             };
 
             string json = JsonSerializer.Serialize(backup, new JsonSerializerOptions
@@ -131,28 +160,6 @@ namespace AZCKeeper_Cliente.Blocking
             }
         }
 
-        private static string BuildProxyOverride(string[] bypassHosts)
-        {
-            var entries = new System.Collections.Generic.List<string>
-            {
-                "<local>",
-                "localhost",
-                "127.0.0.1"
-            };
-
-            foreach (string host in bypassHosts ?? Array.Empty<string>())
-            {
-                if (string.IsNullOrWhiteSpace(host))
-                    continue;
-
-                string normalized = host.Trim().ToLowerInvariant();
-                if (!entries.Any(x => string.Equals(x, normalized, StringComparison.OrdinalIgnoreCase)))
-                    entries.Add(normalized);
-            }
-
-            return string.Join(";", entries);
-        }
-
         private static void RefreshWinInetSettings()
         {
             try
@@ -174,6 +181,7 @@ namespace AZCKeeper_Cliente.Blocking
             public bool ProxyEnable { get; set; }
             public string ProxyServer { get; set; }
             public string ProxyOverride { get; set; }
+            public string AutoConfigUrl { get; set; }
         }
     }
 }

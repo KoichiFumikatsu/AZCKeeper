@@ -128,19 +128,29 @@ namespace AZCKeeper_Cliente.Blocking
 
             try
             {
-                int boundPort = _proxy.StartOrUpdate(ProxyPort, cache.Domains);
-                string[] bypassHosts = BuildBypassHosts(apiBaseUrl);
-                _systemProxyManager.Enable($"127.0.0.1:{boundPort}", bypassHosts);
-                _hostsFileBlocker.Apply(cache.Domains, bypassHosts);
-                AppendTrace($"ApplyLocalState() applied. Port={boundPort}");
-                LocalLogger.Info($"WebBlockingManager: política aplicada ({source}). PolicyVersion={cache.PolicyVersion}, Domains={cache.Domains.Length}, ProxyPort={boundPort}");
+                // Enforcement por PAC (Proxy Auto-Config) per-usuario, SIN permisos elevados.
+                // El PAC enruta al proxy local SOLO los dominios bloqueados; todo lo demás
+                // queda DIRECT (sin interceptar). Soporta wildcards (*.dominio).
+                // Reemplaza al archivo hosts, que exigía admin.
+                int boundPort = _proxy.StartOrUpdate(ProxyPort, cache.Domains, string.Empty);
+                string pac = BuildPacContent(cache.Domains, boundPort);
+                _proxy.SetPacContent(pac);
+
+                // Limpiar restos de versiones previas (bloque hosts si lo hubiera).
+                _hostsFileBlocker.Clear();
+
+                // EnablePac limpia cualquier proxy estático 127.0.0.1 heredado y fija AutoConfigURL.
+                _systemProxyManager.EnablePac($"http://127.0.0.1:{boundPort}/proxy.pac");
+
+                AppendTrace($"ApplyLocalState() applied (PAC). Port={boundPort}, Domains={cache.Domains.Length}");
+                LocalLogger.Info($"WebBlockingManager: política aplicada por PAC ({source}). PolicyVersion={cache.PolicyVersion}, Domains={cache.Domains.Length}, ProxyPort={boundPort}");
             }
             catch (Exception ex)
             {
                 _proxy.Stop();
                 _systemProxyManager.Restore();
                 _hostsFileBlocker.Clear();
-                LocalLogger.Error(ex, $"WebBlockingManager: error aplicando proxy local ({source}). Se restaura conectividad normal.");
+                LocalLogger.Error(ex, $"WebBlockingManager: error aplicando PAC ({source}). Se restaura conectividad normal.");
                 AppendTrace($"ApplyLocalState() error: {ex.Message}");
             }
         }
@@ -206,22 +216,50 @@ namespace AZCKeeper_Cliente.Blocking
             return Convert.ToHexString(hash);
         }
 
-        private static string[] BuildBypassHosts(string apiBaseUrl)
+        /// <summary>
+        /// Genera el script PAC: enruta al proxy local solo los dominios bloqueados,
+        /// el resto va DIRECT. Soporta dominios exactos (incluye subdominios) y
+        /// wildcards (*.dominio).
+        /// </summary>
+        private static string BuildPacContent(string[] domains, int proxyPort)
         {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(apiBaseUrl))
-                    return Array.Empty<string>();
+            var sb = new StringBuilder();
+            sb.AppendLine("function FindProxyForURL(url, host) {");
+            sb.AppendLine("  host = host.toLowerCase();");
 
-                if (!Uri.TryCreate(apiBaseUrl, UriKind.Absolute, out var uri))
-                    return Array.Empty<string>();
-
-                return new[] { uri.Host };
-            }
-            catch
+            foreach (string raw in domains ?? Array.Empty<string>())
             {
-                return Array.Empty<string>();
+                if (string.IsNullOrWhiteSpace(raw))
+                    continue;
+
+                string domain = EscapePac(raw.Trim().ToLowerInvariant());
+                if (domain.Length == 0)
+                    continue;
+
+                string condition;
+                if (domain.StartsWith("*.", StringComparison.Ordinal))
+                {
+                    // wildcard: solo subdominios (a.dominio.com), no el dominio raíz.
+                    condition = $"shExpMatch(host, \"{domain}\")";
+                }
+                else
+                {
+                    // exacto: el dominio y sus subdominios.
+                    condition = $"shExpMatch(host, \"{domain}\") || shExpMatch(host, \"*.{domain}\")";
+                }
+
+                sb.AppendLine($"  if ({condition}) return \"PROXY 127.0.0.1:{proxyPort}\";");
             }
+
+            sb.AppendLine("  return \"DIRECT\";");
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
+
+        // Evita romper el JS del PAC con comillas o backslashes en dominios mal escritos.
+        private static string EscapePac(string value)
+        {
+            return value.Replace("\\", string.Empty).Replace("\"", string.Empty);
         }
 
         private static void AppendTrace(string message)
