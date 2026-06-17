@@ -55,7 +55,14 @@ $currentPage = 'users';
 
 // ==================== PERÍODO SELECCIONADO ====================
 $period = $_GET['period'] ?? 'today';
-if (!in_array($period, ['today', 'week', 'month'])) $period = 'today';
+if (!in_array($period, ['today', 'week', 'month', 'custom'])) $period = 'today';
+
+// Rango custom (period=custom): from/to validados YYYY-MM-DD
+$customFrom = $_GET['from'] ?? '';
+$customTo   = $_GET['to']   ?? '';
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $customFrom)) $customFrom = date('Y-m-d', strtotime('-7 days'));
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $customTo))   $customTo   = date('Y-m-d');
+if ($customFrom > $customTo) { $tmp = $customFrom; $customFrom = $customTo; $customTo = $tmp; }
 
 // ==================== RANGO DE EPISODIOS (independiente) ====================
 $epFrom = $_GET['ep_from'] ?? date('Y-m-d', strtotime('-30 days'));
@@ -74,11 +81,26 @@ switch ($period) {
         $dateTo   = date('Y-m-d');
         $periodLabel = 'Este Mes';
         break;
+    case 'custom':
+        $dateFrom = $customFrom;
+        $dateTo   = $customTo;
+        $periodLabel = 'Rango';
+        break;
     default:
         $dateFrom = date('Y-m-d');
         $dateTo   = date('Y-m-d');
         $periodLabel = 'Hoy';
         break;
+}
+
+// ¿El rango abarca más de un día? → define si se muestran los promedios por día
+$isRange = ($dateFrom !== $dateTo);
+
+// Días hábiles (Lun–Vie) dentro de [dateFrom, dateTo] inclusive — divisor de promedios
+$businessDays = 0;
+for ($bd = strtotime($dateFrom), $bdEnd = strtotime($dateTo); $bd <= $bdEnd; $bd = strtotime('+1 day', $bd)) {
+    $dow = (int)date('N', $bd); // 1=Lun … 7=Dom
+    if ($dow >= 1 && $dow <= 5) $businessDays++;
 }
 
 // ==================== DISPOSITIVO ====================
@@ -201,35 +223,60 @@ $lastEvent = $activity['last_event']
     ? date('g:i A', strtotime($activity['last_event']))
     : '--:--';
 
-// ==================== ÚLTIMOS 7 DÍAS (para gráfico) ====================
+// ==================== PROMEDIOS POR DÍA (solo en rangos) ====================
+// Horas activo/laboral: total ÷ días hábiles (Lun–Vie) del rango.
+$avgActiveSec = $businessDays > 0 ? (int)round($activeSec / $businessDays) : 0;
+$avgWorkSec   = $businessDays > 0 ? (int)round($workSec / $businessDays) : 0;
+
+// Primer ingreso promedio: media de la hora del primer evento, SOLO días con login.
+$avgFirstLogin = '--:--';
+$stAvg = $pdo->prepare("
+    SELECT AVG(TIME_TO_SEC(t.first_time)) AS avg_sec
+    FROM (
+        SELECT we.day_date, TIME(MIN(we.start_at)) AS first_time
+        FROM keeper_window_episode we
+        WHERE we.user_id = :uid
+          AND we.day_date BETWEEN :from AND :to
+          AND TIME(we.start_at) >= '05:00:00'
+        GROUP BY we.day_date
+    ) t
+");
+$stAvg->execute([':uid' => $userId, ':from' => $dateFrom, ':to' => $dateTo]);
+$avgSec = $stAvg->fetchColumn();
+if ($avgSec !== null && $avgSec !== false) {
+    $avgFirstLogin = date('g:i A', strtotime('today') + (int)round((float)$avgSec));
+}
+
+// ==================== ACTIVIDAD DIARIA (gráfico, sigue el rango) ====================
+// Mínimo visual de 7 días: si el rango abarca <7 días, el gráfico muestra
+// 7 días terminando en dateTo (las cards sí respetan el rango exacto).
+$chartTo = $dateTo;
+$rangeSpanDays = (int)floor((strtotime($dateTo) - strtotime($dateFrom)) / 86400) + 1;
+$chartFrom = $rangeSpanDays < 7 ? date('Y-m-d', strtotime($chartTo . ' -6 days')) : $dateFrom;
+
 $st = $pdo->prepare("
     SELECT
         a.day_date,
         SUM(a.active_seconds) AS active_sec,
         SUM(a.idle_seconds) AS idle_sec,
-        SUM(a.work_hours_active_seconds) AS work_sec,
-        (SELECT MIN(we.start_at) FROM keeper_window_episode we
-            WHERE we.user_id = a.user_id AND we.day_date = a.day_date
-              AND TIME(we.start_at) >= '05:00:00') AS first_event,
-        MAX(a.last_event_at) - INTERVAL 5 HOUR AS last_event
+        SUM(a.work_hours_active_seconds) AS work_sec
     FROM keeper_activity_day a
     WHERE a.user_id = :uid
-      AND a.day_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
-      AND a.day_date <= CURDATE()
+      AND a.day_date BETWEEN :from AND :to
     GROUP BY a.day_date
     ORDER BY a.day_date ASC
 ");
-$st->execute([':uid' => $userId]);
+$st->execute([':uid' => $userId, ':from' => $chartFrom, ':to' => $chartTo]);
 $weekDays = $st->fetchAll(PDO::FETCH_ASSOC);
 
-// Armar array de 7 días completos
+// Armar array de todos los días del rango del gráfico (rellenando vacíos)
 $weekChart = [];
 $dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-for ($i = 6; $i >= 0; $i--) {
-    $d = date('Y-m-d', strtotime("-{$i} days"));
-    $dayOfWeek = (int)date('w', strtotime($d));
+for ($dc = strtotime($chartFrom), $dcEnd = strtotime($chartTo); $dc <= $dcEnd; $dc = strtotime('+1 day', $dc)) {
+    $d = date('Y-m-d', $dc);
+    $dayOfWeek = (int)date('w', $dc);
     $weekChart[$d] = [
-        'label'  => $dayNames[$dayOfWeek] . ' ' . date('d', strtotime($d)),
+        'label'  => $dayNames[$dayOfWeek] . ' ' . date('d', $dc),
         'active' => 0,
         'idle'   => 0,
         'work'   => 0,
@@ -323,6 +370,45 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'csv') {
             $ep['window_title'] ?? '',
             (int)($ep['duration_seconds'] ?? 0),
             $ep['is_in_call'] ? 'Sí' : 'No',
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
+// ==================== AJAX: CSV resumen diario (sigue el rango seleccionado) ====================
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'daily_csv') {
+    $stD = $pdo->prepare("
+        SELECT
+            a.day_date,
+            SUM(a.active_seconds) AS active_sec,
+            SUM(a.idle_seconds) AS idle_sec,
+            SUM(a.work_hours_active_seconds) AS work_sec,
+            (SELECT MIN(we.start_at) FROM keeper_window_episode we
+                WHERE we.user_id = a.user_id AND we.day_date = a.day_date
+                  AND TIME(we.start_at) >= '05:00:00') AS first_event,
+            MAX(a.last_event_at) - INTERVAL 5 HOUR AS last_event
+        FROM keeper_activity_day a
+        WHERE a.user_id = :uid AND a.day_date BETWEEN :from AND :to
+        GROUP BY a.day_date
+        ORDER BY a.day_date ASC
+    ");
+    $stD->execute([':uid' => $userId, ':from' => $dateFrom, ':to' => $dateTo]);
+    $rows = $stD->fetchAll(PDO::FETCH_ASSOC);
+
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="actividad_diaria_' . ($user['display_name'] ?? 'usuario') . '_' . $dateFrom . '_' . $dateTo . '.csv"');
+    $out = fopen('php://output', 'w');
+    fprintf($out, chr(0xEF).chr(0xBB).chr(0xBF)); // BOM UTF-8
+    fputcsv($out, ['Fecha', 'Activo (h)', 'Inactivo (h)', 'Horario Laboral (h)', 'Primer Ingreso', 'Último Evento']);
+    foreach ($rows as $r) {
+        fputcsv($out, [
+            $r['day_date'],
+            round((int)$r['active_sec'] / 3600, 2),
+            round((int)$r['idle_sec']   / 3600, 2),
+            round((int)$r['work_sec']   / 3600, 2),
+            $r['first_event'] ? date('H:i', strtotime($r['first_event'])) : '',
+            $r['last_event']  ? date('H:i', strtotime($r['last_event']))  : '',
         ]);
     }
     fclose($out);
@@ -484,20 +570,41 @@ require_once __DIR__ . '/partials/layout_header.php';
 </div>
 
 <!-- Period Selector -->
-<div class="flex items-center justify-between mb-6">
-    <div class="flex items-center gap-1 bg-white rounded-lg border border-gray-200 p-1">
-        <a href="?id=<?= $userId ?>&period=today"
-           class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors <?= $period === 'today' ? 'bg-corp-800 text-white' : 'text-muted hover:text-dark' ?>">
-            Hoy
-        </a>
-        <a href="?id=<?= $userId ?>&period=week"
-           class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors <?= $period === 'week' ? 'bg-corp-800 text-white' : 'text-muted hover:text-dark' ?>">
-            Semana
-        </a>
-        <a href="?id=<?= $userId ?>&period=month"
-           class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors <?= $period === 'month' ? 'bg-corp-800 text-white' : 'text-muted hover:text-dark' ?>">
-            Mes
-        </a>
+<div class="flex flex-wrap items-center justify-between gap-3 mb-6" x-data="{ showRange: <?= $period === 'custom' ? 'true' : 'false' ?> }">
+    <div class="flex flex-wrap items-center gap-3">
+        <div class="flex items-center gap-1 bg-white rounded-lg border border-gray-200 p-1">
+            <a href="?id=<?= $userId ?>&period=today"
+               class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors <?= $period === 'today' ? 'bg-corp-800 text-white' : 'text-muted hover:text-dark' ?>">
+                Hoy
+            </a>
+            <a href="?id=<?= $userId ?>&period=week"
+               class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors <?= $period === 'week' ? 'bg-corp-800 text-white' : 'text-muted hover:text-dark' ?>">
+                Semana
+            </a>
+            <a href="?id=<?= $userId ?>&period=month"
+               class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors <?= $period === 'month' ? 'bg-corp-800 text-white' : 'text-muted hover:text-dark' ?>">
+                Mes
+            </a>
+            <button type="button" @click="showRange = !showRange"
+                    class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors <?= $period === 'custom' ? 'bg-corp-800 text-white' : 'text-muted hover:text-dark' ?>">
+                Rango
+            </button>
+        </div>
+        <!-- Custom date range -->
+        <form method="get" x-show="showRange" style="<?= $period === 'custom' ? '' : 'display:none' ?>" class="flex flex-wrap items-center gap-2">
+            <input type="hidden" name="id" value="<?= $userId ?>">
+            <input type="hidden" name="period" value="custom">
+            <label class="text-xs text-muted">Desde</label>
+            <input type="date" name="from" value="<?= htmlspecialchars($customFrom) ?>" max="<?= date('Y-m-d') ?>"
+                   class="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none">
+            <label class="text-xs text-muted">Hasta</label>
+            <input type="date" name="to" value="<?= htmlspecialchars($customTo) ?>" max="<?= date('Y-m-d') ?>"
+                   class="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none">
+            <button type="submit"
+                    class="px-3 py-1.5 bg-corp-800 text-white rounded-lg text-xs font-medium hover:bg-corp-900 transition-colors">
+                Aplicar
+            </button>
+        </form>
     </div>
     <div class="flex items-center gap-2 text-sm text-muted">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
@@ -514,6 +621,7 @@ require_once __DIR__ . '/partials/layout_header.php';
         </div>
         <p class="text-2xl font-bold text-dark"><?= fmtHM($activeSec) ?></p>
         <p class="text-xs text-muted mt-0.5">Tiempo Activo</p>
+        <?php if ($isRange): ?><p class="text-[11px] font-semibold text-corp-800 mt-1"><?= $businessDays > 0 ? 'Prom. ' . fmtHM($avgActiveSec) . '/día' : '—' ?></p><?php endif; ?>
     </div>
 
     <!-- Work Hours -->
@@ -523,6 +631,7 @@ require_once __DIR__ . '/partials/layout_header.php';
         </div>
         <p class="text-2xl font-bold text-dark"><?= fmtHM($workSec) ?></p>
         <p class="text-xs text-muted mt-0.5">Horario Laboral</p>
+        <?php if ($isRange): ?><p class="text-[11px] font-semibold text-emerald-600 mt-1"><?= $businessDays > 0 ? 'Prom. ' . fmtHM($avgWorkSec) . '/día' : '—' ?></p><?php endif; ?>
     </div>
 
     <!-- Productivity -->
@@ -550,6 +659,7 @@ require_once __DIR__ . '/partials/layout_header.php';
         </div>
         <p class="text-2xl font-bold text-dark"><?= $firstEvent ?></p>
         <p class="text-xs text-muted mt-0.5">Primer Ingreso</p>
+        <?php if ($isRange): ?><p class="text-[11px] font-semibold text-purple-600 mt-1">Prom. <?= $avgFirstLogin ?></p><?php endif; ?>
     </div>
 </div>
 
@@ -713,7 +823,7 @@ require_once __DIR__ . '/partials/layout_header.php';
     <div class="flex items-center justify-between mb-1">
         <div class="flex items-center gap-2">
             <svg class="w-5 h-5 text-corp-800" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-            <h3 class="text-base font-bold text-dark">Actividad Últimos 7 Días</h3>
+            <h3 class="text-base font-bold text-dark">Actividad Diaria</h3>
         </div>
         <div class="flex items-center gap-4 text-xs">
             <div class="flex items-center gap-1.5">
@@ -724,36 +834,50 @@ require_once __DIR__ . '/partials/layout_header.php';
                 <span class="w-2.5 h-2.5 bg-gray-200 rounded-sm"></span>
                 <span class="text-muted">Inactivo</span>
             </div>
+            <a href="?id=<?= $userId ?>&period=<?= htmlspecialchars($period) ?>&from=<?= htmlspecialchars($dateFrom) ?>&to=<?= htmlspecialchars($dateTo) ?>&ajax=daily_csv"
+               class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-muted hover:text-dark hover:bg-gray-50 transition-colors">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                CSV
+            </a>
         </div>
     </div>
-    <p class="text-xs text-muted mb-5">Horas de actividad por día</p>
+    <p class="text-xs text-muted mb-5">Horas de actividad por día · <?= date('d/m', strtotime($chartFrom)) ?> — <?= date('d/m', strtotime($chartTo)) ?> (<?= count($weekChart) ?> días)</p>
 
-    <div class="flex items-end gap-3 h-52">
+    <?php $compact = count($weekChart) > 16; // muchos días → barras finas + tooltip ?>
+    <div class="flex items-end <?= $compact ? 'gap-0.5' : 'gap-3' ?> h-52">
         <?php foreach ($weekChart as $date => $day):
             $totalDay = $day['active'] + $day['idle'];
             $barH  = $maxBarSec > 0 ? round(($day['active'] / $maxBarSec) * 100) : 0;
             $idleH = $maxBarSec > 0 ? round(($day['idle']   / $maxBarSec) * 100) : 0;
             $isToday = ($date === date('Y-m-d'));
+            $dow = (int)date('w', strtotime($date)); // 0=Dom … 6=Sáb
+            $barCap = $compact ? '' : 'max-w-[40px]';
+            $tip = $day['label'] . ' · Activo ' . ($day['active'] > 0 ? round($day['active']/3600, 1) . 'h' : '0')
+                 . ' · Inactivo ' . round($day['idle']/3600, 1) . 'h';
         ?>
-        <div class="flex-1 flex flex-col items-center gap-1 h-full justify-end">
+        <div class="flex-1 flex flex-col items-center gap-1 h-full justify-end" title="<?= htmlspecialchars($tip) ?>">
             <!-- Stacked bars -->
             <div class="w-full flex flex-col items-center flex-1 justify-end">
                 <?php if ($day['idle'] > 0): ?>
-                <div class="w-full max-w-[40px] bg-gray-200 rounded-t-md transition-all" style="height: <?= max($idleH, 2) ?>%;"></div>
+                <div class="w-full <?= $barCap ?> bg-gray-200 <?= $compact ? '' : 'rounded-t-md' ?> transition-all" style="height: <?= max($idleH, 2) ?>%;"></div>
                 <?php endif; ?>
                 <?php if ($day['active'] > 0 || $day['idle'] === 0): ?>
-                <div class="w-full max-w-[40px] <?= $isToday ? 'bg-corp-800' : 'bg-corp-800/70' ?> <?= $day['idle'] > 0 ? '' : 'rounded-t-md' ?> transition-all" style="height: <?= max($barH, 2) ?>%;"></div>
+                <div class="w-full <?= $barCap ?> <?= $isToday ? 'bg-corp-800' : 'bg-corp-800/70' ?> <?= (!$compact && $day['idle'] === 0) ? 'rounded-t-md' : '' ?> transition-all" style="height: <?= max($barH, 2) ?>%;"></div>
                 <?php endif; ?>
             </div>
-            <!-- Hours labels -->
+            <?php if (!$compact): ?>
+            <!-- Modo detallado: horas + día bajo cada barra -->
             <div class="text-center leading-tight">
                 <p class="text-xs font-semibold text-dark"><?= $day['active'] > 0 ? round($day['active'] / 3600, 1) . 'h' : '0' ?></p>
                 <?php if ($day['idle'] > 0): ?>
                 <p class="text-[10px] text-gray-400"><?= round($day['idle'] / 3600, 1) ?>h</p>
                 <?php endif; ?>
             </div>
-            <!-- Day label -->
             <p class="text-xs text-muted <?= $isToday ? 'font-bold text-corp-800' : '' ?>"><?= $day['label'] ?></p>
+            <?php else: ?>
+            <!-- Modo compacto: eje esparcido (solo lunes), detalle al pasar el mouse -->
+            <p class="text-[10px] text-muted whitespace-nowrap h-3 leading-3 <?= $isToday ? 'font-bold text-corp-800' : '' ?>"><?= $dow === 1 ? date('d/m', strtotime($date)) : '' ?></p>
+            <?php endif; ?>
         </div>
         <?php endforeach; ?>
     </div>

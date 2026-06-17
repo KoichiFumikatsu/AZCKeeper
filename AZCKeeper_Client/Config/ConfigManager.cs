@@ -280,7 +280,8 @@ namespace AZCKeeper_Cliente.Config
                     ActivityFlushIntervalSeconds = 10,
                     HandshakeIntervalSeconds = 60,
                     HandshakeIntervalMinutes = 5,
-                    OfflineQueueRetrySeconds = 30
+                    OfflineQueueRetrySeconds = 30,
+                    WindowEpisodeBatchIntervalSeconds = 30
                 },
                 Modules = new ModulesConfig
                 {
@@ -376,6 +377,12 @@ namespace AZCKeeper_Cliente.Config
             public int HandshakeIntervalSeconds { get; set; } = 300;
             public int HandshakeIntervalMinutes { get; set; } = 5; // legacy
             public int OfflineQueueRetrySeconds { get; set; } = 30;
+            /// <summary>
+            /// Intervalo de flush del batch de window-episodes, en segundos. Default 30s.
+            /// Configurable desde la política global (timers.windowEpisodeBatchIntervalSeconds)
+            /// para bajar la carga del flujo dominante sin recompilar. Piso 15s en cliente.
+            /// </summary>
+            public int WindowEpisodeBatchIntervalSeconds { get; set; } = 30;
         }
         /// <summary>
         /// Configuración de actualizaciones automáticas.

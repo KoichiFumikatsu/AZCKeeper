@@ -862,18 +862,22 @@ $leisureWinsRaw = implode("\n", $leisureData['windows']);
                     <!-- ── Timers ── -->
                     <fieldset class="bg-gray-50 rounded-xl p-4 space-y-3">
                         <legend class="text-xs font-bold text-dark uppercase tracking-wider flex items-center gap-2"><svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Timers</legend>
-                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
                                 <label class="text-[10px] text-muted">Handshake (min)</label>
                                 <input type="number" x-model.number="editData.timers.handshakeIntervalMinutes" class="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs mt-0.5">
                             </div>
                             <div>
-                                <label class="text-[10px] text-muted">Flush (seg)</label>
+                                <label class="text-[10px] text-muted">Flush actividad (seg)</label>
                                 <input type="number" x-model.number="editData.timers.activityFlushIntervalSeconds" class="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs mt-0.5">
                             </div>
                             <div>
                                 <label class="text-[10px] text-muted">Retry offline (seg)</label>
                                 <input type="number" x-model.number="editData.timers.offlineQueueRetrySeconds" class="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs mt-0.5">
+                            </div>
+                            <div>
+                                <label class="text-[10px] text-muted">Flush ventanas (seg)</label>
+                                <input type="number" min="15" x-model.number="editData.timers.windowEpisodeBatchIntervalSeconds" class="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs mt-0.5">
                             </div>
                         </div>
                     </fieldset>
@@ -1114,7 +1118,7 @@ function policiesPage() {
         editUserName: '',
         editData: {
             apiBaseUrl: '',
-            timers: { handshakeIntervalMinutes: 5, offlineQueueRetrySeconds: 120, activityFlushIntervalSeconds: 60 },
+            timers: { handshakeIntervalMinutes: 5, offlineQueueRetrySeconds: 120, activityFlushIntervalSeconds: 60, windowEpisodeBatchIntervalSeconds: 30 },
             logging: { globalLevel: 'Error', discordWebhookUrl: '', enableFileLogging: true, clientOverrideLevel: 'Error', enableDiscordLogging: false },
             modules: { enableBlocking: true, callTitleKeywords: [], enableDebugWindow: false, countCallsAsActive: true, enableCallTracking: true, callProcessKeywords: [], enableUpdateManager: true, enableWindowTracking: true, enableProcessTracking: true, enableActivityTracking: true, activityIntervalSeconds: 30, callActiveMaxIdleSeconds: 1800, windowTrackingIntervalSeconds: 30, activityInactivityThresholdSeconds: 900 },
             startup: { startMinimized: false, enableAutoStartup: true },
@@ -1138,7 +1142,7 @@ function policiesPage() {
         defaultPolicy() {
             return {
                 apiBaseUrl: 'https://one.azclegal.com/keeper/public/index.php/api/',
-                timers: { handshakeIntervalMinutes: 5, offlineQueueRetrySeconds: 120, activityFlushIntervalSeconds: 60 },
+                timers: { handshakeIntervalMinutes: 5, offlineQueueRetrySeconds: 120, activityFlushIntervalSeconds: 60, windowEpisodeBatchIntervalSeconds: 30 },
                 logging: { globalLevel: 'Error', discordWebhookUrl: '', enableFileLogging: true, clientOverrideLevel: 'Error', enableDiscordLogging: false },
                 modules: { enableBlocking: true, callTitleKeywords: ['meeting','call','reunión','llamada'], enableDebugWindow: false, countCallsAsActive: true, enableCallTracking: true, callProcessKeywords: ['zoom','teams','skype','meet','webex'], enableUpdateManager: true, enableWindowTracking: true, enableProcessTracking: true, enableActivityTracking: true, activityIntervalSeconds: 30, callActiveMaxIdleSeconds: 1800, windowTrackingIntervalSeconds: 30, activityInactivityThresholdSeconds: 900 },
                 startup: { startMinimized: false, enableAutoStartup: true },

@@ -70,6 +70,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
+copy /Y "%~dp0azc-killer.ps1" "%BUILD_DIR%\package\"
+if errorlevel 1 (
+    echo ERROR: No se pudo copiar azc-killer.ps1
+    pause
+    exit /b 1
+)
+
 :: Limpiar archivos de debug innecesarios en el paquete
 del /f /q "%BUILD_DIR%\package\*.pdb" 2>nul
 

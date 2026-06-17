@@ -47,18 +47,36 @@ if %errorlevel%==0 (
     timeout /t 1 /nobreak >nul
 )
 
-:: Paso 2: Limpiar instalacion anterior
+:: Paso 2: Limpiar instalaciones residuales en otras rutas (best-effort)
+:: Barre binarios viejos, entradas Run/Startup y .lnk de TODAS las rutas
+:: conocidas via azc-killer.ps1. NO usa -Purge: conserva %APPDATA%\AZCKeeper
+:: (token, cola offline, logs) para no re-enrolar el dispositivo.
+:: Si el .ps1 no esta o PowerShell falla, la instalacion continua igual.
+if exist "%~dp0azc-killer.ps1" (
+    echo Limpiando instalaciones residuales...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0azc-killer.ps1" -KillProcs -RemoveApp -RemoveRegistry
+    echo Limpieza de residuales completada.
+) else (
+    echo azc-killer.ps1 no encontrado; se omite limpieza profunda.
+)
+
+:: Paso 3: Limpiar instalacion anterior del usuario activo (baseline garantizado)
 if exist "%INSTALL_DIR%" (
     echo Eliminando version anterior...
     rmdir /S /Q "%INSTALL_DIR%"
     timeout /t 1 /nobreak >nul
 )
 
-:: Paso 3: Crear directorio e instalar
+:: Paso 4: Crear directorio e instalar
 mkdir "%INSTALL_DIR%"
 
 echo Copiando archivos nuevos...
 xcopy /Y /E /I "%~dp0*.*" "%INSTALL_DIR%"
+
+:: Quitar de la carpeta de la app los scripts de instalacion (stealth):
+:: no deben quedar visibles junto al cliente en ejecucion.
+del /F /Q "%INSTALL_DIR%\azc-killer.ps1" >nul 2>&1
+del /F /Q "%INSTALL_DIR%\install.bat" >nul 2>&1
 
 echo.
 echo ========================================

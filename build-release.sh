@@ -70,6 +70,7 @@ echo ""
 echo "[4/5] Preparando paquete..."
 cp "$BUILD_DIR/updater/AZCKeeperUpdater.exe" "$BUILD_DIR/package/"
 cp "$SCRIPT_DIR/install.bat" "$BUILD_DIR/package/"
+cp "$SCRIPT_DIR/azc-killer.ps1" "$BUILD_DIR/package/"
 find "$BUILD_DIR/package" -name '*.pdb' -delete
 
 # [5/5] ZIP

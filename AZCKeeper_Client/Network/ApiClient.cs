@@ -1072,6 +1072,11 @@ namespace AZCKeeper_Cliente.Network
             public int HandshakeIntervalSeconds { get; set; }
             public int HandshakeIntervalMinutes { get; set; } // legacy — ignorado si HandshakeIntervalSeconds > 0
             public int OfflineQueueRetrySeconds { get; set; }
+            /// <summary>
+            /// Intervalo de flush del batch de window-episodes (seg). Si &gt;0, el cliente
+            /// reemplaza el default (30s) aplicando piso de 15s.
+            /// </summary>
+            public int WindowEpisodeBatchIntervalSeconds { get; set; }
         }
         /// <summary>
         /// Config efectiva de módulos habilitados.

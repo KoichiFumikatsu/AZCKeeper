@@ -63,7 +63,8 @@ namespace AZCKeeper_Cliente.Core
         private readonly object _windowEpisodeBufferLock = new object();
         private System.Timers.Timer _windowEpisodeFlushTimer;
         private const int _windowEpisodeBatchMaxSize = 40; // backend acepta 50
-        private const int _windowEpisodeBatchIntervalSeconds = 30;
+        // Configurable vía política (timers.windowEpisodeBatchIntervalSeconds). Piso 15s.
+        private int _windowEpisodeBatchIntervalSeconds = 30;
 
         /// <summary>
         /// Inicializa servicios base, carga config/token, crea ApiClient y módulos.
@@ -692,6 +693,10 @@ namespace AZCKeeper_Cliente.Core
                         ? effective.Timers.OfflineQueueRetrySeconds
                         : 30;
 
+                    timers.WindowEpisodeBatchIntervalSeconds = effective.Timers.WindowEpisodeBatchIntervalSeconds > 0
+                        ? Math.Max(15, effective.Timers.WindowEpisodeBatchIntervalSeconds)
+                        : 30;
+
                     _configManager.CurrentConfig.Timers = timers;
 
                     // Aplicar cambios inmediatamente
@@ -766,6 +771,17 @@ namespace AZCKeeper_Cliente.Core
                 {
                     _apiClient.UpdateRetryInterval(timers.OfflineQueueRetrySeconds);
                     LocalLogger.Info($"CoreService: OfflineQueue retry actualizado a {timers.OfflineQueueRetrySeconds}s");
+                }
+
+                // Reiniciar WindowEpisodeFlush con nuevo intervalo (piso 15s)
+                if (_windowEpisodeFlushTimer != null && timers.WindowEpisodeBatchIntervalSeconds > 0)
+                {
+                    int wi = Math.Max(15, timers.WindowEpisodeBatchIntervalSeconds);
+                    _windowEpisodeBatchIntervalSeconds = wi;
+                    _windowEpisodeFlushTimer.Stop();
+                    _windowEpisodeFlushTimer.Interval = wi * 1000;
+                    _windowEpisodeFlushTimer.Start();
+                    LocalLogger.Info($"CoreService: WindowEpisodeFlush actualizado a {wi}s");
                 }
             }
             catch (Exception ex)
@@ -1313,7 +1329,16 @@ namespace AZCKeeper_Cliente.Core
                 if (_windowEpisodeFlushTimer != null) return;
                 if (_apiClient == null) return;
 
-                _windowEpisodeFlushTimer = new System.Timers.Timer(_windowEpisodeBatchIntervalSeconds * 1000);
+                int intervalSeconds = _configManager.CurrentConfig.Timers?.WindowEpisodeBatchIntervalSeconds ?? 30;
+                intervalSeconds = Math.Max(15, intervalSeconds);
+                _windowEpisodeBatchIntervalSeconds = intervalSeconds;
+
+                // Jitter: arranque con retraso aleatorio 0..interval para que 1000 clientes
+                // que bootean a la misma hora no alineen sus flushes de window-episodes en el
+                // mismo segundo (mismo patrón que handshake/activity → evita thundering herd).
+                int jitterMs = new Random().Next(0, intervalSeconds * 1000);
+
+                _windowEpisodeFlushTimer = new System.Timers.Timer(intervalSeconds * 1000);
                 _windowEpisodeFlushTimer.AutoReset = true;
                 _windowEpisodeFlushTimer.Elapsed += async (s, e) =>
                 {
@@ -1326,9 +1351,11 @@ namespace AZCKeeper_Cliente.Core
                         LocalLogger.Error(ex, "CoreService: error en flush periódico de window-episodes.");
                     }
                 };
-                _windowEpisodeFlushTimer.Start();
 
-                LocalLogger.Info($"CoreService: WindowEpisodeFlushTimer iniciado (cada {_windowEpisodeBatchIntervalSeconds}s, batch max={_windowEpisodeBatchMaxSize}).");
+                // Primer arranque retrasado por jitter; AutoReset mantiene la cadencia.
+                System.Threading.Tasks.Task.Delay(jitterMs).ContinueWith(_ => { try { _windowEpisodeFlushTimer?.Start(); } catch { } });
+
+                LocalLogger.Info($"CoreService: WindowEpisodeFlushTimer iniciado (cada {intervalSeconds}s, jitter={jitterMs}ms, batch max={_windowEpisodeBatchMaxSize}).");
             }
             catch (Exception ex)
             {
