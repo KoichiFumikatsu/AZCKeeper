@@ -18,6 +18,9 @@ obj/
 *.suo
 build/
 
+# Visual Studio (índices Copilot, caché de IDE — nunca versionar)
+.vs/
+
 # Paquetes ZIP — siempre artefactos, nunca fuente. Los builds van a build/
 # y los paquetes deploy PHP ad-hoc (web.zip, webold.zip) se generan a demanda.
 *.zip
