@@ -76,6 +76,13 @@ namespace AZCKeeper_Cliente.Blocking
                     return;
 
                 string original = File.ReadAllText(_hostsPath, Encoding.ASCII);
+
+                // Si no hay bloque administrado por nosotros, no hay nada que limpiar.
+                // Evitamos intentar escribir (que requeriría admin) y el warning espurio
+                // en máquinas sin elevación donde nunca se usó el enforcement por hosts.
+                if (original.IndexOf(BeginMarker, StringComparison.Ordinal) < 0)
+                    return;
+
                 string cleaned = RemoveManagedBlock(original).TrimEnd();
                 WriteAtomically(cleaned);
                 LocalLogger.Info("HostsFileBlocker: bloque administrado removido.");
