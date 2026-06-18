@@ -29,8 +29,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!canDo('devices', 'can_edit')) throw new \Exception('Sin permisos');
                 $deviceId = (int)($_POST['device_id'] ?? 0);
                 if ($deviceId <= 0) throw new \Exception('Dispositivo inválido');
-                $pdo->prepare("UPDATE keeper_devices SET status = 'active' WHERE id = ?")->execute([$deviceId]);
+                $pdo->prepare("UPDATE keeper_devices SET status = 'active', decommission_reason = NULL, decommissioned_at = NULL WHERE id = ?")->execute([$deviceId]);
                 $msg = 'Dispositivo reactivado.';
+                $msgType = 'success';
+                break;
+
+            case 'decommission':
+                if (!canDo('devices', 'can_edit')) throw new \Exception('Sin permisos');
+                $deviceId = (int)($_POST['device_id'] ?? 0);
+                if ($deviceId <= 0) throw new \Exception('Dispositivo inválido');
+                $reason = in_array($_POST['reason'] ?? '', ['returned','changed','replaced','other'], true) ? $_POST['reason'] : 'other';
+                $pdo->prepare("UPDATE keeper_devices SET status = 'revoked', decommission_reason = ?, decommissioned_at = NOW() WHERE id = ?")->execute([$reason, $deviceId]);
+                $labels = ['returned'=>'devuelto','changed'=>'cambiado','replaced'=>'reemplazado','other'=>'otro'];
+                $msg = 'Dispositivo dado de baja (' . $labels[$reason] . ').';
                 $msgType = 'success';
                 break;
 
@@ -75,6 +86,8 @@ $sql = "
         d.client_version,
         d.serial_hint,
         d.status,
+        d.decommission_reason,
+        d.decommissioned_at,
         d.last_seen_at,
         d.created_at,
         u.display_name,
@@ -98,19 +111,34 @@ $st = $pdo->prepare($sql);
 $st->execute($params);
 $devices = $st->fetchAll(PDO::FETCH_ASSOC);
 
+// Umbral de obsolescencia: un dispositivo 'active' sin reportar hace > STALE_DAYS
+// se considera OBSOLETO (equipo viejo/cambiado) y no cuenta para métricas vigentes.
+$STALE_DAYS = 30;
+
+// Estado efectivo del dispositivo: revoked | stale | active (reciente).
+function devState(array $d, int $staleDays): string {
+    if ($d['status'] === 'revoked') return 'revoked';
+    $seen = $d['last_seen_at'] ? strtotime($d['last_seen_at']) : 0;
+    if (!$seen || (time() - $seen) > $staleDays * 86400) return 'stale';
+    return 'active';
+}
+
 // Stats
 $totalDevices = count($devices);
-$activeCount  = count(array_filter($devices, fn($d) => $d['status'] === 'active'));
-$revokedCount = $totalDevices - $activeCount;
-$onlineCount  = count(array_filter($devices, fn($d) => $d['last_seen_at'] && (time() - strtotime($d['last_seen_at'])) < 120));
+$freshCount   = count(array_filter($devices, fn($d) => devState($d, $STALE_DAYS) === 'active'));
+$staleCount   = count(array_filter($devices, fn($d) => devState($d, $STALE_DAYS) === 'stale'));
+$revokedCount = count(array_filter($devices, fn($d) => $d['status'] === 'revoked'));
 
-// Version breakdown
+// Version breakdown: SOLO equipos activos recientes (≤ STALE_DAYS), para no
+// inflar con versiones viejas de máquinas que ya no se usan.
 $versionMap = [];
 foreach ($devices as $d) {
+    if (devState($d, $STALE_DAYS) !== 'active') continue;
     $v = $d['client_version'] ?: 'Sin versión';
     $versionMap[$v] = ($versionMap[$v] ?? 0) + 1;
 }
 arsort($versionMap);
+$freshVersionTotal = array_sum($versionMap);
 
 require_once __DIR__ . '/partials/layout_header.php';
 ?>
@@ -141,8 +169,8 @@ require_once __DIR__ . '/partials/layout_header.php';
                 <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 13l4 4L19 7"/></svg>
             </div>
             <div>
-                <p class="text-2xl font-bold text-dark"><?= $onlineCount ?></p>
-                <p class="text-xs text-muted">Online Ahora</p>
+                <p class="text-2xl font-bold text-dark"><?= $freshCount ?></p>
+                <p class="text-xs text-muted">Activos (≤<?= $STALE_DAYS ?>d)</p>
             </div>
         </div>
     </div>
@@ -152,8 +180,8 @@ require_once __DIR__ . '/partials/layout_header.php';
                 <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
             </div>
             <div>
-                <p class="text-2xl font-bold text-dark"><?= $activeCount ?></p>
-                <p class="text-xs text-muted">Activos</p>
+                <p class="text-2xl font-bold text-dark"><?= $staleCount ?></p>
+                <p class="text-xs text-muted">Obsoletos (&gt;<?= $STALE_DAYS ?>d)</p>
             </div>
         </div>
     </div>
@@ -164,7 +192,7 @@ require_once __DIR__ . '/partials/layout_header.php';
             </div>
             <div>
                 <p class="text-2xl font-bold text-dark"><?= $revokedCount ?></p>
-                <p class="text-xs text-muted">Revocados</p>
+                <p class="text-xs text-muted">Dados de baja</p>
             </div>
         </div>
     </div>
@@ -199,8 +227,9 @@ require_once __DIR__ . '/partials/layout_header.php';
     </div>
     <select x-model="statusFilter" class="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none">
         <option value="all">Todos los estados</option>
-        <option value="active">Activos</option>
-        <option value="revoked">Revocados</option>
+        <option value="active">Activos (recientes)</option>
+        <option value="stale">Obsoletos (&gt;<?= $STALE_DAYS ?>d)</option>
+        <option value="revoked">Dados de baja</option>
     </select>
     <span class="text-xs text-muted" x-show="search || statusFilter !== 'all'" x-transition>
         <span x-text="visibleCount"></span> resultado(s)
@@ -231,16 +260,20 @@ require_once __DIR__ . '/partials/layout_header.php';
                 </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
-                <?php foreach ($devices as $d):
+                <?php
+                $reasonLabels = ['returned'=>'Devuelto','changed'=>'Cambiado','replaced'=>'Reemplazado','other'=>'Dado de baja'];
+                foreach ($devices as $d):
                     $seenAgo = $d['last_seen_at'] ? time() - strtotime($d['last_seen_at']) : 99999;
-                    if ($d['status'] === 'revoked') { $connStatus = 'Revocado'; $connColor = 'text-red-500'; $connBg = 'bg-red-50'; }
+                    $state   = devState($d, $STALE_DAYS);
+                    if ($state === 'revoked') { $connStatus = $reasonLabels[$d['decommission_reason']] ?? 'Revocado'; $connColor = 'text-red-500'; $connBg = 'bg-red-50'; }
+                    elseif ($state === 'stale') { $connStatus = 'Obsoleto'; $connColor = 'text-gray-500'; $connBg = 'bg-gray-100'; }
                     elseif ($seenAgo < 120) { $connStatus = 'Online'; $connColor = 'text-emerald-700'; $connBg = 'bg-emerald-50'; }
                     elseif ($seenAgo < 900) { $connStatus = 'Ausente'; $connColor = 'text-amber-700'; $connBg = 'bg-amber-50'; }
                     else { $connStatus = 'Offline'; $connColor = 'text-gray-500'; $connBg = 'bg-gray-50'; }
 
                     $searchData = strtolower(($d['device_name'] ?? '') . ' ' . ($d['display_name'] ?? '') . ' ' . ($d['email'] ?? '') . ' ' . ($d['client_version'] ?? '') . ' ' . ($d['device_guid'] ?? '') . ' ' . ($d['sociedad_name'] ?? '') . ' ' . ($d['firm_name'] ?? '') . ' ' . ($d['sede_name'] ?? ''));
                 ?>
-                <tr class="hover:bg-gray-50/50 transition-colors" data-device data-search="<?= htmlspecialchars($searchData) ?>" data-status="<?= $d['status'] ?>">
+                <tr class="hover:bg-gray-50/50 transition-colors" data-device data-search="<?= htmlspecialchars($searchData) ?>" data-status="<?= $state ?>">
                     <td class="py-3 px-3">
                         <div>
                             <p class="font-medium text-dark"><?= htmlspecialchars($d['device_name'] ?? 'Sin nombre') ?></p>
@@ -266,7 +299,7 @@ require_once __DIR__ . '/partials/layout_header.php';
                     </td>
                     <td class="py-3 px-3">
                         <span class="inline-flex items-center gap-1.5 px-2 py-0.5 <?= $connBg ?> <?= $connColor ?> text-xs font-medium rounded-full">
-                            <span class="w-1.5 h-1.5 rounded-full <?= $d['status'] === 'revoked' ? 'bg-red-400' : ($seenAgo < 120 ? 'bg-emerald-500' : ($seenAgo < 900 ? 'bg-amber-400' : 'bg-gray-400')) ?>"></span>
+                            <span class="w-1.5 h-1.5 rounded-full <?= $state === 'revoked' ? 'bg-red-400' : ($state === 'stale' ? 'bg-gray-400' : ($seenAgo < 120 ? 'bg-emerald-500' : ($seenAgo < 900 ? 'bg-amber-400' : 'bg-gray-300'))) ?>"></span>
                             <?= $connStatus ?>
                         </span>
                     </td>
@@ -285,6 +318,24 @@ require_once __DIR__ . '/partials/layout_header.php';
                                 </button>
                                 <div x-show="open" @click.away="open = false" x-transition class="absolute right-0 mt-1 w-44 bg-white rounded-lg shadow-lg border border-gray-100 py-1 z-10" style="display:none">
                                     <?php if ($d['status'] === 'active'): ?>
+                                    <form method="post" class="block">
+                                        <input type="hidden" name="action" value="decommission">
+                                        <input type="hidden" name="reason" value="returned">
+                                        <input type="hidden" name="device_id" value="<?= $d['id'] ?>">
+                                        <button type="submit" class="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors flex items-center gap-2">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 10l2-5h14l2 5M5 10v9a1 1 0 001 1h12a1 1 0 001-1v-9"/></svg>
+                                            Marcar devuelto
+                                        </button>
+                                    </form>
+                                    <form method="post" class="block">
+                                        <input type="hidden" name="action" value="decommission">
+                                        <input type="hidden" name="reason" value="changed">
+                                        <input type="hidden" name="device_id" value="<?= $d['id'] ?>">
+                                        <button type="submit" class="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors flex items-center gap-2">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                                            Marcar cambiado
+                                        </button>
+                                    </form>
                                     <form method="post" class="block">
                                         <input type="hidden" name="action" value="revoke">
                                         <input type="hidden" name="device_id" value="<?= $d['id'] ?>">
@@ -338,12 +389,13 @@ require_once __DIR__ . '/partials/layout_header.php';
             <svg class="w-5 h-5 text-corp-800" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/></svg>
             <h3 class="text-sm font-bold text-dark">Versiones del Cliente</h3>
         </div>
+        <p class="text-[10px] text-muted -mt-2 mb-3">Solo equipos activos recientes (≤<?= $STALE_DAYS ?>d), <?= $freshVersionTotal ?> dispositivos.</p>
         <div class="space-y-2.5">
             <?php
             $vColors = ['#003a5d', '#2d87ad', '#198754', '#f59e0b', '#be1622', '#9d9d9c'];
             $vi = 0;
             foreach ($versionMap as $ver => $cnt):
-                $pct = $totalDevices > 0 ? round(($cnt / $totalDevices) * 100) : 0;
+                $pct = $freshVersionTotal > 0 ? round(($cnt / $freshVersionTotal) * 100) : 0;
                 $color = $vColors[$vi % count($vColors)];
                 $vi++;
             ?>
@@ -371,6 +423,8 @@ require_once __DIR__ . '/partials/layout_header.php';
         </div>
         <div class="space-y-2 text-xs text-muted">
             <p>Cada dispositivo se identifica por un <b>GUID</b> único generado en la primera instalación del cliente.</p>
+            <p><b>Obsoleto</b>: equipo activo que no reporta hace más de <?= $STALE_DAYS ?> días (máquina vieja). No cuenta en métricas de versión.</p>
+            <p><b>Marcar devuelto/cambiado</b> da de baja el equipo (sale de listas y métricas), conservando el historial.</p>
             <p><b>Revocar</b> impide que el dispositivo se comunique con el servidor pero conserva los datos.</p>
             <p><b>Eliminar</b> borra el dispositivo y sus sesiones asociadas de forma permanente.</p>
         </div>
