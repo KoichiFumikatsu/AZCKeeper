@@ -225,35 +225,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Todos los usuarios con métricas de hoy
+// ──────── Filtro de estado clicable (online/away/offline) ────────
+$statusFilter = strtolower(trim($_GET['status'] ?? ''));
+if (!in_array($statusFilter, ['online', 'away', 'offline'], true)) $statusFilter = '';
+
+// Rebind de params de scope (el handler edit_user pudo sobrescribir $params arriba).
+$params = $scope['params'];
+
+// ── Query A: lista LIVIANA de todos los usuarios activos en alcance ──
+// Solo lo necesario para estado/orden/conteo/búsqueda. El estado se calcula en
+// SQL a partir del último last_seen_at (JOIN agregado, sin subconsultas por fila).
+// Las métricas pesadas (actividad/ocio/primer ingreso) se calculan más abajo
+// SOLO para los usuarios de la página visible.
 $sql = "
     SELECT
-        u.id,
-        u.cc,
-        u.display_name,
-        u.email,
-        u.status AS user_status,
-        -- Asignación
-        ua.firm_id,
-        ua.area_id,
-        ua.cargo_id,
+        u.id, u.cc, u.display_name, u.email, u.status AS user_status,
+        ua.firm_id, ua.area_id, ua.cargo_id,
         f.nombre AS firm_name,
         ar.nombre AS area_name,
         c.nombre AS cargo_name,
         soc.nombre AS sociedad_name,
-        -- Dispositivo más reciente
-        (SELECT d2.device_name FROM keeper_devices d2
-         WHERE d2.user_id = u.id AND d2.status = 'active'
-         ORDER BY d2.last_seen_at DESC LIMIT 1) AS device_name,
-        (SELECT d2.last_seen_at FROM keeper_devices d2
-         WHERE d2.user_id = u.id AND d2.status = 'active'
-         ORDER BY d2.last_seen_at DESC LIMIT 1) AS last_seen_at,
-        -- Actividad de hoy
-        COALESCE(today.active_sec, 0) AS today_active,
-        COALESCE(today.idle_sec, 0) AS today_idle,
-        COALESCE(today.work_sec, 0) AS today_work,
-        COALESCE(today.work_idle_sec, 0) AS today_work_idle,
-        today.first_event AS first_event_today
+        dev.last_seen_at,
+        CASE
+            WHEN dev.last_seen_at >= NOW() - INTERVAL 120 SECOND THEN 'Online'
+            WHEN dev.last_seen_at >= NOW() - INTERVAL 900 SECOND THEN 'Away'
+            ELSE 'Offline'
+        END AS status_label
     FROM keeper_users u
     LEFT JOIN keeper_user_assignments ua ON ua.keeper_user_id = u.id
     LEFT JOIN keeper_sociedades soc ON soc.id = ua.sociedad_id
@@ -261,93 +258,18 @@ $sql = "
     LEFT JOIN keeper_areas ar ON ar.id = ua.area_id
     LEFT JOIN keeper_cargos c ON c.id = ua.cargo_id
     LEFT JOIN (
-        SELECT
-            a.user_id,
-            SUM(a.active_seconds) AS active_sec,
-            SUM(a.idle_seconds) AS idle_sec,
-            SUM(a.work_hours_active_seconds) AS work_sec,
-            SUM(a.work_hours_idle_seconds) AS work_idle_sec,
-            (SELECT MIN(we.start_at) FROM keeper_window_episode we
-                WHERE we.user_id = a.user_id AND we.day_date = CURDATE()
-                  AND TIME(we.start_at) >= '05:00:00') AS first_event
-        FROM keeper_activity_day a
-        WHERE a.day_date = CURDATE()
-        GROUP BY a.user_id
-    ) today ON today.user_id = u.id
+        SELECT user_id, MAX(last_seen_at) AS last_seen_at
+        FROM keeper_devices
+        WHERE status = 'active'
+        GROUP BY user_id
+    ) dev ON dev.user_id = u.id
     WHERE u.status = 'active'
     {$scope['sql']}
-    ORDER BY u.display_name ASC
+    ORDER BY FIELD(status_label, 'Online', 'Away', 'Offline'), u.display_name ASC
 ";
 $st = $pdo->prepare($sql);
 $st->execute($params);
-$allUsersRaw = $st->fetchAll(PDO::FETCH_ASSOC);
-
-// ── Leisure apps+windows deduction (per user, today) ──
-$leisureMap = [];
-$leisureData = getLeisureApps();
-$lApps = $leisureData['apps'];
-$lWins = $leisureData['windows'];
-if (!empty($lApps) || !empty($lWins)) {
-    $conditions = [];
-    $lParams    = [];
-    if (!empty($lApps)) {
-        $phA = implode(',', array_fill(0, count($lApps), '?'));
-        $conditions[] = "w.process_name IN ($phA)";
-        $lParams = array_merge($lParams, array_values($lApps));
-    }
-    if (!empty($lWins)) {
-        $likes = [];
-        foreach ($lWins as $win) {
-            $likes[] = "w.window_title LIKE ?";
-            $lParams[] = '%' . $win . '%';
-        }
-        $conditions[] = '(' . implode(' OR ', $likes) . ')';
-    }
-    $orClause = implode(' OR ', $conditions);
-    $stL = $pdo->prepare("
-        SELECT w.user_id, COALESCE(SUM(w.duration_seconds), 0) AS leisure_sec
-        FROM keeper_window_episode w
-        WHERE w.day_date = CURDATE()
-          AND ($orClause)
-        GROUP BY w.user_id
-    ");
-    $stL->execute($lParams);
-    foreach ($stL->fetchAll(PDO::FETCH_ASSOC) as $lr) {
-        $leisureMap[(int)$lr['user_id']] = (int)$lr['leisure_sec'];
-    }
-}
-
-// Calcular status y métricas en PHP
-foreach ($allUsersRaw as &$user) {
-    $seenAgo = $user['last_seen_at'] ? time() - strtotime($user['last_seen_at']) : 99999;
-    if ($seenAgo < 120)       $user['status_label'] = 'Online';
-    elseif ($seenAgo < 900)   $user['status_label'] = 'Away';
-    elseif ($seenAgo < 86400) $user['status_label'] = 'Offline';
-    else                      $user['status_label'] = 'Offline';
-
-    // Productividad: solo horario laboral, descontando apps de descanso
-    $workActive  = (int)$user['today_work'];
-    $workIdle    = (int)$user['today_work_idle'];
-    $leisureSec  = $leisureMap[(int)$user['id']] ?? 0;
-    $productive  = max(0, $workActive - $leisureSec);
-    $workTotal   = $workActive + $workIdle;
-    $user['productivity'] = $workTotal > 0 ? round(($productive / $workTotal) * 100) : 0;
-    $user['focus_score']  = $workTotal > 0 ? round(($productive / $workTotal) * 10, 1) : 0;
-    $user['first_login']  = $user['first_event_today']
-        ? date('g:i A', strtotime($user['first_event_today']))
-        : '--:--';
-}
-unset($user);
-
-// Ordenar: Online primero, luego Ausente, luego Offline, y dentro de cada grupo por nombre
-usort($allUsersRaw, function($a, $b) {
-    $statusOrder = ['Online' => 0, 'Away' => 1, 'Offline' => 2];
-    $aOrder = $statusOrder[$a['status_label']] ?? 9;
-    $bOrder = $statusOrder[$b['status_label']] ?? 9;
-    if ($aOrder !== $bOrder) return $aOrder - $bOrder;
-    return strcasecmp($a['display_name'] ?? '', $b['display_name'] ?? '');
-});
-$users = $allUsersRaw;
+$users = $st->fetchAll(PDO::FETCH_ASSOC);
 
 // ──── Búsqueda global (server-side, filtra ANTES de paginar) ────
 $searchQ = trim($_GET['q'] ?? '');
@@ -367,12 +289,103 @@ if ($searchQ !== '') {
     }));
 }
 
+// Conteos por estado (sobre el conjunto buscado, ANTES del filtro de estado)
+$onlineCount  = count(array_filter($users, fn($u) => $u['status_label'] === 'Online'));
+$awayCount    = count(array_filter($users, fn($u) => $u['status_label'] === 'Away'));
+$offlineCount = count(array_filter($users, fn($u) => $u['status_label'] === 'Offline'));
+
+// Filtro de estado clicable
+if ($statusFilter !== '') {
+    $want = ucfirst($statusFilter);
+    $users = array_values(array_filter($users, fn($u) => $u['status_label'] === $want));
+}
+
 // Paginación
 $perPage    = 15;
 $totalUsers = count($users);
 $totalPages = max(1, ceil($totalUsers / $perPage));
 $page       = max(1, min((int)($_GET['page'] ?? 1), $totalPages));
 $pagedUsers = array_slice($users, ($page - 1) * $perPage, $perPage);
+
+// ── Query B: métricas pesadas SOLO para los usuarios de la página ──
+$pagedIds = array_map(fn($u) => (int)$u['id'], $pagedUsers);
+$todayMap = [];
+$weMap    = [];
+if (!empty($pagedIds)) {
+    $idPh = implode(',', array_fill(0, count($pagedIds), '?'));
+
+    // Actividad de hoy (tabla resumen, liviana)
+    $stT = $pdo->prepare("
+        SELECT a.user_id,
+               SUM(a.active_seconds) AS active_sec,
+               SUM(a.idle_seconds) AS idle_sec,
+               SUM(a.work_hours_active_seconds) AS work_sec,
+               SUM(a.work_hours_idle_seconds) AS work_idle_sec
+        FROM keeper_activity_day a
+        WHERE a.day_date = CURDATE() AND a.user_id IN ($idPh)
+        GROUP BY a.user_id
+    ");
+    $stT->execute($pagedIds);
+    foreach ($stT->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $todayMap[(int)$r['user_id']] = $r;
+    }
+
+    // Primer ingreso + ocio en UNA sola pasada a window_episode (solo página)
+    $leisureData = getLeisureApps();
+    $lApps = $leisureData['apps'];
+    $lWins = $leisureData['windows'];
+    $leisureExpr = '0';
+    $leadParams  = [];
+    if (!empty($lApps) || !empty($lWins)) {
+        $conds = [];
+        if (!empty($lApps)) {
+            $conds[] = 'w.process_name IN (' . implode(',', array_fill(0, count($lApps), '?')) . ')';
+            $leadParams = array_merge($leadParams, array_values($lApps));
+        }
+        foreach ($lWins as $win) {
+            $conds[] = 'w.window_title LIKE ?';
+            $leadParams[] = '%' . $win . '%';
+        }
+        $leisureExpr = 'CASE WHEN (' . implode(' OR ', $conds) . ') THEN w.duration_seconds ELSE 0 END';
+    }
+    // Orden de placeholders: primero los del CASE de ocio (SELECT), luego los IN(ids) del WHERE.
+    $weParams = array_merge($leadParams, $pagedIds);
+    $stW = $pdo->prepare("
+        SELECT w.user_id,
+               MIN(CASE WHEN TIME(w.start_at) >= '05:00:00' THEN w.start_at END) AS first_event,
+               COALESCE(SUM($leisureExpr), 0) AS leisure_sec
+        FROM keeper_window_episode w
+        WHERE w.day_date = CURDATE() AND w.user_id IN ($idPh)
+        GROUP BY w.user_id
+    ");
+    $stW->execute($weParams);
+    foreach ($stW->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $weMap[(int)$r['user_id']] = $r;
+    }
+}
+
+// Calcular métricas de la página en PHP
+foreach ($pagedUsers as &$user) {
+    $uid = (int)$user['id'];
+    $t = $todayMap[$uid] ?? [];
+    $w = $weMap[$uid] ?? [];
+    $user['today_active']    = (int)($t['active_sec'] ?? 0);
+    $user['today_idle']      = (int)($t['idle_sec'] ?? 0);
+    $user['today_work']      = (int)($t['work_sec'] ?? 0);
+    $user['today_work_idle'] = (int)($t['work_idle_sec'] ?? 0);
+
+    $workActive = $user['today_work'];
+    $workIdle   = $user['today_work_idle'];
+    $leisureSec = (int)($w['leisure_sec'] ?? 0);
+    $productive = max(0, $workActive - $leisureSec);
+    $workTotal  = $workActive + $workIdle;
+    $user['productivity'] = $workTotal > 0 ? round(($productive / $workTotal) * 100) : 0;
+    $user['focus_score']  = $workTotal > 0 ? round(($productive / $workTotal) * 10, 1) : 0;
+    $user['first_login']  = !empty($w['first_event'])
+        ? date('g:i A', strtotime($w['first_event']))
+        : '--:--';
+}
+unset($user);
 
 // Helpers
 function fmtHM(int $seconds): string {
@@ -405,10 +418,13 @@ function focusColor(float $score): string {
     return 'text-accent-500';
 }
 
-// Counters
-$onlineCount  = count(array_filter($users, fn($u) => $u['status_label'] === 'Online'));
-$awayCount    = count(array_filter($users, fn($u) => $u['status_label'] === 'Away'));
-$offlineCount = count(array_filter($users, fn($u) => $u['status_label'] === 'Offline'));
+// URL del chip de estado: preserva la búsqueda; clic en el activo lo limpia (toggle).
+function statusUrl(string $key, string $current, string $q): string {
+    $p = [];
+    if ($q !== '') $p['q'] = $q;
+    if ($current !== $key) $p['status'] = $key;
+    return '?' . http_build_query($p);
+}
 
 // Admin status lookup for each user (keyed by keeper_user_id)
 $adminMap = [];
@@ -457,24 +473,31 @@ require_once __DIR__ . '/partials/layout_header.php';
         <?php endif; ?>
     </div>
     <p class="text-xs text-muted mb-3 hidden sm:block">Haz clic en un miembro del equipo para ver actividad detallada y opciones de gestión</p>
-    <div class="flex items-center gap-3 sm:gap-4">
-        <div class="flex items-center gap-1.5">
+    <div class="flex items-center gap-2 sm:gap-3 flex-wrap">
+        <a href="<?= statusUrl('online', $statusFilter, $searchQ) ?>"
+           class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors <?= $statusFilter === 'online' ? 'border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold' : 'border-transparent text-muted hover:bg-gray-100' ?>">
             <span class="w-2 h-2 bg-emerald-500 rounded-full"></span>
-            <span class="text-xs text-muted"><?= $onlineCount ?> Online</span>
-        </div>
-        <div class="flex items-center gap-1.5">
+            <span class="text-xs"><?= $onlineCount ?> Online</span>
+        </a>
+        <a href="<?= statusUrl('away', $statusFilter, $searchQ) ?>"
+           class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors <?= $statusFilter === 'away' ? 'border-amber-300 bg-amber-50 text-amber-700 font-semibold' : 'border-transparent text-muted hover:bg-gray-100' ?>">
             <span class="w-2 h-2 bg-amber-400 rounded-full"></span>
-            <span class="text-xs text-muted"><?= $awayCount ?> Ausentes</span>
-        </div>
-        <div class="flex items-center gap-1.5">
+            <span class="text-xs"><?= $awayCount ?> Ausentes</span>
+        </a>
+        <a href="<?= statusUrl('offline', $statusFilter, $searchQ) ?>"
+           class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors <?= $statusFilter === 'offline' ? 'border-gray-300 bg-gray-100 text-gray-700 font-semibold' : 'border-transparent text-muted hover:bg-gray-100' ?>">
             <span class="w-2 h-2 bg-gray-300 rounded-full"></span>
-            <span class="text-xs text-muted"><?= $offlineCount ?> Offline</span>
-        </div>
+            <span class="text-xs"><?= $offlineCount ?> Offline</span>
+        </a>
+        <?php if ($statusFilter !== ''): ?>
+        <a href="<?= $searchQ !== '' ? '?q=' . urlencode($searchQ) : 'users.php' ?>" class="text-[11px] text-muted hover:text-dark underline ml-1">Ver todos</a>
+        <?php endif; ?>
     </div>
 </div>
 
 <!-- Search / Filter (server-side) -->
 <form method="get" class="mb-4 sm:mb-6 flex items-center gap-2 sm:gap-3">
+    <?php if ($statusFilter !== ''): ?><input type="hidden" name="status" value="<?= htmlspecialchars($statusFilter) ?>"><?php endif; ?>
     <div class="relative flex-1 sm:max-w-md">
         <svg class="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
         <input
@@ -633,7 +656,8 @@ require_once __DIR__ . '/partials/layout_header.php';
 
 <!-- Paginador -->
 <?php
-$qParam = $searchQ !== '' ? '&q=' . urlencode($searchQ) : '';
+$qParam = ($searchQ !== '' ? '&q=' . urlencode($searchQ) : '')
+        . ($statusFilter !== '' ? '&status=' . urlencode($statusFilter) : '');
 ?>
 <?php if ($totalPages > 1): ?>
 <div class="flex items-center justify-between mt-6">
