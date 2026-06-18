@@ -55,7 +55,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'get_user') {
     header('Content-Type: application/json');
     $uid = (int)($_GET['id'] ?? 0);
     if ($uid <= 0) { echo json_encode(['ok' => false]); exit; }
-    $st = $pdo->prepare("SELECT id, cc, display_name, email, status, legacy_employee_id FROM keeper_users WHERE id = ? LIMIT 1");
+    $st = $pdo->prepare("SELECT id, cc, display_name, email, status, employment_status, legacy_employee_id FROM keeper_users WHERE id = ? LIMIT 1");
     $st->execute([$uid]);
     $u = $st->fetch(PDO::FETCH_ASSOC);
     if (!$u) { echo json_encode(['ok' => false]); exit; }
@@ -80,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($empId > 0) {
             // Mode 1: link to legacy employee
             $empSt = $legacyPdo->prepare("
-                SELECT e.id, e.CC, e.first_Name, e.second_Name, e.first_LastName, e.second_LastName, e.mail
+                SELECT e.id, e.CC, e.first_Name, e.second_Name, e.first_LastName, e.second_LastName, e.mail, e.role
                 FROM employee e
                 WHERE e.id = ?
                 LIMIT 1
@@ -102,9 +102,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $emp['first_Name'], $emp['second_Name'], $emp['first_LastName'], $emp['second_LastName']
                 ])));
                 $hash = password_hash($rawPass, PASSWORD_BCRYPT);
+                $employmentStatus = (($emp['role'] ?? '') === 'retirado') ? 'retired' : 'active';
                 $ins = $pdo->prepare("
-                    INSERT INTO keeper_users (legacy_employee_id, cc, display_name, email, password_hash, status, created_at)
-                    VALUES (:lid, :cc, :dn, :em, :ph, 'active', NOW())
+                    INSERT INTO keeper_users (legacy_employee_id, cc, display_name, email, password_hash, status, employment_status, created_at)
+                    VALUES (:lid, :cc, :dn, :em, :ph, 'active', :es, NOW())
                 ");
                 $ins->execute([
                     'lid' => $emp['id'],
@@ -112,6 +113,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'dn'  => $displayName,
                     'em'  => $emp['mail'],
                     'ph'  => $hash,
+                    'es'  => $employmentStatus,
                 ]);
                 $flashMsg = 'ok|Usuario "' . htmlspecialchars($displayName) . '" creado (vinculado a legacy).';
             }
@@ -180,13 +182,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $newEmail  = trim($_POST['edit_email'] ?? '');
                 $newCc     = trim($_POST['edit_cc'] ?? '');
                 $newStatus = in_array($_POST['edit_status'] ?? '', ['active','inactive','locked']) ? $_POST['edit_status'] : 'active';
+                $newEmployment = in_array($_POST['edit_employment'] ?? '', ['active','retired']) ? $_POST['edit_employment'] : 'active';
                 $newPass   = trim($_POST['edit_password'] ?? '');
 
                 if ($newName === '') {
                     $flashMsg = 'error|El nombre es requerido.';
                 } else {
-                    $sets = ['display_name = :dn', 'email = :em', 'cc = :cc', 'status = :st'];
-                    $params = [':dn' => $newName, ':em' => $newEmail ?: null, ':cc' => $newCc ?: null, ':st' => $newStatus, ':id' => $userId];
+                    $sets = ['display_name = :dn', 'email = :em', 'cc = :cc', 'status = :st', 'employment_status = :es'];
+                    $params = [':dn' => $newName, ':em' => $newEmail ?: null, ':cc' => $newCc ?: null, ':st' => $newStatus, ':es' => $newEmployment, ':id' => $userId];
 
                     if ($newPass !== '') {
                         $sets[] = 'password_hash = :ph';
@@ -240,6 +243,7 @@ $params = $scope['params'];
 $sql = "
     SELECT
         u.id, u.cc, u.display_name, u.email, u.status AS user_status,
+        u.employment_status,
         ua.firm_id, ua.area_id, ua.cargo_id,
         f.nombre AS firm_name,
         ar.nombre AS area_name,
@@ -455,7 +459,7 @@ require_once __DIR__ . '/partials/layout_header.php';
 </div>
 <?php endif; ?>
 
-<div x-data="{ showCreateModal: false, showEditModal: false, editUser: {id:0, display_name:'', email:'', cc:'', status:'active'}, async loadUser(id) { try { const r = await fetch('users.php?ajax=get_user&id='+id); const d = await r.json(); if(d.ok){ this.editUser = d.user; this.showEditModal = true; } } catch(e){} } }">
+<div x-data="{ showCreateModal: false, showEditModal: false, editUser: {id:0, display_name:'', email:'', cc:'', status:'active', employment_status:'active'}, async loadUser(id) { try { const r = await fetch('users.php?ajax=get_user&id='+id); const d = await r.json(); if(d.ok){ this.editUser = d.user; this.showEditModal = true; } } catch(e){} } }">
 
 <!-- Header -->
 <div class="mb-4 sm:mb-6">
@@ -541,6 +545,9 @@ require_once __DIR__ . '/partials/layout_header.php';
                         <div class="flex items-center gap-1.5 sm:gap-2 mb-0.5">
                             <h3 class="text-xs sm:text-sm font-bold text-dark truncate"><?= htmlspecialchars($user['display_name'] ?? '') ?></h3>
                             <span class="flex-shrink-0"><?= userStatusBadge($user['status_label']) ?></span>
+                            <?php if (($user['employment_status'] ?? 'active') === 'retired'): ?>
+                            <span class="flex-shrink-0 inline-flex items-center text-xs font-semibold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full" title="Empleado retirado en el sistema legacy">Retirado</span>
+                            <?php endif; ?>
                             <?php if (isset($adminMap[(int)$user['id']])): ?>
                             <span class="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] font-bold rounded-full uppercase flex-shrink-0" title="<?= htmlspecialchars($adminMap[(int)$user['id']]['panel_role']) ?>">
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
@@ -885,14 +892,24 @@ $qParam = ($searchQ !== '' ? '&q=' . urlencode($searchQ) : '')
                 <input type="text" name="edit_cc" x-model="editUser.cc" placeholder="Cédula de ciudadanía"
                        class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none">
             </div>
-            <div>
-                <label class="text-xs font-semibold text-muted block mb-1">Estado</label>
-                <select name="edit_status" x-model="editUser.status"
-                        class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none bg-white">
-                    <option value="active">Activo</option>
-                    <option value="inactive">Inactivo</option>
-                    <option value="locked">Bloqueado</option>
-                </select>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="text-xs font-semibold text-muted block mb-1">Acceso Keeper</label>
+                    <select name="edit_status" x-model="editUser.status"
+                            class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none bg-white">
+                        <option value="active">Activo</option>
+                        <option value="inactive">Inactivo</option>
+                        <option value="locked">Bloqueado</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-xs font-semibold text-muted block mb-1">Situación laboral</label>
+                    <select name="edit_employment" x-model="editUser.employment_status"
+                            class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none bg-white">
+                        <option value="active">Empleado</option>
+                        <option value="retired">Retirado</option>
+                    </select>
+                </div>
             </div>
             <div>
                 <label class="text-xs font-semibold text-muted block mb-1">Nueva contraseña <span class="font-normal">(dejar vacío para no cambiar)</span></label>
