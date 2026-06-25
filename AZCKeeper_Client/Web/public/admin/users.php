@@ -137,7 +137,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         VALUES (NULL, :cc, :dn, :em, :ph, 'active', NOW())
                     ");
                     $ins->execute([
-                        'cc'  => $manualCc,
+                        // cc vacío → NULL: uk_keeper_users_cc es UNIQUE y '' colisiona
+                        // entre dos usuarios sin cédula (NULL múltiple sí lo permite).
+                        'cc'  => $manualCc !== '' ? $manualCc : null,
                         'dn'  => $manualName,
                         'em'  => $manualEmail,
                         'ph'  => $hash,
