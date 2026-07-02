@@ -47,6 +47,9 @@ switch ($period) {
         break;
 }
 
+// ponytail: sin clampFrom() aquí — módulo solo-superadmin (menu visibility), firm_floor siempre null.
+// Si se habilita a firma-admins, agregar $dateFrom = clampFrom($dateFrom); (la vista agrega por sede, no por firma).
+
 // ==================== SEDES ACTIVAS ====================
 $sedesSt = $pdo->query("SELECT id, nombre, codigo, descripcion FROM keeper_sedes WHERE activa = 1 ORDER BY nombre");
 $allSedes = $sedesSt->fetchAll(PDO::FETCH_ASSOC);

@@ -39,6 +39,9 @@ switch ($period) {
         break;
 }
 
+// Corte de historial por firma (no-op para superadmin)
+$dateFrom = clampFrom($dateFrom);
+
 // ==================== QUERIES ====================
 $scope  = scopeFilter();
 $params = $scope['params'];
@@ -297,13 +300,17 @@ try {
 // Dual-job pending alerts count
 $dualJobPending = 0;
 try {
+    $floor = $adminUser['firm_floor'] ?? null;  // corte de historial por firma
+    $djParams = $scope['params'];
+    $djFloorSql = '';
+    if ($floor) { $djFloorSql = ' AND a.day_date >= :firm_floor'; $djParams[':firm_floor'] = $floor; }
     $stDj = $pdo->prepare("
         SELECT COUNT(*) FROM keeper_dual_job_alerts a
         INNER JOIN keeper_users u ON u.id = a.user_id
         LEFT JOIN keeper_user_assignments ua ON ua.keeper_user_id = u.id
-        WHERE a.is_reviewed = 0 {$scope['sql']}
+        WHERE a.is_reviewed = 0 {$scope['sql']}{$djFloorSql}
     ");
-    $stDj->execute($scope['params']);
+    $stDj->execute($djParams);
     $dualJobPending = (int)$stDj->fetchColumn();
 } catch (\Throwable $e) {}
 

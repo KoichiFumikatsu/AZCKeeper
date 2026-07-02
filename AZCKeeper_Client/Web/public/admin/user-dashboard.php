@@ -93,6 +93,10 @@ switch ($period) {
         break;
 }
 
+// Corte de historial por firma (no-op para superadmin); aplica también al rango de episodios
+$dateFrom = clampFrom($dateFrom);
+$epFrom   = clampFrom($epFrom);
+
 // ¿El rango abarca más de un día? → define si se muestran los promedios por día
 $isRange = ($dateFrom !== $dateTo);
 

@@ -68,11 +68,12 @@ $reviewedVal = $filterStatus === 'pending' ? false : ($filterStatus === 'reviewe
 $page = max(1, (int)($_GET['page'] ?? 1));
 $perPage = 25;
 
-$alertCounts = \Keeper\Repos\ProductivityRepo::getAlertCounts($pdo, $scope['sql'], $scope['params']);
+$floor = $adminUser['firm_floor'] ?? null;  // corte de historial por firma (null = sin corte)
+$alertCounts = \Keeper\Repos\ProductivityRepo::getAlertCounts($pdo, $scope['sql'], $scope['params'], $floor);
 $alerts = \Keeper\Repos\ProductivityRepo::getAlerts(
     $pdo, $scope['sql'], $scope['params'],
     $typeVal, $severityVal, $reviewedVal,
-    $perPage, ($page - 1) * $perPage
+    $perPage, ($page - 1) * $perPage, $floor
 );
 
 $totalPending = (int)($alertCounts['pending'] ?? 0);

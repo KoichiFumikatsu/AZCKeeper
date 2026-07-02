@@ -56,6 +56,17 @@ try {
 } catch (\Throwable $e) {
     error_log('LegacySyncService::syncAllFromPanel error: ' . $e->getMessage());
 }
+
+// Fecha-piso de historial: firma-admins no ven actividad anterior a keeper_firmas.historial_desde.
+// Solo aplica a admins con scope de UNA firma; superadmin y otros scopes ven todo el histórico.
+$adminUser['firm_floor'] = null;
+if (($adminUser['panel_role'] ?? '') !== 'superadmin' && !empty($adminUser['firm_scope_id'])) {
+    try {
+        $st = $pdo->prepare("SELECT historial_desde FROM keeper_firmas WHERE id = ? LIMIT 1");
+        $st->execute([$adminUser['firm_scope_id']]);
+        $adminUser['firm_floor'] = $st->fetchColumn() ?: null;
+    } catch (\Throwable $e) { /* columna aún no migrada → sin piso */ }
+}
 /**
  * Helper: carga todos los roles desde keeper_panel_roles (con cache).
  * Retorna array indexado por slug: ['superadmin' => [...], 'admin' => [...], ...]
@@ -193,6 +204,17 @@ function scopeFilter(): array {
     }
 
     return ['sql' => $sql, 'params' => $params];
+}
+
+/**
+ * Helper: eleva una fecha "from" (YYYY-MM-DD) al piso de historial del firma-admin actual.
+ * Si el admin no tiene piso (superadmin / sin firma / firma sin corte), devuelve $from intacto.
+ * Comparación lexicográfica válida para fechas ISO.
+ */
+function clampFrom(string $from): string {
+    global $adminUser;
+    $floor = $adminUser['firm_floor'] ?? null;
+    return ($floor && $floor > $from) ? $floor : $from;
 }
 
 /**

@@ -176,6 +176,9 @@ switch ($period) {
         break;
 }
 
+// Corte de historial por firma (no-op para superadmin)
+$dateFrom = clampFrom($dateFrom);
+
 // ==================== SCOPE + QUERIES ====================
 $scope  = scopeFilter();
 $params = $scope['params'];

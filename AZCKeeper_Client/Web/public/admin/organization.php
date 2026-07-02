@@ -60,8 +60,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     } elseif ($entity === 'firm') {
                         $manager = trim($_POST['manager'] ?? '');
                         $mailMgr = trim($_POST['mail_manager'] ?? '');
-                        $st = $pdo->prepare("INSERT INTO keeper_firmas (nombre, manager, mail_manager) VALUES (?, ?, ?)");
-                        $st->execute([$name, $manager ?: null, $mailMgr ?: null]);
+                        $histDesde = trim($_POST['historial_desde'] ?? '');
+                        $histDesde = preg_match('/^\d{4}-\d{2}-\d{2}$/', $histDesde) ? $histDesde : null;
+                        $st = $pdo->prepare("INSERT INTO keeper_firmas (nombre, manager, mail_manager, historial_desde) VALUES (?, ?, ?, ?)");
+                        $st->execute([$name, $manager ?: null, $mailMgr ?: null, $histDesde]);
                         $newFirmId = (int)$pdo->lastInsertId();
                         // Guardar fuente de datos si se proporcionó
                         saveDataSource($pdo, $newFirmId, $_POST);
@@ -107,8 +109,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     } elseif ($entity === 'firm') {
                         $manager = trim($_POST['manager'] ?? '');
                         $mailMgr = trim($_POST['mail_manager'] ?? '');
-                        $st = $pdo->prepare("UPDATE keeper_firmas SET nombre = ?, manager = ?, mail_manager = ? WHERE id = ?");
-                        $st->execute([$name, $manager ?: null, $mailMgr ?: null, $id]);
+                        $histDesde = trim($_POST['historial_desde'] ?? '');
+                        $histDesde = preg_match('/^\d{4}-\d{2}-\d{2}$/', $histDesde) ? $histDesde : null;
+                        $st = $pdo->prepare("UPDATE keeper_firmas SET nombre = ?, manager = ?, mail_manager = ?, historial_desde = ? WHERE id = ?");
+                        $st->execute([$name, $manager ?: null, $mailMgr ?: null, $histDesde, $id]);
                         // Actualizar fuente de datos
                         saveDataSource($pdo, $id, $_POST);
                     } elseif ($entity === 'area') {
@@ -326,6 +330,7 @@ require_once __DIR__ . '/partials/layout_header.php';
     editName: '',
     editManager: '',
     editMailManager: '',
+    editHistorialDesde: '',
     editDescripcion: '',
     editCodigo: '',
     editNit: '',
@@ -348,6 +353,7 @@ require_once __DIR__ . '/partials/layout_header.php';
         this.editName = '';
         this.editManager = '';
         this.editMailManager = '';
+        this.editHistorialDesde = '';
         this.editDescripcion = '';
         this.editCodigo = '';
         this.editNit = '';
@@ -364,6 +370,7 @@ require_once __DIR__ . '/partials/layout_header.php';
         this.editName = name;
         this.editManager = extra.manager || '';
         this.editMailManager = extra.mail_manager || '';
+        this.editHistorialDesde = extra.historial_desde || '';
         this.editDescripcion = extra.descripcion || '';
         this.editCodigo = extra.codigo || '';
         this.editNit = extra.nit || '';
@@ -550,7 +557,7 @@ require_once __DIR__ . '/partials/layout_header.php';
                     <td class="py-2.5 px-3 text-right">
                         <div class="flex items-center justify-end gap-1">
                             <?php if ($canEdit): ?>
-                            <button @click="openEdit('firm', <?= $f['id'] ?>, <?= htmlspecialchars(json_encode($f['nombre']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode(['manager' => $f['manager'] ?? '', 'mail_manager' => $f['mail_manager'] ?? '', 'ds_type' => $f['ds_type'] ?? '', 'ds_host' => $f['ds_host'] ?? '', 'ds_port' => (int)($f['ds_port'] ?? 3306), 'ds_name' => $f['ds_name'] ?? '', 'ds_user' => $f['ds_user'] ?? '', 'ds_employee_table' => $f['ds_employee_table'] ?? 'employee']), ENT_QUOTES) ?>)"
+                            <button @click="openEdit('firm', <?= $f['id'] ?>, <?= htmlspecialchars(json_encode($f['nombre']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode(['manager' => $f['manager'] ?? '', 'mail_manager' => $f['mail_manager'] ?? '', 'historial_desde' => $f['historial_desde'] ?? '', 'ds_type' => $f['ds_type'] ?? '', 'ds_host' => $f['ds_host'] ?? '', 'ds_port' => (int)($f['ds_port'] ?? 3306), 'ds_name' => $f['ds_name'] ?? '', 'ds_user' => $f['ds_user'] ?? '', 'ds_employee_table' => $f['ds_employee_table'] ?? 'employee']), ENT_QUOTES) ?>)"
                                     class="p-1.5 rounded-lg text-muted hover:text-corp-800 hover:bg-corp-50 transition-colors" title="Editar">
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
                             </button>
@@ -816,6 +823,12 @@ require_once __DIR__ . '/partials/layout_header.php';
                         <input type="email" name="mail_manager" x-model="editMailManager"
                                class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none"
                                placeholder="email@empresa.com (opcional)">
+                    </div>
+                    <div>
+                        <label class="text-xs font-semibold text-dark block mb-1">Historial visible desde</label>
+                        <input type="date" name="historial_desde" x-model="editHistorialDesde"
+                               class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-corp-800/20 focus:border-corp-800 outline-none">
+                        <p class="text-[10px] text-muted mt-1">Los admins de esta firma no verán actividad anterior a esta fecha. Vacío = sin corte.</p>
                     </div>
 
                     <!-- ── Fuente de Datos ── -->
