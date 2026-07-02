@@ -57,7 +57,7 @@ class ProductivityRepo {
         COUNT(DISTINCT f.user_id)          AS user_count
       FROM keeper_focus_daily f
       INNER JOIN keeper_users u ON u.id = f.user_id AND u.status = 'active'
-      LEFT JOIN keeper_user_assignments ka ON ka.keeper_user_id = u.id
+      LEFT JOIN keeper_user_assignments ua ON ua.keeper_user_id = u.id
       WHERE f.day_date BETWEEN :from AND :to
       $scopeSql
     ");
@@ -76,7 +76,7 @@ class ProductivityRepo {
     $st = $pdo->prepare("
       SELECT
         u.id AS user_id, u.display_name, u.email,
-        ka.firm_id, ka.area_id, ka.sede_id,
+        ua.firm_id, ua.area_id, ua.sede_id,
         COALESCE(fi.nombre, '') AS firma_nombre,
         COALESCE(ar.nombre, '') AS area_nombre,
         ROUND(AVG(f.focus_score), 1) AS avg_focus,
@@ -87,9 +87,9 @@ class ProductivityRepo {
         COUNT(f.id) AS days_tracked
       FROM keeper_focus_daily f
       INNER JOIN keeper_users u ON u.id = f.user_id AND u.status = 'active'
-      LEFT JOIN keeper_user_assignments ka ON ka.keeper_user_id = u.id
-      LEFT JOIN keeper_firmas fi ON fi.id = ka.firm_id
-      LEFT JOIN keeper_areas ar ON ar.id = ka.area_id
+      LEFT JOIN keeper_user_assignments ua ON ua.keeper_user_id = u.id
+      LEFT JOIN keeper_firmas fi ON fi.id = ua.firm_id
+      LEFT JOIN keeper_areas ar ON ar.id = ua.area_id
       WHERE f.day_date BETWEEN :from AND :to
       $scopeSql
       GROUP BY u.id
@@ -111,7 +111,7 @@ class ProductivityRepo {
       SELECT COUNT(DISTINCT f.user_id)
       FROM keeper_focus_daily f
       INNER JOIN keeper_users u ON u.id = f.user_id AND u.status = 'active'
-      LEFT JOIN keeper_user_assignments ka ON ka.keeper_user_id = u.id
+      LEFT JOIN keeper_user_assignments ua ON ua.keeper_user_id = u.id
       WHERE f.day_date BETWEEN :from AND :to
       $scopeSql
     ");
@@ -126,10 +126,10 @@ class ProductivityRepo {
   public static function getTeamRanking(PDO $pdo, string $from, string $to,
                                          string $groupBy = 'firm',
                                          string $scopeSql = '', array $scopeParams = []): array {
-    $groupCol = $groupBy === 'area' ? 'ka.area_id' : 'ka.firm_id';
+    $groupCol = $groupBy === 'area' ? 'ua.area_id' : 'ua.firm_id';
     $nameJoin = $groupBy === 'area'
-      ? 'LEFT JOIN keeper_areas grp ON grp.id = ka.area_id'
-      : 'LEFT JOIN keeper_firmas grp ON grp.id = ka.firm_id';
+      ? 'LEFT JOIN keeper_areas grp ON grp.id = ua.area_id'
+      : 'LEFT JOIN keeper_firmas grp ON grp.id = ua.firm_id';
 
     $st = $pdo->prepare("
       SELECT
@@ -141,7 +141,7 @@ class ProductivityRepo {
         COUNT(DISTINCT f.user_id)          AS user_count
       FROM keeper_focus_daily f
       INNER JOIN keeper_users u ON u.id = f.user_id AND u.status = 'active'
-      LEFT JOIN keeper_user_assignments ka ON ka.keeper_user_id = u.id
+      LEFT JOIN keeper_user_assignments ua ON ua.keeper_user_id = u.id
       $nameJoin
       WHERE f.day_date BETWEEN :from AND :to
       $scopeSql
@@ -169,7 +169,7 @@ class ProductivityRepo {
         COUNT(DISTINCT f.user_id)          AS user_count
       FROM keeper_focus_daily f
       INNER JOIN keeper_users u ON u.id = f.user_id AND u.status = 'active'
-      LEFT JOIN keeper_user_assignments ka ON ka.keeper_user_id = u.id
+      LEFT JOIN keeper_user_assignments ua ON ua.keeper_user_id = u.id
       WHERE f.day_date BETWEEN :from AND :to
       $scopeSql
       GROUP BY yw
@@ -189,10 +189,15 @@ class ProductivityRepo {
    */
   public static function getAlerts(PDO $pdo, string $scopeSql = '', array $scopeParams = [],
                                     ?string $type = null, ?string $severity = null,
-                                    ?bool $reviewed = null, int $limit = 50, int $offset = 0): array {
+                                    ?bool $reviewed = null, int $limit = 50, int $offset = 0,
+                                    ?string $floorDate = null): array {
     $where = '';
     $params = $scopeParams;
 
+    if ($floorDate) {
+      $where .= ' AND a.day_date >= :firm_floor';
+      $params[':firm_floor'] = $floorDate;
+    }
     if ($type !== null) {
       $where .= ' AND a.alert_type = :type';
       $params[':type'] = $type;
@@ -213,9 +218,9 @@ class ProductivityRepo {
              rev_admin.display_name AS reviewed_by_name
       FROM keeper_dual_job_alerts a
       INNER JOIN keeper_users u ON u.id = a.user_id
-      LEFT JOIN keeper_user_assignments ka ON ka.keeper_user_id = u.id
-      LEFT JOIN keeper_firmas fi ON fi.id = ka.firm_id
-      LEFT JOIN keeper_areas ar ON ar.id = ka.area_id
+      LEFT JOIN keeper_user_assignments ua ON ua.keeper_user_id = u.id
+      LEFT JOIN keeper_firmas fi ON fi.id = ua.firm_id
+      LEFT JOIN keeper_areas ar ON ar.id = ua.area_id
       LEFT JOIN keeper_admin_accounts rev_acc ON rev_acc.id = a.reviewed_by
       LEFT JOIN keeper_users rev_admin ON rev_admin.id = rev_acc.keeper_user_id
       WHERE 1=1 $scopeSql $where
@@ -231,7 +236,14 @@ class ProductivityRepo {
   /**
    * Contar alertas (para paginación y KPIs).
    */
-  public static function getAlertCounts(PDO $pdo, string $scopeSql = '', array $scopeParams = []): array {
+  public static function getAlertCounts(PDO $pdo, string $scopeSql = '', array $scopeParams = [],
+                                         ?string $floorDate = null): array {
+    $params = $scopeParams;
+    $floorSql = '';
+    if ($floorDate) {
+      $floorSql = ' AND a.day_date >= :firm_floor';
+      $params[':firm_floor'] = $floorDate;
+    }
     $st = $pdo->prepare("
       SELECT
         COUNT(*) AS total,
@@ -241,10 +253,10 @@ class ProductivityRepo {
         SUM(CASE WHEN a.severity = 'low' AND a.is_reviewed = 0 THEN 1 ELSE 0 END) AS low_pending
       FROM keeper_dual_job_alerts a
       INNER JOIN keeper_users u ON u.id = a.user_id
-      LEFT JOIN keeper_user_assignments ka ON ka.keeper_user_id = u.id
-      WHERE 1=1 $scopeSql
+      LEFT JOIN keeper_user_assignments ua ON ua.keeper_user_id = u.id
+      WHERE 1=1 $scopeSql $floorSql
     ");
-    $st->execute($scopeParams);
+    $st->execute($params);
     return $st->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'pending' => 0, 'high_pending' => 0, 'medium_pending' => 0, 'low_pending' => 0];
   }
 
