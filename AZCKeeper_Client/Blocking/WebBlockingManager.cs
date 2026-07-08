@@ -11,20 +11,18 @@ namespace AZCKeeper_Cliente.Blocking
 {
     /// <summary>
     /// Administra la política local de bloqueo web basada en dominios.
-    /// Se encarga de persistir la última configuración válida para operar
-    /// aunque la API no esté disponible temporalmente.
+    /// Enforcement por URLBlocklist nativo de navegador (Chrome/Edge/Brave), sin proxy ni admin.
+    /// Persiste la última configuración válida para operar aunque la API no esté disponible.
     /// </summary>
     internal sealed class WebBlockingManager
     {
-        private const int ProxyPort = 8877;
         private static readonly string TracePath =
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AZCKeeper", "Logs", "webblocking-trace.log");
 
         private readonly string _cacheDirectory;
         private readonly string _cacheFilePath;
-        private readonly SystemProxyManager _systemProxyManager;
-        private readonly LocalWebBlockProxy _proxy;
-        private readonly HostsFileBlocker _hostsFileBlocker;
+        private readonly SystemProxyManager _legacyProxyCleanup;
+        private readonly BrowserPolicyBlocker _browserPolicy;
 
         private WebBlockingCache _currentCache;
 
@@ -33,18 +31,21 @@ namespace AZCKeeper_Cliente.Blocking
             string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             _cacheDirectory = Path.Combine(appData, "AZCKeeper", "Cache");
             _cacheFilePath = Path.Combine(_cacheDirectory, "web_block_cache.json");
-            _systemProxyManager = new SystemProxyManager(_cacheDirectory);
-            _proxy = new LocalWebBlockProxy();
-            _hostsFileBlocker = new HostsFileBlocker();
+            _legacyProxyCleanup = new SystemProxyManager(_cacheDirectory);
+            _browserPolicy = new BrowserPolicyBlocker();
         }
 
         public void Initialize(ConfigManager.WebBlockingConfig config, string apiBaseUrl)
         {
             AppendTrace($"Initialize() Enabled={config?.Enabled}, Domains={(config?.Domains?.Length ?? 0)}, ApiBaseUrl={apiBaseUrl}");
+
+            // Migración única desde builds con PAC/proxy loopback (<= 3.0.2.4).
+            _legacyProxyCleanup.MigrateAwayFromPac();
+
             _currentCache = LoadCacheFromDisk()
                 ?? BuildCache(config, config?.PolicyVersion ?? 0);
 
-            ApplyLocalState(_currentCache, source: "startup", apiBaseUrl: apiBaseUrl);
+            ApplyLocalState(_currentCache, source: "startup");
         }
 
         public void ApplyRemotePolicy(ConfigManager.WebBlockingConfig config, int policyVersion, string apiBaseUrl)
@@ -54,19 +55,22 @@ namespace AZCKeeper_Cliente.Blocking
             string nextHash = nextCache.DomainsHash ?? string.Empty;
             string currentHash = _currentCache?.DomainsHash ?? string.Empty;
 
-            if (_currentCache != null &&
+            bool unchanged = _currentCache != null &&
                 _currentCache.PolicyVersion == nextCache.PolicyVersion &&
                 string.Equals(currentHash, nextHash, StringComparison.OrdinalIgnoreCase) &&
-                _currentCache.Enabled == nextCache.Enabled)
+                _currentCache.Enabled == nextCache.Enabled;
+
+            if (unchanged)
             {
-                LocalLogger.Info($"WebBlockingManager: sin cambios. PolicyVersion={nextCache.PolicyVersion}, Domains={nextCache.Domains.Length}");
+                // Anti-manipulación: re-aplicar la política en cada handshake aunque no cambie.
+                Reassert(_currentCache);
                 return;
             }
 
             SaveCacheToDisk(nextCache);
             _currentCache = nextCache;
 
-            ApplyLocalState(_currentCache, source: "remote-policy", apiBaseUrl: apiBaseUrl);
+            ApplyLocalState(_currentCache, source: "remote-policy");
         }
 
         public string[] GetCachedDomains()
@@ -76,16 +80,8 @@ namespace AZCKeeper_Cliente.Blocking
 
         public void Shutdown()
         {
-            try
-            {
-                _proxy.Stop();
-                _systemProxyManager.Restore();
-                _hostsFileBlocker.Clear();
-            }
-            catch (Exception ex)
-            {
-                LocalLogger.Error(ex, "WebBlockingManager.Shutdown(): error.");
-            }
+            // No limpiamos la política al cerrar: el bloqueo debe persistir aunque el
+            // cliente no esté corriendo. Solo se retira cuando la política remota lo indica.
         }
 
         private WebBlockingCache BuildCache(ConfigManager.WebBlockingConfig config, int policyVersion)
@@ -108,7 +104,7 @@ namespace AZCKeeper_Cliente.Blocking
             };
         }
 
-        private void ApplyLocalState(WebBlockingCache cache, string source, string apiBaseUrl)
+        private void ApplyLocalState(WebBlockingCache cache, string source)
         {
             AppendTrace($"ApplyLocalState() Source={source}, CacheEnabled={cache?.Enabled}, CacheDomains={(cache?.Domains?.Length ?? 0)}");
             if (cache == null)
@@ -117,41 +113,38 @@ namespace AZCKeeper_Cliente.Blocking
                 return;
             }
 
-            if (!cache.Enabled)
-            {
-                _proxy.Stop();
-                _systemProxyManager.Restore();
-                _hostsFileBlocker.Clear();
-                LocalLogger.Info($"WebBlockingManager: bloqueo web deshabilitado ({source}).");
-                return;
-            }
-
             try
             {
-                // Enforcement por PAC (Proxy Auto-Config) per-usuario, SIN permisos elevados.
-                // El PAC enruta al proxy local SOLO los dominios bloqueados; todo lo demás
-                // queda DIRECT (sin interceptar). Soporta wildcards (*.dominio).
-                // Reemplaza al archivo hosts, que exigía admin.
-                int boundPort = _proxy.StartOrUpdate(ProxyPort, cache.Domains, string.Empty);
-                string pac = BuildPacContent(cache.Domains, boundPort);
-                _proxy.SetPacContent(pac);
+                if (!cache.Enabled)
+                {
+                    _browserPolicy.Clear();
+                    LocalLogger.Info($"WebBlockingManager: bloqueo web deshabilitado ({source}).");
+                    return;
+                }
 
-                // Limpiar restos de versiones previas (bloque hosts si lo hubiera).
-                _hostsFileBlocker.Clear();
-
-                // EnablePac limpia cualquier proxy estático 127.0.0.1 heredado y fija AutoConfigURL.
-                _systemProxyManager.EnablePac($"http://127.0.0.1:{boundPort}/proxy.pac");
-
-                AppendTrace($"ApplyLocalState() applied (PAC). Port={boundPort}, Domains={cache.Domains.Length}");
-                LocalLogger.Info($"WebBlockingManager: política aplicada por PAC ({source}). PolicyVersion={cache.PolicyVersion}, Domains={cache.Domains.Length}, ProxyPort={boundPort}");
+                _browserPolicy.Apply(cache.Domains);
+                LocalLogger.Info($"WebBlockingManager: política aplicada por URLBlocklist ({source}). PolicyVersion={cache.PolicyVersion}, Domains={cache.Domains.Length}");
             }
             catch (Exception ex)
             {
-                _proxy.Stop();
-                _systemProxyManager.Restore();
-                _hostsFileBlocker.Clear();
-                LocalLogger.Error(ex, $"WebBlockingManager: error aplicando PAC ({source}). Se restaura conectividad normal.");
+                LocalLogger.Error(ex, $"WebBlockingManager: error aplicando política ({source}).");
                 AppendTrace($"ApplyLocalState() error: {ex.Message}");
+            }
+        }
+
+        // Re-aplicación silenciosa (sin log ni disco) para el anti-manipulación por handshake.
+        private void Reassert(WebBlockingCache cache)
+        {
+            try
+            {
+                if (cache == null || !cache.Enabled)
+                    _browserPolicy.Clear();
+                else
+                    _browserPolicy.Apply(cache.Domains);
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "WebBlockingManager.Reassert(): error re-aplicando política.");
             }
         }
 
@@ -214,52 +207,6 @@ namespace AZCKeeper_Cliente.Blocking
             byte[] bytes = Encoding.UTF8.GetBytes(joined);
             byte[] hash = sha.ComputeHash(bytes);
             return Convert.ToHexString(hash);
-        }
-
-        /// <summary>
-        /// Genera el script PAC: enruta al proxy local solo los dominios bloqueados,
-        /// el resto va DIRECT. Soporta dominios exactos (incluye subdominios) y
-        /// wildcards (*.dominio).
-        /// </summary>
-        private static string BuildPacContent(string[] domains, int proxyPort)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine("function FindProxyForURL(url, host) {");
-            sb.AppendLine("  host = host.toLowerCase();");
-
-            foreach (string raw in domains ?? Array.Empty<string>())
-            {
-                if (string.IsNullOrWhiteSpace(raw))
-                    continue;
-
-                string domain = EscapePac(raw.Trim().ToLowerInvariant());
-                if (domain.Length == 0)
-                    continue;
-
-                string condition;
-                if (domain.StartsWith("*.", StringComparison.Ordinal))
-                {
-                    // wildcard: solo subdominios (a.dominio.com), no el dominio raíz.
-                    condition = $"shExpMatch(host, \"{domain}\")";
-                }
-                else
-                {
-                    // exacto: el dominio y sus subdominios.
-                    condition = $"shExpMatch(host, \"{domain}\") || shExpMatch(host, \"*.{domain}\")";
-                }
-
-                sb.AppendLine($"  if ({condition}) return \"PROXY 127.0.0.1:{proxyPort}\";");
-            }
-
-            sb.AppendLine("  return \"DIRECT\";");
-            sb.AppendLine("}");
-            return sb.ToString();
-        }
-
-        // Evita romper el JS del PAC con comillas o backslashes en dominios mal escritos.
-        private static string EscapePac(string value)
-        {
-            return value.Replace("\\", string.Empty).Replace("\"", string.Empty);
         }
 
         private static void AppendTrace(string message)

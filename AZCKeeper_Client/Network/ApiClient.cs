@@ -31,6 +31,18 @@ namespace AZCKeeper_Cliente.Network
         private readonly OfflineQueue _offlineQueue;   // cola persistente de reintentos
         private System.Timers.Timer _retryTimer;       // timer para reintentar cola offline
 
+        // --- Circuit breaker / backoff de red ---
+        // Evita que el cliente sostenga un ban de firewall del hosting (CSF/LFD) cuando
+        // 100+ equipos tras un NAT único reintentan en tormenta. Ante fallo de transporte
+        // (RST/timeout) o status de sobrecarga (403/429/5xx), el backoff crece exponencial
+        // con jitter y CORTA todo intento de red hasta expirar; al primer éxito se resetea.
+        private readonly object _backoffLock = new object();
+        private readonly Random _backoffRng = new Random();
+        private int _backoffConsecutiveFailures;
+        private DateTime _backoffUntilUtc = DateTime.MinValue;
+        private const double BackoffBaseSeconds = 30.0;
+        private const double BackoffCapSeconds = 1800.0; // 30 min
+
         private readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -111,7 +123,7 @@ namespace AZCKeeper_Cliente.Network
 
                 using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
 
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendViaBackoffAsync(httpRequest).ConfigureAwait(false);
                 result.StatusCode = (int)response.StatusCode;
 
                 string responseBody = await SafeReadBodyAsync(response).ConfigureAwait(false);
@@ -182,7 +194,7 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
 
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendViaBackoffAsync(httpRequest).ConfigureAwait(false);
                 result.StatusCode = (int)response.StatusCode;
 
                 string responseBody = await SafeReadBodyAsync(response).ConfigureAwait(false);
@@ -246,7 +258,7 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = CreateRequest(HttpMethod.Post, url, content);
 
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendViaBackoffAsync(httpRequest).ConfigureAwait(false);
 
                 result.StatusCode = (int)response.StatusCode;
 
@@ -339,7 +351,7 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = CreateRequest(HttpMethod.Post, url, content);
 
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendViaBackoffAsync(httpRequest).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -405,7 +417,7 @@ namespace AZCKeeper_Cliente.Network
                 string url = $"client/activity-day?deviceId={Uri.EscapeDataString(deviceId)}&dayDate={Uri.EscapeDataString(dayDate)}";
                 using var httpRequest = CreateRequest(HttpMethod.Get, url, content: null);
 
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendViaBackoffAsync(httpRequest).ConfigureAwait(false);
                 result.StatusCode = (int)response.StatusCode;
 
                 string body = await SafeReadBodyAsync(response).ConfigureAwait(false);
@@ -509,7 +521,7 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = CreateRequest(HttpMethod.Post, url, content);
 
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendViaBackoffAsync(httpRequest).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -600,7 +612,7 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = CreateRequest(HttpMethod.Post, url, content);
 
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendViaBackoffAsync(httpRequest).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -683,7 +695,7 @@ namespace AZCKeeper_Cliente.Network
                 }
 
                 using var httpRequest = CreateRequest(HttpMethod.Get, relativeUrl, content: null);
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendViaBackoffAsync(httpRequest).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -719,7 +731,7 @@ namespace AZCKeeper_Cliente.Network
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var httpRequest = CreateRequest(HttpMethod.Post, relativeUrl, content);
 
-                using var response = await _httpClient.SendAsync(httpRequest).ConfigureAwait(false);
+                using var response = await SendViaBackoffAsync(httpRequest).ConfigureAwait(false);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -815,6 +827,63 @@ namespace AZCKeeper_Cliente.Network
         }
 
         /// <summary>
+        /// true si hay backoff de red activo: no se debe intentar ninguna llamada HTTP.
+        /// </summary>
+        public bool IsBackingOff
+        {
+            get { lock (_backoffLock) { return DateTime.UtcNow < _backoffUntilUtc; } }
+        }
+
+        // Registra el resultado de un intento REAL de red y ajusta el backoff.
+        // overload = fallo de transporte o status de sobrecarga/ban → crece exponencial;
+        // cualquier otro resultado (incluye 2xx y 401) → resetea.
+        private void RegisterNetworkOutcome(int statusCode, bool transportError)
+        {
+            bool overload = transportError
+                || statusCode == 403 || statusCode == 429
+                || statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504;
+
+            lock (_backoffLock)
+            {
+                if (!overload)
+                {
+                    if (_backoffConsecutiveFailures != 0)
+                        LocalLogger.Info("ApiClient: red recuperada, backoff reseteado.");
+                    _backoffConsecutiveFailures = 0;
+                    _backoffUntilUtc = DateTime.MinValue;
+                    return;
+                }
+
+                _backoffConsecutiveFailures++;
+                double seconds = Math.Min(BackoffCapSeconds, BackoffBaseSeconds * Math.Pow(2, _backoffConsecutiveFailures - 1));
+                double jitter = seconds * 0.2 * _backoffRng.NextDouble();
+                _backoffUntilUtc = DateTime.UtcNow.AddSeconds(seconds + jitter);
+                LocalLogger.Warn($"ApiClient: fallo de red #{_backoffConsecutiveFailures} (status={statusCode}, transport={transportError}). Backoff {seconds:F0}s (+jitter) hasta {_backoffUntilUtc:HH:mm:ss} UTC.");
+            }
+        }
+
+        // Envía respetando el backoff. Si hay backoff activo, corta sin abrir socket
+        // (lanza para que el llamador trate como fallo y encole). Centraliza el registro
+        // de resultado de red para TODOS los endpoints.
+        private async Task<HttpResponseMessage> SendViaBackoffAsync(HttpRequestMessage request)
+        {
+            if (IsBackingOff)
+                throw new HttpRequestException("Backoff de red activo; intento omitido.");
+
+            try
+            {
+                var response = await _httpClient.SendAsync(request).ConfigureAwait(false);
+                RegisterNetworkOutcome((int)response.StatusCode, transportError: false);
+                return response;
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException || ex is OperationCanceledException)
+            {
+                RegisterNetworkOutcome(0, transportError: true);
+                throw;
+            }
+        }
+
+        /// <summary>
         /// Inicia timer para procesar cola offline cada 30 segundos.
         /// </summary>
         private void StartRetryTimer()
@@ -848,6 +917,12 @@ namespace AZCKeeper_Cliente.Network
         {
             try
             {
+                if (IsBackingOff)
+                {
+                    LocalLogger.Info("ApiClient: backoff activo, se pospone drenado de cola offline.");
+                    return;
+                }
+
                 var pending = _offlineQueue.GetPendingItems(10); // Procesar 10 por lote
                 if (pending.Count == 0) return;
 
