@@ -34,6 +34,12 @@ namespace AZCKeeper_Cliente.Logging
         private static LogLevel _globalLevel = LogLevel.Info;
         private static LogLevel? _clientOverrideLevel = null;
 
+        // ---- Buffer circular de issues (Warn/Error) para la ventana Debug ----
+        private const int RecentIssuesMax = 15;
+        private static readonly System.Collections.Generic.Queue<string> _recentIssues =
+            new System.Collections.Generic.Queue<string>();
+        private static readonly object _recentIssuesLock = new object();
+
         private static bool _enableFileLogging = true;
         private static bool _enableWebhookLogging = false;
 
@@ -159,6 +165,26 @@ namespace AZCKeeper_Cliente.Logging
         }
 
         /// <summary>
+        /// Registra un issue (Warn/Error) en el buffer circular, sin pasar por ShouldLog,
+        /// para que quede disponible en la ventana Debug aunque el nivel configurado
+        /// filtre la salida a archivo/webhook.
+        /// </summary>
+        private static void CaptureIssue(LogLevel level, string message)
+        {
+            lock (_recentIssuesLock)
+            {
+                _recentIssues.Enqueue($"{DateTime.Now:HH:mm:ss} [{level}] {message}");
+                while (_recentIssues.Count > RecentIssuesMax) _recentIssues.Dequeue();
+            }
+        }
+
+        /// <summary>Últimos Warn/Error para diagnóstico en la ventana Debug (más reciente al final).</summary>
+        public static System.Collections.Generic.IReadOnlyList<string> GetRecentIssues()
+        {
+            lock (_recentIssuesLock) { return _recentIssues.ToArray(); }
+        }
+
+        /// <summary>
         /// Escribe un log de nivel INFO si está habilitado.
         /// </summary>
         public static void Info(string message)
@@ -172,6 +198,7 @@ namespace AZCKeeper_Cliente.Logging
         /// </summary>
         public static void Warn(string message)
         {
+            CaptureIssue(LogLevel.Warn, message);
             if (!ShouldLog(LogLevel.Warn)) return;
             WriteLog(LogLevel.Warn, message);
         }
@@ -181,6 +208,7 @@ namespace AZCKeeper_Cliente.Logging
         /// </summary>
         public static void Error(string message)
         {
+            CaptureIssue(LogLevel.Error, message);
             if (!ShouldLog(LogLevel.Error)) return;
             WriteLog(LogLevel.Error, message);
         }
@@ -190,6 +218,7 @@ namespace AZCKeeper_Cliente.Logging
         /// </summary>
         public static void Error(Exception exception, string contextMessage = null)
         {
+            CaptureIssue(LogLevel.Error, contextMessage ?? exception?.Message ?? "error");
             if (!ShouldLog(LogLevel.Error)) return;
 
             var sb = new StringBuilder();
