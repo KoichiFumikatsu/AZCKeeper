@@ -835,7 +835,7 @@ namespace AZCKeeper_Cliente.Network
         }
 
         // Accessors de diagnóstico de solo lectura (ventana de Debug). No cambian comportamiento.
-        public bool IsInBackoff { get { lock (_backoffLock) { return DateTime.UtcNow < _backoffUntilUtc; } } }
+        public bool IsInBackoff => IsBackingOff;
         public DateTime BackoffUntilUtc { get { lock (_backoffLock) { return _backoffUntilUtc; } } }
         public int PendingQueueCount { get { try { return _offlineQueue.GetPendingCount(); } catch { return -1; } } }
 
