@@ -133,7 +133,7 @@ git commit -m "test: agrega proyecto xUnit AZCKeeper.Tests"
 
 ---
 
-## Task A1: PacContentBuilder (matching preciso)
+## Task 1: PacContentBuilder (matching preciso)
 
 **Files:**
 - Create: `AZCKeeper_Client/Blocking/PacContentBuilder.cs`
@@ -292,7 +292,7 @@ git commit -m "feat(blocking): PacContentBuilder con match exacto dominio+subdom
 
 ---
 
-## Task A2: LocalPacServer (servidor loopback del .pac)
+## Task 2: LocalPacServer (servidor loopback del .pac)
 
 **Files:**
 - Create: `AZCKeeper_Client/Blocking/LocalPacServer.cs`
@@ -539,7 +539,7 @@ git commit -m "feat(blocking): LocalPacServer loopback con puerto persistido"
 
 ---
 
-## Task A3: SystemProxyManager — recuperar EnablePac/Restore, quitar migración
+## Task 3: SystemProxyManager — recuperar EnablePac/Restore, quitar migración
 
 **Files:**
 - Modify: `AZCKeeper_Client/Blocking/SystemProxyManager.cs`
@@ -579,7 +579,7 @@ En `SystemProxyManager.cs`, dentro de la clase, agregar el método (usa `Interne
 - [ ] **Step 3: Verificar que compila**
 
 Run: `dotnet build AZCKeeper_Client/AZCKeeper_Client.csproj -c Debug`
-Expected: fallará por referencias a `LocalWebBlockProxy`/`BrowserPolicyBlocker` en `WebBlockingManager` (se arreglan en A4). **Verificar solo que `SystemProxyManager.cs` no aporte errores propios** (buscar en el output errores del archivo `SystemProxyManager.cs`; no debe haber).
+Expected: fallará por referencias a `LocalWebBlockProxy`/`BrowserPolicyBlocker` en `WebBlockingManager` (se arreglan en Task 4). **Verificar solo que `SystemProxyManager.cs` no aporte errores propios** (buscar en el output errores del archivo `SystemProxyManager.cs`; no debe haber).
 
 - [ ] **Step 4: Commit**
 
@@ -590,7 +590,7 @@ git commit -m "feat(blocking): recupera EnablePac/Restore y agrega IsOurPacActiv
 
 ---
 
-## Task A4: Reescribir WebBlockingManager a PAC + borrar BrowserPolicyBlocker
+## Task 4: Reescribir WebBlockingManager a PAC + borrar BrowserPolicyBlocker
 
 **Files:**
 - Modify (reescritura completa): `AZCKeeper_Client/Blocking/WebBlockingManager.cs`
@@ -861,7 +861,7 @@ git commit -m "feat(blocking): WebBlockingManager por PAC; elimina URLBlocklist"
 
 ---
 
-## Task A5: Verificación end-to-end del bloqueo (manual/scripted)
+## Task 5: Verificación end-to-end del bloqueo (manual/scripted)
 
 **Files:** ninguno (verificación).
 
@@ -899,7 +899,7 @@ Reiniciar el cliente → el PAC se re-sirve en el mismo puerto (revisar `AutoCon
 
 ---
 
-## Task B1: LocalLogger — buffer circular de issues
+## Task 6: LocalLogger — buffer circular de issues
 
 **Files:**
 - Modify: `AZCKeeper_Client/Logging/LocalLogger.cs`
@@ -1006,7 +1006,7 @@ git commit -m "feat(logging): buffer circular de Warn/Error para la ventana Debu
 
 ---
 
-## Task B2: Accessors de diagnóstico (ApiClient, UpdateManager)
+## Task 7: Accessors de diagnóstico (ApiClient, UpdateManager)
 
 **Files:**
 - Modify: `AZCKeeper_Client/Network/ApiClient.cs`
@@ -1064,7 +1064,7 @@ git commit -m "feat: accessors de diagnostico (backoff, cola, versiones) para De
 
 ---
 
-## Task B3: DebugSnapshot + estado de handshake en CoreService
+## Task 8: DebugSnapshot + estado de handshake en CoreService
 
 **Files:**
 - Create: `AZCKeeper_Client/Core/DebugSnapshot.cs`
@@ -1173,7 +1173,7 @@ git commit -m "feat(debug): DebugSnapshot + estado de handshake en CoreService"
 
 ---
 
-## Task B4: Extraer y reescribir DebugWindowForm (compacta + secciones)
+## Task 9: Extraer y reescribir DebugWindowForm (compacta + secciones)
 
 **Files:**
 - Create: `AZCKeeper_Client/Core/DebugWindowForm.cs`
@@ -1375,7 +1375,7 @@ git commit -m "feat(debug): ventana Debug compacta con diagnosticos (version/api
 
 ---
 
-## Task B5: Suite completa + verificación final
+## Task 10: Suite completa + verificación final
 
 - [ ] **Step 1: Suite de tests**
 
@@ -1389,12 +1389,12 @@ Expected: PASS (0 errores; los warnings nullable preexistentes del updater son t
 
 - [ ] **Step 3: Checklist manual final**
 
-Repetir Task A5 (bloqueo preciso, gov DIRECT, reinicio, cierre limpio) + Task B4 Step 5 (ventana Debug) sobre el build.
+Repetir Task 5 (bloqueo preciso, gov DIRECT, reinicio, cierre limpio) + Task 9 Step 5 (ventana Debug) sobre el build.
 
 - [ ] **Step 4: Commit final / merge de la rama** — seguir `superpowers:finishing-a-development-branch`.
 
 ---
 
 ## Notas de ejecución
-- Los tests automatizados cubren la lógica pura: `PacContentBuilder` (tabla de precisión), `LocalPacServer` (sirve PAC + puerto persistido), `LocalLogger` (buffer). El registro/WinInet, la resolución real del sistema y la UI se verifican manual/scripted (Tasks A5, B4), porque mutan estado de máquina o son WinForms.
+- Los tests automatizados cubren la lógica pura: `PacContentBuilder` (tabla de precisión), `LocalPacServer` (sirve PAC + puerto persistido), `LocalLogger` (buffer). El registro/WinInet, la resolución real del sistema y la UI se verifican manual/scripted (Tasks 5, 9), porque mutan estado de máquina o son WinForms.
 - El bloqueo real solo se puede validar en Windows con navegador; en Linux el cliente ni compila (falta WindowsDesktop SDK) — usar `build-release.sh` o Windows.
