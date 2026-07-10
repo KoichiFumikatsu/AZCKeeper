@@ -27,6 +27,11 @@ namespace AZCKeeper_Cliente.Blocking
 
         private WebBlockingCache _currentCache;
 
+        // Serializa la ruta de aplicación de política (Initialize/ApplyRemotePolicy/Shutdown):
+        // el timer de handshake puede reentrar y correr en paralelo, compitiendo por _currentCache,
+        // el archivo .tmp de SaveCacheToDisk y el check-then-write de BackupCurrentSettingsIfNeeded.
+        private readonly object _applyLock = new object();
+
         public bool Enabled => _currentCache?.Enabled == true;
         public int DomainCount => _currentCache?.Domains?.Length ?? 0;
         public int PacPort => _pacServer.Port;
@@ -43,37 +48,46 @@ namespace AZCKeeper_Cliente.Blocking
 
         public void Initialize(ConfigManager.WebBlockingConfig config, string apiBaseUrl)
         {
-            AppendTrace($"Initialize() Enabled={config?.Enabled}, Domains={(config?.Domains?.Length ?? 0)}");
-            CleanupLegacyUrlBlocklist(); // best-effort: borra residuo del intento URLBlocklist (3.0.2.5/2.6)
+            lock (_applyLock)
+            {
+                AppendTrace($"Initialize() Enabled={config?.Enabled}, Domains={(config?.Domains?.Length ?? 0)}");
+                CleanupLegacyUrlBlocklist(); // best-effort: borra residuo del intento URLBlocklist (3.0.2.5/2.6)
 
-            _currentCache = LoadCacheFromDisk() ?? BuildCache(config, config?.PolicyVersion ?? 0);
-            ApplyLocalState(_currentCache, "startup");
+                _currentCache = LoadCacheFromDisk() ?? BuildCache(config, config?.PolicyVersion ?? 0);
+                ApplyLocalState(_currentCache, "startup");
+            }
         }
 
         public void ApplyRemotePolicy(ConfigManager.WebBlockingConfig config, int policyVersion, string apiBaseUrl)
         {
-            AppendTrace($"ApplyRemotePolicy() Enabled={config?.Enabled}, Domains={(config?.Domains?.Length ?? 0)}, PolicyVersion={policyVersion}");
-            var next = BuildCache(config, policyVersion);
+            lock (_applyLock)
+            {
+                AppendTrace($"ApplyRemotePolicy() Enabled={config?.Enabled}, Domains={(config?.Domains?.Length ?? 0)}, PolicyVersion={policyVersion}");
+                var next = BuildCache(config, policyVersion);
 
-            bool unchanged = _currentCache != null &&
-                _currentCache.PolicyVersion == next.PolicyVersion &&
-                string.Equals(_currentCache.DomainsHash ?? "", next.DomainsHash ?? "", StringComparison.OrdinalIgnoreCase) &&
-                _currentCache.Enabled == next.Enabled;
+                bool unchanged = _currentCache != null &&
+                    _currentCache.PolicyVersion == next.PolicyVersion &&
+                    string.Equals(_currentCache.DomainsHash ?? "", next.DomainsHash ?? "", StringComparison.OrdinalIgnoreCase) &&
+                    _currentCache.Enabled == next.Enabled;
 
-            if (unchanged) { Reassert(_currentCache); return; }
+                if (unchanged) { Reassert(_currentCache); return; }
 
-            SaveCacheToDisk(next);
-            _currentCache = next;
-            ApplyLocalState(_currentCache, "remote-policy");
+                SaveCacheToDisk(next);
+                _currentCache = next;
+                ApplyLocalState(_currentCache, "remote-policy");
+            }
         }
 
         public string[] GetCachedDomains() => _currentCache?.Domains ?? Array.Empty<string>();
 
         public void Shutdown()
         {
-            // Cierre limpio: quitar el PAC para no dejar un AutoConfigURL colgado.
-            try { _pacServer.Stop(); } catch { }
-            try { _systemProxy.Restore(); } catch { }
+            lock (_applyLock)
+            {
+                // Cierre limpio: quitar el PAC para no dejar un AutoConfigURL colgado.
+                try { _pacServer.Stop(); } catch { }
+                try { _systemProxy.Restore(); } catch { }
+            }
         }
 
         private void ApplyLocalState(WebBlockingCache cache, string source)
@@ -113,7 +127,6 @@ namespace AZCKeeper_Cliente.Blocking
                 }
                 string pac = PacContentBuilder.Build(cache.Domains);
                 int port = _pacServer.StartOrUpdate(pac);
-                _pacServer.UpdatePac(pac);
                 if (!_systemProxy.IsOurPacActive(port))
                     _systemProxy.EnablePac($"http://127.0.0.1:{port}/proxy.pac");
             }

@@ -80,6 +80,43 @@ namespace AZCKeeper_Cliente.Blocking
                 if (backup == null)
                 {
                     LocalLogger.Info("SystemProxyManager: no existe backup de proxy a restaurar.");
+
+                    // Red de seguridad: si no hay backup (falta o corrupto) pero el
+                    // AutoConfigURL/ProxyServer actual sigue apuntando a nuestro loopback,
+                    // no dejarlo colgado apuntando a un servidor muerto tras el apagado.
+                    try
+                    {
+                        using var safetyKey = Registry.CurrentUser.OpenSubKey(InternetSettingsPath, writable: true);
+                        if (safetyKey != null)
+                        {
+                            bool changed = false;
+
+                            string autoConfigUrl = safetyKey.GetValue("AutoConfigURL", string.Empty)?.ToString() ?? string.Empty;
+                            if (autoConfigUrl.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                try { safetyKey.DeleteValue("AutoConfigURL", throwOnMissingValue: false); } catch { }
+                                changed = true;
+                            }
+
+                            string proxyServer = safetyKey.GetValue("ProxyServer", string.Empty)?.ToString() ?? string.Empty;
+                            if (proxyServer.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                safetyKey.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
+                                safetyKey.SetValue("ProxyServer", string.Empty, RegistryValueKind.String);
+                                changed = true;
+                            }
+
+                            if (changed)
+                            {
+                                RefreshWinInetSettings();
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalLogger.Error(ex, "SystemProxyManager.Restore(): error en red de seguridad sin backup.");
+                    }
+
                     return;
                 }
 
