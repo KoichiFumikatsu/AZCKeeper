@@ -9,10 +9,11 @@ using AZCKeeper_Cliente.Logging;
 namespace AZCKeeper_Cliente.Blocking
 {
     /// <summary>
-    /// Limpieza de la era del PAC/proxy (builds &lt;= 3.0.2.4). Restaura el proxy del
-    /// sistema (HKCU) desde el backup dejado por esas versiones y elimina cualquier
-    /// AutoConfigURL/ProxyServer residual que apunte a nuestro loopback. El bloqueo web
-    /// actual NO usa proxy; esta clase solo existe para la migración de la flota.
+    /// Gestiona la autoconfiguración de proxy a nivel de usuario actual (HKCU),
+    /// usando AutoConfigURL (PAC) en lugar de un ProxyServer estático.
+    /// Con PAC, solo los dominios bloqueados se enrutan al proxy local; el resto
+    /// de la navegación queda DIRECT. No requiere permisos elevados (solo HKCU).
+    /// Guarda un respaldo local para poder restaurar el estado anterior.
     /// </summary>
     internal sealed class SystemProxyManager
     {
@@ -24,47 +25,50 @@ namespace AZCKeeper_Cliente.Blocking
             _backupFilePath = Path.Combine(cacheDirectory, "system_proxy_backup.json");
         }
 
-        /// <summary>
-        /// Migración desde la era del PAC (builds &lt;= 3.0.2.4): restaura el backup si existe
-        /// y, como red de seguridad, fuerza la limpieza de cualquier AutoConfigURL o ProxyServer
-        /// que apunte a nuestro loopback (127.0.0.1) aunque no hubiera backup (bug alreadyOurs).
-        /// </summary>
-        public void MigrateAwayFromPac()
+        /// <summary>True si el AutoConfigURL actual es el PAC que servimos en el puerto dado.</summary>
+        public bool IsOurPacActive(int port)
         {
-            Restore();
-
             try
             {
+                using var key = Registry.CurrentUser.OpenSubKey(InternetSettingsPath, writable: false);
+                string url = key?.GetValue("AutoConfigURL", string.Empty)?.ToString() ?? string.Empty;
+                return url.Equals($"http://127.0.0.1:{port}/proxy.pac", StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Habilita el PAC per-usuario apuntando a la URL indicada (http://127.0.0.1:port/proxy.pac).
+        /// </summary>
+        public void EnablePac(string pacUrl)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_backupFilePath) ?? ".");
+                BackupCurrentSettingsIfNeeded(pacUrl);
+
                 using var key = Registry.CurrentUser.OpenSubKey(InternetSettingsPath, writable: true);
                 if (key == null)
                     return;
 
-                bool changed = false;
-
-                string autoConfig = key.GetValue("AutoConfigURL", string.Empty)?.ToString() ?? string.Empty;
-                if (autoConfig.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    try { key.DeleteValue("AutoConfigURL", throwOnMissingValue: false); } catch { }
-                    changed = true;
-                }
-
-                string proxyServer = key.GetValue("ProxyServer", string.Empty)?.ToString() ?? string.Empty;
-                if (proxyServer.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0)
+                // Limpiar cualquier proxy estático heredado de versiones previas que
+                // apuntara a nuestro propio loopback. NO tocamos proxies estáticos
+                // ajenos (corporativos): el backup los restaurará al deshabilitar.
+                string currentProxy = key.GetValue("ProxyServer", string.Empty)?.ToString() ?? string.Empty;
+                if (currentProxy.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
                     key.SetValue("ProxyServer", string.Empty, RegistryValueKind.String);
-                    changed = true;
                 }
 
-                if (changed)
-                {
-                    RefreshWinInetSettings();
-                    LocalLogger.Info("SystemProxyManager: residuo de PAC/proxy loopback limpiado (migración).");
-                }
+                key.SetValue("AutoConfigURL", pacUrl, RegistryValueKind.String);
+
+                RefreshWinInetSettings();
+                LocalLogger.Info($"SystemProxyManager: PAC habilitado en {pacUrl}.");
             }
             catch (Exception ex)
             {
-                LocalLogger.Error(ex, "SystemProxyManager.MigrateAwayFromPac(): error limpiando residuo.");
+                LocalLogger.Error(ex, "SystemProxyManager.EnablePac(): error habilitando PAC.");
             }
         }
 
@@ -110,6 +114,43 @@ namespace AZCKeeper_Cliente.Blocking
             {
                 LocalLogger.Error(ex, "SystemProxyManager.Restore(): error restaurando proxy.");
             }
+        }
+
+        private void BackupCurrentSettingsIfNeeded(string ourPacUrl)
+        {
+            if (File.Exists(_backupFilePath))
+                return;
+
+            using var key = Registry.CurrentUser.OpenSubKey(InternetSettingsPath, writable: false);
+            if (key == null)
+                return;
+
+            bool proxyEnable = Convert.ToInt32(key.GetValue("ProxyEnable", 0)) == 1;
+            string proxyServer = key.GetValue("ProxyServer", string.Empty)?.ToString() ?? string.Empty;
+            string proxyOverride = key.GetValue("ProxyOverride", string.Empty)?.ToString() ?? string.Empty;
+            string autoConfigUrl = key.GetValue("AutoConfigURL", string.Empty)?.ToString() ?? string.Empty;
+
+            // Si el estado actual ya es "nuestro" (PAC en loopback o proxy estático en
+            // 127.0.0.1 de una versión previa), no sobreescribir el backup real.
+            bool alreadyOurs =
+                autoConfigUrl.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (proxyEnable && proxyServer.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (alreadyOurs)
+                return;
+
+            var backup = new ProxyBackup
+            {
+                ProxyEnable = proxyEnable,
+                ProxyServer = proxyServer,
+                ProxyOverride = proxyOverride,
+                AutoConfigUrl = autoConfigUrl
+            };
+
+            string json = JsonSerializer.Serialize(backup, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+            File.WriteAllText(_backupFilePath, json);
         }
 
         private ProxyBackup LoadBackup()
