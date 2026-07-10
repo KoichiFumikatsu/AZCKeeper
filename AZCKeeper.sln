@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AZCKeeper_Client", "AZCKeep
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AZCKeeperUpdater", "AZCKeeperUpdater\AZCKeeperUpdater.csproj", "{7018A598-565A-4F25-A509-0B1DB90BDDA2}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AZCKeeper.Tests", "AZCKeeper.Tests\AZCKeeper.Tests.csproj", "{F9362520-CA8B-4EA0-ABA3-C37D9E4A99DE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{7018A598-565A-4F25-A509-0B1DB90BDDA2}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7018A598-565A-4F25-A509-0B1DB90BDDA2}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7018A598-565A-4F25-A509-0B1DB90BDDA2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F9362520-CA8B-4EA0-ABA3-C37D9E4A99DE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F9362520-CA8B-4EA0-ABA3-C37D9E4A99DE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F9362520-CA8B-4EA0-ABA3-C37D9E4A99DE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F9362520-CA8B-4EA0-ABA3-C37D9E4A99DE}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
