@@ -53,6 +53,7 @@ namespace AZCKeeper_Cliente.Core
 
         private System.Timers.Timer _handshakeTimer; // handshake periódico
         private DateTime _lastHandshakeTime = DateTime.MinValue; // último handshake ok
+        private string _lastHandshakeStatus = "—"; // resultado del último intento de handshake (OK / HTTP xxx / error)
         private bool _hasSuccessfulHandshake = false; // flag para primer handshake exitoso
 
         // Buffer para batch de window-episodes (Fix #4 anti-DDoS).
@@ -474,12 +475,14 @@ namespace AZCKeeper_Cliente.Core
                 if (hs == null)
                 {
                     LocalLogger.Warn("CoreService.PerformHandshake(): resultado null.");
+                    _lastHandshakeStatus = "error: sin respuesta";
                     return;
                 }
 
                 if (hs.IsUnauthorized)
                 {
                     LocalLogger.Warn("CoreService.PerformHandshake(): 401/403. Intentando auto-re-login...");
+                    _lastHandshakeStatus = "HTTP " + (hs.StatusCode?.ToString() ?? "401/403");
                     _authManager.ClearToken(deleteFromDisk: true);
 
                     if (TrySilentReLogin())
@@ -503,6 +506,9 @@ namespace AZCKeeper_Cliente.Core
                 if (!hs.IsSuccess || hs.Response == null || hs.Response.EffectiveConfig == null)
                 {
                     LocalLogger.Warn($"CoreService.PerformHandshake(): no aplicado. Status={hs.StatusCode?.ToString() ?? "null"}, NonJson={hs.IsNonJsonResponse}, BodyPreview={hs.BodyPreview}");
+                    _lastHandshakeStatus = hs.IsNonJsonResponse
+                        ? "error: respuesta no-JSON"
+                        : "HTTP " + (hs.StatusCode?.ToString() ?? "error");
                     return;
                 }
 
@@ -730,12 +736,47 @@ namespace AZCKeeper_Cliente.Core
                 }
 
                 LocalLogger.Info("CoreService.PerformHandshake(): configuración aplicada desde effectiveConfig.");
+                _lastHandshakeStatus = "OK";
             }
             catch (Exception ex)
             {
                 LocalLogger.Error(ex, "CoreService.PerformHandshake(): error. Se continúa con config local.");
+                _lastHandshakeStatus = "error: " + ex.Message;
             }
         }
+
+        /// <summary>
+        /// Arma una foto read-only del estado actual de los subsistemas para la ventana Debug.
+        /// </summary>
+        internal DebugSnapshot BuildDebugSnapshot()
+        {
+            var cfg = _configManager?.CurrentConfig;
+            var s = new DebugSnapshot
+            {
+                RunningVersion = cfg?.Version ?? "—",
+                AvailableVersion = _updateManager?.LastAvailableVersion ?? "—",
+                MinimumVersion = _updateManager?.LastMinimumVersion ?? "—",
+                UpdateStatus = string.IsNullOrEmpty(_updateManager?.LastUpdateError) ? "OK" : _updateManager.LastUpdateError,
+                ApiBaseUrl = cfg?.ApiBaseUrl ?? "—",
+                HandshakeStatus = _lastHandshakeStatus,
+                BackoffStatus = _apiClient != null && _apiClient.IsInBackoff
+                    ? "activo hasta " + _apiClient.BackoffUntilUtc.ToLocalTime().ToString("HH:mm:ss")
+                    : "no",
+                QueuePending = _apiClient?.PendingQueueCount ?? -1,
+                RecentIssues = AZCKeeper_Cliente.Logging.LocalLogger.GetRecentIssues(),
+                WebBlockEnabled = _webBlockingManager?.Enabled ?? false,
+                WebBlockDomains = _webBlockingManager?.DomainCount ?? 0,
+                PacActive = _webBlockingManager?.PacActive ?? false,
+                DeviceId = cfg?.DeviceId ?? "—",
+                UserName = cfg?.UserDisplayName ?? "—",
+                HasToken = _authManager?.HasToken ?? false,
+            };
+
+            if (_lastHandshakeTime == DateTime.MinValue) s.LastHandshake = "Nunca";
+            else s.LastHandshake = $"{_lastHandshakeTime:HH:mm:ss} (hace {(DateTime.Now - _lastHandshakeTime).TotalSeconds:F0}s)";
+            return s;
+        }
+
         /// <summary>
         /// Aplica cambios de intervalos (flush, handshake, offline queue).
         /// </summary>
