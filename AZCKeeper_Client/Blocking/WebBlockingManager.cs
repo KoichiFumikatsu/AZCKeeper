@@ -32,6 +32,11 @@ namespace AZCKeeper_Cliente.Blocking
         // el archivo .tmp de SaveCacheToDisk y el check-then-write de BackupCurrentSettingsIfNeeded.
         private readonly object _applyLock = new object();
 
+        // Se pone en true al inicio de Shutdown() (dentro de _applyLock) para que un
+        // ApplyRemotePolicy en vuelo (timer.Elapsed que ya arrancó antes del Stop) no
+        // reaplique el PAC después de que Shutdown ya lo quitó.
+        private volatile bool _shuttingDown;
+
         public bool Enabled => _currentCache?.Enabled == true;
         public int DomainCount => _currentCache?.Domains?.Length ?? 0;
         public int PacPort => _pacServer.Port;
@@ -62,6 +67,8 @@ namespace AZCKeeper_Cliente.Blocking
         {
             lock (_applyLock)
             {
+                if (_shuttingDown) return; // Shutdown ya quitó el PAC; no reaplicar en el cierre.
+
                 AppendTrace($"ApplyRemotePolicy() Enabled={config?.Enabled}, Domains={(config?.Domains?.Length ?? 0)}, PolicyVersion={policyVersion}");
                 var next = BuildCache(config, policyVersion);
 
@@ -84,6 +91,8 @@ namespace AZCKeeper_Cliente.Blocking
         {
             lock (_applyLock)
             {
+                _shuttingDown = true; // Bloquea cualquier ApplyRemotePolicy en vuelo que tomé el lock después.
+
                 // Cierre limpio: quitar el PAC para no dejar un AutoConfigURL colgado.
                 try { _pacServer.Stop(); } catch { }
                 try { _systemProxy.Restore(); } catch { }
