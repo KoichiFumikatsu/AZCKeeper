@@ -834,6 +834,11 @@ namespace AZCKeeper_Cliente.Network
             get { lock (_backoffLock) { return DateTime.UtcNow < _backoffUntilUtc; } }
         }
 
+        // Accessors de diagnóstico de solo lectura (ventana de Debug). No cambian comportamiento.
+        public bool IsInBackoff { get { lock (_backoffLock) { return DateTime.UtcNow < _backoffUntilUtc; } } }
+        public DateTime BackoffUntilUtc { get { lock (_backoffLock) { return _backoffUntilUtc; } } }
+        public int PendingQueueCount { get { try { return _offlineQueue.GetPendingCount(); } catch { return -1; } } }
+
         // Registra el resultado de un intento REAL de red y ajusta el backoff.
         // overload = fallo de transporte o status de sobrecarga/ban → crece exponencial;
         // cualquier otro resultado (incluye 2xx y 401) → resetea.

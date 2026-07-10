@@ -28,6 +28,13 @@ namespace AZCKeeper_Cliente.Update
         private bool _isDownloading = false;
         private readonly SemaphoreSlim _checkGate = new SemaphoreSlim(1, 1);
 
+        // Accessors de diagnóstico de solo lectura (ventana de Debug). No cambian comportamiento.
+        public string LastAvailableVersion { get; private set; } = "—";
+        public string LastMinimumVersion { get; private set; } = "—";
+        public bool LastCriticalFlag { get; private set; }
+        public string LastUpdateError { get; private set; } = "";
+        public DateTime LastCheckUtc { get; private set; } = DateTime.MinValue;
+
         /// <summary>
         /// Crea el manager con config, ApiClient y el intervalo en minutos.
         /// </summary>
@@ -122,6 +129,11 @@ namespace AZCKeeper_Cliente.Update
                 var minimum = string.IsNullOrWhiteSpace(data.MinimumVersion)
                     ? new Version("0.0.0.0")
                     : new Version(data.MinimumVersion);
+
+                LastCheckUtc = DateTime.UtcNow;
+                LastAvailableVersion = data.LatestVersion;
+                LastMinimumVersion = minimum.ToString();
+                LastCriticalFlag = current < minimum;
 
                 LocalLogger.Info($"UpdateManager: versión actual={current}, disponible={latest}, mínima={minimum}");
 
@@ -224,12 +236,15 @@ namespace AZCKeeper_Cliente.Update
                 LocalLogger.Info("UpdateManager: lanzando updater. El cliente se cerrará...");
                 System.Diagnostics.Process.Start(psi);
 
+                LastUpdateError = "";
+
                 // Cerrar aplicación para permitir actualización
                 await Task.Delay(1000);
                 System.Windows.Forms.Application.Exit();
             }
             catch (Exception ex)
             {
+                LastUpdateError = ex.Message;
                 LocalLogger.Error(ex, "UpdateManager: error al descargar/instalar actualización.");
             }
             finally
