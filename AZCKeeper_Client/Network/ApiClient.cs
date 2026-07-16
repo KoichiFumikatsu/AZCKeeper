@@ -33,15 +33,11 @@ namespace AZCKeeper_Cliente.Network
 
         // --- Circuit breaker / backoff de red ---
         // Evita que el cliente sostenga un ban de firewall del hosting (CSF/LFD) cuando
-        // 100+ equipos tras un NAT único reintentan en tormenta. Ante fallo de transporte
-        // (RST/timeout) o status de sobrecarga (403/429/5xx), el backoff crece exponencial
-        // con jitter y CORTA todo intento de red hasta expirar; al primer éxito se resetea.
-        private readonly object _backoffLock = new object();
-        private readonly Random _backoffRng = new Random();
-        private int _backoffConsecutiveFailures;
-        private DateTime _backoffUntilUtc = DateTime.MinValue;
-        private const double BackoffBaseSeconds = 30.0;
-        private const double BackoffCapSeconds = 1800.0; // 30 min
+        // 100+ equipos tras un NAT único reintentan en tormenta. El backoff crece
+        // exponencial con jitter y CORTA todo intento de red hasta expirar; al primer
+        // éxito se resetea. El tope depende de la CLASE de fallo (ver NetworkBackoffPolicy):
+        // un DNS caído no se cura esperando media hora, un 429 sí.
+        private readonly NetworkBackoffPolicy _backoff = new NetworkBackoffPolicy();
 
         private readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
         {
@@ -829,42 +825,28 @@ namespace AZCKeeper_Cliente.Network
         /// <summary>
         /// true si hay backoff de red activo: no se debe intentar ninguna llamada HTTP.
         /// </summary>
-        public bool IsBackingOff
-        {
-            get { lock (_backoffLock) { return DateTime.UtcNow < _backoffUntilUtc; } }
-        }
+        public bool IsBackingOff => _backoff.IsBackingOff;
 
         // Accessors de diagnóstico de solo lectura (ventana de Debug). No cambian comportamiento.
         public bool IsInBackoff => IsBackingOff;
-        public DateTime BackoffUntilUtc { get { lock (_backoffLock) { return _backoffUntilUtc; } } }
+        public DateTime BackoffUntilUtc => _backoff.BackoffUntilUtc;
         public int PendingQueueCount { get { try { return _offlineQueue.GetPendingCount(); } catch { return -1; } } }
 
         // Registra el resultado de un intento REAL de red y ajusta el backoff.
-        // overload = fallo de transporte o status de sobrecarga/ban → crece exponencial;
-        // cualquier otro resultado (incluye 2xx y 401) → resetea.
-        private void RegisterNetworkOutcome(int statusCode, bool transportError)
+        private void RegisterNetworkOutcome(int statusCode, Exception ex)
         {
-            bool overload = transportError
-                || statusCode == 403 || statusCode == 429
-                || statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504;
+            bool estabaEnFallo = _backoff.ConsecutiveFailures > 0;
+            var kind = _backoff.Register(statusCode, ex);
 
-            lock (_backoffLock)
+            if (kind == NetworkFailureKind.Success)
             {
-                if (!overload)
-                {
-                    if (_backoffConsecutiveFailures != 0)
-                        LocalLogger.Info("ApiClient: red recuperada, backoff reseteado.");
-                    _backoffConsecutiveFailures = 0;
-                    _backoffUntilUtc = DateTime.MinValue;
-                    return;
-                }
-
-                _backoffConsecutiveFailures++;
-                double seconds = Math.Min(BackoffCapSeconds, BackoffBaseSeconds * Math.Pow(2, _backoffConsecutiveFailures - 1));
-                double jitter = seconds * 0.2 * _backoffRng.NextDouble();
-                _backoffUntilUtc = DateTime.UtcNow.AddSeconds(seconds + jitter);
-                LocalLogger.Warn($"ApiClient: fallo de red #{_backoffConsecutiveFailures} (status={statusCode}, transport={transportError}). Backoff {seconds:F0}s (+jitter) hasta {_backoffUntilUtc:HH:mm:ss} UTC.");
+                if (estabaEnFallo)
+                    LocalLogger.Info("ApiClient: red recuperada, backoff reseteado.");
+                return;
             }
+
+            double espera = (_backoff.BackoffUntilUtc - DateTime.UtcNow).TotalSeconds;
+            LocalLogger.Warn($"ApiClient: fallo de red #{_backoff.ConsecutiveFailures} (clase={kind}, status={statusCode}). Backoff {espera:F0}s hasta {_backoff.BackoffUntilUtc:HH:mm:ss} UTC.");
         }
 
         // Envía respetando el backoff. Si hay backoff activo, corta sin abrir socket
@@ -878,12 +860,12 @@ namespace AZCKeeper_Cliente.Network
             try
             {
                 var response = await _httpClient.SendAsync(request).ConfigureAwait(false);
-                RegisterNetworkOutcome((int)response.StatusCode, transportError: false);
+                RegisterNetworkOutcome((int)response.StatusCode, null);
                 return response;
             }
             catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException || ex is OperationCanceledException)
             {
-                RegisterNetworkOutcome(0, transportError: true);
+                RegisterNetworkOutcome(0, ex);
                 throw;
             }
         }
