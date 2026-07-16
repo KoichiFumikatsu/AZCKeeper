@@ -53,6 +53,7 @@ $routes = [
     '/client/activity-day' => [Keeper\Endpoints\ActivityDay::class, 'handle'],
     '/client/window-episode' => [Keeper\Endpoints\WindowEpisode::class, 'handle'],
     '/client/window-episodes/batch' => [Keeper\Endpoints\WindowEpisodeBatch::class, 'handle'],
+    '/client/logs' => [Keeper\Endpoints\ClientLogBatch::class, 'handle'],
     '/client/device-lock/unlock' => [Keeper\Endpoints\DeviceLock::class, 'tryUnlock'],
     '/client/event' => [Keeper\Endpoints\EventIngest::class, 'handle'],
     '/client/force-handshake' => [Keeper\Endpoints\ForceHandshake::class, 'handle'],

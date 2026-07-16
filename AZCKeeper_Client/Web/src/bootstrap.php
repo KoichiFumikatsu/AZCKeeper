@@ -23,6 +23,7 @@ require_once __DIR__ . '/Repos/ReleaseRepo.php';
 require_once __DIR__ . '/Repos/AdminAuthRepo.php';
 require_once __DIR__ . '/Repos/ProductivityRepo.php';
 require_once __DIR__ . '/Repos/PendingEnrollmentRepo.php';
+require_once __DIR__ . '/Repos/ClientLogRepo.php';
 
 // Services
 require_once __DIR__ . '/Services/ProductivityCalculator.php';
@@ -37,6 +38,7 @@ require_once __DIR__ . '/Endpoints/ClientReEnroll.php';
 require_once __DIR__ . '/Endpoints/ActivityDay.php';
 require_once __DIR__ . '/Endpoints/WindowEpisode.php';
 require_once __DIR__ . '/Endpoints/WindowEpisodeBatch.php';
+require_once __DIR__ . '/Endpoints/ClientLogBatch.php';
 require_once __DIR__ . '/Endpoints/EventIngest.php';
 require_once __DIR__ . '/Endpoints/ForceHandshake.php';
 require_once __DIR__ . '/Endpoints/DeviceLock.php';

@@ -88,10 +88,18 @@ class ProductivityCron {
       }
     }
 
+    // Retención de keeper_client_log. Un fallo aquí no debe tumbar el cron de productividad.
+    $logsPurged = 0;
+    try {
+      $logsPurged = \Keeper\Repos\ClientLogRepo::purgeOlderThan(Db::pdo());
+    } catch (\Throwable $e) {
+      error_log("[KEEPER CRON] Purga de keeper_client_log falló: " . $e->getMessage());
+    }
+
     $duration = round(microtime(true) - $startTime, 2);
 
     // Log resultado
-    error_log("[KEEPER CRON] Productividad $dayDate: $processed/$totalUsers usuarios, $alerts alertas, $errors errores, {$duration}s");
+    error_log("[KEEPER CRON] Productividad $dayDate: $processed/$totalUsers usuarios, $alerts alertas, $errors errores, $logsPurged logs purgados, {$duration}s");
 
     Http::json(200, [
       'ok'           => true,
@@ -100,6 +108,7 @@ class ProductivityCron {
       'processed'    => $processed,
       'alerts'       => $alerts,
       'errors'       => $errors,
+      'logs_purged'  => $logsPurged,
       'duration_sec' => $duration,
       'error_details'=> $errors > 0 ? array_slice($errorDetails, 0, 20) : [],
     ]);
