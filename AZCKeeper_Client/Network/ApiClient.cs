@@ -558,6 +558,65 @@ namespace AZCKeeper_Cliente.Network
             }
         }
 
+        // -------------------- LOGS AL SERVIDOR --------------------
+
+        /// <summary>
+        /// Reporta el buffer de Warn/Error y eventos de update a /client/logs.
+        ///
+        /// Reglas que lo hacen seguro de llamar durante un incidente de red:
+        /// - Respeta el circuit breaker: si hay backoff, no abre socket y devuelve false.
+        /// - NO usa la cola offline: los logs son diagnóstico, no datos de negocio. Si no
+        ///   salen ahora, se quedan en el buffer acotado de LocalLogger y salen luego.
+        /// - NO loguea sus propios fallos, ni siquiera indirectamente (SuppressReporting
+        ///   cubre los Warn que emite RegisterNetworkOutcome). Reportar el fallo de
+        ///   reportar es un lazo infinito, y justo se dispararía cuando la red ya sufre.
+        ///
+        /// Devuelve true solo si el servidor confirmó; el llamador decide si devolver
+        /// las líneas al buffer.
+        /// </summary>
+        public async Task<bool> SendClientLogsAsync(
+            string deviceGuid,
+            System.Collections.Generic.IList<ClientLogReport> logs)
+        {
+            if (logs == null || logs.Count == 0) return true;
+            if (string.IsNullOrWhiteSpace(deviceGuid)) return false;
+
+            using (LocalLogger.SuppressReporting())
+            {
+                try
+                {
+                    if (_httpClient.BaseAddress == null) return false;
+
+                    var body = new
+                    {
+                        deviceId = deviceGuid,
+                        clientVersion = _configManager.CurrentConfig.Version,
+                        logs = System.Linq.Enumerable.ToArray(
+                            System.Linq.Enumerable.Select(logs, l => new
+                            {
+                                level = l.Level,
+                                source = l.Source,
+                                message = l.Message,
+                                clientTs = l.LocalTs.ToString("yyyy-MM-dd HH:mm:ss")
+                            }))
+                    };
+
+                    string json = JsonSerializer.Serialize(body, _jsonOptions);
+                    using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                    using var httpRequest = CreateRequest(HttpMethod.Post, "client/logs", content);
+
+                    using var response = await SendViaBackoffAsync(httpRequest).ConfigureAwait(false);
+
+                    return response.IsSuccessStatusCode;
+                }
+                catch
+                {
+                    // Silencio deliberado: ver el comentario de arriba.
+                    return false;
+                }
+            }
+        }
+
         // -------------------- GET GENÉRICO --------------------
 
         /// <summary>

@@ -737,11 +737,42 @@ namespace AZCKeeper_Cliente.Core
 
                 LocalLogger.Info("CoreService.PerformHandshake(): configuración aplicada desde effectiveConfig.");
                 _lastHandshakeStatus = "OK";
+
+                // Va pegado al handshake exitoso a propósito: no abre conexión propia ni
+                // agrega un timer. Si la red está mal, no llegamos hasta aquí y los logs
+                // esperan en el buffer.
+                ReportPendingLogs();
             }
             catch (Exception ex)
             {
                 LocalLogger.Error(ex, "CoreService.PerformHandshake(): error. Se continúa con config local.");
                 _lastHandshakeStatus = "error: " + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// Envía a /client/logs los Warn/Error y eventos de update acumulados.
+        /// Lo que no se confirme vuelve al buffer para el próximo handshake.
+        /// </summary>
+        private void ReportPendingLogs()
+        {
+            try
+            {
+                string deviceGuid = _configManager.CurrentConfig.DeviceId;
+                if (string.IsNullOrWhiteSpace(deviceGuid)) return;
+
+                var batch = LocalLogger.DrainForReport(50);
+                if (batch.Count == 0) return;
+
+                bool enviado = _apiClient.SendClientLogsAsync(deviceGuid, batch)
+                                         .GetAwaiter().GetResult();
+
+                if (!enviado)
+                    LocalLogger.RequeueForReport(batch);
+            }
+            catch
+            {
+                // Nunca romper el handshake por el reporte de logs.
             }
         }
 

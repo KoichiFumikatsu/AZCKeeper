@@ -4,6 +4,9 @@ using Xunit;
 
 namespace AZCKeeper.Tests
 {
+    // LocalLogger es estático: sin serializar, estas pruebas y las de la cola de reporte
+    // se pisan los buffers entre sí.
+    [Collection("LocalLogger")]
     public class LocalLoggerRingBufferTests
     {
         [Fact]

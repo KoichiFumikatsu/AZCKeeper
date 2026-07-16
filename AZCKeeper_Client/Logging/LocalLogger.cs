@@ -21,6 +21,17 @@ namespace AZCKeeper_Cliente.Logging
     /// - ConfigManager aplica la configuración de logging (niveles y webhook).
     /// - Todas las capas (Core/Network/Auth/Tracking) usan LocalLogger.* para diagnóstico.
     /// </summary>
+    /// <summary>
+    /// Línea pendiente de reportar al servidor (tabla keeper_client_log).
+    /// </summary>
+    internal sealed class ClientLogReport
+    {
+        public string Level { get; set; }
+        public string Source { get; set; }
+        public string Message { get; set; }
+        public DateTime LocalTs { get; set; }
+    }
+
     internal static class LocalLogger
     {
         internal enum LogLevel
@@ -39,6 +50,21 @@ namespace AZCKeeper_Cliente.Logging
         private static readonly System.Collections.Generic.Queue<string> _recentIssues =
             new System.Collections.Generic.Queue<string>();
         private static readonly object _recentIssuesLock = new object();
+
+        // ---- Cola de reporte al servidor (keeper_client_log) ----
+        // Separada del buffer de la ventana Debug: aquella es un anillo que se sobreescribe
+        // para mirar en vivo; esta se DRENA solo cuando el servidor confirma el envío, para
+        // que cada línea se persista una vez. Acotada: si el equipo pasa horas sin red, se
+        // descartan las más viejas antes que crecer sin límite.
+        private const int ReportQueueMax = 200;
+        private static readonly System.Collections.Generic.Queue<ClientLogReport> _reportQueue =
+            new System.Collections.Generic.Queue<ClientLogReport>();
+        private static readonly object _reportLock = new object();
+
+        // Corta el lazo de realimentación: mientras se envían logs, los Warn que genere
+        // ese propio envío no se vuelven a encolar para reportar.
+        private static readonly System.Threading.AsyncLocal<bool> _suppressReport =
+            new System.Threading.AsyncLocal<bool>();
 
         private static bool _enableFileLogging = true;
         private static bool _enableWebhookLogging = false;
@@ -176,12 +202,148 @@ namespace AZCKeeper_Cliente.Logging
                 _recentIssues.Enqueue($"{DateTime.Now:HH:mm:ss} [{level}] {message}");
                 while (_recentIssues.Count > RecentIssuesMax) _recentIssues.Dequeue();
             }
+
+            EnqueueForReport(level, InferSource(message), message);
         }
 
         /// <summary>Últimos Warn/Error para diagnóstico en la ventana Debug (más reciente al final).</summary>
         public static System.Collections.Generic.IReadOnlyList<string> GetRecentIssues()
         {
             lock (_recentIssuesLock) { return _recentIssues.ToArray(); }
+        }
+
+        // ---------------- Reporte al servidor ----------------
+
+        /// <summary>
+        /// Reporta un evento al servidor aunque su nivel no llegue al archivo local.
+        /// Pensado para eventos de update, que son Info y el nivel de la flota está en Warn:
+        /// sin esto, un equipo que nunca actualiza no deja rastro de por qué.
+        /// </summary>
+        public static void ReportEvent(LogLevel level, string source, string message)
+        {
+            EnqueueForReport(level, source, message);
+            WriteLog(level, message);
+        }
+
+        private static void EnqueueForReport(LogLevel level, string source, string message)
+        {
+            if (_suppressReport.Value) return;
+            if (string.IsNullOrWhiteSpace(message)) return;
+
+            var entry = new ClientLogReport
+            {
+                Level = LevelToWire(level),
+                Source = source,
+                Message = Sanitize(message),
+                LocalTs = DateTime.Now
+            };
+
+            lock (_reportLock)
+            {
+                _reportQueue.Enqueue(entry);
+                while (_reportQueue.Count > ReportQueueMax) _reportQueue.Dequeue();
+            }
+        }
+
+        /// <summary>
+        /// Saca hasta <paramref name="max"/> líneas para enviar. Solo se pierden si el envío
+        /// confirma; si falla, el llamador debe devolverlas con <see cref="RequeueForReport"/>.
+        /// </summary>
+        public static System.Collections.Generic.List<ClientLogReport> DrainForReport(int max)
+        {
+            var batch = new System.Collections.Generic.List<ClientLogReport>();
+
+            lock (_reportLock)
+            {
+                while (_reportQueue.Count > 0 && batch.Count < max)
+                    batch.Add(_reportQueue.Dequeue());
+            }
+
+            return batch;
+        }
+
+        /// <summary>Devuelve al frente de la cola las líneas cuyo envío falló.</summary>
+        public static void RequeueForReport(System.Collections.Generic.IEnumerable<ClientLogReport> entries)
+        {
+            if (entries == null) return;
+
+            lock (_reportLock)
+            {
+                var pendientes = new System.Collections.Generic.List<ClientLogReport>(entries);
+                pendientes.AddRange(_reportQueue);
+                _reportQueue.Clear();
+
+                int desde = Math.Max(0, pendientes.Count - ReportQueueMax);
+                for (int i = desde; i < pendientes.Count; i++)
+                    _reportQueue.Enqueue(pendientes[i]);
+            }
+        }
+
+        public static int PendingReportCount { get { lock (_reportLock) { return _reportQueue.Count; } } }
+
+        /// <summary>
+        /// Suprime el encolado de reportes en el flujo async actual. Envolver el envío de
+        /// logs con esto: reportar el fallo de reportar es un lazo infinito.
+        /// </summary>
+        public static IDisposable SuppressReporting() => new ReportSuppression();
+
+        private sealed class ReportSuppression : IDisposable
+        {
+            private readonly bool _previo;
+            public ReportSuppression() { _previo = _suppressReport.Value; _suppressReport.Value = true; }
+            public void Dispose() { _suppressReport.Value = _previo; }
+        }
+
+        private static string LevelToWire(LogLevel level)
+        {
+            switch (level)
+            {
+                case LogLevel.Error: return "error";
+                case LogLevel.Warn: return "warn";
+                default: return "info";
+            }
+        }
+
+        /// <summary>
+        /// Deduce el subsistema desde el prefijo del mensaje ("ApiClient: ...").
+        /// Debe devolver un valor de ClientLogRepo::SOURCES; el servidor normaliza
+        /// a 'other' cualquier otro.
+        /// </summary>
+        private static string InferSource(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message)) return "other";
+
+            int corte = message.IndexOf(':');
+            string prefijo = corte > 0 ? message.Substring(0, corte) : message;
+
+            if (prefijo.StartsWith("ApiClient", StringComparison.OrdinalIgnoreCase) ||
+                prefijo.StartsWith("OfflineQueue", StringComparison.OrdinalIgnoreCase))
+                return "network";
+
+            if (prefijo.StartsWith("UpdateManager", StringComparison.OrdinalIgnoreCase))
+                return "update";
+
+            if (prefijo.StartsWith("WebBlocking", StringComparison.OrdinalIgnoreCase) ||
+                prefijo.StartsWith("SystemProxyManager", StringComparison.OrdinalIgnoreCase) ||
+                prefijo.StartsWith("LocalPacServer", StringComparison.OrdinalIgnoreCase) ||
+                prefijo.StartsWith("PacContentBuilder", StringComparison.OrdinalIgnoreCase) ||
+                prefijo.StartsWith("KeyBlocker", StringComparison.OrdinalIgnoreCase))
+                return "blocking";
+
+            if (prefijo.StartsWith("AuthManager", StringComparison.OrdinalIgnoreCase))
+                return "auth";
+
+            if (prefijo.StartsWith("ActivityTracker", StringComparison.OrdinalIgnoreCase) ||
+                prefijo.StartsWith("WindowTracker", StringComparison.OrdinalIgnoreCase) ||
+                prefijo.StartsWith("ProcessTracker", StringComparison.OrdinalIgnoreCase))
+                return "tracking";
+
+            if (prefijo.StartsWith("CoreService", StringComparison.OrdinalIgnoreCase) ||
+                prefijo.StartsWith("Program", StringComparison.OrdinalIgnoreCase) ||
+                prefijo.StartsWith("StartupManager", StringComparison.OrdinalIgnoreCase))
+                return "core";
+
+            return "other";
         }
 
         /// <summary>

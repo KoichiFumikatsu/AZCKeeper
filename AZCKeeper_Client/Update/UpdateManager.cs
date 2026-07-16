@@ -135,7 +135,8 @@ namespace AZCKeeper_Cliente.Update
                 LastMinimumVersion = minimum.ToString();
                 LastCriticalFlag = current < minimum;
 
-                LocalLogger.Info($"UpdateManager: versión actual={current}, disponible={latest}, mínima={minimum}");
+                LocalLogger.ReportEvent(LocalLogger.LogLevel.Info,
+                    "update", $"UpdateManager: chequeo OK. actual={current}, disponible={latest}, mínima={minimum}");
 
                 if (latest > current)
                 {
@@ -154,7 +155,8 @@ namespace AZCKeeper_Cliente.Update
                     }
                     else
                     {
-                        LocalLogger.Info("UpdateManager: actualización disponible pero no configurada para descarga automática.");
+                        LocalLogger.ReportEvent(LocalLogger.LogLevel.Info,
+                            "update", $"UpdateManager: {data.LatestVersion} disponible pero no se descarga (autoDownload={updatesConfig?.AutoDownload}, force={data.ForceUpdate}, crítica={isCritical}).");
                     }
                 }
             }
@@ -176,7 +178,8 @@ namespace AZCKeeper_Cliente.Update
 
             try
             {
-                LocalLogger.Info($"UpdateManager: descargando actualización desde {url}...");
+                LocalLogger.ReportEvent(LocalLogger.LogLevel.Info,
+                    "update", $"UpdateManager: descargando {version} desde {url}...");
 
                 // ✅ USAR APPDATA en lugar de TEMP
                 string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -204,7 +207,8 @@ namespace AZCKeeper_Cliente.Update
                     await File.WriteAllBytesAsync(zipPath, bytes);
                 }
 
-                LocalLogger.Info($"UpdateManager: descarga completada ({new FileInfo(zipPath).Length / 1024}KB). Extrayendo...");
+                LocalLogger.ReportEvent(LocalLogger.LogLevel.Info,
+                    "update", $"UpdateManager: descarga de {version} completada ({new FileInfo(zipPath).Length / 1024}KB). Extrayendo...");
 
                 // Extraer ZIP
                 string extractPath = Path.Combine(updateDir, $"v{version}");
@@ -233,7 +237,8 @@ namespace AZCKeeper_Cliente.Update
                     WorkingDirectory = updateDir
                 };
 
-                LocalLogger.Info("UpdateManager: lanzando updater. El cliente se cerrará...");
+                LocalLogger.ReportEvent(LocalLogger.LogLevel.Info,
+                    "update", $"UpdateManager: lanzando updater para {version}. El cliente se cerrará...");
                 System.Diagnostics.Process.Start(psi);
 
                 LastUpdateError = "";
