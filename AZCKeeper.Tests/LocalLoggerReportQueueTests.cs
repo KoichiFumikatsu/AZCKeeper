@@ -65,6 +65,39 @@ namespace AZCKeeper.Tests
         }
 
         [Fact]
+        public void ReportEvent_no_se_salta_el_filtro_de_nivel_para_el_archivo()
+        {
+            // El reporte al servidor ignora el nivel a propósito; la escritura a disco NO.
+            // Detectado en vivo el 2026-07-16: la línea Info del chequeo de update aparecía
+            // en el log de un equipo con el nivel en Warn, mientras el resto de Info sí se
+            // filtraba. La flota corre en Warn justamente para no llenar disco.
+            Limpiar();
+
+            string ruta = System.IO.Path.Combine(
+                System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData),
+                "AZCKeeper", "Logs", $"{System.DateTime.Now:yyyy-MM-dd}.log");
+
+            try
+            {
+                LocalLogger.ConfigureLevels(LocalLogger.LogLevel.Warn, null, enableFileLogging: true, false);
+
+                long antes = System.IO.File.Exists(ruta) ? new System.IO.FileInfo(ruta).Length : 0;
+
+                LocalLogger.ReportEvent(LocalLogger.LogLevel.Info, "update", "marcador-info-no-debe-tocar-disco");
+
+                long despues = System.IO.File.Exists(ruta) ? new System.IO.FileInfo(ruta).Length : 0;
+
+                Assert.Equal(antes, despues);
+                Assert.Contains(LocalLogger.DrainForReport(50),
+                    e => e.Message.Contains("marcador-info-no-debe-tocar-disco"));
+            }
+            finally
+            {
+                LocalLogger.ConfigureLevels(LocalLogger.LogLevel.Warn, null, enableFileLogging: false, false);
+            }
+        }
+
+        [Fact]
         public void Drenar_vacia_la_cola()
         {
             Limpiar();

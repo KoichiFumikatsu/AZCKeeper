@@ -222,6 +222,10 @@ namespace AZCKeeper_Cliente.Logging
         public static void ReportEvent(LogLevel level, string source, string message)
         {
             EnqueueForReport(level, source, message);
+
+            // El reporte al servidor ignora el nivel; el archivo local no. Saltarse ShouldLog
+            // aquí llenaba de líneas Info el log de una flota configurada en Warn.
+            if (!ShouldLog(level)) return;
             WriteLog(level, message);
         }
 
