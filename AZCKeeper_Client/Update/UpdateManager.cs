@@ -28,6 +28,10 @@ namespace AZCKeeper_Cliente.Update
         private bool _isDownloading = false;
         private readonly SemaphoreSlim _checkGate = new SemaphoreSlim(1, 1);
 
+        // Última tupla (actual|disponible|mínima|vaADescargar) reportada al servidor.
+        // Evita una fila por chequeo en keeper_client_log; solo se reporta el cambio.
+        private string _lastReportedState;
+
         // Accessors de diagnóstico de solo lectura (ventana de Debug). No cambian comportamiento.
         public string LastAvailableVersion { get; private set; } = "—";
         public string LastMinimumVersion { get; private set; } = "—";
@@ -135,29 +139,42 @@ namespace AZCKeeper_Cliente.Update
                 LastMinimumVersion = minimum.ToString();
                 LastCriticalFlag = current < minimum;
 
-                LocalLogger.ReportEvent(LocalLogger.LogLevel.Info,
-                    "update", $"UpdateManager: chequeo OK. actual={current}, disponible={latest}, mínima={minimum}");
+                bool isCritical = current < minimum;
+                var updatesConfig = _config.CurrentConfig.Updates;
+                bool vaADescargar = latest > current
+                    && (isCritical || updatesConfig?.AutoDownload == true || data.ForceUpdate);
+
+                // El chequeo corre cada pocos minutos y su resultado casi nunca cambia. Reportar
+                // cada pasada daría ~130k filas/día a 180 equipos: el mismo write-amp que ya
+                // sufre keeper_window_episode, y en la tabla de diagnóstico. Solo se reporta el
+                // CAMBIO de estado — un equipo atascado deja una fila y calla hasta que algo se
+                // mueva, que es exactamente la señal que se busca. El resto va al archivo local.
+                string estado = $"{current}|{latest}|{minimum}|{vaADescargar}";
+                bool estadoNuevo = estado != _lastReportedState;
+                if (estadoNuevo) _lastReportedState = estado;
 
                 if (latest > current)
                 {
-                    bool isCritical = current < minimum;
-                    LocalLogger.Warn($"UpdateManager: nueva versión {data.LatestVersion} disponible. Crítica={isCritical}");
+                    string detalle = $"UpdateManager: {latest} disponible (actual={current}, mínima={minimum}, crítica={isCritical}, " +
+                                     $"autoDownload={updatesConfig?.AutoDownload}, force={data.ForceUpdate}) → " +
+                                     (vaADescargar ? "descargando." : "NO se descarga.");
 
-                    var updatesConfig = _config.CurrentConfig.Updates;
-
-                    // Actualizar si:
-                    // - Es crítica (debajo de versión mínima)
-                    // - AutoDownload está habilitado
-                    // - ForceUpdate está activo
-                    if (isCritical || updatesConfig?.AutoDownload == true || data.ForceUpdate)
-                    {
-                        await DownloadAndInstallAsync(data.DownloadUrl, data.LatestVersion);
-                    }
+                    if (estadoNuevo)
+                        LocalLogger.ReportEvent(LocalLogger.LogLevel.Warn, "update", detalle);
                     else
-                    {
-                        LocalLogger.ReportEvent(LocalLogger.LogLevel.Info,
-                            "update", $"UpdateManager: {data.LatestVersion} disponible pero no se descarga (autoDownload={updatesConfig?.AutoDownload}, force={data.ForceUpdate}, crítica={isCritical}).");
-                    }
+                        LocalLogger.Info(detalle);
+
+                    if (vaADescargar)
+                        await DownloadAndInstallAsync(data.DownloadUrl, data.LatestVersion);
+                }
+                else if (estadoNuevo)
+                {
+                    LocalLogger.ReportEvent(LocalLogger.LogLevel.Info,
+                        "update", $"UpdateManager: al día en {current} (disponible={latest}, mínima={minimum}).");
+                }
+                else
+                {
+                    LocalLogger.Info($"UpdateManager: versión actual={current}, disponible={latest}, mínima={minimum}");
                 }
             }
             catch (Exception ex)
