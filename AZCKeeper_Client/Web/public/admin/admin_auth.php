@@ -244,6 +244,7 @@ function getMenuVisibility(): array {
         'server-health' => ['superadmin'],
         'dual_job'      => ['superadmin', 'admin'],
         'pending_users' => ['superadmin'],
+        'logs'          => ['superadmin'],
     ];
 
     try {

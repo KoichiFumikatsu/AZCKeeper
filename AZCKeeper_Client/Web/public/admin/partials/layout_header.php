@@ -133,7 +133,7 @@
 
                 <?php
                 // Sección avanzada: se muestra si el usuario puede ver al menos un módulo de esta sección
-                $advModules = ['policies','releases','install_coverage','admin-users','assignments','organization','roles','settings','server-health','dual_job'];
+                $advModules = ['policies','releases','install_coverage','admin-users','assignments','organization','roles','settings','server-health','dual_job','logs'];
                 $showAdvanced = false;
                 foreach ($advModules as $_m) { if (canAccessModule($_m)) { $showAdvanced = true; break; } }
                 if ($showAdvanced):
@@ -198,6 +198,12 @@
                     <a href="dual-job-alerts.php" class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-600 transition-colors <?= ($currentPage ?? '') === 'dual-job-alerts' ? 'active' : '' ?>">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
                         Alertas de Actividades
+                    </a>
+                    <?php endif; ?>
+                    <?php if (canAccessModule('logs')): ?>
+                    <a href="logs.php" class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-600 transition-colors <?= ($currentPage ?? '') === 'logs' ? 'active' : '' ?>">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                        Logs
                     </a>
                     <?php endif; ?>
                 </div>
