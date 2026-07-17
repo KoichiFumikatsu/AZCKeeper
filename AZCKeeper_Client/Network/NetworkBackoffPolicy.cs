@@ -114,7 +114,20 @@ namespace AZCKeeper_Cliente.Network
                 // Cambiar de clase arranca una escalada nueva: los intentos fallidos por
                 // DNS no son evidencia de que el servidor nos esté frenando, ni al revés.
                 if (kind != _lastKind)
+                {
                     _consecutiveFailures = 0;
+                }
+                else if (_nowUtc() < _untilUtc)
+                {
+                    // Ya hay backoff activo de esta MISMA clase y este fallo llegó dentro de
+                    // esa ventana. Solo puede ser un straggler concurrente de la misma caída:
+                    // handshake/activity-day/window-episode salen casi a la vez y todos fallan
+                    // antes de que el primero fije el backoff. Un intento REAL posterior nunca
+                    // entra aquí, porque SendViaBackoffAsync no abre socket mientras hay backoff.
+                    // Contarlo inflaría el contador (una caída se veía como 3) y escalaría el
+                    // backoff de más. Se ignora sin re-incrementar ni re-extender.
+                    return kind;
+                }
 
                 _lastKind = kind;
                 _consecutiveFailures++;

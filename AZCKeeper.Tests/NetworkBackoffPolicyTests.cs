@@ -20,6 +20,20 @@ namespace AZCKeeper.Tests
         private static NetworkBackoffPolicy NewPolicy(Func<DateTime> now = null)
             => new NetworkBackoffPolicy(now ?? (() => T0), () => 0.0);
 
+        // Reloj mutable: para simular fallos secuenciales REALES, que ocurren después de que
+        // el backoff expira (SendViaBackoffAsync no reintenta mientras hay backoff activo).
+        private sealed class Clock { public DateTime Now; public Clock(DateTime t) { Now = t; } }
+
+        private static NetworkBackoffPolicy NewPolicy(Clock clock, double rng = 0.0)
+            => new NetworkBackoffPolicy(() => clock.Now, () => rng);
+
+        // Registra un fallo secuencial: avanza el reloj más allá del backoff vigente y falla.
+        private static void FalloSecuencial(NetworkBackoffPolicy p, Clock c, int status, Exception ex)
+        {
+            if (c.Now < p.BackoffUntilUtc) c.Now = p.BackoffUntilUtc.AddSeconds(1);
+            p.Register(status, ex);
+        }
+
         private static Exception DnsException()
             => new HttpRequestException("No such host is known. (keep.azclegal.com:443)",
                                         new SocketException((int)SocketError.HostNotFound));
@@ -100,10 +114,11 @@ namespace AZCKeeper.Tests
         [Fact]
         public void Transient_topa_en_5_minutos()
         {
-            var policy = NewPolicy();
-            for (int i = 0; i < 20; i++) policy.Register(500, null);
+            var clock = new Clock(T0);
+            var policy = NewPolicy(clock);
+            for (int i = 0; i < 20; i++) FalloSecuencial(policy, clock, 500, null);
 
-            Assert.Equal(TimeSpan.FromSeconds(300), policy.BackoffUntilUtc - T0);
+            Assert.Equal(TimeSpan.FromSeconds(300), policy.BackoffUntilUtc - clock.Now);
             Assert.Equal(300.0, NetworkBackoffPolicy.TransientCapSeconds);
         }
 
@@ -111,25 +126,60 @@ namespace AZCKeeper.Tests
         public void Throttled_conserva_el_tope_largo_de_30_minutos()
         {
             // 403/429 = el hosting nos está rate-limiteando o baneando: ahí esperar SÍ es correcto.
-            var policy = NewPolicy();
-            for (int i = 0; i < 20; i++) policy.Register(429, null);
+            var clock = new Clock(T0);
+            var policy = NewPolicy(clock);
+            for (int i = 0; i < 20; i++) FalloSecuencial(policy, clock, 429, null);
 
-            Assert.Equal(TimeSpan.FromSeconds(1800), policy.BackoffUntilUtc - T0);
+            Assert.Equal(TimeSpan.FromSeconds(1800), policy.BackoffUntilUtc - clock.Now);
         }
 
         [Fact]
         public void Transient_escala_exponencial_desde_30s()
         {
-            var policy = NewPolicy();
+            var clock = new Clock(T0);
+            var policy = NewPolicy(clock);
 
-            policy.Register(500, null);
-            Assert.Equal(TimeSpan.FromSeconds(30), policy.BackoffUntilUtc - T0);
+            FalloSecuencial(policy, clock, 500, null);
+            Assert.Equal(TimeSpan.FromSeconds(30), policy.BackoffUntilUtc - clock.Now);
 
-            policy.Register(500, null);
-            Assert.Equal(TimeSpan.FromSeconds(60), policy.BackoffUntilUtc - T0);
+            FalloSecuencial(policy, clock, 500, null);
+            Assert.Equal(TimeSpan.FromSeconds(60), policy.BackoffUntilUtc - clock.Now);
 
-            policy.Register(500, null);
-            Assert.Equal(TimeSpan.FromSeconds(120), policy.BackoffUntilUtc - T0);
+            FalloSecuencial(policy, clock, 500, null);
+            Assert.Equal(TimeSpan.FromSeconds(120), policy.BackoffUntilUtc - clock.Now);
+        }
+
+        [Fact]
+        public void Fallos_concurrentes_de_la_misma_caida_cuentan_una_sola_vez()
+        {
+            // Regresión 2026-07-17: handshake/activity-day/window-episode salían casi a la vez
+            // y todos fallaban antes de que el primero fijara el backoff. Se veía "#1 #2 #3" en
+            // el mismo segundo y el backoff escalaba 3× (140s) por UNA sola caída.
+            var policy = NewPolicy();          // reloj fijo en T0: los tres fallan "a la vez"
+
+            policy.Register(0, ResetException());   // #1 fija el backoff
+            policy.Register(0, ResetException());   // straggler concurrente
+            policy.Register(0, ResetException());   // straggler concurrente
+
+            Assert.Equal(1, policy.ConsecutiveFailures);
+            Assert.Equal(TimeSpan.FromSeconds(NetworkBackoffPolicy.TransientBaseSeconds),
+                         policy.BackoffUntilUtc - T0);
+        }
+
+        [Fact]
+        public void Un_fallo_real_posterior_si_escala()
+        {
+            // El anti-race no debe tragarse un fallo REAL posterior (tras expirar el backoff).
+            var clock = new Clock(T0);
+            var policy = NewPolicy(clock);
+
+            policy.Register(500, null);                 // #1 → +30s
+            policy.Register(500, null);                 // straggler dentro de la ventana → ignorado
+            Assert.Equal(1, policy.ConsecutiveFailures);
+
+            clock.Now = policy.BackoffUntilUtc.AddSeconds(1);  // backoff expiró, siguiente intento real
+            policy.Register(500, null);                 // #2 real → +60s
+            Assert.Equal(2, policy.ConsecutiveFailures);
         }
 
         // ---------- Reset ----------
