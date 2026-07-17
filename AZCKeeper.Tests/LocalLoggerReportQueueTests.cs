@@ -11,7 +11,12 @@ namespace AZCKeeper.Tests
     [Collection("LocalLogger")]
     public class LocalLoggerReportQueueTests
     {
-        private static void Limpiar() => LocalLogger.DrainForReport(int.MaxValue);
+        private static void Limpiar()
+        {
+            LocalLogger.ResetReportStateForTests();
+            // Nivel por defecto para los tests que no lo fijan explícitamente.
+            LocalLogger.ConfigureLevels(LocalLogger.LogLevel.Info, null, false, false);
+        }
 
         [Fact]
         public void Warn_y_error_se_encolan_para_reporte()
@@ -111,10 +116,20 @@ namespace AZCKeeper.Tests
         public void Drenar_respeta_el_maximo()
         {
             Limpiar();
-            for (int i = 0; i < 10; i++) LocalLogger.Warn($"ApiClient: linea-{i}");
+            // Patrones distintos (sin dígitos) para no chocar con el cooldown.
+            for (int i = 0; i < 10; i++) LocalLogger.Warn($"ApiClient: item-{Alpha(i)}");
 
             Assert.Equal(4, LocalLogger.DrainForReport(4).Count);
             Assert.Equal(6, LocalLogger.PendingReportCount);
+        }
+
+        // Genera sufijos alfabéticos únicos (a, b, ... z, aa, ab, ...) que sobreviven a la
+        // normalización del cooldown (que solo quita dígitos).
+        private static string Alpha(int n)
+        {
+            var s = "";
+            for (n++; n > 0; n = (n - 1) / 26) s = (char)('a' + (n - 1) % 26) + s;
+            return s;
         }
 
         [Fact]
@@ -135,9 +150,65 @@ namespace AZCKeeper.Tests
         public void La_cola_esta_acotada()
         {
             Limpiar();
-            for (int i = 0; i < 500; i++) LocalLogger.Warn($"ApiClient: flood-{i}");
+            // Patrones distintos: prueba el tope de la cola, no el cooldown.
+            for (int i = 0; i < 500; i++) LocalLogger.Warn($"ApiClient: flood-{Alpha(i)}");
 
             Assert.True(LocalLogger.PendingReportCount <= 200);
+        }
+
+        [Fact]
+        public void Los_ecos_de_consecuencia_no_se_reportan_pero_la_raiz_si()
+        {
+            // Una caída de red produce la raíz + eco en cada capa. Al panel solo va la raíz.
+            Limpiar();
+
+            LocalLogger.Warn("ApiClient: fallo de red #1 (clase=Transient, status=0). Backoff 30s");
+            LocalLogger.Warn("OfflineQueue: payload encolado. Endpoint=client/window-episode");
+            LocalLogger.Warn("ApiClient: retry falló para item 3 (client/window-episode). Se reintentará.");
+            LocalLogger.Warn("CoreService.FlushWindowEpisodeBufferAsync(): batch falló, 5 episodios encolados.");
+            LocalLogger.Warn("ApiClient.SendActivityDayAsync(): red caída. Encolando...");
+
+            var batch = LocalLogger.DrainForReport(50);
+
+            Assert.Single(batch);
+            Assert.Contains("fallo de red", batch[0].Message);
+        }
+
+        [Fact]
+        public void Un_patron_repetido_se_reporta_una_sola_vez_en_la_ventana()
+        {
+            // La tormenta de reintentos ("fallo de red #1, #2, #3...") colapsa a una fila:
+            // los números se normalizan y el cooldown bloquea las repeticiones.
+            Limpiar();
+
+            for (int i = 1; i <= 20; i++)
+                LocalLogger.Warn($"ApiClient: fallo de red #{i} (clase=Transient, status=0). Backoff {i*30}s");
+
+            Assert.Single(LocalLogger.DrainForReport(50));
+        }
+
+        [Fact]
+        public void Patrones_distintos_no_se_deduplican()
+        {
+            Limpiar();
+
+            LocalLogger.Warn("AuthManager: token vencido");
+            LocalLogger.Warn("CoreService: horario laboral no aplicado");
+
+            Assert.Equal(2, LocalLogger.DrainForReport(50).Count);
+        }
+
+        [Fact]
+        public void Los_eventos_deliberados_de_update_no_se_deduplican_por_version()
+        {
+            // ReportEvent (update) NO pasa por el cooldown: dos versiones distintas normalizan
+            // al mismo patrón, pero son eventos deliberados y ambos deben verse.
+            Limpiar();
+
+            LocalLogger.ReportEvent(LocalLogger.LogLevel.Info, "update", "UpdateManager: al día en 3.0.2.8");
+            LocalLogger.ReportEvent(LocalLogger.LogLevel.Info, "update", "UpdateManager: al día en 3.0.3.0");
+
+            Assert.Equal(2, LocalLogger.DrainForReport(50).Count);
         }
 
         [Fact]

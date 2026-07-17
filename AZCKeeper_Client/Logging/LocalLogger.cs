@@ -66,6 +66,20 @@ namespace AZCKeeper_Cliente.Logging
         private static readonly System.Threading.AsyncLocal<bool> _suppressReport =
             new System.Threading.AsyncLocal<bool>();
 
+        // ---- Dedup del reporte al servidor ----
+        // Una sola caída de red genera decenas de líneas: la raíz ("fallo de red #N") más su
+        // eco en cada capa (cola encolada, retry falló, batch falló) repetido cada ciclo de
+        // reintento. Al panel solo interesa la señal. Dos filtros, aplicados SOLO a la captura
+        // automática de Warn/Error (los ReportEvent de update son deliberados y ya vienen
+        // throttleados por su emisor):
+        //   1) los ecos de consecuencia van solo al archivo local, no al panel;
+        //   2) el resto se deduplica por patrón normalizado dentro de una ventana.
+        private static readonly TimeSpan ReportCooldown = TimeSpan.FromMinutes(5);
+        private static readonly System.Collections.Generic.Dictionary<string, DateTime> _reportCooldown =
+            new System.Collections.Generic.Dictionary<string, DateTime>();
+        private static readonly object _cooldownLock = new object();
+        private static readonly Regex _rxDigits = new Regex(@"\d+", RegexOptions.Compiled);
+
         private static bool _enableFileLogging = true;
         private static bool _enableWebhookLogging = false;
 
@@ -203,7 +217,7 @@ namespace AZCKeeper_Cliente.Logging
                 while (_recentIssues.Count > RecentIssuesMax) _recentIssues.Dequeue();
             }
 
-            EnqueueForReport(level, InferSource(message), message);
+            EnqueueForReport(level, InferSource(message), message, autoCapture: true);
         }
 
         /// <summary>Últimos Warn/Error para diagnóstico en la ventana Debug (más reciente al final).</summary>
@@ -221,7 +235,7 @@ namespace AZCKeeper_Cliente.Logging
         /// </summary>
         public static void ReportEvent(LogLevel level, string source, string message)
         {
-            EnqueueForReport(level, source, message);
+            EnqueueForReport(level, source, message, autoCapture: false);
 
             // El reporte al servidor ignora el nivel; el archivo local no. Saltarse ShouldLog
             // aquí llenaba de líneas Info el log de una flota configurada en Warn.
@@ -229,10 +243,21 @@ namespace AZCKeeper_Cliente.Logging
             WriteLog(level, message);
         }
 
-        private static void EnqueueForReport(LogLevel level, string source, string message)
+        private static void EnqueueForReport(LogLevel level, string source, string message, bool autoCapture)
         {
             if (_suppressReport.Value) return;
             if (string.IsNullOrWhiteSpace(message)) return;
+
+            if (autoCapture)
+            {
+                // Eco de consecuencia: la caída ya la reporta "ApiClient: fallo de red #N".
+                // Estas líneas van al archivo local (forense) pero no al panel.
+                if (IsReportEcho(message)) return;
+
+                // Repetido reciente (mismo patrón normalizado): colapsa la tormenta de
+                // reintentos a una fila por ventana.
+                if (!PassesReportCooldown(level, message)) return;
+            }
 
             var entry = new ClientLogReport
             {
@@ -247,6 +272,55 @@ namespace AZCKeeper_Cliente.Logging
                 _reportQueue.Enqueue(entry);
                 while (_reportQueue.Count > ReportQueueMax) _reportQueue.Dequeue();
             }
+        }
+
+        /// <summary>
+        /// true si el mensaje es una consecuencia de un fallo de red ya reportado por la línea
+        /// raíz "ApiClient: fallo de red #N". No matchea la raíz (que dice "fallo de red").
+        /// </summary>
+        private static bool IsReportEcho(string message)
+        {
+            return Contiene(message, "payload encolado")
+                || Contiene(message, "retry falló")
+                || Contiene(message, "batch falló")
+                || Contiene(message, "Backoff de red activo")
+                || Contiene(message, "Encolando")
+                || Contiene(message, "error de red")
+                || Contiene(message, "red caída");
+        }
+
+        private static bool Contiene(string haystack, string needle)
+            => haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+
+        /// <summary>
+        /// Deja pasar el primer reporte de un patrón y bloquea las repeticiones dentro de la
+        /// ventana. El patrón se normaliza quitando dígitos: "fallo de red #1/#2/#3", "Count=2",
+        /// timestamps y demás colapsan al mismo patrón.
+        /// </summary>
+        private static bool PassesReportCooldown(LogLevel level, string message)
+        {
+            string key = level + "|" + _rxDigits.Replace(message, "N");
+            DateTime now = DateTime.UtcNow;
+
+            lock (_cooldownLock)
+            {
+                if (_reportCooldown.TryGetValue(key, out var last) && (now - last) < ReportCooldown)
+                    return false;
+
+                // Cardinalidad de patrones baja; si crece de más (mensajes con texto único),
+                // se vacía entero — es barato y raro.
+                if (_reportCooldown.Count > 200) _reportCooldown.Clear();
+
+                _reportCooldown[key] = now;
+                return true;
+            }
+        }
+
+        /// <summary>Reinicia cola y cooldown de reporte. Solo para tests (estado estático).</summary>
+        internal static void ResetReportStateForTests()
+        {
+            lock (_reportLock) { _reportQueue.Clear(); }
+            lock (_cooldownLock) { _reportCooldown.Clear(); }
         }
 
         /// <summary>
