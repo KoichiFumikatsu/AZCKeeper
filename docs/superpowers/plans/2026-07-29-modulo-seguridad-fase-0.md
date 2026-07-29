@@ -1086,7 +1086,7 @@ namespace AZCKeeper_Cliente.Security
 }
 ```
 
-- [ ] **Step 4: Correr el test y verificar que pasa**
+- [ ] **Step 5: Correr el test y verificar que pasa**
 
 ```bash
 dotnet test AZCKeeper.Tests/AZCKeeper.Tests.csproj --filter SecurityControlsTests
@@ -1101,7 +1101,7 @@ Esperado: 4 tests en verde.
 > </AssemblyAttribute>
 > ```
 
-- [ ] **Step 5: Escribir el lector del registro**
+- [ ] **Step 6: Escribir el lector del registro**
 
 Crear `AZCKeeper_Client/Security/SecurityStateReader.cs`:
 
@@ -1146,7 +1146,7 @@ namespace AZCKeeper_Cliente.Security
 }
 ```
 
-- [ ] **Step 6: Compilar**
+- [ ] **Step 7: Compilar**
 
 ```bash
 dotnet build AZCKeeper.sln
@@ -1154,10 +1154,10 @@ dotnet build AZCKeeper.sln
 
 Esperado: build sin errores.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add AZCKeeper_Client/Security/ AZCKeeper.Tests/SecurityControlsTests.cs
+git add AZCKeeper_Client/Contracts/ AZCKeeper_Client/Security/ AZCKeeper.Tests/SecurityControlsTests.cs
 git commit -m "feat(security): lector de solo-lectura del estado de controles en HKLM
 
 Catalogo de 19 controles del Modulo de Seguridad, evaluador puro y testeable,
