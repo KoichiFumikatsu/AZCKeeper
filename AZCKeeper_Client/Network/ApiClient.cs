@@ -650,10 +650,16 @@ namespace AZCKeeper_Cliente.Network
 
                 string json = JsonSerializer.Serialize(payload, _jsonOptions);
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
-                using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
+                using var httpRequest = CreateRequest(HttpMethod.Post, url, content);
 
                 using var response = await SendViaBackoffAsync(httpRequest).ConfigureAwait(false);
-                return response != null && response.IsSuccessStatusCode;
+                if (response == null || !response.IsSuccessStatusCode)
+                {
+                    LocalLogger.Warn($"ApiClient.ReportSecurityStateAsync(): respuesta no exitosa. HTTP {(response != null ? (int)response.StatusCode : 0)}.");
+                    return false;
+                }
+
+                return true;
             }
             catch (Exception ex)
             {

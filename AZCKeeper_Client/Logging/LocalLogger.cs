@@ -403,9 +403,13 @@ namespace AZCKeeper_Cliente.Logging
 
             if (prefijo.StartsWith("WebBlocking", StringComparison.OrdinalIgnoreCase) ||
                 prefijo.StartsWith("SystemProxyManager", StringComparison.OrdinalIgnoreCase) ||
-                prefijo.StartsWith("LocalPacServer", StringComparison.OrdinalIgnoreCase) ||
-                prefijo.StartsWith("PacContentBuilder", StringComparison.OrdinalIgnoreCase) ||
-                prefijo.StartsWith("KeyBlocker", StringComparison.OrdinalIgnoreCase))
+                prefijo.StartsWith("KeyBlocker", StringComparison.OrdinalIgnoreCase) ||
+                // No existe un bucket "security" en ClientLogRepo::SOURCES (backend PHP,
+                // no tocar desde aquí); un source no reconocido cae en "other" igual, así
+                // que en vez de inventar uno que el servidor reescribiría en silencio,
+                // agrupamos el módulo de auditoría de seguridad con su módulo hermano
+                // de enforcement/blocking en vez de dejarlo en la categoría genérica.
+                prefijo.StartsWith("SecurityStateReader", StringComparison.OrdinalIgnoreCase))
                 return "blocking";
 
             if (prefijo.StartsWith("AuthManager", StringComparison.OrdinalIgnoreCase))

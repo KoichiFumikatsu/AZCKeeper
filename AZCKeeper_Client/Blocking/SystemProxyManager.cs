@@ -25,18 +25,6 @@ namespace AZCKeeper_Cliente.Blocking
             _backupFilePath = Path.Combine(cacheDirectory, "system_proxy_backup.json");
         }
 
-        /// <summary>True si el AutoConfigURL actual es el PAC que servimos en el puerto dado.</summary>
-        public bool IsOurPacActive(int port)
-        {
-            try
-            {
-                using var key = Registry.CurrentUser.OpenSubKey(InternetSettingsPath, writable: false);
-                string url = key?.GetValue("AutoConfigURL", string.Empty)?.ToString() ?? string.Empty;
-                return url.Equals($"http://127.0.0.1:{port}/proxy.pac", StringComparison.OrdinalIgnoreCase);
-            }
-            catch { return false; }
-        }
-
         /// <summary>
         /// Habilita el PAC per-usuario apuntando a la URL indicada (http://127.0.0.1:port/proxy.pac).
         /// </summary>
@@ -123,6 +111,32 @@ namespace AZCKeeper_Cliente.Blocking
                 using var key = Registry.CurrentUser.OpenSubKey(InternetSettingsPath, writable: true);
                 if (key == null)
                     return;
+
+                // Solo restaurar si el estado actual sigue siendo el nuestro (mismo
+                // criterio que la red de seguridad de la rama sin backup, arriba).
+                // Este método ahora corre en CADA arranque (WebBlockingManager.Initialize),
+                // no solo en Shutdown: si el backup quedó viejo y el usuario/IT cambió la
+                // config de red desde entonces, sobreescribir incondicionalmente dejaría
+                // el equipo con un proxy/PAC muerto sin conexión, en los 251 equipos del
+                // rollout.
+                string currentAutoConfigUrl = key.GetValue("AutoConfigURL", string.Empty)?.ToString() ?? string.Empty;
+                string currentProxyServer = key.GetValue("ProxyServer", string.Empty)?.ToString() ?? string.Empty;
+                bool currentIsOurs =
+                    currentAutoConfigUrl.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    currentProxyServer.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                if (!currentIsOurs)
+                {
+                    LocalLogger.Info("SystemProxyManager: backup existente pero el estado actual no es nuestro; no se restaura para no pisar una configuración de red posterior. Se descarta el backup obsoleto.");
+
+                    // El backup ya no describe un estado al que valga la pena volver
+                    // (la config actual, ajena a nosotros, es más nueva). Conservarlo
+                    // solo arriesgaría a que un futuro Restore() lo aplique sobre un
+                    // tercer estado todavía más distinto. Se borra igual que en el
+                    // camino normal de abajo.
+                    try { File.Delete(_backupFilePath); } catch { }
+                    return;
+                }
 
                 key.SetValue("ProxyEnable", backup.ProxyEnable ? 1 : 0, RegistryValueKind.DWord);
                 key.SetValue("ProxyServer", backup.ProxyServer ?? string.Empty, RegistryValueKind.String);
