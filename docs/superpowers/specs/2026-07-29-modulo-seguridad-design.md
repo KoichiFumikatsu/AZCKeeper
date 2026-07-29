@@ -1,8 +1,8 @@
 # Módulo de Seguridad — Diseño
 
 **Fecha:** 2026-07-29
-**Estado:** diseño aprobado. Marco legal revisado por la gerencia jurídica (§11.1). Listo para plan de Fase 0
-**Rama:** `DevLinux`
+**Estado:** diseño aprobado. Marco legal revisado por la gerencia jurídica (§11.1). Trabajo en rama `feature/modulo-seguridad`; NO va a producción hasta tener todas las correcciones. Producción vigente: 3.0.3.2
+**Rama:** `feature/modulo-seguridad`
 
 ---
 
@@ -66,7 +66,7 @@ no cierran: ninguna política de Windows detiene la cámara de un teléfono.
 
 ## 3. Ground truth: cómo funciona hoy el motor de políticas
 
-Verificado leyendo el código en `DevLinux`, no asumido.
+Verificado leyendo el código en `fa88823` (base de la rama), no asumido.
 
 ### 3.1 Resolución
 

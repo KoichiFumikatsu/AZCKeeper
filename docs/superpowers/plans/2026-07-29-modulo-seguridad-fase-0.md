@@ -20,7 +20,12 @@
 - Regla del proyecto vigente desde 2026-05-08: cada parche requiere prueba de escritorio que confirme flujo y datos enviados/recibidos. Ningún hallazgo se cierra sin esa verificación.
 - Compilación del cliente: `dotnet build AZCKeeper.sln` en Windows. Tests: `dotnet test AZCKeeper.Tests/AZCKeeper.Tests.csproj`.
 - Commit por tarea completada, no acumular.
-- **Versión de release de este parche: `4.0.0.0`.** Es un major: retira el stack PAC, cambia la semántica del merge de políticas y estrena el Módulo de Seguridad. La versión anterior publicada es 3.0.2.8.
+- **Rama de trabajo: `feature/modulo-seguridad`.** NO `DevLinux`. Este trabajo no va a producción hasta
+  que estén todas las correcciones (saneamiento del núcleo y cambios del panel web).
+- **`4.0.0.0` es el número objetivo del release final, NO de este parche.** Se reserva para cuando el
+  conjunto completo esté listo. La versión vigente en producción es **3.0.3.2**.
+- El único build que sale de esta fase es un **demo interno**, para el equipo de Koichi y dos equipos más.
+  No se publica a la flota.
 
 ## Fuera de alcance de esta fase
 
