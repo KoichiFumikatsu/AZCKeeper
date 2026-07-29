@@ -11,6 +11,102 @@ orden de trabajo hasta 4.0.0.0. No sustituye al spec del Módulo de Seguridad
 
 ---
 
+## 0. Decisiones de encuadre (Koichi, 2026-07-29)
+
+Estas cuatro decisiones cambian el alcance y el orden del resto del documento. Se tomaron después de
+escribir el diagnóstico, así que **prevalecen sobre cualquier cosa que las contradiga más abajo.**
+
+**0.1 — Keeper 4 arranca con datos desde cero. El 3 pasa a ser historial.**
+No hay que preservar los datos actuales. Consecuencia mayor: **el saneamiento incluye el esquema.** Ya no
+hay que arrastrar los defectos estructurales de la base; se corrigen en el diseño, sin migración dolorosa:
+
+- `keeper_user_assignments`: un solo contrato de IDs, en vez del espacio ambiguo que hoy funciona por
+  coincidencia del seed (§6.1). Termina el riesgo de clasificar a la persona equivocada.
+- `keeper_window_episode`: índices correctos desde el diseño (ver 0.4 — es el sustrato del entregable
+  principal).
+- `keeper_activity_day`: replantear el `GREATEST` que es un trinquete monótono y que amplificó el doble
+  seed hasta hacerlo imborrable.
+- `keeper_focus_daily`: columna de cobertura, para que "no medido" no pueda disfrazarse de "medido con
+  buen resultado" (§3.3).
+- Borrar de raíz las tablas muertas: `keeper_module_catalog`, `keeper_device_locks`, `keeper_events`,
+  `keeper_daily_metrics`, `keeper_handshake_log`.
+
+Pendiente de definir: cómo queda el 3 como historial — base congelada de solo lectura, o export a un
+archivo consultable.
+
+**0.2 — El índice y el alcance de la corrupción quedan diferidos.** No se investiga el volumen del daño
+ni se corre `SHOW INDEX FROM keeper_user_assignments` por ahora: si los datos parten de cero, el alcance
+histórico es irrelevante y el índice se define en el esquema nuevo.
+
+**0.3 — La Fase A se parte en dos, y solo la mitad sigue urgente.**
+Partir de cero despriorizada los arreglos de datos: no tiene sentido detener una corrupción de datos que
+igual se van a borrar. Queda así:
+
+| Sigue urgente (independiente de los datos) | Se absorbe en el rediseño del esquema |
+|---|---|
+| A1 — PIN sin validar en `tryUnlock` | A2 — doble seed |
+| A5 — `requireModule` + `canViewUser` en `users.php` | A3 — focus fabricado |
+| A6 — `canDo` y scope en `policies.php` | A4 — `leisure_apps` vacío |
+| A7 — SSRF de `organization.php` | A8 — índice de `day_date` |
+
+**0.4 — Prioridad de producto #1: la vista de "qué hace cada persona".**
+El entregable que más importa es el visor de procesos y ventanas por empleado, integrado en el panel:
+buscador, filtros por franja horaria, proceso, usuario, equipo y llamada, estadísticas, orden, paginación
+y export CSV.
+
+Los requisitos ya están validados: el visor standalone entregado el 2026-07-10 se usó sobre 13.493
+episodios reales. No hay que descubrir la funcionalidad, hay que construirla sobre un esquema que la
+aguante.
+
+**Esta prioridad reordena el plan:** la vista se alimenta de `keeper_window_episode`, la tabla peor
+diseñada del sistema, hoy servida por `user-dashboard.php:319` sin `LIMIT` (~7.800 filas materializadas y
+embebidas dos veces). El rediseño del esquema de esa tabla **no es un trabajo paralelo: es el cimiento
+del entregable principal.** Se diseñan juntos.
+
+**Requisito de diseño derivado (no opcional):** esta vista es la que más expone `window_title`, el campo
+que puede contener nombres de casos, contrapartes y clientes de las firmas — el frente de secreto
+profesional del §11.1 del spec del módulo. El diseño debe resolver tres cosas explícitamente: quién puede
+ver títulos completos, si se enmascaran para roles no autorizados, y **auditar el acceso a la vista**
+(quién consultó la actividad de quién). Lo último no es burocracia: es lo que protege al responsable de TI.
+
+**0.5 — El sistema es multi-tenant por diseño: importa usuarios desde la BD del cliente.**
+Dato aportado por Koichi que no estaba en el diagnóstico. Existe un mecanismo parametrizable para que un
+cliente entregue sus usuarios sin capturarlos a mano: `keeper_data_sources` (host, puerto, base, usuario,
+contraseña cifrada, `source_type`) resuelto por `Db::sourceFor(int $firmaId)` (`Db.php:204-232`), con
+credenciales cifradas en AES-256-CBC usando `APP_KEY` del `.env` (`Db.php:235-273`), UI en
+`organization.php` y probador de conexión en `organization.php:186-213`.
+
+**Estado real: construido pero NO cableado.** `sourceFor()` no tiene ningún consumidor; solo se menciona
+en un comentario de `LegacySyncService.php:19`. Ventaja para Keeper 4: se completa bien desde el diseño en
+vez de parchear un flujo a medias.
+
+Cuatro consecuencias:
+
+1. **Reencuadre de A7.** El `test_connection` no es un bug accidental: es el probador de esta feature y la
+   capacidad es necesaria. **No se elimina, se rediseña**: POST en vez de GET, credenciales fuera del
+   query string, y bloqueo de rangos internos o lista blanca.
+
+2. **La traducción de IDs pasa de "corrección" a requisito estructural (eleva §6.1).** Si cada cliente
+   trae sus propios `area_id`, `cargo_id` y `firma_id` desde su propia base, esos espacios de
+   identificadores **colisionan entre clientes por definición**. Guardar el ID externo sin traducir
+   funciona con un solo tenant y por coincidencia; con dos clientes es incorrecto desde el primer día. El
+   esquema nuevo necesita correspondencia explícita **origen + identificador externo → identidad interna**.
+   Ya existe a medias: las columnas `legacy_*_id` de `keeper_areas`/`keeper_cargos` son ese mapeo para un
+   solo tenant. Generalizarlas a `source_id + external_id` es la evolución natural.
+
+3. **Custodia de credenciales de terceros.** `Db.php` mezcla hoy conexión, parseo de `.env`, criptografía
+   y dominio multi-tenant. Guardar credenciales de bases de datos de clientes merece pieza propia, con
+   rotación de llave contemplada. Verificado: `APP_KEY` vive en el `.env`, que está protegido por 403, y
+   **`web.zip` (público) NO contiene `.env` ni dumps ni claves** — 76 archivos de código, y `config.php`
+   son 29 líneas sin valores embebidos. Las credenciales de clientes **no** están comprometidas; el riesgo
+   de `web.zip` se limita a exposición de código fuente.
+
+4. **El esquema nuevo se diseña multi-tenant desde el principio**, no como parche, y el import desde
+   fuente externa es un flujo de primera clase con su propia auditoría (qué se importó, desde dónde,
+   cuándo, y qué se creó o actualizó).
+
+---
+
 ## 1. El requisito que gobierna todo
 
 En palabras de Koichi:
