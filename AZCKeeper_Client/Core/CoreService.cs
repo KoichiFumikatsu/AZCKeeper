@@ -40,6 +40,7 @@ namespace AZCKeeper_Cliente.Core
         private KeyBlocker _keyBlocker;        // bloqueo por política
         private WebBlockingManager _webBlockingManager; // política local de dominios
         private UpdateManager _updateManager;  // actualización automática
+        private Security.SecurityReportCache _securityReportCache; // omite el POST si el estado no cambió
 
         // --- UI ---
         private DebugWindowForm _debugWindow; // ventana de diagnóstico
@@ -789,9 +790,16 @@ namespace AZCKeeper_Cliente.Core
                 string deviceGuid = _configManager.CurrentConfig.DeviceId;
                 if (string.IsNullOrWhiteSpace(deviceGuid)) return;
 
-                var state = AZCKeeper_Cliente.Security.SecurityStateReader.Read();
-                _apiClient.ReportSecurityStateAsync(deviceGuid, agentPresent: false, controls: state)
-                          .GetAwaiter().GetResult();
+                var state = Security.SecurityStateReader.Read();
+                string hash = _securityReportCache.ComputeHash(state);
+                DateTime nowUtc = DateTime.UtcNow;
+
+                // Sin cambios y con el latido vigente: no gastar un POST.
+                if (!_securityReportCache.ShouldSend(hash, nowUtc)) return;
+
+                bool ok = _apiClient.ReportSecurityStateAsync(deviceGuid, agentPresent: false, controls: state)
+                                    .GetAwaiter().GetResult();
+                if (ok) _securityReportCache.MarkSent(hash, nowUtc);
             }
             catch (Exception ex)
             {
@@ -1019,6 +1027,9 @@ namespace AZCKeeper_Cliente.Core
             // -------------------- Hooks / Blocking / Debug --------------------
             // KeyboardHook y MouseHook eliminados - no son necesarios (ActivityTracker usa GetLastInputInfo)
             if (modulesConfig.EnableBlocking) _keyBlocker = new KeyBlocker(_apiClient);
+            _securityReportCache = new Security.SecurityReportCache(
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                             "AZCKeeper", "Cache"));
             _webBlockingManager = new WebBlockingManager();
             _webBlockingManager.Initialize(
                 _configManager.CurrentConfig.WebBlocking ?? new ConfigManager.WebBlockingConfig(),
