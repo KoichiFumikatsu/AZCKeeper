@@ -1172,8 +1172,12 @@ flota sin tocar ningun equipo."
 - Modify: `AZCKeeper_Client/Network/ApiClient.cs`
 
 **Interfaces:**
-- Consumes: `SecurityStateReader.Read()` de la Tarea 6; endpoint `POST /client/security/report` de la Tarea 4.
-- Produces: `ApiClient.ReportSecurityStateAsync(string deviceGuid, bool agentPresent, Dictionary<string, SecurityControlState> controls)` → `Task<bool>`.
+- Consumes: `AZCKeeper_Cliente.Security.SecurityStateReader.Read()` de la Tarea 6, que devuelve `Dictionary<string, AZCKeeper_Cliente.Contracts.SecurityControlState>`; endpoint `POST /client/security/report` de la Tarea 4.
+- Produces: `ApiClient.ReportSecurityStateAsync(string deviceGuid, bool agentPresent, Dictionary<string, AZCKeeper_Cliente.Contracts.SecurityControlState> controls)` → `Task<bool>`.
+
+> **Importante:** el tipo del diccionario es `Contracts.SecurityControlState`, **no** `Security.SecurityControlState`.
+> `ApiClient` debe importar `AZCKeeper_Cliente.Contracts` y **nunca** `AZCKeeper_Cliente.Security`. Ese es el
+> punto entero de haber creado `Contracts/` en la Tarea 6: `Network` no debe conocer módulos de negocio.
 
 - [ ] **Step 1: Agregar el método al ApiClient**
 
@@ -1183,7 +1187,7 @@ En `AZCKeeper_Client/Network/ApiClient.cs`, agregar el método siguiendo el patr
         public async Task<bool> ReportSecurityStateAsync(
             string deviceGuid,
             bool agentPresent,
-            Dictionary<string, AZCKeeper_Cliente.Security.SecurityControlState> controls)
+            Dictionary<string, AZCKeeper_Cliente.Contracts.SecurityControlState> controls)
         {
             try
             {
