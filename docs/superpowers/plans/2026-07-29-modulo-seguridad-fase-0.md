@@ -1183,28 +1183,56 @@ En `AZCKeeper_Client/Network/ApiClient.cs`, agregar el método siguiendo el patr
         }
 ```
 
-- [ ] **Step 2: Llamarlo tras el handshake**
+- [ ] **Step 2: Llamarlo al final del handshake**
 
-En `AZCKeeper_Client/Core/CoreService.cs`, dentro de `PerformHandshake`, después del bloque que aplica `effective.WebBlocking` (alrededor de la línea 609), agregar:
+> **Corrección aplicada tras la auditoría arquitectónica (2026-07-29).** La versión anterior de este paso
+> insertaba un `await` dentro de `PerformHandshake` alrededor de la línea 609. **Eso no compila:**
+> `PerformHandshake` es `private void`, no `async` (`CoreService.cs:452`), y no puede marcarse `async`
+> porque se invoca síncronamente desde `Start()`, `PrepareLoginUi` y dos closures de timer. Además, esa
+> ubicación metía una ida y vuelta de red en medio de la aplicación de configuración, retrasando los
+> bloques de Updates, Logging, Modules y Timers.
+>
+> El patrón correcto ya existe en el mismo archivo: `ReportPendingLogs()` se llama al final del handshake
+> (`CoreService.cs:744`), fire-and-forget, con `try/catch` que nunca rompe el flujo. Se calca ese patrón.
+
+En `AZCKeeper_Client/Core/CoreService.cs`, justo después de la llamada a `ReportPendingLogs()` en la
+línea 744, agregar:
 
 ```csharp
-                // Auditoria de solo-lectura: reporta que controles de seguridad existen
-                // hoy en HKLM. No aplica nada; el enforcement es de AZCKeeperAgent (Fase 1).
-                try
-                {
-                    var securityState = AZCKeeper_Cliente.Security.SecurityStateReader.Read();
-                    await _apiClient.ReportSecurityStateAsync(
-                        _configManager.CurrentConfig.DeviceId,
-                        agentPresent: false,
-                        controls: securityState).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    LocalLogger.Error(ex, "CoreService: error reportando estado de seguridad.");
-                }
+                ReportSecurityState();
 ```
 
-`CurrentConfig.DeviceId` es el GUID del dispositivo y está declarado en `ConfigManager.cs:341` como `public string DeviceId { get; set; }`. Es el mismo valor que el endpoint resuelve contra `keeper_devices.device_guid`.
+Y definir el método hermano junto a `ReportPendingLogs` (que está en la línea 757), síncrono por fuera
+como el resto del archivo:
+
+```csharp
+        /// <summary>
+        /// Auditoria de solo-lectura: reporta que controles de seguridad existen hoy en HKLM.
+        /// No aplica nada; el enforcement es de AZCKeeperAgent (Fase 1).
+        /// Nunca rompe el handshake: cualquier fallo se traga.
+        /// </summary>
+        private void ReportSecurityState()
+        {
+            try
+            {
+                string deviceGuid = _configManager.CurrentConfig.DeviceId;
+                if (string.IsNullOrWhiteSpace(deviceGuid)) return;
+
+                var state = AZCKeeper_Cliente.Security.SecurityStateReader.Read();
+                _apiClient.ReportSecurityStateAsync(deviceGuid, agentPresent: false, controls: state)
+                          .GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error reportando estado de seguridad.");
+            }
+        }
+```
+
+`CurrentConfig.DeviceId` es el GUID del dispositivo y está declarado en `ConfigManager.cs:341` como
+`public string DeviceId { get; set; }`. Es el mismo valor que el endpoint resuelve contra
+`keeper_devices.device_guid`. El `.GetAwaiter().GetResult()` es el patrón que ya usa `PerformHandshake`
+en las líneas 471-473 para llamar código async desde un método síncrono.
 
 - [ ] **Step 3: Compilar y correr todos los tests**
 
