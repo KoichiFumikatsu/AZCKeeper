@@ -26,9 +26,16 @@ namespace AZCKeeper_Cliente.Security
 
                     if (def.IsEnumeratedSubkey)
                     {
-                        // Subclave con valores "1".."n": se leen todos y se ordenan numericamente.
+                        // Subclave con valores "1".."n". El orden de GetValueNames() NO esta
+                        // garantizado, y ordenar importa por dos razones: la lista de politicas
+                        // Chromium esta numerada (el orden es semantico), y SecurityReportCache
+                        // hashea el string[] tal cual — un orden inestable produciria un hash
+                        // distinto sin que el estado haya cambiado, disparando POST inutiles.
+                        string[] nombres = key.GetValueNames();
+                        Array.Sort(nombres, CompararNombreNumerico);
+
                         var items = new List<string>();
-                        foreach (string name in key.GetValueNames())
+                        foreach (string name in nombres)
                         {
                             object v = key.GetValue(name);
                             if (v != null) items.Add(Convert.ToString(v));
@@ -48,6 +55,21 @@ namespace AZCKeeper_Cliente.Security
             }
 
             return SecurityControls.Evaluate(raw);
+        }
+
+        /// <summary>
+        /// Ordena "1","2","10" como numeros y no como texto (que daria "1","10","2").
+        /// Los nombres no numericos van al final, en orden ordinal.
+        /// </summary>
+        internal static int CompararNombreNumerico(string a, string b)
+        {
+            bool aEsNumero = int.TryParse(a, out int ia);
+            bool bEsNumero = int.TryParse(b, out int ib);
+
+            if (aEsNumero && bEsNumero) return ia.CompareTo(ib);
+            if (aEsNumero) return -1;
+            if (bEsNumero) return 1;
+            return string.CompareOrdinal(a, b);
         }
     }
 }
