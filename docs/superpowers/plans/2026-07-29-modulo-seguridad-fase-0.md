@@ -1208,10 +1208,21 @@ En `AZCKeeper_Client/Network/ApiClient.cs`, agregar el método siguiendo el patr
 
                 string json = JsonSerializer.Serialize(payload, _jsonOptions);
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
-                using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
+
+                // CreateRequest() es OBLIGATORIO: es lo unico que adjunta el token
+                // (Authorization: Bearer + el fallback X-Auth-Token que este hosting
+                // necesita porque no propaga Authorization a PHP). Construir el
+                // HttpRequestMessage a mano produce un 401 SILENCIOSO: 401 se clasifica
+                // como Success en NetworkBackoffPolicy, no lanza y no hace backoff.
+                using var httpRequest = CreateRequest(HttpMethod.Post, url, content);
 
                 using var response = await SendViaBackoffAsync(httpRequest).ConfigureAwait(false);
-                return response != null && response.IsSuccessStatusCode;
+                bool ok = response != null && response.IsSuccessStatusCode;
+                if (!ok)
+                {
+                    LocalLogger.Warn($"ApiClient.ReportSecurityStateAsync(): respuesta no exitosa. HTTP {(response != null ? (int)response.StatusCode : 0)}.");
+                }
+                return ok;
             }
             catch (Exception ex)
             {
