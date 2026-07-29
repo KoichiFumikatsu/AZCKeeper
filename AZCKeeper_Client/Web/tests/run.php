@@ -26,6 +26,10 @@ function suite(string $name): void {
 require_once __DIR__ . '/../src/PolicyService.php';
 require_once __DIR__ . '/PolicyServiceTest.php';
 
+require_once __DIR__ . '/../src/Repos/SecurityStateRepo.php';
+require_once __DIR__ . '/../src/Endpoints/SecurityReport.php';
+require_once __DIR__ . '/SecurityReportTest.php';
+
 echo "\n----------------------------------------\n";
 echo "PASS: {$GLOBALS['__tests_passed']}  FAIL: {$GLOBALS['__tests_failed']}\n";
 exit($GLOBALS['__tests_failed'] > 0 ? 1 : 0);

@@ -23,6 +23,19 @@ class SecurityReport
 {
     private const MAX_CONTROLS = 100;
 
+    /**
+     * Tope de longitud para cada clave y cada valor dentro de "controls". El
+     * catalogo real (ver SecurityStateReader del cliente) son 19 controles con
+     * forma {present: bool, value: int|string|null}: nombres de clave cortos y
+     * valores pequeños (version strings, codigos de estado). MAX_CONTROLS por si
+     * solo limita el NUMERO de claves de primer nivel, no su tamaño; un cliente
+     * comprometido podria meter strings enormes dentro de esas 100 claves y
+     * llenar la columna LONGTEXT. Truncar aca acota el tamaño maximo posible del
+     * payload serializado, con el mismo enfoque que ClientLogBatch::sanitize().
+     */
+    private const MAX_KEY_LEN   = 128;
+    private const MAX_VALUE_LEN = 512;
+
     public static function handle(): void
     {
         $sess   = AuthService::requireSession();
@@ -60,6 +73,8 @@ class SecurityReport
             Http::json(403, ['ok' => false, 'error' => 'Device revoked']);
         }
 
+        $controls = self::sanitizeControls($controls);
+
         try {
             $changed = SecurityStateRepo::upsert(
                 $pdo,
@@ -69,9 +84,52 @@ class SecurityReport
                 $controls
             );
             Http::json(200, ['ok' => true, 'changed' => $changed]);
+        } catch (\JsonException $e) {
+            // $controls ya fue saneado arriba, asi que esto solo dispara con UTF-8
+            // invalido dentro de un valor de string (p.ej. lectura corrupta del
+            // registro de Windows). No se llego a hashear ni a persistir nada.
+            error_log("SecurityReport JSON encode error (device={$deviceGuid}): " . $e->getMessage());
+            Http::json(400, ['ok' => false, 'error' => 'Invalid character encoding in controls payload']);
         } catch (\PDOException $e) {
             error_log("SecurityReport UPSERT error: " . $e->getMessage());
             Http::json(500, ['ok' => false, 'error' => 'Database write failed']);
         }
+    }
+
+    /**
+     * Trunca claves y valores anomalamente grandes antes de persistir. Mismo
+     * enfoque que ClientLogBatch::sanitize() (truncar en vez de rechazar el
+     * batch entero), adaptado a la forma {present, value} en vez de a un
+     * mensaje de log libre. Los valores fuera del contrato int|string|null
+     * (arrays/objetos anidados, floats) se descartan a null: el cliente legitimo
+     * nunca los produce, y persistirlos tal cual es lo que permite inflar la
+     * columna LONGTEXT.
+     */
+    private static function sanitizeControls(array $controls): array
+    {
+        $clean = [];
+
+        foreach ($controls as $key => $entry) {
+            $key = is_string($key) ? mb_substr($key, 0, self::MAX_KEY_LEN, 'UTF-8') : (string)$key;
+
+            if (!is_array($entry)) {
+                $clean[$key] = ['present' => false, 'value' => null];
+                continue;
+            }
+
+            $present = (bool)($entry['present'] ?? false);
+            $value   = $entry['value'] ?? null;
+
+            if (is_string($value)) {
+                $value = mb_substr($value, 0, self::MAX_VALUE_LEN, 'UTF-8');
+            } elseif (!is_int($value) && !is_bool($value) && $value !== null) {
+                // float, array, object: fuera de int|string|null -> anomalo, se descarta.
+                $value = null;
+            }
+
+            $clean[$key] = ['present' => $present, 'value' => $value];
+        }
+
+        return $clean;
     }
 }

@@ -8,9 +8,13 @@ class SecurityStateRepo {
   /**
    * UPSERT del estado de controles de un dispositivo.
    * Devuelve true si el hash cambio respecto al ultimo reporte.
+   *
+   * @throws \JsonException si $controls no se puede serializar (p.ej. UTF-8 invalido
+   *   proveniente de un valor de registro malformado). Nunca se persiste con el hash
+   *   o el JSON vacios que resultarian de ignorar un json_encode() fallido.
    */
   public static function upsert(PDO $pdo, int $userId, int $deviceId, bool $agentPresent, array $controls): bool {
-    $json = json_encode($controls, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $json = json_encode($controls, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     $hash = hash('sha256', $json);
 
     $st = $pdo->prepare("SELECT controls_hash FROM keeper_security_state WHERE device_id = :d LIMIT 1");
