@@ -1021,12 +1021,9 @@ namespace AZCKeeper_Cliente.Security
         }
     }
 
-    /// <summary>Estado observado de un control en el equipo.</summary>
-    internal sealed class SecurityControlState
-    {
-        public bool Present { get; set; }
-        public object Value { get; set; }
-    }
+    // NOTA: SecurityControlState NO se define aqui. Vive en Contracts/ (Step 3).
+    // Definirla tambien en Security/ dejaria a Contracts/ sin consumidores reales
+    // y anularia el proposito de la carpeta.
 
     /// <summary>
     /// Catalogo de controles del Modulo de Seguridad y evaluacion del estado leido.
