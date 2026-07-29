@@ -883,6 +883,7 @@ File.Move con overwrite (atomico)."
 Lee `HKLM\SOFTWARE\Policies` y produce el objeto `controls` del reporte. **Solo lectura**, que no requiere privilegio.
 
 **Files:**
+- Create: `AZCKeeper_Client/Contracts/SecurityControlState.cs`
 - Create: `AZCKeeper_Client/Security/SecurityControls.cs`
 - Create: `AZCKeeper_Client/Security/SecurityStateReader.cs`
 - Create: `AZCKeeper.Tests/SecurityControlsTests.cs`
@@ -890,11 +891,22 @@ Lee `HKLM\SOFTWARE\Policies` y produce el objeto `controls` del reporte. **Solo 
 **Interfaces:**
 - Consumes: nada.
 - Produces:
+  - `AZCKeeper_Cliente.Contracts.SecurityControlState` con `Present` (bool) y `Value` (object).
   - `AZCKeeper_Cliente.Security.SecurityControlDefinition` con `Key` (string), `RegistryPath` (string), `ValueName` (string).
   - `SecurityControls.All` — `IReadOnlyList<SecurityControlDefinition>`.
   - `SecurityControls.Evaluate(IReadOnlyDictionary<string, object> raw)` → `Dictionary<string, SecurityControlState>`, puro y testeable sin registro.
-  - `SecurityControlState` con `Present` (bool) y `Value` (object).
   - `SecurityStateReader.Read()` → `Dictionary<string, SecurityControlState>`, lee el registro real.
+
+> **Decisión arquitectónica (2026-07-29, tras la auditoría).** `SecurityControlState` es un contrato de
+> datos y va en `Contracts/`, **no** en `Security/`. Motivo: si viviera en `Security/`, `ApiClient` —que
+> está en `Network/` y hoy solo importa Auth, Config y Logging— tendría que importar `Security` para poder
+> enviarlo, creando una dependencia Network→Security en el nodo más central del cliente.
+>
+> `Contracts/` es una carpeta **sin dependencias de ningún módulo**: solo clases de datos. Es el primer
+> ladrillo de la capa que el sistema nunca tuvo, y la razón por la que hoy los 21 DTOs de `ApiClient`
+> viven dentro de `ApiClient` y los 8 de configuración dentro de `ConfigManager`. En Fase 1,
+> `AZCKeeperAgent` (proyecto separado, como `AZCKeeperUpdater`, que tiene cero `ProjectReference`) podrá
+> compartir estos contratos sin referenciar `AZCKeeper_Client` completo.
 
 - [ ] **Step 1: Escribir el test que falla**
 
@@ -960,12 +972,37 @@ dotnet test AZCKeeper.Tests/AZCKeeper.Tests.csproj --filter SecurityControlsTest
 
 Esperado: error de compilación, `SecurityControls` no existe.
 
-- [ ] **Step 3: Escribir el catálogo y el evaluador**
+- [ ] **Step 3: Crear el contrato de datos**
+
+Crear `AZCKeeper_Client/Contracts/SecurityControlState.cs`. Esta carpeta es nueva y **no debe importar
+ningún módulo del proyecto**: solo `System`.
+
+```csharp
+namespace AZCKeeper_Cliente.Contracts
+{
+    /// <summary>
+    /// Estado observado de un control de seguridad en el equipo.
+    ///
+    /// Vive en Contracts/ y no en Security/ a proposito: lo consumen tanto el modulo
+    /// Security (que lo produce) como Network/ApiClient (que lo envia). Si viviera en
+    /// Security/, ApiClient tendria que importar Security y se crearia una dependencia
+    /// entre modulos. Contracts/ no depende de nada.
+    /// </summary>
+    internal sealed class SecurityControlState
+    {
+        public bool Present { get; set; }
+        public object Value { get; set; }
+    }
+}
+```
+
+- [ ] **Step 4: Escribir el catálogo y el evaluador**
 
 Crear `AZCKeeper_Client/Security/SecurityControls.cs`:
 
 ```csharp
 using System.Collections.Generic;
+using AZCKeeper_Cliente.Contracts;
 
 namespace AZCKeeper_Cliente.Security
 {
