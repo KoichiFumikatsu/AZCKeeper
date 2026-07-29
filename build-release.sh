@@ -4,7 +4,7 @@
 # Equivalente a build-release.bat para Fumilinux.
 # Requisitos: dotnet-sdk-8.0, zip.
 # Uso: ./build-release.sh [version]
-#   Ej: ./build-release.sh 3.0.2.0
+#   Ej: ./build-release.sh 4.0.0.0
 # ════════════════════════════════════════════
 set -euo pipefail
 
@@ -13,7 +13,7 @@ set -euo pipefail
 export PATH="/home/kelsie/.dotnet:$PATH"
 export DOTNET_ROOT="/home/kelsie/.dotnet"
 
-VERSION="${1:-3.0.2.0}"
+VERSION="${1:-4.0.0.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$SCRIPT_DIR/build"
 CONFIG="Release"
