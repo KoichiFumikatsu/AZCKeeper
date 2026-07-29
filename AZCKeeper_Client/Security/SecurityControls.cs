@@ -50,7 +50,12 @@ namespace AZCKeeper_Cliente.Security
             new SecurityControlDefinition("edge.DeveloperToolsAvailability",    @"SOFTWARE\Policies\Microsoft\Edge", "DeveloperToolsAvailability"),
             new SecurityControlDefinition("edge.BrowserSignin",                 @"SOFTWARE\Policies\Microsoft\Edge", "BrowserSignin"),
             new SecurityControlDefinition("edge.SyncDisabled",                  @"SOFTWARE\Policies\Microsoft\Edge", "SyncDisabled"),
-            new SecurityControlDefinition("edge.IncognitoModeAvailability",     @"SOFTWARE\Policies\Microsoft\Edge", "IncognitoModeAvailability"),
+            // Edge NO usa IncognitoModeAvailability: Microsoft renombro este policy al portarlo
+            // de Chromium. El nombre real y soportado es InPrivateModeAvailability, en la misma
+            // ruta. Ponerle el nombre de Chrome haria que el control reporte Present=false
+            // siempre, aunque este configurado por GPO o Intune: un falso negativo silencioso.
+            // (URLBlocklist y ExtensionInstallBlocklist si conservan su nombre en Edge.)
+            new SecurityControlDefinition("edge.InPrivateModeAvailability",     @"SOFTWARE\Policies\Microsoft\Edge", "InPrivateModeAvailability"),
             new SecurityControlDefinition("edge.PrintingEnabled",               @"SOFTWARE\Policies\Microsoft\Edge", "PrintingEnabled"),
             new SecurityControlDefinition("edge.PasswordManagerEnabled",        @"SOFTWARE\Policies\Microsoft\Edge", "PasswordManagerEnabled"),
             new SecurityControlDefinition("edge.URLBlocklist",                  @"SOFTWARE\Policies\Microsoft\Edge\URLBlocklist", null, true),

@@ -1809,9 +1809,18 @@ del navegador más `\<NombreDeLaSubclave>`:
 
 Mantener sin cambios los seis controles de sistema y el de SRP que ya existen.
 
-> `IncognitoModeAvailability` es el nombre correcto en los tres navegadores basados en Chromium,
-> incluido Edge. La clave `InPrivateModeAvailability` que figuraba antes solo para Edge se retira del
-> catálogo para que los tres navegadores sean simétricos y el test de simetría pase.
+> **CORRECCIÓN (2026-07-29, tras el review de esta tarea).** La versión anterior de esta nota afirmaba
+> que `IncognitoModeAvailability` era el nombre correcto también en Edge. **Es falso.** Microsoft renombró
+> ese policy al portarlo de Chromium: en Edge se llama **`InPrivateModeAvailability`**, en la misma ruta
+> de registro. Usar el nombre de Chrome haría que el control reporte `Present=false` siempre, aunque esté
+> configurado por GPO o Intune — un falso negativo silencioso, justo lo que esta fase existe para evitar.
+>
+> El catálogo correcto es: Chrome y Brave usan `IncognitoModeAvailability`; **Edge usa
+> `InPrivateModeAvailability`**. `URLBlocklist`, `URLAllowlist`, `ExtensionInstallBlocklist` y
+> `ExtensionInstallAllowlist` sí conservan el mismo nombre en los tres.
+>
+> La simetría que exige el test es de **cantidad** de controles por navegador, no de nombres de valor,
+> así que el catálogo sigue siendo simétrico con el nombre correcto.
 
 - [ ] **Step 4: Enseñar al lector a leer subclaves enumeradas**
 
@@ -1942,7 +1951,7 @@ servidor, sanitizeControls() acepta listas de strings acotadas (200 elementos,
 
 ## Criterio de salida de la Fase 0
 
-- [ ] `php AZCKeeper_Client/Web/tests/run.php` → `PASS: 7  FAIL: 0`
+- [ ] `php AZCKeeper_Client/Web/tests/run.php` → sin fallos
 - [ ] `dotnet test AZCKeeper.Tests/AZCKeeper.Tests.csproj` → todo verde
 - [ ] `grep -rn "PacActive\|LocalPacServer\|PacContentBuilder" AZCKeeper_Client/ AZCKeeper.Tests/` → cero resultados
 - [ ] Política de usuario probada contra DEV sin heredar restos de la global
