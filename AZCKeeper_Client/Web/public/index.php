@@ -58,6 +58,7 @@ $routes = [
     '/client/event' => [Keeper\Endpoints\EventIngest::class, 'handle'],
     '/client/force-handshake' => [Keeper\Endpoints\ForceHandshake::class, 'handle'],
     '/client/re-enroll' => [Keeper\Endpoints\ClientReEnroll::class, 'handle'],
+    '/client/security/report' => [Keeper\Endpoints\SecurityReport::class, 'handle'],
     '/cron/productivity' => [Keeper\Endpoints\ProductivityCron::class, 'handle'],
   ],
 ];
