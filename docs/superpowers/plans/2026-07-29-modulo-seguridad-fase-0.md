@@ -20,6 +20,7 @@
 - Regla del proyecto vigente desde 2026-05-08: cada parche requiere prueba de escritorio que confirme flujo y datos enviados/recibidos. Ningún hallazgo se cierra sin esa verificación.
 - Compilación del cliente: `dotnet build AZCKeeper.sln` en Windows. Tests: `dotnet test AZCKeeper.Tests/AZCKeeper.Tests.csproj`.
 - Commit por tarea completada, no acumular.
+- **Versión de release de este parche: `4.0.0.0`.** Es un major: retira el stack PAC, cambia la semántica del merge de políticas y estrena el Módulo de Seguridad. La versión anterior publicada es 3.0.2.8.
 
 ## Fuera de alcance de esta fase
 
@@ -1226,6 +1227,77 @@ controles existen en la flota antes de desplegar AZCKeeperAgent."
 ```
 
 > **Prueba de escritorio requerida — es el cierre de la fase:** correr el build self-contained de `build/package` en un equipo real, confirmar en el log del cliente que el POST sale, y verificar la fila en `keeper_security_state` con los 19 controles y `agent_present=0`. Confirmar también que un segundo handshake devuelve `changed:false`.
+
+---
+
+## Task 8: Bump de versión a 4.0.0.0
+
+Va al final: el número de versión debe reflejar todo el código ya integrado.
+
+**Files:**
+- Modify: `build-release.bat:12`
+- Modify: `build-release.sh:16`
+
+**Interfaces:**
+- Consumes: todas las tareas anteriores integradas.
+- Produces: `build/AZCKeeper_v4.0.0.0.zip` al correr el builder sin argumentos.
+
+- [ ] **Step 1: Cambiar el default en el builder de Windows**
+
+En `build-release.bat`, línea 12, reemplazar:
+
+```bat
+if "%VERSION%"=="" set VERSION=3.0.2.0
+```
+
+por:
+
+```bat
+if "%VERSION%"=="" set VERSION=4.0.0.0
+```
+
+Actualizar también el ejemplo del comentario en la línea 10 para que diga `build-release.bat 4.0.0.1`.
+
+- [ ] **Step 2: Cambiar el default en el builder de Linux**
+
+En `build-release.sh`, línea 16, reemplazar:
+
+```sh
+VERSION="${1:-3.0.2.0}"
+```
+
+por:
+
+```sh
+VERSION="${1:-4.0.0.0}"
+```
+
+Actualizar también el ejemplo del comentario en la línea 7 para que diga `./build-release.sh 4.0.0.0`.
+
+- [ ] **Step 3: Construir y verificar la versión embebida**
+
+```bash
+./build-release.bat
+```
+
+Esperado: se genera `build/AZCKeeper_v4.0.0.0.zip`. Verificar el `FileVersion` embebido en el ejecutable publicado:
+
+```powershell
+(Get-Item build\package\AZCKeeper_Client.exe).VersionInfo.FileVersion
+```
+
+Esperado: `4.0.0.0`
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add build-release.bat build-release.sh
+git commit -m "chore: bump de version a 4.0.0.0
+
+Major: retira el stack PAC, cambia la semantica del merge de politicas
+(las listas se reemplazan) y estrena el Modulo de Seguridad. La version
+anterior publicada es 3.0.2.8."
+```
 
 ---
 
