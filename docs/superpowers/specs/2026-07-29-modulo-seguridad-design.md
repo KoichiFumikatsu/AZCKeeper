@@ -1,7 +1,7 @@
 # Módulo de Seguridad — Diseño
 
 **Fecha:** 2026-07-29
-**Estado:** diseño aprobado por secciones; pendiente sección legal (en manos de la gerencia jurídica)
+**Estado:** diseño aprobado. Marco legal revisado por la gerencia jurídica (§11.1). Listo para plan de Fase 0
 **Rama:** `DevLinux`
 
 ---
@@ -436,18 +436,61 @@ con vencimiento.
 
 ## 11. Fuera de alcance de este spec
 
-### 11.1 Marco legal y monitoreo de personal — DELEGADO
+### 11.1 Marco legal — REVISADO Y CONSIDERADO POR LA GERENCIA JURÍDICA (2026-07-29)
 
-En discusión con la gerencia jurídica al 2026-07-29. **No se implementa nada de esta sección hasta que
-haya definición.** Preguntas abiertas que la definición debe responder:
+El marco legal fue revisado y considerado por la gerencia jurídica. **No es un bloqueante para la
+implementación.**
 
-1. Aviso y consentimiento del personal para el endurecimiento y para el monitoreo ya existente.
-2. Proporcionalidad y finalidad del tratamiento bajo Ley 1581 de 2012.
-3. Situación de la captura actual de `window_title` sobre 103 personas monitoreadas (464.000 registros).
-   Este es un riesgo que corre en dirección contraria: endurecer el endpoint sin resolverlo deja
-   expuesta a la firma frente al empleado mientras se protege al cliente.
-4. Retención y acceso a los datos de auditoría del propio módulo.
-5. Obligaciones contractuales específicas de las firmas clientes.
+Lo que sigue es un recordatorio de verificación, no un dictamen: quien redacta este spec es el área de
+TI, no la jurídica. Sirve para contrastar que ningún frente quedó por fuera y para que el módulo se
+construya alineado a lo ya definido.
+
+#### Protección de datos personales — Ley 1581 de 2012 y Decreto 1074 de 2015
+
+| Asunto | Qué verificar |
+|---|---|
+| Autorización del titular | Previa, expresa e informada (art. 9). Cubre tanto al empleado monitoreado como a los titulares cuyos datos tratan los agentes |
+| Principio de finalidad | Los datos solo para lo informado (art. 4 lit. b y c). El módulo no debe habilitar usos nuevos no declarados |
+| Proporcionalidad y necesidad | El control debe ser el mínimo idóneo para el fin. Es el criterio que sostiene el endurecimiento ante una eventual queja |
+| Aviso de privacidad y política de tratamiento | Vigentes y publicados |
+| Derechos del titular | Conocer, actualizar, rectificar y revocar (art. 8): canal operativo disponible |
+| Registro Nacional de Bases de Datos | Verificar si AZC supera el umbral que obliga al registro ante la SIC |
+| Temporalidad y supresión | No conservar más allá de la finalidad. Aplica a `keeper_security_state` y a `keeper_window_episode`, que hoy acumula ~6,9 millones de filas **sin política de retención definida** |
+| Principio de seguridad | Art. 4 lit. g y arts. 17–18. Este módulo **apoya** el cumplimiento: es argumento a favor, no en contra |
+| Reporte de incidentes | Deber de informar a la SIC violaciones a los códigos de seguridad (art. 17 lit. n, art. 18 lit. k) |
+
+#### Rol frente a las firmas clientes
+
+AZC probablemente actúa como **Encargado del tratamiento** y cada firma como **Responsable**. Eso exige
+contrato de transmisión de datos con las cláusulas del art. 25 del Decreto 1377 de 2013 (hoy compilado
+en el Decreto 1074 de 2015). La auditoría de estado del módulo (§9) es evidencia útil para sustentar
+ante cada firma qué controles protegen su información.
+
+#### Monitoreo laboral
+
+| Asunto | Referencia |
+|---|---|
+| Poder subordinante del empleador | Art. 23 CST — habilita el control, no lo vuelve ilimitado |
+| Reglamento Interno de Trabajo | Arts. 104–125 CST: el monitoreo debe estar contemplado |
+| Información previa al trabajador | Debe saber qué se monitorea, cómo y para qué, antes de que ocurra |
+| Intimidad y correspondencia | Art. 15 C.P. Comunicaciones privadas y correo personal tienen protección reforzada; la línea jurisprudencial constitucional exige que el control sea previamente informado y proporcional |
+
+#### Los tres que suelen pasarse por alto
+
+**1. Secreto profesional del abogado.** Art. 74 C.P. y Ley 1123 de 2007. Los agentes manejan información
+de clientes de firmas de abogados, y `keeper_window_episode.window_title` captura títulos de ventana que
+pueden contener nombres de casos, contrapartes o clientes. Es información potencialmente amparada por
+secreto profesional almacenada en una base de datos operativa. Conviene confirmar el tratamiento
+específico de ese campo.
+
+**2. Transferencia internacional de datos.** Art. 26 Ley 1581. El backend de producción corre hoy en
+hosting compartido de un tercero (`server1872.mylogin.co`); si la infraestructura está fuera de Colombia,
+aplica el régimen de transferencia internacional. Verificar la ubicación real y si el país cuenta con
+nivel adecuado según la SIC, o si se requiere autorización o cláusulas contractuales.
+
+**3. Datos que el módulo crea y hoy no existen.** `keeper_security_state` registrará, por persona y por
+equipo, qué controles están aplicados y desde cuándo. Es información nueva sobre el empleado.
+Confirmado como considerado por la gerencia jurídica el 2026-07-29.
 
 ### 11.2 Controles físicos
 

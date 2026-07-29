@@ -34,3 +34,6 @@ Thumbs.db
 desktop.ini
 *~
 *.swp
+
+# Graphify — grafo de conocimiento generado (artefacto, se regenera con `graphify update .`)
+graphify-out/
