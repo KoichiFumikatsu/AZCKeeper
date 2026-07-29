@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -6,6 +7,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using AZCKeeper_Cliente.Auth;
 using AZCKeeper_Cliente.Config;
+using AZCKeeper_Cliente.Contracts;
 using AZCKeeper_Cliente.Logging;
 
 namespace AZCKeeper_Cliente.Network
@@ -614,6 +616,49 @@ namespace AZCKeeper_Cliente.Network
                     // Silencio deliberado: ver el comentario de arriba.
                     return false;
                 }
+            }
+        }
+
+        // -------------------- SEGURIDAD (AUDITORÍA DE SOLO LECTURA) --------------------
+
+        /// <summary>
+        /// Reporta a /client/security/report el estado observado de los controles de
+        /// seguridad leídos de HKLM (ver AZCKeeper_Cliente.Security.SecurityStateReader).
+        /// Solo lectura/auditoría: no aplica ninguna política.
+        /// </summary>
+        public async Task<bool> ReportSecurityStateAsync(
+            string deviceGuid,
+            bool agentPresent,
+            Dictionary<string, SecurityControlState> controls)
+        {
+            try
+            {
+                if (_httpClient.BaseAddress == null)
+                {
+                    LocalLogger.Warn("ApiClient.ReportSecurityStateAsync(): BaseAddress es null.");
+                    return false;
+                }
+
+                const string url = "client/security/report";
+
+                var payload = new
+                {
+                    deviceId = deviceGuid,
+                    agentPresent = agentPresent,
+                    controls = controls
+                };
+
+                string json = JsonSerializer.Serialize(payload, _jsonOptions);
+                using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
+
+                using var response = await SendViaBackoffAsync(httpRequest).ConfigureAwait(false);
+                return response != null && response.IsSuccessStatusCode;
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "ApiClient.ReportSecurityStateAsync(): error.");
+                return false;
             }
         }
 

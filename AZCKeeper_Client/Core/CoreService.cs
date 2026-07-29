@@ -742,6 +742,7 @@ namespace AZCKeeper_Cliente.Core
                 // agrega un timer. Si la red está mal, no llegamos hasta aquí y los logs
                 // esperan en el buffer.
                 ReportPendingLogs();
+                ReportSecurityState();
             }
             catch (Exception ex)
             {
@@ -773,6 +774,28 @@ namespace AZCKeeper_Cliente.Core
             catch
             {
                 // Nunca romper el handshake por el reporte de logs.
+            }
+        }
+
+        /// <summary>
+        /// Auditoria de solo-lectura: reporta que controles de seguridad existen hoy en HKLM.
+        /// No aplica nada; el enforcement es de AZCKeeperAgent (Fase 1).
+        /// Nunca rompe el handshake: cualquier fallo se traga.
+        /// </summary>
+        private void ReportSecurityState()
+        {
+            try
+            {
+                string deviceGuid = _configManager.CurrentConfig.DeviceId;
+                if (string.IsNullOrWhiteSpace(deviceGuid)) return;
+
+                var state = AZCKeeper_Cliente.Security.SecurityStateReader.Read();
+                _apiClient.ReportSecurityStateAsync(deviceGuid, agentPresent: false, controls: state)
+                          .GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error reportando estado de seguridad.");
             }
         }
 
