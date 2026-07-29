@@ -94,6 +94,12 @@ class ClientHandshake {
     $appliedId      = (int)$global['id'];
     $appliedVersion = (int)$global['version'];
 
+    $composition = [[
+      'scope'    => 'global',
+      'policyId' => (int)$global['id'],
+      'version'  => (int)$global['version'],
+    ]];
+
     if ($policies['user']) {
       $u = json_decode($policies['user']['policy_json'], true);
       if (is_array($u)) {
@@ -101,6 +107,11 @@ class ClientHandshake {
         $appliedScope   = 'user';
         $appliedId      = (int)$policies['user']['id'];
         $appliedVersion = (int)$policies['user']['version'];
+        $composition[]  = [
+          'scope'    => 'user',
+          'policyId' => (int)$policies['user']['id'],
+          'version'  => (int)$policies['user']['version'],
+        ];
       }
     }
 
@@ -111,6 +122,11 @@ class ClientHandshake {
         $appliedScope   = 'device';
         $appliedId      = (int)$policies['device']['id'];
         $appliedVersion = (int)$policies['device']['version'];
+        $composition[]  = [
+          'scope'    => 'device',
+          'policyId' => (int)$policies['device']['id'],
+          'version'  => (int)$policies['device']['version'],
+        ];
       }
     }
 
@@ -133,9 +149,10 @@ class ClientHandshake {
       'serverTimeUtc' => Http::nowUtcIso(),
       'displayName'   => $displayName,
       'policyApplied' => [
-        'scope'    => $appliedScope,
-        'policyId' => $appliedId,
-        'version'  => $appliedVersion,
+        'scope'       => $appliedScope,
+        'policyId'    => $appliedId,
+        'version'     => $appliedVersion,
+        'composition' => $composition,
       ],
       'effectiveConfig' => $effective,
       'workSchedule'    => $workSchedule,
