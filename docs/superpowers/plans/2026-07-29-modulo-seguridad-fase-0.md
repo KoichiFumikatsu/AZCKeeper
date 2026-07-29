@@ -1378,6 +1378,568 @@ anterior publicada es 3.0.2.8."
 
 ---
 
+## Task 9: Enviar el reporte solo cuando cambia
+
+Decisión de Koichi (2026-07-29) tras el review final. Hoy el reporte viaja en cada handshake: ~251 POST
+cada 5 minutos y ~72.000 UPSERT diarios inútiles contra el hosting compartido cuyo CSF/LFD ya baneó la
+IP de la oficina el 2026-07-08, dejando 110 equipos incomunicados. Los controles de un equipo no cambian
+casi nunca.
+
+**Files:**
+- Create: `AZCKeeper_Client/Security/SecurityReportCache.cs`
+- Modify: `AZCKeeper_Client/Core/CoreService.cs` (método `ReportSecurityState`)
+- Test: `AZCKeeper.Tests/SecurityReportCacheTests.cs`
+
+**Interfaces:**
+- Consumes: `SecurityStateReader.Read()`, `ApiClient.ReportSecurityStateAsync(...)`.
+- Produces: `SecurityReportCache` con `ComputeHash(IReadOnlyDictionary<string, SecurityControlState>) : string`,
+  `ShouldSend(string hash, DateTime nowUtc) : bool` y `MarkSent(string hash, DateTime nowUtc) : void`.
+
+- [ ] **Step 1: Escribir los tests que fallan**
+
+Crear `AZCKeeper.Tests/SecurityReportCacheTests.cs`:
+
+```csharp
+using System;
+using System.Collections.Generic;
+using AZCKeeper_Cliente.Contracts;
+using AZCKeeper_Cliente.Security;
+using Xunit;
+
+public class SecurityReportCacheTests
+{
+    private static Dictionary<string, SecurityControlState> Estado(int valor) =>
+        new Dictionary<string, SecurityControlState>
+        {
+            ["chrome.DownloadRestrictions"] = new SecurityControlState { Present = true, Value = valor }
+        };
+
+    [Fact]
+    public void ComputeHash_EsEstableParaElMismoEstado()
+    {
+        var c = new SecurityReportCache(null);
+        Assert.Equal(c.ComputeHash(Estado(3)), c.ComputeHash(Estado(3)));
+    }
+
+    [Fact]
+    public void ComputeHash_CambiaSiCambiaUnValor()
+    {
+        var c = new SecurityReportCache(null);
+        Assert.NotEqual(c.ComputeHash(Estado(3)), c.ComputeHash(Estado(4)));
+    }
+
+    [Fact]
+    public void ShouldSend_EsTrueLaPrimeraVez()
+    {
+        var c = new SecurityReportCache(null);
+        Assert.True(c.ShouldSend("abc", DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void ShouldSend_EsFalseSiElHashNoCambioYNoVencioElLatido()
+    {
+        var c = new SecurityReportCache(null);
+        var t0 = new DateTime(2026, 7, 29, 8, 0, 0, DateTimeKind.Utc);
+        c.MarkSent("abc", t0);
+        Assert.False(c.ShouldSend("abc", t0.AddHours(3)));
+    }
+
+    [Fact]
+    public void ShouldSend_EsTrueSiElHashCambio()
+    {
+        var c = new SecurityReportCache(null);
+        var t0 = new DateTime(2026, 7, 29, 8, 0, 0, DateTimeKind.Utc);
+        c.MarkSent("abc", t0);
+        Assert.True(c.ShouldSend("xyz", t0.AddMinutes(5)));
+    }
+
+    [Fact]
+    public void ShouldSend_EsTrueTrasVencerElLatidoAunqueNoCambie()
+    {
+        var c = new SecurityReportCache(null);
+        var t0 = new DateTime(2026, 7, 29, 8, 0, 0, DateTimeKind.Utc);
+        c.MarkSent("abc", t0);
+        Assert.True(c.ShouldSend("abc", t0.AddHours(25)));
+    }
+}
+```
+
+- [ ] **Step 2: Correr los tests y verificar que fallan**
+
+```bash
+dotnet test AZCKeeper.Tests/AZCKeeper.Tests.csproj --filter SecurityReportCacheTests
+```
+
+Esperado: error de compilación, `SecurityReportCache` no existe.
+
+- [ ] **Step 3: Implementar la caché**
+
+Crear `AZCKeeper_Client/Security/SecurityReportCache.cs`. El parámetro `cacheDirectory` acepta `null`
+para operar solo en memoria, que es lo que usan los tests.
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using AZCKeeper_Cliente.Contracts;
+using AZCKeeper_Cliente.Logging;
+
+namespace AZCKeeper_Cliente.Security
+{
+    /// <summary>
+    /// Evita reenviar el estado de seguridad cuando no cambio. Los controles de un equipo
+    /// son practicamente estaticos; sin esto el handshake arrastra un POST cada 300s por
+    /// equipo contra un hosting compartido que ya bloqueo la IP de la oficina por volumen.
+    /// Mantiene un latido: cada HeartbeatHours se reenvia aunque no haya cambios, para que
+    /// el panel distinga "sin cambios" de "equipo que dejo de reportar".
+    /// </summary>
+    internal sealed class SecurityReportCache
+    {
+        private const int HeartbeatHours = 24;
+
+        private readonly string _cacheFilePath;
+        private string _lastHash;
+        private DateTime _lastSentUtc = DateTime.MinValue;
+
+        public SecurityReportCache(string cacheDirectory)
+        {
+            if (!string.IsNullOrWhiteSpace(cacheDirectory))
+            {
+                _cacheFilePath = Path.Combine(cacheDirectory, "security_report_cache.json");
+                LoadFromDisk();
+            }
+        }
+
+        /// <summary>Hash estable del estado: ordena por clave para no depender del orden de lectura.</summary>
+        public string ComputeHash(IReadOnlyDictionary<string, SecurityControlState> controls)
+        {
+            var sb = new StringBuilder();
+            foreach (var kv in (controls ?? new Dictionary<string, SecurityControlState>())
+                     .OrderBy(k => k.Key, StringComparer.Ordinal))
+            {
+                sb.Append(kv.Key).Append('=')
+                  .Append(kv.Value?.Present == true ? '1' : '0').Append(':')
+                  .Append(FormatValue(kv.Value?.Value)).Append('\n');
+            }
+
+            using var sha = SHA256.Create();
+            return Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(sb.ToString())));
+        }
+
+        private static string FormatValue(object value)
+        {
+            if (value == null) return "";
+            if (value is string[] arr) return string.Join("|", arr);
+            return Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? "";
+        }
+
+        public bool ShouldSend(string hash, DateTime nowUtc)
+        {
+            if (_lastHash == null) return true;
+            if (!string.Equals(_lastHash, hash, StringComparison.Ordinal)) return true;
+            return (nowUtc - _lastSentUtc).TotalHours >= HeartbeatHours;
+        }
+
+        public void MarkSent(string hash, DateTime nowUtc)
+        {
+            _lastHash = hash;
+            _lastSentUtc = nowUtc;
+            SaveToDisk();
+        }
+
+        private void LoadFromDisk()
+        {
+            try
+            {
+                if (_cacheFilePath == null || !File.Exists(_cacheFilePath)) return;
+                string json = File.ReadAllText(_cacheFilePath);
+                if (string.IsNullOrWhiteSpace(json)) return;
+                var state = JsonSerializer.Deserialize<CacheState>(json);
+                if (state == null) return;
+                _lastHash = state.Hash;
+                if (DateTime.TryParse(state.LastSentUtc, null,
+                        System.Globalization.DateTimeStyles.RoundtripKind, out DateTime parsed))
+                {
+                    _lastSentUtc = parsed;
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "SecurityReportCache.LoadFromDisk(): error.");
+            }
+        }
+
+        private void SaveToDisk()
+        {
+            try
+            {
+                if (_cacheFilePath == null) return;
+                Directory.CreateDirectory(Path.GetDirectoryName(_cacheFilePath));
+                string json = JsonSerializer.Serialize(new CacheState
+                {
+                    Hash = _lastHash,
+                    LastSentUtc = _lastSentUtc.ToString("O")
+                });
+                string tmp = _cacheFilePath + ".tmp";
+                File.WriteAllText(tmp, json, Encoding.UTF8);
+                File.Move(tmp, _cacheFilePath, overwrite: true);
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "SecurityReportCache.SaveToDisk(): error.");
+            }
+        }
+
+        private sealed class CacheState
+        {
+            public string Hash { get; set; }
+            public string LastSentUtc { get; set; }
+        }
+    }
+}
+```
+
+- [ ] **Step 4: Correr los tests y verificar que pasan**
+
+```bash
+dotnet test AZCKeeper.Tests/AZCKeeper.Tests.csproj --filter SecurityReportCacheTests
+```
+
+Esperado: 6 tests en verde.
+
+- [ ] **Step 5: Cablearla en CoreService**
+
+En `AZCKeeper_Client/Core/CoreService.cs`, declarar el campo junto a los otros módulos:
+
+```csharp
+        private Security.SecurityReportCache _securityReportCache;
+```
+
+Inicializarlo en `InitializeModules()`, junto a donde se construye `_webBlockingManager`, usando el
+mismo directorio de caché que ya usa el cliente:
+
+```csharp
+            _securityReportCache = new Security.SecurityReportCache(
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                             "AZCKeeper", "Cache"));
+```
+
+Y reemplazar el cuerpo de `ReportSecurityState()` por:
+
+```csharp
+        private void ReportSecurityState()
+        {
+            try
+            {
+                string deviceGuid = _configManager.CurrentConfig.DeviceId;
+                if (string.IsNullOrWhiteSpace(deviceGuid)) return;
+
+                var state = Security.SecurityStateReader.Read();
+                string hash = _securityReportCache.ComputeHash(state);
+                DateTime nowUtc = DateTime.UtcNow;
+
+                // Sin cambios y con el latido vigente: no gastar un POST.
+                if (!_securityReportCache.ShouldSend(hash, nowUtc)) return;
+
+                bool ok = _apiClient.ReportSecurityStateAsync(deviceGuid, agentPresent: false, controls: state)
+                                    .GetAwaiter().GetResult();
+                if (ok) _securityReportCache.MarkSent(hash, nowUtc);
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: error reportando estado de seguridad.");
+            }
+        }
+```
+
+`MarkSent` solo se llama si el POST tuvo éxito: si falla, el siguiente handshake reintenta.
+
+- [ ] **Step 6: Compilar y correr toda la suite**
+
+```bash
+dotnet build AZCKeeper.sln
+dotnet test AZCKeeper.Tests/AZCKeeper.Tests.csproj
+```
+
+Esperado: build sin errores; todos los tests en verde.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add AZCKeeper_Client/Security/SecurityReportCache.cs AZCKeeper_Client/Core/CoreService.cs AZCKeeper.Tests/SecurityReportCacheTests.cs
+git commit -m "feat(security): enviar el reporte solo cuando cambia el estado
+
+El reporte viajaba en cada handshake: ~251 POST cada 5 min y ~72k UPSERT
+diarios inutiles contra el hosting compartido cuyo CSF/LFD ya baneo la IP de
+la oficina el 2026-07-08. Los controles de un equipo son casi estaticos.
+
+SecurityReportCache guarda el hash del ultimo estado enviado y omite el POST
+si no cambio, con latido de 24h para que el panel distinga 'sin cambios' de
+'equipo que dejo de reportar'. MarkSent solo se aplica si el POST tuvo exito."
+```
+
+---
+
+## Task 10: Extender el catálogo a subclaves enumeradas, Brave y Edge simétrico
+
+Decisión de Koichi (2026-07-29) tras el review final. El catálogo actual solo expresa valores planos, así
+que no puede leer `URLBlocklist`, `URLAllowlist`, `ExtensionInstallBlocklist` ni `ExtensionInstallAllowlist`
+— que son **subclaves con valores numerados `1..n`**, y son justo los controles que motivan la Fase 1.
+`ExtensionInstallBlocklist=*` es el que cierra el pendiente de VPN por extensión abierto desde 2026-06-18.
+
+**Files:**
+- Modify: `AZCKeeper_Client/Security/SecurityControls.cs`
+- Modify: `AZCKeeper_Client/Security/SecurityStateReader.cs`
+- Modify: `AZCKeeper_Client/Web/src/Endpoints/SecurityReport.php` (`sanitizeControls`)
+- Modify: `AZCKeeper.Tests/SecurityControlsTests.cs`
+- Modify: `AZCKeeper.Tests/SecurityReportContractTests.cs`
+
+**Interfaces:**
+- Produces: `SecurityControlDefinition` gana la propiedad `IsEnumeratedSubkey` (bool). Cuando es `true`,
+  `ValueName` es `null` y `RegistryPath` apunta a la subclave cuyos valores `1..n` se leen como lista.
+  `SecurityControlState.Value` pasa a admitir `string[]` además de `int`/`string`/`null`.
+
+- [ ] **Step 1: Escribir los tests que fallan**
+
+Añadir a `AZCKeeper.Tests/SecurityControlsTests.cs`:
+
+```csharp
+    [Fact]
+    public void All_IncluyeLosControlesDeListaQueMotivanLaFase1()
+    {
+        var claves = new HashSet<string>();
+        foreach (var c in SecurityControls.All) claves.Add(c.Key);
+
+        Assert.Contains("chrome.URLBlocklist", claves);
+        Assert.Contains("chrome.ExtensionInstallBlocklist", claves);
+        Assert.Contains("edge.URLBlocklist", claves);
+        Assert.Contains("brave.URLBlocklist", claves);
+    }
+
+    [Fact]
+    public void All_LosControlesDeListaSonSubclavesEnumeradas()
+    {
+        foreach (var c in SecurityControls.All)
+        {
+            bool esLista = c.Key.EndsWith("URLBlocklist") || c.Key.EndsWith("URLAllowlist")
+                        || c.Key.EndsWith("ExtensionInstallBlocklist") || c.Key.EndsWith("ExtensionInstallAllowlist");
+            Assert.Equal(esLista, c.IsEnumeratedSubkey);
+            if (c.IsEnumeratedSubkey) Assert.Null(c.ValueName);
+            else Assert.NotNull(c.ValueName);
+        }
+    }
+
+    [Fact]
+    public void All_CubreLosTresNavegadoresPorIgual()
+    {
+        var porNavegador = new Dictionary<string, int> { ["chrome."] = 0, ["edge."] = 0, ["brave."] = 0 };
+        foreach (var c in SecurityControls.All)
+            foreach (var p in new[] { "chrome.", "edge.", "brave." })
+                if (c.Key.StartsWith(p)) porNavegador[p]++;
+
+        Assert.Equal(porNavegador["chrome."], porNavegador["edge."]);
+        Assert.Equal(porNavegador["chrome."], porNavegador["brave."]);
+    }
+
+    [Fact]
+    public void Evaluate_ConservaUnValorDeLista()
+    {
+        var raw = new Dictionary<string, object>
+        {
+            ["chrome.URLBlocklist"] = new[] { "facebook.com", "x.com" }
+        };
+
+        var result = SecurityControls.Evaluate(raw);
+
+        Assert.True(result["chrome.URLBlocklist"].Present);
+        Assert.Equal(new[] { "facebook.com", "x.com" }, (string[])result["chrome.URLBlocklist"].Value);
+    }
+```
+
+- [ ] **Step 2: Correr los tests y verificar que fallan**
+
+```bash
+dotnet test AZCKeeper.Tests/AZCKeeper.Tests.csproj --filter SecurityControlsTests
+```
+
+Esperado: error de compilación (`IsEnumeratedSubkey` no existe) y fallos de contenido del catálogo.
+
+- [ ] **Step 3: Extender el contrato y el catálogo**
+
+En `AZCKeeper_Client/Security/SecurityControls.cs`, añadir la propiedad a la definición y un constructor
+que la acepte, conservando el existente para los valores planos:
+
+```csharp
+    internal sealed class SecurityControlDefinition
+    {
+        public string Key { get; }
+        public string RegistryPath { get; }
+        public string ValueName { get; }
+        /// <summary>true = RegistryPath es una subclave con valores "1".."n" que se leen como lista.</summary>
+        public bool IsEnumeratedSubkey { get; }
+
+        public SecurityControlDefinition(string key, string registryPath, string valueName)
+            : this(key, registryPath, valueName, false) { }
+
+        public SecurityControlDefinition(string key, string registryPath, string valueName, bool isEnumeratedSubkey)
+        {
+            Key = key;
+            RegistryPath = registryPath;
+            ValueName = valueName;
+            IsEnumeratedSubkey = isEnumeratedSubkey;
+        }
+    }
+```
+
+En el catálogo `All`, dejar los tres navegadores con el **mismo conjunto** de controles. Para cada uno de
+`chrome` (`SOFTWARE\Policies\Google\Chrome`), `edge` (`SOFTWARE\Policies\Microsoft\Edge`) y `brave`
+(`SOFTWARE\Policies\BraveSoftware\Brave`), incluir estos valores planos:
+
+`DownloadRestrictions`, `DeveloperToolsAvailability`, `BrowserSignin`, `SyncDisabled`,
+`IncognitoModeAvailability`, `PrintingEnabled`, `PasswordManagerEnabled`
+
+y estas cuatro subclaves enumeradas (`ValueName` en `null`, `isEnumeratedSubkey` en `true`), con la ruta
+del navegador más `\<NombreDeLaSubclave>`:
+
+`URLBlocklist`, `URLAllowlist`, `ExtensionInstallBlocklist`, `ExtensionInstallAllowlist`
+
+Mantener sin cambios los seis controles de sistema y el de SRP que ya existen.
+
+> `IncognitoModeAvailability` es el nombre correcto en los tres navegadores basados en Chromium,
+> incluido Edge. La clave `InPrivateModeAvailability` que figuraba antes solo para Edge se retira del
+> catálogo para que los tres navegadores sean simétricos y el test de simetría pase.
+
+- [ ] **Step 4: Enseñar al lector a leer subclaves enumeradas**
+
+En `AZCKeeper_Client/Security/SecurityStateReader.cs`, dentro del `foreach`, ramificar según el tipo de
+control. La lectura sigue siendo **solo lectura**: `writable: false` en todos los casos.
+
+```csharp
+                    using var key = Registry.LocalMachine.OpenSubKey(def.RegistryPath, writable: false);
+                    if (key == null) continue;
+
+                    if (def.IsEnumeratedSubkey)
+                    {
+                        // Subclave con valores "1".."n": se leen todos y se ordenan numericamente.
+                        var items = new List<string>();
+                        foreach (string name in key.GetValueNames())
+                        {
+                            object v = key.GetValue(name);
+                            if (v != null) items.Add(Convert.ToString(v));
+                        }
+                        if (items.Count > 0) raw[def.Key] = items.ToArray();
+                    }
+                    else
+                    {
+                        object value = key.GetValue(def.ValueName);
+                        if (value != null) raw[def.Key] = value;
+                    }
+```
+
+Añadir `using System.Collections.Generic;` si falta.
+
+- [ ] **Step 5: Correr los tests y verificar que pasan**
+
+```bash
+dotnet test AZCKeeper.Tests/AZCKeeper.Tests.csproj --filter SecurityControlsTests
+```
+
+Esperado: todos en verde.
+
+- [ ] **Step 6: Aceptar listas en el servidor**
+
+**Sin este paso las listas llegan vacías:** hoy `sanitizeControls()` descarta cualquier `value` que sea
+array, convirtiéndolo a `null`.
+
+En `AZCKeeper_Client/Web/src/Endpoints/SecurityReport.php`, dentro de `sanitizeControls()`, aceptar
+arrays de strings además de los tipos actuales, acotando tanto la cantidad de elementos como el largo de
+cada uno. Añadir junto a las otras constantes de la clase:
+
+```php
+    private const MAX_LIST_ITEMS = 200;
+```
+
+Y en la rama que hoy descarta los valores fuera de contrato, tratar el array antes de descartarlo:
+
+```php
+            } elseif (is_array($value)) {
+                // Subclaves enumeradas (URLBlocklist, ExtensionInstallBlocklist...): lista de strings.
+                $lista = [];
+                foreach ($value as $item) {
+                    if (!is_string($item)) continue;
+                    $lista[] = mb_substr($item, 0, self::MAX_VALUE_LEN, 'UTF-8');
+                    if (count($lista) >= self::MAX_LIST_ITEMS) break;
+                }
+                $value = $lista;
+            } elseif (!is_int($value) && !is_string($value) && $value !== null) {
+```
+
+Ajusta la estructura del `if/elseif` a como esté escrita realmente la función; lo vinculante es que un
+array de strings sobreviva acotado y que todo lo demás fuera de `int|string|null` siga descartándose.
+
+- [ ] **Step 7: Extender el test de contrato**
+
+En `AZCKeeper.Tests/SecurityReportContractTests.cs`, añadir un caso que serialice un control cuyo `Value`
+sea `string[]` y afirme que el JSON produce un array de strings:
+
+```csharp
+    [Fact]
+    public void Serializacion_DeUnaListaProduceArrayDeStrings()
+    {
+        var controls = new Dictionary<string, SecurityControlState>
+        {
+            ["chrome.URLBlocklist"] = new SecurityControlState
+            {
+                Present = true,
+                Value = new[] { "facebook.com", "x.com" }
+            }
+        };
+
+        string json = JsonSerializer.Serialize(controls, JsonOptionsIgualesAlApiClient());
+
+        Assert.Contains("\"chrome.URLBlocklist\"", json);
+        Assert.Contains("\"value\":[\"facebook.com\",\"x.com\"]", json);
+    }
+```
+
+Usa el mismo helper de opciones que ya tiene ese archivo de tests; si se llama distinto, ajusta el nombre.
+
+- [ ] **Step 8: Compilar, correr todo y verificar sintaxis PHP**
+
+```bash
+dotnet build AZCKeeper.sln
+dotnet test AZCKeeper.Tests/AZCKeeper.Tests.csproj
+php -l AZCKeeper_Client/Web/src/Endpoints/SecurityReport.php
+php AZCKeeper_Client/Web/tests/run.php
+```
+
+Esperado: build sin errores, todos los tests de C# en verde, `No syntax errors detected`, y el runner PHP
+sin fallos.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add AZCKeeper_Client/Security/ AZCKeeper_Client/Web/src/Endpoints/SecurityReport.php AZCKeeper.Tests/
+git commit -m "feat(security): catalogo con subclaves enumeradas, Brave y Edge simetrico
+
+El contrato SecurityControlDefinition(key, path, valueName) no podia expresar
+URLBlocklist, URLAllowlist, ExtensionInstallBlocklist ni ExtensionInstallAllowlist,
+que son subclaves con valores numerados 1..n. Son justo los controles que motivan
+la Fase 1: ExtensionInstallBlocklist=* cierra el pendiente de VPN por extension
+abierto desde 2026-06-18, y URLBlocklist es el enforcement central del modulo.
+
+Se agrega IsEnumeratedSubkey al contrato, el lector aprende a enumerar la subclave
+(sigue siendo solo lectura), se suma Brave y se simetriza Edge con Chrome. En el
+servidor, sanitizeControls() acepta listas de strings acotadas (200 elementos,
+512 chars cada uno); sin eso las listas llegaban vacias por el descarte de arrays."
+```
+
+---
+
 ## Criterio de salida de la Fase 0
 
 - [ ] `php AZCKeeper_Client/Web/tests/run.php` → `PASS: 7  FAIL: 0`
