@@ -24,8 +24,22 @@ namespace AZCKeeper_Cliente.Security
                     using var key = Registry.LocalMachine.OpenSubKey(def.RegistryPath, writable: false);
                     if (key == null) continue;
 
-                    object value = key.GetValue(def.ValueName);
-                    if (value != null) raw[def.Key] = value;
+                    if (def.IsEnumeratedSubkey)
+                    {
+                        // Subclave con valores "1".."n": se leen todos y se ordenan numericamente.
+                        var items = new List<string>();
+                        foreach (string name in key.GetValueNames())
+                        {
+                            object v = key.GetValue(name);
+                            if (v != null) items.Add(Convert.ToString(v));
+                        }
+                        if (items.Count > 0) raw[def.Key] = items.ToArray();
+                    }
+                    else
+                    {
+                        object value = key.GetValue(def.ValueName);
+                        if (value != null) raw[def.Key] = value;
+                    }
                 }
                 catch (Exception ex)
                 {

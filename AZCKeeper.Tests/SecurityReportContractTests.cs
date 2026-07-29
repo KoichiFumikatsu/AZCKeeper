@@ -84,5 +84,23 @@ namespace AZCKeeper.Tests
             Assert.True(entry.TryGetProperty("value", out var valueEl));
             Assert.Equal(JsonValueKind.Null, valueEl.ValueKind);
         }
+
+        [Fact]
+        public void Serializacion_DeUnaListaProduceArrayDeStrings()
+        {
+            var controls = new Dictionary<string, SecurityControlState>
+            {
+                ["chrome.URLBlocklist"] = new SecurityControlState
+                {
+                    Present = true,
+                    Value = new[] { "facebook.com", "x.com" }
+                }
+            };
+
+            string json = JsonSerializer.Serialize(controls, ApiClientJsonOptions);
+
+            Assert.Contains("\"chrome.URLBlocklist\"", json);
+            Assert.Contains("\"value\":[\"facebook.com\",\"x.com\"]", json);
+        }
     }
 }

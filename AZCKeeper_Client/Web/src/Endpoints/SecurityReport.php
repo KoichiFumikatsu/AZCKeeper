@@ -13,7 +13,7 @@ use Keeper\Repos\SecurityStateRepo;
  *   {
  *     "deviceId": "<guid>",
  *     "agentPresent": false,
- *     "controls": { "<clave>": { "present": bool, "value": <int|string|null> }, ... }
+ *     "controls": { "<clave>": { "present": bool, "value": <int|string|string[]|null> }, ... }
  *   }
  *
  * En Fase 0 el cliente solo LEE el registro; no aplica nada. agentPresent viaja
@@ -25,16 +25,19 @@ class SecurityReport
 
     /**
      * Tope de longitud para cada clave y cada valor dentro de "controls". El
-     * catalogo real (ver SecurityStateReader del cliente) son 19 controles con
-     * forma {present: bool, value: int|string|null}: nombres de clave cortos y
-     * valores pequeños (version strings, codigos de estado). MAX_CONTROLS por si
-     * solo limita el NUMERO de claves de primer nivel, no su tamaño; un cliente
-     * comprometido podria meter strings enormes dentro de esas 100 claves y
+     * catalogo real (ver SecurityControls del cliente) tiene forma
+     * {present: bool, value: int|string|string[]|null}: nombres de clave
+     * cortos, valores pequeños (version strings, codigos de estado) salvo las
+     * subclaves enumeradas (URLBlocklist, ExtensionInstallBlocklist...) que
+     * viajan como lista de strings. MAX_CONTROLS por si solo limita el NUMERO
+     * de claves de primer nivel, no su tamaño; un cliente comprometido podria
+     * meter strings enormes (o listas enormes) dentro de esas 100 claves y
      * llenar la columna LONGTEXT. Truncar aca acota el tamaño maximo posible del
      * payload serializado, con el mismo enfoque que ClientLogBatch::sanitize().
      */
     private const MAX_KEY_LEN   = 128;
     private const MAX_VALUE_LEN = 512;
+    private const MAX_LIST_ITEMS = 200;
 
     public static function handle(): void
     {
@@ -100,10 +103,13 @@ class SecurityReport
      * Trunca claves y valores anomalamente grandes antes de persistir. Mismo
      * enfoque que ClientLogBatch::sanitize() (truncar en vez de rechazar el
      * batch entero), adaptado a la forma {present, value} en vez de a un
-     * mensaje de log libre. Los valores fuera del contrato int|string|null
-     * (arrays/objetos anidados, floats) se descartan a null: el cliente legitimo
-     * nunca los produce, y persistirlos tal cual es lo que permite inflar la
-     * columna LONGTEXT.
+     * mensaje de log libre. El contrato es int|string|null|string[]: un array
+     * de strings (subclaves enumeradas como URLBlocklist o
+     * ExtensionInstallBlocklist) sobrevive acotado a MAX_LIST_ITEMS elementos
+     * de hasta MAX_VALUE_LEN caracteres cada uno. Todo lo demas fuera de ese
+     * contrato (objetos anidados, floats, arrays con elementos no-string) se
+     * descarta a null: el cliente legitimo nunca lo produce, y persistirlo tal
+     * cual es lo que permite inflar la columna LONGTEXT.
      */
     private static function sanitizeControls(array $controls): array
     {
@@ -122,8 +128,24 @@ class SecurityReport
 
             if (is_string($value)) {
                 $value = mb_substr($value, 0, self::MAX_VALUE_LEN, 'UTF-8');
+            } elseif (is_array($value) && array_values($value) === $value) {
+                // Lista secuencial (0..n-1): la forma real de las subclaves enumeradas
+                // (URLBlocklist, ExtensionInstallBlocklist...) tras json_decode. Se
+                // conserva acotada. array_values($value) === $value es el chequeo de
+                // "es lista" compatible con PHP 8.0 (array_is_list() es 8.1+); un array
+                // asociativo o anidado (el vector de ataque real: usar las 100 claves
+                // permitidas para meter estructuras enormes) NO pasa este chequeo y cae
+                // al descarte de abajo.
+                $lista = [];
+                foreach ($value as $item) {
+                    if (!is_string($item)) continue;
+                    $lista[] = mb_substr($item, 0, self::MAX_VALUE_LEN, 'UTF-8');
+                    if (count($lista) >= self::MAX_LIST_ITEMS) break;
+                }
+                $value = $lista;
             } elseif (!is_int($value) && !is_bool($value) && $value !== null) {
-                // float, array, object: fuera de int|string|null -> anomalo, se descarta.
+                // float, array asociativo/anidado, object: fuera de int|string|string[]|null
+                // -> anomalo, se descarta.
                 $value = null;
             }
 

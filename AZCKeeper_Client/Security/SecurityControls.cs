@@ -9,12 +9,18 @@ namespace AZCKeeper_Cliente.Security
         public string Key { get; }
         public string RegistryPath { get; }
         public string ValueName { get; }
+        /// <summary>true = RegistryPath es una subclave con valores "1".."n" que se leen como lista.</summary>
+        public bool IsEnumeratedSubkey { get; }
 
         public SecurityControlDefinition(string key, string registryPath, string valueName)
+            : this(key, registryPath, valueName, false) { }
+
+        public SecurityControlDefinition(string key, string registryPath, string valueName, bool isEnumeratedSubkey)
         {
             Key = key;
             RegistryPath = registryPath;
             ValueName = valueName;
+            IsEnumeratedSubkey = isEnumeratedSubkey;
         }
     }
 
@@ -34,13 +40,36 @@ namespace AZCKeeper_Cliente.Security
             new SecurityControlDefinition("chrome.IncognitoModeAvailability",   @"SOFTWARE\Policies\Google\Chrome", "IncognitoModeAvailability"),
             new SecurityControlDefinition("chrome.PrintingEnabled",             @"SOFTWARE\Policies\Google\Chrome", "PrintingEnabled"),
             new SecurityControlDefinition("chrome.PasswordManagerEnabled",      @"SOFTWARE\Policies\Google\Chrome", "PasswordManagerEnabled"),
+            new SecurityControlDefinition("chrome.URLBlocklist",                @"SOFTWARE\Policies\Google\Chrome\URLBlocklist", null, true),
+            new SecurityControlDefinition("chrome.URLAllowlist",                @"SOFTWARE\Policies\Google\Chrome\URLAllowlist", null, true),
+            new SecurityControlDefinition("chrome.ExtensionInstallBlocklist",   @"SOFTWARE\Policies\Google\Chrome\ExtensionInstallBlocklist", null, true),
+            new SecurityControlDefinition("chrome.ExtensionInstallAllowlist",   @"SOFTWARE\Policies\Google\Chrome\ExtensionInstallAllowlist", null, true),
 
             // Navegador — Edge
             new SecurityControlDefinition("edge.DownloadRestrictions",          @"SOFTWARE\Policies\Microsoft\Edge", "DownloadRestrictions"),
             new SecurityControlDefinition("edge.DeveloperToolsAvailability",    @"SOFTWARE\Policies\Microsoft\Edge", "DeveloperToolsAvailability"),
             new SecurityControlDefinition("edge.BrowserSignin",                 @"SOFTWARE\Policies\Microsoft\Edge", "BrowserSignin"),
             new SecurityControlDefinition("edge.SyncDisabled",                  @"SOFTWARE\Policies\Microsoft\Edge", "SyncDisabled"),
-            new SecurityControlDefinition("edge.InPrivateModeAvailability",     @"SOFTWARE\Policies\Microsoft\Edge", "InPrivateModeAvailability"),
+            new SecurityControlDefinition("edge.IncognitoModeAvailability",     @"SOFTWARE\Policies\Microsoft\Edge", "IncognitoModeAvailability"),
+            new SecurityControlDefinition("edge.PrintingEnabled",               @"SOFTWARE\Policies\Microsoft\Edge", "PrintingEnabled"),
+            new SecurityControlDefinition("edge.PasswordManagerEnabled",        @"SOFTWARE\Policies\Microsoft\Edge", "PasswordManagerEnabled"),
+            new SecurityControlDefinition("edge.URLBlocklist",                  @"SOFTWARE\Policies\Microsoft\Edge\URLBlocklist", null, true),
+            new SecurityControlDefinition("edge.URLAllowlist",                  @"SOFTWARE\Policies\Microsoft\Edge\URLAllowlist", null, true),
+            new SecurityControlDefinition("edge.ExtensionInstallBlocklist",     @"SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallBlocklist", null, true),
+            new SecurityControlDefinition("edge.ExtensionInstallAllowlist",     @"SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallAllowlist", null, true),
+
+            // Navegador — Brave
+            new SecurityControlDefinition("brave.DownloadRestrictions",         @"SOFTWARE\Policies\BraveSoftware\Brave", "DownloadRestrictions"),
+            new SecurityControlDefinition("brave.DeveloperToolsAvailability",   @"SOFTWARE\Policies\BraveSoftware\Brave", "DeveloperToolsAvailability"),
+            new SecurityControlDefinition("brave.BrowserSignin",                @"SOFTWARE\Policies\BraveSoftware\Brave", "BrowserSignin"),
+            new SecurityControlDefinition("brave.SyncDisabled",                 @"SOFTWARE\Policies\BraveSoftware\Brave", "SyncDisabled"),
+            new SecurityControlDefinition("brave.IncognitoModeAvailability",    @"SOFTWARE\Policies\BraveSoftware\Brave", "IncognitoModeAvailability"),
+            new SecurityControlDefinition("brave.PrintingEnabled",              @"SOFTWARE\Policies\BraveSoftware\Brave", "PrintingEnabled"),
+            new SecurityControlDefinition("brave.PasswordManagerEnabled",       @"SOFTWARE\Policies\BraveSoftware\Brave", "PasswordManagerEnabled"),
+            new SecurityControlDefinition("brave.URLBlocklist",                 @"SOFTWARE\Policies\BraveSoftware\Brave\URLBlocklist", null, true),
+            new SecurityControlDefinition("brave.URLAllowlist",                 @"SOFTWARE\Policies\BraveSoftware\Brave\URLAllowlist", null, true),
+            new SecurityControlDefinition("brave.ExtensionInstallBlocklist",    @"SOFTWARE\Policies\BraveSoftware\Brave\ExtensionInstallBlocklist", null, true),
+            new SecurityControlDefinition("brave.ExtensionInstallAllowlist",    @"SOFTWARE\Policies\BraveSoftware\Brave\ExtensionInstallAllowlist", null, true),
 
             // Sistema
             new SecurityControlDefinition("system.UsbStorStart",                @"SYSTEM\CurrentControlSet\Services\USBSTOR", "Start"),
