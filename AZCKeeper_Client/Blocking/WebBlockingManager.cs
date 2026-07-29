@@ -11,36 +11,27 @@ using Microsoft.Win32;
 namespace AZCKeeper_Cliente.Blocking
 {
     /// <summary>
-    /// Bloqueo web por PAC per-usuario (sin admin). Sirve un .pac local que manda los dominios
-    /// designados (+ subdominios) a un puerto muerto y deja todo lo demás DIRECT. Persiste la
-    /// última política para operar aunque la API no responda. Cierre limpio quita el PAC.
+    /// Cache de la politica de dominios recibida del backend.
+    ///
+    /// NO aplica bloqueo. Tres arquitecturas sin privilegio fallaron (hosts+proxy,
+    /// URLBlocklist en HKCU, PAC blackhole) y el PAC ademas falla ABIERTO: si el
+    /// servidor local no responde, WinInet navega directo sin avisar. El enforcement
+    /// pasa a AZCKeeperAgent (servicio elevado, Fase 1) via HKLM\SOFTWARE\Policies.
+    ///
+    /// Esta clase conserva la politica para el reporte de estado y limpia los
+    /// residuos que dejaron los intentos anteriores en los equipos ya desplegados.
     /// </summary>
     internal sealed class WebBlockingManager
     {
-        private static readonly string TracePath =
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AZCKeeper", "Logs", "webblocking-trace.log");
-
         private readonly string _cacheDirectory;
         private readonly string _cacheFilePath;
         private readonly SystemProxyManager _systemProxy;
-        private readonly LocalPacServer _pacServer;
 
         private WebBlockingCache _currentCache;
-
-        // Serializa la ruta de aplicación de política (Initialize/ApplyRemotePolicy/Shutdown):
-        // el timer de handshake puede reentrar y correr en paralelo, compitiendo por _currentCache,
-        // el archivo .tmp de SaveCacheToDisk y el check-then-write de BackupCurrentSettingsIfNeeded.
         private readonly object _applyLock = new object();
-
-        // Se pone en true al inicio de Shutdown() (dentro de _applyLock) para que un
-        // ApplyRemotePolicy en vuelo (timer.Elapsed que ya arrancó antes del Stop) no
-        // reaplique el PAC después de que Shutdown ya lo quitó.
-        private volatile bool _shuttingDown;
 
         public bool Enabled => _currentCache?.Enabled == true;
         public int DomainCount => _currentCache?.Domains?.Length ?? 0;
-        public int PacPort => _pacServer.Port;
-        public bool PacActive => Enabled && _pacServer.IsRunning && _systemProxy.IsOurPacActive(_pacServer.Port);
 
         public WebBlockingManager()
         {
@@ -48,18 +39,21 @@ namespace AZCKeeper_Cliente.Blocking
             _cacheDirectory = Path.Combine(appData, "AZCKeeper", "Cache");
             _cacheFilePath = Path.Combine(_cacheDirectory, "web_block_cache.json");
             _systemProxy = new SystemProxyManager(_cacheDirectory);
-            _pacServer = new LocalPacServer(_cacheDirectory);
         }
 
         public void Initialize(ConfigManager.WebBlockingConfig config, string apiBaseUrl)
         {
             lock (_applyLock)
             {
-                AppendTrace($"Initialize() Enabled={config?.Enabled}, Domains={(config?.Domains?.Length ?? 0)}");
-                CleanupLegacyUrlBlocklist(); // best-effort: borra residuo del intento URLBlocklist (3.0.2.5/2.6)
+                // Limpieza de residuos de los intentos previos en equipos ya desplegados.
+                // SystemProxyManager no expone MigrateAwayFromPac (se quito en 10f03cc y
+                // nunca se re-agrego); Restore() ya cubre este caso: si no hay backup,
+                // su red de seguridad limpia AutoConfigURL/ProxyServer apuntando a loopback.
+                CleanupLegacyUrlBlocklist();
+                try { _systemProxy.Restore(); } catch { }
 
                 _currentCache = LoadCacheFromDisk() ?? BuildCache(config, config?.PolicyVersion ?? 0);
-                ApplyLocalState(_currentCache, "startup");
+                LocalLogger.Info($"WebBlockingManager: politica cacheada. Enabled={_currentCache.Enabled}, Domains={_currentCache.Domains.Length}. Enforcement delegado a AZCKeeperAgent.");
             }
         }
 
@@ -67,9 +61,6 @@ namespace AZCKeeper_Cliente.Blocking
         {
             lock (_applyLock)
             {
-                if (_shuttingDown) return; // Shutdown ya quitó el PAC; no reaplicar en el cierre.
-
-                AppendTrace($"ApplyRemotePolicy() Enabled={config?.Enabled}, Domains={(config?.Domains?.Length ?? 0)}, PolicyVersion={policyVersion}");
                 var next = BuildCache(config, policyVersion);
 
                 bool unchanged = _currentCache != null &&
@@ -77,11 +68,11 @@ namespace AZCKeeper_Cliente.Blocking
                     string.Equals(_currentCache.DomainsHash ?? "", next.DomainsHash ?? "", StringComparison.OrdinalIgnoreCase) &&
                     _currentCache.Enabled == next.Enabled;
 
-                if (unchanged) { Reassert(_currentCache); return; }
+                if (unchanged) return;
 
                 SaveCacheToDisk(next);
                 _currentCache = next;
-                ApplyLocalState(_currentCache, "remote-policy");
+                LocalLogger.Info($"WebBlockingManager: politica actualizada. Version={next.PolicyVersion}, Domains={next.Domains.Length}");
             }
         }
 
@@ -89,60 +80,7 @@ namespace AZCKeeper_Cliente.Blocking
 
         public void Shutdown()
         {
-            lock (_applyLock)
-            {
-                _shuttingDown = true; // Bloquea cualquier ApplyRemotePolicy en vuelo que tomé el lock después.
-
-                // Cierre limpio: quitar el PAC para no dejar un AutoConfigURL colgado.
-                try { _pacServer.Stop(); } catch { }
-                try { _systemProxy.Restore(); } catch { }
-            }
-        }
-
-        private void ApplyLocalState(WebBlockingCache cache, string source)
-        {
-            AppendTrace($"ApplyLocalState() Source={source}, Enabled={cache?.Enabled}, Domains={(cache?.Domains?.Length ?? 0)}");
-            if (cache == null) return;
-            try
-            {
-                if (!cache.Enabled || cache.Domains.Length == 0)
-                {
-                    _pacServer.Stop();
-                    _systemProxy.Restore();
-                    LocalLogger.Info($"WebBlockingManager: bloqueo web deshabilitado ({source}).");
-                    return;
-                }
-
-                string pac = PacContentBuilder.Build(cache.Domains);
-                int port = _pacServer.StartOrUpdate(pac);
-                _systemProxy.EnablePac($"http://127.0.0.1:{port}/proxy.pac");
-                LocalLogger.Info($"WebBlockingManager: PAC aplicado ({source}). Port={port}, Domains={cache.Domains.Length}");
-            }
-            catch (Exception ex)
-            {
-                LocalLogger.Error(ex, $"WebBlockingManager: error aplicando política ({source}).");
-            }
-        }
-
-        // Re-aplicación silenciosa (anti-manipulación por handshake).
-        private void Reassert(WebBlockingCache cache)
-        {
-            try
-            {
-                if (cache == null || !cache.Enabled || cache.Domains.Length == 0)
-                {
-                    if (_pacServer.IsRunning) { _pacServer.Stop(); _systemProxy.Restore(); }
-                    return;
-                }
-                string pac = PacContentBuilder.Build(cache.Domains);
-                int port = _pacServer.StartOrUpdate(pac);
-                if (!_systemProxy.IsOurPacActive(port))
-                    _systemProxy.EnablePac($"http://127.0.0.1:{port}/proxy.pac");
-            }
-            catch (Exception ex)
-            {
-                LocalLogger.Error(ex, "WebBlockingManager.Reassert(): error.");
-            }
+            // Ya no hay PAC ni servidor local que detener.
         }
 
         private static void CleanupLegacyUrlBlocklist()
@@ -208,8 +146,9 @@ namespace AZCKeeper_Cliente.Blocking
                 string json = JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true });
                 string tmp = _cacheFilePath + ".tmp";
                 File.WriteAllText(tmp, json, Encoding.UTF8);
-                if (File.Exists(_cacheFilePath)) File.Delete(_cacheFilePath);
-                File.Move(tmp, _cacheFilePath);
+                // File.Move con overwrite es atomico; el delete-then-move anterior dejaba
+                // ventana sin archivo si el proceso moria entre ambas operaciones.
+                File.Move(tmp, _cacheFilePath, overwrite: true);
             }
             catch (Exception ex)
             {
@@ -222,16 +161,6 @@ namespace AZCKeeper_Cliente.Blocking
             using var sha = SHA256.Create();
             string joined = string.Join("\n", domains ?? Array.Empty<string>());
             return Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(joined)));
-        }
-
-        private static void AppendTrace(string message)
-        {
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(TracePath) ?? ".");
-                File.AppendAllText(TracePath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {message}{Environment.NewLine}");
-            }
-            catch { }
         }
 
         private sealed class WebBlockingCache

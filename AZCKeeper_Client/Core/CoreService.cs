@@ -797,7 +797,6 @@ namespace AZCKeeper_Cliente.Core
                 RecentIssues = AZCKeeper_Cliente.Logging.LocalLogger.GetRecentIssues(),
                 WebBlockEnabled = _webBlockingManager?.Enabled ?? false,
                 WebBlockDomains = _webBlockingManager?.DomainCount ?? 0,
-                PacActive = _webBlockingManager?.PacActive ?? false,
                 DeviceId = cfg?.DeviceId ?? "—",
                 UserName = cfg?.UserDisplayName ?? "—",
                 HasToken = _authManager?.HasToken ?? false,

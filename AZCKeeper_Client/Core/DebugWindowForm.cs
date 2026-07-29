@@ -107,7 +107,7 @@ namespace AZCKeeper_Cliente.Core
                 $"  pendientes: {s.QueuePending}",
                 "",
                 "— Web-blocking / Auth —",
-                $"  bloqueo:    {ok(s.WebBlockEnabled)}   dominios: {s.WebBlockDomains}   PAC activo: {ok(s.PacActive)}",
+                $"  bloqueo:    {ok(s.WebBlockEnabled)}   dominios: {s.WebBlockDomains}",
                 $"  device:     {s.DeviceId}",
                 $"  usuario:    {s.UserName}   token: {ok(s.HasToken)}",
             });

@@ -24,7 +24,6 @@ namespace AZCKeeper_Cliente.Core
         // Web-blocking + Auth
         public bool WebBlockEnabled;
         public int WebBlockDomains;
-        public bool PacActive;
         public string DeviceId;
         public string UserName;
         public bool HasToken;
