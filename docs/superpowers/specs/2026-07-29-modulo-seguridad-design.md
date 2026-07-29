@@ -388,12 +388,22 @@ confirme flujo, datos enviados y recibidos; ningún hallazgo se cierra sin esa v
 | 1 | Listas se reemplazan, no se mezclan por índice | `PolicyService.php` | **Bloqueante** (§4.1) |
 | 2 | Retirar el stack PAC | `WebBlockingManager`, `SystemProxyManager`, `LocalPacServer` | No funciona y falla abierto (§4.2) |
 | 3 | Reportar estado aplicado | Cliente + endpoint nuevo | Elimina la falla silenciosa (§4.3) |
-| 4 | Mover instalación a `%ProgramFiles%` | `install.bat` | Requisito de SRP; protege el cliente |
-| 5 | Composición completa en `policyApplied` | `ClientHandshake.php` | Auditoría por persona |
-| 6 | Minors ya documentados en `progress.md` | varios | xUnit1031, fugas en `LocalPacServer`, `SaveCacheToDisk` no atómico |
+| 4 | Composición completa en `policyApplied` | `ClientHandshake.php` | Auditoría por persona |
+| 5 | Minors ya documentados en `progress.md` | varios | Los de `LocalPacServer` y `SaveCacheToDisk` se resuelven por eliminación al retirar el PAC |
 
-**Criterio de salida:** tests xUnit en verde en `AZCKeeper.Tests` cubriendo el merge de listas, y política
-de usuario probada contra DEV sin heredar restos de la global. Cero equipos tocados.
+**Entregable propio de la fase:** auditoría de **solo lectura**. El cliente lee
+`HKLM\SOFTWARE\Policies` —leer no requiere privilegio— y reporta qué controles existen hoy en cada
+equipo. Da inventario real de la flota antes de aplicar nada.
+
+**Criterio de salida:** tests xUnit en verde en `AZCKeeper.Tests` cubriendo el merge de listas, política
+de usuario probada contra DEV sin heredar restos de la global, y al menos un equipo reportando estado en
+`keeper_security_state`. Cero equipos con política aplicada.
+
+> **Corrección al alcance (2026-07-29, al escribir el plan):** mover la instalación a `%ProgramFiles%`
+> figuraba en esta fase y es incorrecto. `install.bat:22-25` instala en `%LOCALAPPDATA%\AZCKeeper\app` y
+> `AZCKeeperUpdater` copia ahí sin privilegio; mover la ruta rompe el auto-update de los 251 equipos hasta
+> que exista el servicio elevado que pueda escribir en `%ProgramFiles%`. **Se traslada a Fase 1**, donde
+> el servicio la habilita.
 
 ### Fase 1 — Piloto técnico (2–3 equipos, modo auditoría)
 
@@ -427,7 +437,9 @@ siguiente.
 
 ### Fase 5 — Sistema y SRP
 
-USB, nube personal, UAC y finalmente SRP contra la lista blanca de la Fase 2.
+USB, nube personal, UAC y finalmente SRP contra la lista blanca de la Fase 2. La migración de la
+instalación a `%ProgramFiles%` debe estar hecha en Fase 1 antes de llegar aquí; de lo contrario SRP
+mata al propio cliente.
 
 **Criterio de salida:** cobertura al 100% en `security-coverage.php`, con las excepciones justificadas y
 con vencimiento.
