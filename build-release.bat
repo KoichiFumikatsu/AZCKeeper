@@ -7,9 +7,9 @@ echo   AZCKeeper Build Script v2.0
 echo   Update Package (Framework-Dependent)
 echo ========================================
 
-:: VERSION: pasar como argumento (build-release.bat 4.0.0.1) o usar el default de abajo.
+:: VERSION: pasar como argumento (build-release.bat 3.9.0.1) o usar el default de abajo.
 set VERSION=%~1
-if "%VERSION%"=="" set VERSION=4.0.0.0
+if "%VERSION%"=="" set VERSION=3.9.0.0
 set BUILD_DIR=%~dp0build
 set CONFIG=Release
 set RUNTIME=win-x64

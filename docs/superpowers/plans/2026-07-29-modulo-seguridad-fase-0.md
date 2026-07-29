@@ -22,10 +22,12 @@
 - Commit por tarea completada, no acumular.
 - **Rama de trabajo: `feature/modulo-seguridad`.** NO `DevLinux`. Este trabajo no va a producción hasta
   que estén todas las correcciones (saneamiento del núcleo y cambios del panel web).
+- **Versión del build de esta fase: `3.9.0.0` — es un DEMO INTERNO** para el equipo de Koichi y dos
+  equipos más. No se publica a la flota.
 - **`4.0.0.0` es el número objetivo del release final, NO de este parche.** Se reserva para cuando el
-  conjunto completo esté listo. La versión vigente en producción es **3.0.3.2**.
-- El único build que sale de esta fase es un **demo interno**, para el equipo de Koichi y dos equipos más.
-  No se publica a la flota.
+  conjunto completo esté listo (incluye el saneamiento del núcleo y los cambios del panel web).
+- La versión vigente en producción es **3.0.3.2**. La serie `3.9.x` queda por encima de producción —para
+  que el updater la tome como upgrade en los equipos de prueba— y por debajo de `4.0.0.0`.
 
 ## Fuera de alcance de esta fase
 
@@ -1312,7 +1314,7 @@ controles existen en la flota antes de desplegar AZCKeeperAgent."
 
 ---
 
-## Task 8: Bump de versión a 4.0.0.0
+## Task 8: Bump de versión a 3.9.0.0 (demo interno)
 
 Va al final: el número de versión debe reflejar todo el código ya integrado.
 
@@ -1958,6 +1960,7 @@ servidor, sanitizeControls() acepta listas de strings acotadas (200 elementos,
 
 - [ ] `php AZCKeeper_Client/Web/tests/run.php` → sin fallos
 - [ ] `dotnet test AZCKeeper.Tests/AZCKeeper.Tests.csproj` → todo verde
+- [ ] Version embebida = `3.9.0.0` (demo interno; 4.0.0.0 se reserva para el release final)
 - [ ] `grep -rn "PacActive\|LocalPacServer\|PacContentBuilder" AZCKeeper_Client/ AZCKeeper.Tests/` → cero resultados
 - [ ] Política de usuario probada contra DEV sin heredar restos de la global
 - [ ] `keeper_security_state` con al menos una fila real reportada desde un equipo
