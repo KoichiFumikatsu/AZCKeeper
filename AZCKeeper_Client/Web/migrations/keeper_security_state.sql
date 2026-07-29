@@ -14,4 +14,4 @@ CREATE TABLE IF NOT EXISTS keeper_security_state (
   UNIQUE KEY uq_security_state_device (device_id),
   KEY ix_security_state_reported (reported_at),
   KEY ix_security_state_user (user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
