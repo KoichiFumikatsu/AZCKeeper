@@ -22,15 +22,30 @@ internal static class Program
     private static ResidentHost? _resident;
     private static CancellationTokenSource? _cts;
 
+    // Bajo WinExe no hay consola; para el modo --once diagnostico nos enganchamos a la del
+    // proceso padre (la terminal desde la que se lanzó) para que se vean los mensajes.
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool AttachConsole(int dwProcessId);
+    private const int AttachParentProcess = -1;
+
     [STAThread]
     private static int Main(string[] args)
     {
+        bool once = args.Contains("--once");
+        bool noInstall = once || args.Contains("--no-install");
+        if (once) AttachConsole(AttachParentProcess);
+
+        // Auto-instalación per-user (ANTES del mutex, para que la copia instalada sea la que
+        // obtenga el mutex, no esta). Si el exe corre desde fuera del dir de instalación
+        // (descarga/USB), se copia a %APPDATA%\AZCKeeper4\app, registra el arranque y relanza
+        // la copia instalada. En dev se salta con --no-install/--once.
+        if (!noInstall && TrySelfInstall()) return 0;
+
         // Instancia única. Nombre DISTINTO al de K3 ("AZCKeeper_Cliente_SingleInstance")
         // para que producción 3.0.3.2 y K4 puedan coexistir durante la migración.
         using var mutex = new Mutex(initiallyOwned: true, @"Local\AZCKeeper_K4_SingleInstance", out bool isNew);
         if (!isNew) return 0; // ya hay una instancia corriendo
 
-        bool once = args.Contains("--once");
         var positional = args.Where(a => !a.StartsWith("--", StringComparison.Ordinal)).ToArray();
 
         // Config + identidad estable del equipo.
@@ -107,6 +122,39 @@ internal static class Program
         Shutdown(); // por si Application.Run retornó sin pasar por ProcessExit
         GC.KeepAlive(mutex);
         return 0;
+    }
+
+    /// <summary>
+    /// Si el exe corre desde fuera del dir de instalación, se instala per-user y relanza la
+    /// copia instalada. Devuelve true si instaló (el caller debe salir). Si algo falla,
+    /// devuelve false para seguir corriendo en el sitio actual — mejor eso que no arrancar.
+    /// </summary>
+    private static bool TrySelfInstall()
+    {
+        try
+        {
+            var current = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(current)) return false;
+            if (Installer.IsInInstallDir(current, K4Paths.InstallDir)) return false; // ya instalado
+
+            var installer = new Installer();
+            // El updater puede venir embebido (Setup de un solo archivo) o al lado del exe.
+            using var embedded = System.Reflection.Assembly.GetExecutingAssembly()
+                .GetManifestResourceStream(Installer.UpdaterName);
+            var installedExe = installer.InstallFrom(current, embedded);
+            try { new StartupManager().EnableStartup(); } catch { /* best-effort */ }
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(installedExe)
+            {
+                UseShellExecute = true,
+                WorkingDirectory = K4Paths.InstallDir,
+            });
+            return true;
+        }
+        catch
+        {
+            return false; // no se pudo instalar: seguir en el sitio actual
+        }
     }
 
     /// <summary>

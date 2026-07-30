@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <!-- WinExe: sin ventana de consola. El cliente es invisible (BPO). El modo diagnostico
+         se engancha a la consola padre por P/Invoke cuando hace falta. -->
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -8,4 +10,36 @@
     <AssemblyName>AZCKeeper4</AssemblyName>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
+
+  <!-- Publicacion self-contained (runtime .NET embebido: nada que instalar aparte).
+       El RID/SelfContained/SingleFile se pasan al publicar (build-release). Trimming
+       APAGADO: WinForms usa reflexion y el trim la rompe. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <!-- Embebe el updater YA PUBLICADO (self-contained) dentro del cliente, para que el
+       Setup sea UN SOLO archivo: al instalar, el cliente extrae el updater de su propio
+       binario. Condicional: solo si el updater ya fue publicado (build-release lo hace
+       antes). En build/test normal no existe y no se embebe (el Installer lo tolera). -->
+  <ItemGroup Condition="Exists('..\AZCKeeperUpdater\bin\Release\net8.0-windows\win-x64\publish\AZCKeeperUpdater.exe')">
+    <EmbeddedResource Include="..\AZCKeeperUpdater\bin\Release\net8.0-windows\win-x64\publish\AZCKeeperUpdater.exe">
+      <LogicalName>AZCKeeperUpdater.exe</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <!-- Copia el helper de update (self-contained) junto al cliente publicado, para que
+       quede en el paquete y en el dir de instalacion. El script lo publica antes. -->
+  <Target Name="CopyUpdaterIfExists" AfterTargets="Publish">
+    <PropertyGroup>
+      <UpdaterPublished>..\AZCKeeperUpdater\bin\$(Configuration)\net8.0-windows\win-x64\publish\AZCKeeperUpdater.exe</UpdaterPublished>
+    </PropertyGroup>
+    <Copy SourceFiles="$(UpdaterPublished)" DestinationFolder="$(PublishDir)"
+          Condition="Exists('$(UpdaterPublished)')" ContinueOnError="true" />
+    <Warning Text="AZCKeeperUpdater.exe no encontrado; publica el updater antes (build-release)."
+             Condition="!Exists('$(UpdaterPublished)')" />
+  </Target>
 </Project>
