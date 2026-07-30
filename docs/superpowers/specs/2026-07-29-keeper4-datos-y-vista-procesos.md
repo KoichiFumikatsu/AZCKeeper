@@ -35,7 +35,8 @@ distinta ya desambigua, y renombrar todo obligaría a tocar código que no lo ne
 nombre las tablas cuyo modelo cambia de forma sustancial, para que un `SELECT` viejo falle en vez de
 devolver algo con otra semántica.
 
-> **Requiere confirmación de Koichi:** el nombre de la base y si el corte es por fecha (a partir de X, todo
+> **RESUELTO (Koichi, 2026-07-30): el entorno de desarrollo de Keeper 4 es `devkeep.azclegal.com` +
+> `pipezafra_keepdev`.** La base de producción de Keeper 4 se decide al desplegar. Sigue abierto si el corte es por fecha (a partir de X, todo
 > va al 4) o por despliegue (cada equipo empieza a escribir en el 4 cuando recibe el cliente nuevo). El
 > segundo implica un período de escritura dividida y hay que decidir si eso es aceptable.
 
@@ -335,7 +336,7 @@ personas y no con episodios.
 
 ## 7. Pendiente de confirmación
 
-1. Nombre de la base nueva, y si el corte es por fecha o por despliegue del cliente.
+1. ~~Nombre de la base~~ RESUELTO: DEV es `devkeep.azclegal.com` + `pipezafra_keepdev`. Falta decidir si el corte a producción es por fecha o por despliegue del cliente.
 2. Ventana de retención del detalle de episodios (recomendado: 6 meses).
 3. Qué roles pueden ver `window_title` completo, y si el enmascarado es truncado o total.
 4. Cómo queda disponible el historial de Keeper 3: base congelada consultable, o export.
