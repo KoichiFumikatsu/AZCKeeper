@@ -44,7 +44,8 @@ internal static class Program
 
         // Token persistente (DPAPI). Se restaura al arrancar y se guarda cuando cambia.
         var creds = new K4CredentialStore();
-        var api = new K4ApiClient(cfg.BaseUrl, cfg.DeviceId);
+        var queue = new OfflineQueue();
+        var api = new K4ApiClient(cfg.BaseUrl, cfg.DeviceId, queue: queue);
         var savedToken = creds.LoadToken();
         if (savedToken is not null) api.RestoreToken(savedToken);
         api.TokenChanged += t => { if (t is not null) creds.SaveToken(t); };
@@ -81,7 +82,8 @@ internal static class Program
             flushAndStop: () => core.StopAndFlushAsync(),
             interval: TimeSpan.FromSeconds(cfg.HandshakeIntervalSeconds),
             retryInterval: TimeSpan.FromSeconds(cfg.OfflineRetrySeconds),
-            log: Log);
+            log: Log,
+            drain: () => api.DrainAsync());
 
         // Flush garantizado UNA sola vez (ResidentHost lo asegura) por cualquier vía.
         void Shutdown()

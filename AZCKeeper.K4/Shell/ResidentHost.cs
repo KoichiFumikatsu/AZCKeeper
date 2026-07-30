@@ -14,6 +14,7 @@ public sealed class ResidentHost
     private readonly Func<Task<bool>> _runCycle;
     private readonly Func<bool> _isBackingOff;
     private readonly Func<Task> _flushAndStop;
+    private readonly Func<Task>? _drain;
     private readonly TimeSpan _interval;
     private readonly TimeSpan _retryInterval;
     private readonly Func<DateTime> _nowUtc;
@@ -32,7 +33,8 @@ public sealed class ResidentHost
         TimeSpan interval,
         TimeSpan? retryInterval = null,
         Func<DateTime>? nowUtc = null,
-        Action<string>? log = null)
+        Action<string>? log = null,
+        Func<Task>? drain = null)
     {
         _runCycle = runCycle;
         _isBackingOff = isBackingOff;
@@ -41,6 +43,7 @@ public sealed class ResidentHost
         _retryInterval = retryInterval ?? TimeSpan.FromSeconds(30);
         _nowUtc = nowUtc ?? (() => DateTime.UtcNow);
         _log = log;
+        _drain = drain;
     }
 
     /// <summary>
@@ -68,11 +71,23 @@ public sealed class ResidentHost
         try
         {
             await TickAsync(); // arranque inmediato: no esperar el primer tick
+            await DrainIfIdle();
             using var timer = new PeriodicTimer(PollTick);
             while (await timer.WaitForNextTickAsync(ct))
+            {
                 await TickAsync();
+                await DrainIfIdle();
+            }
         }
         catch (OperationCanceledException) { /* cierre normal */ }
+    }
+
+    /// <summary>Reintenta la cola offline si hay drenador y no estamos en backoff. Nunca lanza.</summary>
+    private async Task DrainIfIdle()
+    {
+        if (_drain is null || _isBackingOff()) return;
+        try { await _drain(); }
+        catch (Exception ex) { _log?.Invoke($"drain error: {ex.Message}"); }
     }
 
     /// <summary>

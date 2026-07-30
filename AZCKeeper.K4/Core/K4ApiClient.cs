@@ -21,20 +21,24 @@ public sealed class K4ApiClient : IApiClient
     private readonly HttpClient _http;
     private readonly JsonSerializerOptions _json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     private readonly NetworkBackoffPolicy _backoff;
+    private readonly OfflineQueue? _queue;
     private string _deviceGuid;
     private string? _token;
 
-    public K4ApiClient(string baseUrl, string deviceGuid, HttpClient? http = null, NetworkBackoffPolicy? backoff = null)
+    public K4ApiClient(string baseUrl, string deviceGuid, HttpClient? http = null,
+        NetworkBackoffPolicy? backoff = null, OfflineQueue? queue = null)
     {
         _http = http ?? new HttpClient();
         _http.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
         _deviceGuid = deviceGuid;
         _backoff = backoff ?? new NetworkBackoffPolicy();
+        _queue = queue;
     }
 
     /// <summary>El cliente está en backoff de red: el shell debe saltarse el ciclo.</summary>
     public bool IsBackingOff => _backoff.IsBackingOff;
     public DateTime BackoffUntilUtc => _backoff.BackoffUntilUtc;
+    public int PendingQueueCount => _queue?.PendingCount() ?? 0;
 
     public bool HasToken => _token is not null;
 
@@ -79,12 +83,10 @@ public sealed class K4ApiClient : IApiClient
     public async Task<bool> SendEpisodesAsync(IReadOnlyList<EpisodeDto> episodes)
     {
         if (episodes.Count == 0) return true;
-        var (status, _) = await PostAsync("client/episodes/batch",
-            new { deviceId = _deviceGuid, episodes }, withToken: true);
-        return status == 200;
+        return await PostDataAsync("client/episodes/batch", new { deviceId = _deviceGuid, episodes });
     }
 
-    public async Task<bool> SendActivityDayAsync(ActivityDayDto day)
+    public Task<bool> SendActivityDayAsync(ActivityDayDto day)
     {
         var payload = new
         {
@@ -93,16 +95,13 @@ public sealed class K4ApiClient : IApiClient
             day.ActiveSeconds, day.IdleSeconds, day.CallSeconds,
             day.WorkActiveSeconds, day.WorkIdleSeconds, day.FirstEventAt, day.LastEventAt
         };
-        var (status, _) = await PostAsync("client/activity-day", payload, withToken: true);
-        return status == 200;
+        return PostDataAsync("client/activity-day", payload);
     }
 
-    public async Task<bool> ReportModuleStateAsync(IReadOnlyList<ModuleStateDto> modules)
+    public Task<bool> ReportModuleStateAsync(IReadOnlyList<ModuleStateDto> modules)
     {
         var mods = modules.Select(m => new { code = m.Code, running = m.Running, detail = m.Detail });
-        var (status, _) = await PostAsync("client/module-state",
-            new { deviceId = _deviceGuid, modules = mods }, withToken: true);
-        return status == 200;
+        return PostDataAsync("client/module-state", new { deviceId = _deviceGuid, modules = mods });
     }
 
     public async Task<IReadOnlyList<CommandDto>> PollCommandsAsync()
@@ -139,14 +138,17 @@ public sealed class K4ApiClient : IApiClient
         return status == 200;
     }
 
-    private async Task<(int, JsonElement)> PostAsync(string path, object payload, bool withToken)
+    private Task<(int, JsonElement)> PostAsync(string path, object payload, bool withToken)
+        => PostJsonAsync(path, JsonSerializer.Serialize(payload, _json), withToken);
+
+    private async Task<(int, JsonElement)> PostJsonAsync(string path, string json, bool withToken)
     {
         if (_backoff.IsBackingOff) return (0, default); // no abrir socket durante backoff
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, path)
             {
-                Content = new StringContent(JsonSerializer.Serialize(payload, _json), Encoding.UTF8, "application/json")
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
             };
             if (withToken && _token is not null) req.Headers.Add("X-Auth-Token", _token);
             using var res = await _http.SendAsync(req);
@@ -155,6 +157,42 @@ public sealed class K4ApiClient : IApiClient
             return (code, await ParseAsync(res));
         }
         catch (Exception ex) { _backoff.Register(0, ex); return (0, default); }
+    }
+
+    /// <summary>
+    /// Envío de DATOS idempotentes (episodios, resumen, estado): si no entra (backoff, red,
+    /// 5xx), se ENCOLA el JSON exacto para reintentar. Los endpoints son idempotentes
+    /// (INSERT IGNORE / VALUES replace / upsert), así que reenviar no duplica. Sin cola
+    /// configurada, un fallo simplemente devuelve false (comportamiento previo).
+    /// </summary>
+    private async Task<bool> PostDataAsync(string path, object payload)
+    {
+        var json = JsonSerializer.Serialize(payload, _json);
+        var (status, _) = await PostJsonAsync(path, json, withToken: true);
+        if (status == 200) return true;
+        // Solo encolar lo que vale la pena reintentar: sin-red/backoff (0), 5xx, 429. Un
+        // 4xx es error permanente del cliente (payload inválido, token muerto): reintentarlo
+        // solo llenaría la cola hasta el dead-letter sin cambiar el resultado.
+        if (status == 0 || status >= 500 || status == 429)
+            _queue?.Enqueue(path, json);
+        return false;
+    }
+
+    /// <summary>
+    /// Reintenta lo encolado. Un 200 lo borra; cualquier otro resultado incrementa su
+    /// contador (y a las MaxRetries se descarta como dead letter). Se corta si entra en
+    /// backoff para no inflar contadores con intentos que ni abren socket.
+    /// </summary>
+    public async Task DrainAsync(int batch = 10)
+    {
+        if (_queue is null) return;
+        foreach (var item in _queue.Peek(batch))
+        {
+            if (_backoff.IsBackingOff) break;
+            var (status, _) = await PostJsonAsync(item.Endpoint, item.PayloadJson, withToken: true);
+            if (status == 200) _queue.MarkSent(item.Id);
+            else _queue.MarkRetried(item.Id, $"HTTP {status}");
+        }
     }
 
     private async Task<(int, JsonElement)> GetAsync(string path)
