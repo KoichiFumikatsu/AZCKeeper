@@ -14,6 +14,7 @@ Entorno de desarrollo: `devkeep.azclegal.com` + `pipezafra_keepdev`.
 7. `06_comandos_y_datos_sensibles.sql` — cola de comandos, screenshots, ubicación
 8. `07_seed.sql` — catálogo de módulos, tiers, política global, roles
 9. `08_tier_overrides.sql` — interruptor global de enforcement + override por firma
+10. `09_features_portadas.sql` — doble empleo, clasificacion de apps, cobertura de instalacion
 
 El orden importa: `05` hace `ALTER` sobre `keeper_firmas` (creada en `01`) y referencia `keeper_tier`;
 `07` puebla `keeper_module`/`keeper_tier` antes de que se puedan asignar. Cada archivo asume que los

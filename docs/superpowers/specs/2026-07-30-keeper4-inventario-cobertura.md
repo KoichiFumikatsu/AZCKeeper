@@ -20,15 +20,15 @@ Verificado leyendo el cliente C#, los 16 endpoints, las 22 páginas del panel y 
 datos (doble seed, focus fabricado, IDs ambiguos, auditoría sin actor, tabla de episodios sin índices).
 Cinco tablas muertas se descartaron con verificación de que nadie las lee.
 
-**Cinco huecos (NO CONTEMPLADO), dos centrales:**
+**Cinco huecos — RESUELTOS (decisiones de Koichi, 2026-07-30; migración `09_features_portadas.sql`):**
 
-| # | Hueco | Impacto | Recomendación |
+| # | Hueco | Decisión | Cómo quedó |
 |---|---|---|---|
-| 1 | **Detección de doble empleo** (dual-job) | Central — subsistema completo: 3 tablas, un servicio, cron, 3 páginas | Traer, rediseñar |
-| 2 | **Enrolamiento / aprobación** (pending-users) | Central — sin esto un equipo nuevo no tiene ruta de alta | Traer, rediseñar |
-| 3 | Cobertura de instalación (install-coverage) | Periférico — encaja en el import de `keeper_source` | Traer, corregido |
-| 4 | UpdateManager y logging como módulos de catálogo | Decisión — son infra, no se tarifican | Descartar del catálogo, explícito |
-| 5 | Logging a Discord | Periférico — un campo de config | Traer tal cual o descartar |
+| 1 | **Detección de doble empleo** | **Traer, rediseñado** | `keeper_app_classification` (consolida clasificación + apps sospechosas en un eje limpio) + `keeper_dual_job_alert`. Alertas se recalculan desde `keeper_episode`. **Bonus: arregla el bug de ocio nunca sembrado** |
+| 2 | **Enrolamiento / aprobación** | **Plegado, sin tabla** | `keeper_users(status='pending')` + `keeper_audit_log` (`event_type='enrollment_approved/rejected'`, actor en `admin_id`). Coexiste con el import: importados entran directo, cédula desconocida es la vía secundaria |
+| 3 | Cobertura de instalación | **Traer, corregido** | `keeper_coverage_note` por `user_id` (en K4 el usuario existe por import antes del enrolamiento); `is_exempt` arranca en 0 |
+| 4 | UpdateManager y logging fuera del catálogo | **Descartado del catálogo, explícito** | Son infraestructura, no se tarifican por tier. Sustrato de datos (`keeper_client_releases`, `keeper_client_log`) sí existe. Decisión registrada para que no reaparezca como hueco |
+| 5 | Logging a Discord | **Traer tal cual** | Campo de config que viaja en la política; sin tabla |
 
 **Nota:** las cuatro features nuevas (networkDiagnostic, remoteShutdown, screenshots, location) tienen
 tabla en K4 pero **no tienen implementación en el cliente C#** todavía. No son huecos de K3: son
