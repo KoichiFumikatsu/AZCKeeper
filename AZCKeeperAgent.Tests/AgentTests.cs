@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using AZCKeeperAgent.Core;
 using Xunit;
 
@@ -119,5 +120,63 @@ public class AgentTests
     private static IEnumerable<string> EnumStrings(System.Text.Json.JsonElement arr)
     {
         foreach (var e in arr.EnumerateArray()) yield return e.GetString() ?? "";
+    }
+
+    [Fact]
+    public void Catalogo_TraduceLaPoliticaDeNavegadorAControlesHKLM()
+    {
+        var policy = new BrowserPolicy(
+            BlockDownloads: true,
+            BlockedDomains: new[] { "dropbox.com" },
+            BlockAllExtensions: true,
+            AllowedExtensionIds: new[] { "abc" });
+
+        var controls = ControlCatalog.BrowserRing(policy);
+
+        // 3 navegadores x 4 controles (download, urlblock, extblock, extallow) = 12
+        Assert.Equal(12, controls.Count);
+
+        var chromeDl = controls.Single(c => c.Code == "chrome.DownloadRestrictions");
+        Assert.Equal(@"Google\Chrome", chromeDl.SubkeyPath);
+        Assert.Equal("DownloadRestrictions", chromeDl.ValueName);
+        Assert.Equal(3, chromeDl.Value); // valor EXACTO de la Fase 0
+
+        var edgeBlock = controls.Single(c => c.Code == "edge.ExtensionInstallBlocklist");
+        Assert.True(edgeBlock.IsEnumeratedSubkey);
+        Assert.Equal(new[] { "*" }, edgeBlock.ListValues); // '*' cierra todas las extensiones
+
+        var braveUrls = controls.Single(c => c.Code == "brave.URLBlocklist");
+        Assert.Equal(@"BraveSoftware\Brave\URLBlocklist", braveUrls.SubkeyPath);
+        Assert.Contains("dropbox.com", braveUrls.ListValues!);
+    }
+
+    [Fact]
+    public void Catalogo_SinExtensionesBloqueadas_NoEmiteAllowlist()
+    {
+        // El allowlist solo tiene sentido si primero se bloquea todo; sin bloqueo, no va.
+        var policy = new BrowserPolicy(
+            BlockDownloads: false,
+            BlockedDomains: Array.Empty<string>(),
+            BlockAllExtensions: false,
+            AllowedExtensionIds: new[] { "abc" });
+
+        var controls = ControlCatalog.BrowserRing(policy);
+
+        Assert.Empty(controls); // nada que aplicar
+        Assert.DoesNotContain(controls, c => c.Code.Contains("Allowlist"));
+    }
+
+    [Fact]
+    public void Catalogo_ConPrivilegio_SeAplicaEntero()
+    {
+        // El catálogo real pasa por el enforcer sin fallos cuando hay privilegio.
+        var reg = new MemoryRegistry();
+        var policy = new BrowserPolicy(true, new[] { "dropbox.com" }, true, Array.Empty<string>());
+        var report = new AgentCycle(reg, "4.0.0.0", FixedNow).Run(ControlCatalog.BrowserRing(policy));
+
+        Assert.True(report.CanEnforce);
+        Assert.Empty(report.FailedControls);
+        // 3 navegadores x 3 controles (sin allowlist porque no hay IDs aprobados) = 9
+        Assert.Equal(9, report.AppliedControls.Count);
     }
 }

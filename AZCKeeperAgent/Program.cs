@@ -12,13 +12,14 @@ using AZCKeeperAgent.Platform;
 
 const string version = "4.0.0.0";
 
-// Un par de controles de ejemplo (los reales vienen de la política del servidor).
-var controls = new List<DesiredControl>
-{
-    new("chrome.DownloadRestrictions", @"Google\Chrome", "DownloadRestrictions", 3),
-    new("chrome.URLBlocklist", @"Google\Chrome\URLBlocklist", null, null,
-        IsEnumeratedSubkey: true, ListValues: new[] { "facebook.com", "x.com" }),
-};
+// Anillo 1 (navegador) derivado de una política de ejemplo. En producción la política
+// llega del servidor; aquí se arma con valores de muestra para el runner de desarrollo.
+var policy = new BrowserPolicy(
+    BlockDownloads: true,
+    BlockedDomains: new[] { "drive.google.com", "dropbox.com", "wetransfer.com" },
+    BlockAllExtensions: true,
+    AllowedExtensionIds: new[] { "cjpalhdlnbpafiamejdnhcphjbkeiagm" }); // uBlock, ejemplo aprobado
+var controls = ControlCatalog.BrowserRing(policy);
 
 var reg = new WinPrivilegedRegistry();
 var cycle = new AgentCycle(reg, version);
