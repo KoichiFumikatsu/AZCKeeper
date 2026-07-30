@@ -55,6 +55,12 @@ class ScreenshotMeta
         if (($dev['status'] ?? 'active') !== 'active') Http::json(403, ['ok' => false, 'error' => 'Device revoked']);
         $deviceId = (int)$dev['id'];
 
+        // Gate por tier server-side: capturas es modulo del nivel mas alto. Aunque un
+        // cliente comprometido intente subir, si la firma no lo compro, se rechaza aqui.
+        if (!\Keeper\Services\TierResolver::userAllows($pdo, $userId, 'screenshots')) {
+            Http::json(403, ['ok' => false, 'error' => 'Module not licensed for this firm']);
+        }
+
         $sizeBytes = ($sizeBytes !== null && $sizeBytes !== '') ? (int)$sizeBytes : null;
         $commandId = ($commandId !== null && $commandId !== '') ? (int)$commandId : null;
 

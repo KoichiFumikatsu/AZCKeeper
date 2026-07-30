@@ -44,6 +44,16 @@ class TierResolver
         return array_map(fn($r) => $r['module_code'], $st->fetchAll());
     }
 
+    /** ¿La firma del usuario tiene derecho al modulo indicado? Para gate server-side. */
+    public static function userAllows(PDO $pdo, int $userId, string $moduleCode): bool
+    {
+        $st = $pdo->prepare("SELECT firma_id FROM keeper_user_assignments WHERE user_id = :u LIMIT 1");
+        $st->execute([':u' => $userId]);
+        $firmaId = $st->fetchColumn();
+        $allowed = self::effectiveModules($pdo, $firmaId ? (int)$firmaId : null);
+        return in_array($moduleCode, $allowed, true);
+    }
+
     private static function enforcementEnabled(PDO $pdo): bool
     {
         $st = $pdo->prepare("SELECT setting_value FROM keeper_panel_settings WHERE setting_key = 'tier_enforcement_enabled' LIMIT 1");

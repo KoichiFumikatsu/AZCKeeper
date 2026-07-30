@@ -53,6 +53,11 @@ class LocationReport
         if (($dev['status'] ?? 'active') !== 'active') Http::json(403, ['ok' => false, 'error' => 'Device revoked']);
         $deviceId = (int)$dev['id'];
 
+        // Gate por tier server-side: ubicacion es modulo del nivel mas alto.
+        if (!\Keeper\Services\TierResolver::userAllows($pdo, $userId, 'location')) {
+            Http::json(403, ['ok' => false, 'error' => 'Module not licensed for this firm']);
+        }
+
         $accuracyM = ($accuracyM !== null && $accuracyM !== '') ? (int)$accuracyM : null;
 
         try {

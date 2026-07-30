@@ -24,6 +24,7 @@ class ProcessView
     public static function handle(): void
     {
         $pdo = Db::pdo();
+        \Keeper\AdminAuth::require();
 
         $token = Http::bearerToken();
         if (!$token) Http::json(401, ['ok' => false, 'error' => 'Missing token']);
@@ -47,10 +48,13 @@ class ProcessView
         $total   = ProcessViewRepo::detailCount($pdo, $targetUser, $from, $to);
         $detail  = ProcessViewRepo::detail($pdo, $targetUser, $from, $to, self::PAGE_SIZE, $offset);
 
-        // Enmascarado de window_title (secreto profesional). Por ahora siempre.
+        // Redaccion de window_title (secreto profesional). El titulo suele llevar el
+        // nombre del caso/cliente AL FRENTE, asi que truncar por el frente FILTRABA lo
+        // sensible. Hasta que exista el permiso de titulo completo (fase del panel), se
+        // redacta por completo: se conserva el proceso y la duracion, no el titulo.
         foreach ($detail as &$row) {
-            if ($row['window_title'] !== null) {
-                $row['window_title'] = mb_substr($row['window_title'], 0, 40, 'UTF-8');
+            if ($row['window_title'] !== null && $row['window_title'] !== '') {
+                $row['window_title'] = '[redactado]';
             }
         }
         unset($row);

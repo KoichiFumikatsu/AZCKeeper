@@ -42,6 +42,11 @@ class ClientHandshake
         $dev = DeviceRepo::findByGuid($pdo, $deviceGuid);
         if (!$dev) Http::json(403, ['ok' => false, 'error' => 'Device not enrolled']);
         $deviceId = (int)$dev['id'];
+        // El equipo debe pertenecer al usuario de la sesion: si no, un token valido
+        // podria pisar device_name/version/last_seen y jalar la politica de otro equipo.
+        if ((int)$dev['user_id'] !== $userId) {
+            Http::json(403, ['ok' => false, 'error' => 'Device does not belong to session user']);
+        }
         if (($dev['status'] ?? 'active') !== 'active') {
             Http::json(403, ['ok' => false, 'error' => 'Device revoked']);
         }

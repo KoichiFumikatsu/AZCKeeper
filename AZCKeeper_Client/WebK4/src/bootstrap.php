@@ -11,6 +11,7 @@ require_once __DIR__ . '/InputValidator.php';
 require_once __DIR__ . '/RateLimiter.php';
 require_once __DIR__ . '/PolicyService.php';
 require_once __DIR__ . '/AuthService.php';
+require_once __DIR__ . '/AdminAuth.php';
 
 // Servicios
 require_once __DIR__ . '/Services/TierResolver.php';

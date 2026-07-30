@@ -25,6 +25,7 @@ class AdminCommand
     public static function enqueue(): void
     {
         $pdo  = Db::pdo();
+        \Keeper\AdminAuth::require();
         $body = Http::readJson();
 
         $token = Http::bearerToken();

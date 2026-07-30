@@ -31,6 +31,14 @@ class ClientLogin
         $deviceName = $body['deviceName'] ?? ($body['DeviceName'] ?? null);
         $version    = $body['version']    ?? ($body['Version']    ?? null);
 
+        // Rate-limit por IP: login es la unica via que crea filas sin autenticacion
+        // (CC desconocida -> pending). Sin limite es un vector de llenado de BD y de
+        // enumeracion de cedulas. 10 intentos por minuto por IP.
+        $ipKey = (int)(sprintf('%u', crc32($_SERVER['REMOTE_ADDR'] ?? 'nil')) % 2147483647);
+        if (!\RateLimiter::allow($ipKey, 'client-login', 10, 60)) {
+            Http::json(429, ['ok' => false, 'error' => 'Too many attempts, retry later']);
+        }
+
         if ($cc === '') Http::json(400, ['ok' => false, 'error' => 'Missing cc']);
         if (!$deviceGuid || !preg_match('/^[0-9a-fA-F-]{36}$/', $deviceGuid)) {
             Http::json(400, ['ok' => false, 'error' => 'Invalid or missing DeviceId']);

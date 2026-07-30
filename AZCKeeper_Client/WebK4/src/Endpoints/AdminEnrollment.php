@@ -19,6 +19,7 @@ class AdminEnrollment
     public static function handle(): void
     {
         $pdo  = Db::pdo();
+        \Keeper\AdminAuth::require();
         $body = Http::readJson();
 
         $token = Http::bearerToken();

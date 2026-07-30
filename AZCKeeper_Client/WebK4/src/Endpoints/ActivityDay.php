@@ -55,7 +55,7 @@ class ActivityDay
         };
 
         $tzOffsetRaw = $pick($body, 'tzOffsetMinutes', 'TzOffsetMinutes');
-        $tzOffsetMinutes = is_numeric($tzOffsetRaw) ? (int)$tzOffsetRaw : 0;
+        $tzOffsetMinutes = is_numeric($tzOffsetRaw) ? (int)$tzOffsetRaw : -300; // Colombia por defecto, no UTC
 
         $isWorkdayRaw = $pick($body, 'isWorkday', 'IsWorkday');
         $isWorkday = $isWorkdayRaw === null ? 1 : $flag($isWorkdayRaw);

@@ -46,6 +46,7 @@ class AdminCoverage
 
     private static function requireAuth($pdo): void
     {
+        \Keeper\AdminAuth::require();
         $token = Http::bearerToken();
         if (!$token) Http::json(401, ['ok' => false, 'error' => 'Missing token']);
         if (!SessionRepo::validateBearer($pdo, $token)) Http::json(401, ['ok' => false, 'error' => 'Invalid token']);

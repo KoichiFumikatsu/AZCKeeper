@@ -43,7 +43,7 @@ class ModuleStateReport
             $detail  = $m['detail']  ?? null;
 
             if (!is_string($code) || trim($code) === '') { $errors[] = ['index' => $i, 'error' => 'Missing or invalid code']; continue; }
-            if (mb_strlen($code, 'UTF-8') > 100) { $errors[] = ['index' => $i, 'error' => 'Code too long']; continue; }
+            if (mb_strlen($code, 'UTF-8') > 64) { $errors[] = ['index' => $i, 'error' => 'Code too long']; continue; } // columna es VARCHAR(64)
             if (!is_bool($running)) { $errors[] = ['index' => $i, 'error' => 'Missing or invalid running']; continue; }
             if ($detail !== null && !is_array($detail)) { $errors[] = ['index' => $i, 'error' => 'Invalid detail']; continue; }
 
