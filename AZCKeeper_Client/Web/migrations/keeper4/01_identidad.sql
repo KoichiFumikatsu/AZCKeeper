@@ -13,6 +13,7 @@ CREATE TABLE keeper_firmas (
   is_active    TINYINT(1) NOT NULL DEFAULT 1,
   created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
+  UNIQUE KEY uq_firmas_nombre (nombre),
   KEY ix_firmas_activa (is_active)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -21,7 +22,8 @@ CREATE TABLE keeper_sociedades (
   nombre       VARCHAR(190) NOT NULL,
   is_active    TINYINT(1) NOT NULL DEFAULT 1,
   created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_sociedades_nombre (nombre)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 CREATE TABLE keeper_areas (
@@ -29,7 +31,8 @@ CREATE TABLE keeper_areas (
   nombre       VARCHAR(190) NOT NULL,
   is_active    TINYINT(1) NOT NULL DEFAULT 1,
   created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_areas_nombre (nombre)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 CREATE TABLE keeper_cargos (
@@ -37,7 +40,8 @@ CREATE TABLE keeper_cargos (
   nombre       VARCHAR(190) NOT NULL,
   is_active    TINYINT(1) NOT NULL DEFAULT 1,
   created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_cargos_nombre (nombre)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 CREATE TABLE keeper_sedes (
@@ -45,7 +49,8 @@ CREATE TABLE keeper_sedes (
   nombre       VARCHAR(190) NOT NULL,
   is_active    TINYINT(1) NOT NULL DEFAULT 1,
   created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_sedes_nombre (nombre)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- Fuente de datos por firma: como se importan sus usuarios.
