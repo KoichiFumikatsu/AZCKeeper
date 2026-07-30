@@ -14,7 +14,7 @@ if (!function_exists('panelCan')) {
         $role = $adminUser['panel_role'] ?? 'viewer';
         if ($role === 'superadmin') return true;
         static $byRole = [
-            'it'      => ['dashboard','process-view','users','devices','pending','tiers','coverage','dual-job','audit'],
+            'it'      => ['dashboard','process-view','users','devices','pending','tiers','policies','coverage','dual-job','audit'],
             'gerente' => ['process-view','coverage','dual-job','users'],   // NO ve flota/seguridad
             'viewer'  => ['process-view','coverage'],
         ];
