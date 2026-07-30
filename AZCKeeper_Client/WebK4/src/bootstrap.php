@@ -14,6 +14,7 @@ require_once __DIR__ . '/AuthService.php';
 
 // Servicios
 require_once __DIR__ . '/Services/TierResolver.php';
+require_once __DIR__ . '/Services/Metrics.php';
 
 // Repos
 require_once __DIR__ . '/Repos/SessionRepo.php';
@@ -29,6 +30,7 @@ require_once __DIR__ . '/Repos/CommandRepo.php';
 require_once __DIR__ . '/Repos/SecurityStateRepo.php';
 require_once __DIR__ . '/Repos/ScreenshotRepo.php';
 require_once __DIR__ . '/Repos/LocationRepo.php';
+require_once __DIR__ . '/Repos/FocusRepo.php';
 
 // Endpoints
 require_once __DIR__ . '/Endpoints/Health.php';
@@ -44,3 +46,4 @@ require_once __DIR__ . '/Endpoints/LocationReport.php';
 require_once __DIR__ . '/Endpoints/ProcessView.php';
 require_once __DIR__ . '/Endpoints/AdminCommand.php';
 require_once __DIR__ . '/Endpoints/AdminEnrollment.php';
+require_once __DIR__ . '/Endpoints/ProductivityCron.php';

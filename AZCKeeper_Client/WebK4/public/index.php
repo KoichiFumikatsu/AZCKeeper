@@ -37,6 +37,7 @@ $routes = [
     '/client/location'         => [Keeper\Endpoints\LocationReport::class, 'handle'],
     '/admin/commands'          => [Keeper\Endpoints\AdminCommand::class, 'enqueue'],
     '/admin/enrollment'        => [Keeper\Endpoints\AdminEnrollment::class, 'handle'],
+    '/cron/productivity'       => [Keeper\Endpoints\ProductivityCron::class, 'handle'],
   ],
 ];
 
