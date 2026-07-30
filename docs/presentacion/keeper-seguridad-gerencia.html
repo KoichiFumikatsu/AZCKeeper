@@ -1,0 +1,293 @@
+<title>AZCKeeper · Seguridad y Servicio — Resumen ejecutivo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --navy:#003A5D; --navy-deep:#052a3f; --navy-ink:#0b1d28;
+    --red:#BE1622; --green:#1c7a58; --amber:#a9812c;
+    --paper:#eef2f5; --card:#ffffff; --ink:#0e1a22; --muted:#4a5b66;
+    --line:#d5dde3; --chip:#e7edf1;
+    --shadow:0 1px 2px rgba(0,40,70,.06), 0 8px 24px rgba(0,40,70,.07);
+    --maxw:1080px;
+    --serif:Georgia,"Times New Roman",serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --navy:#3f8fbf; --navy-deep:#04212f; --navy-ink:#cfe2ee;
+      --red:#e4545f; --green:#3fae83; --amber:#d3a84a;
+      --paper:#0a1720; --card:#0f212d; --ink:#e6eef4; --muted:#95a9b6;
+      --line:#20323f; --chip:#182a36;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  /* explicit dark tokens (win over media query both ways) */
+  :root[data-theme="dark"]{
+    --navy:#3f8fbf; --navy-deep:#04212f; --navy-ink:#cfe2ee;
+    --red:#e4545f; --green:#3fae83; --amber:#d3a84a;
+    --paper:#0a1720; --card:#0f212d; --ink:#e6eef4; --muted:#95a9b6;
+    --line:#20323f; --chip:#182a36;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+  }
+  :root[data-theme="light"]{
+    --navy:#003A5D; --navy-deep:#052a3f; --navy-ink:#0b1d28;
+    --red:#BE1622; --green:#1c7a58; --amber:#a9812c;
+    --paper:#eef2f5; --card:#ffffff; --ink:#0e1a22; --muted:#4a5b66;
+    --line:#d5dde3; --chip:#e7edf1;
+    --shadow:0 1px 2px rgba(0,40,70,.06), 0 8px 24px rgba(0,40,70,.07);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+    line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+
+  /* ---- header band ---- */
+  header{background:linear-gradient(160deg,var(--navy) 0%, var(--navy-deep) 100%);color:#eaf3f9}
+  :root[data-theme="dark"] header{background:linear-gradient(160deg,#063049 0%, #04212f 100%)}
+  .band{max-width:var(--maxw);margin:0 auto;padding:38px 24px 44px}
+  .brandrow{display:flex;align-items:center;gap:14px;margin-bottom:30px}
+  .mark{width:38px;height:38px;border-radius:8px;background:#fff;position:relative;flex:none;
+    box-shadow:0 2px 10px rgba(0,0,0,.25)}
+  .mark::before{content:"";position:absolute;inset:9px 9px auto 9px;height:6px;border-radius:2px;background:var(--navy)}
+  .mark::after{content:"";position:absolute;inset:auto 9px 9px 9px;height:14px;border-radius:2px;
+    background:linear-gradient(90deg,var(--navy) 60%, #BE1622 60%)}
+  .brandtext{font-family:var(--serif);font-weight:700;letter-spacing:.02em;font-size:1.05rem}
+  .brandtext small{display:block;font-family:var(--mono);font-weight:400;font-size:.66rem;
+    letter-spacing:.22em;color:#9dc2d8;text-transform:uppercase;margin-top:2px}
+  header h1{font-family:var(--serif);font-weight:700;font-size:clamp(1.9rem,4.4vw,3rem);
+    line-height:1.08;margin:0 0 14px;max-width:20ch;text-wrap:balance}
+  header .lede{font-size:clamp(1rem,1.6vw,1.18rem);color:#cfe4f0;max-width:56ch;margin:0}
+  .headmeta{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px}
+  .headmeta span{font-family:var(--mono);font-size:.72rem;letter-spacing:.04em;color:#bcd8e7;
+    border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:5px 12px}
+
+  /* ---- pillars ---- */
+  .pillars{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin:-26px auto 0;position:relative;z-index:2}
+  .pillar{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px 24px;box-shadow:var(--shadow)}
+  .pillar .tag{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:.7rem;
+    letter-spacing:.14em;text-transform:uppercase;font-weight:600;padding:5px 11px;border-radius:6px}
+  .pillar.sec .tag{background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green)}
+  .pillar.sale .tag{background:color-mix(in srgb,var(--amber) 18%,transparent);color:var(--amber)}
+  .pillar h2{font-family:var(--serif);font-size:1.5rem;margin:14px 0 6px;line-height:1.15}
+  .pillar p{margin:0;color:var(--muted);font-size:.96rem}
+
+  section{padding:44px 0 8px}
+  .sechead{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:20px;flex-wrap:wrap}
+  .sechead h3{font-family:var(--serif);font-size:1.4rem;margin:0}
+  .sechead .num{font-family:var(--mono);color:var(--muted);font-size:.8rem}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;box-shadow:var(--shadow);
+    display:flex;flex-direction:column;gap:9px}
+  .card h4{margin:0;font-size:1.05rem;font-family:var(--sans);font-weight:650;letter-spacing:-.01em}
+  .card p{margin:0;color:var(--muted);font-size:.9rem}
+  .card .lead{border-left:3px solid var(--navy);padding-left:11px;font-size:.92rem;color:var(--ink)}
+
+  .chip{align-self:flex-start;font-family:var(--mono);font-size:.66rem;letter-spacing:.06em;text-transform:uppercase;
+    padding:4px 9px;border-radius:5px;font-weight:600;border:1px solid transparent}
+  .chip.vivo{background:color-mix(in srgb,var(--green) 15%,transparent);color:var(--green);border-color:color-mix(in srgb,var(--green) 30%,transparent)}
+  .chip.dev{background:color-mix(in srgb,var(--navy) 14%,transparent);color:var(--navy);border-color:color-mix(in srgb,var(--navy) 28%,transparent)}
+  .chip.build{background:color-mix(in srgb,var(--amber) 16%,transparent);color:var(--amber);border-color:color-mix(in srgb,var(--amber) 30%,transparent)}
+
+  /* ---- tiers table ---- */
+  .tiers-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--card);box-shadow:var(--shadow)}
+  table.tiers{border-collapse:collapse;width:100%;min-width:560px;font-size:.92rem}
+  table.tiers th,table.tiers td{padding:13px 16px;text-align:left;border-bottom:1px solid var(--line)}
+  table.tiers thead th{font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+    background:color-mix(in srgb,var(--navy) 6%,transparent)}
+  table.tiers tbody tr:last-child td{border-bottom:none}
+  table.tiers td.mod{color:var(--muted)}
+  .dot{display:inline-block;width:15px;text-align:center;font-weight:700}
+  .dot.y{color:var(--green)} .dot.n{color:var(--line)}
+  .tiername{font-weight:650}
+  .tiername.ent{color:var(--amber)}
+
+  /* ---- compliance strip ---- */
+  .strip{background:var(--navy-ink);color:#dbe8f0;border-radius:14px;padding:28px 26px;margin-top:8px}
+  :root[data-theme="light"] .strip{background:linear-gradient(150deg,#062f47,#0b1d28)}
+  .strip h3{font-family:var(--serif);color:#fff;margin:0 0 14px;font-size:1.3rem}
+  .strip .items{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:18px}
+  .strip .item{font-size:.9rem;color:#bcd4e2}
+  .strip .item b{display:block;color:#fff;font-family:var(--sans);font-weight:600;margin-bottom:3px;font-size:.95rem}
+
+  footer{margin:46px 0 10px;padding-top:22px;border-top:1px solid var(--line)}
+  .status-legend{display:flex;flex-wrap:wrap;gap:20px;margin-bottom:16px}
+  .status-legend div{display:flex;align-items:center;gap:8px;font-size:.85rem;color:var(--muted)}
+  footer .fine{font-size:.8rem;color:var(--muted);max-width:70ch}
+  footer .fine b{color:var(--ink)}
+
+  .toggle{position:fixed;top:14px;right:14px;z-index:20;font-family:var(--mono);font-size:.68rem;letter-spacing:.08em;
+    background:var(--card);color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:7px 13px;cursor:pointer}
+  .toggle:focus-visible{outline:2px solid var(--navy);outline-offset:2px}
+  @media (max-width:720px){ .pillars{grid-template-columns:1fr} }
+  @media print{ .toggle{display:none} header{-webkit-print-color-adjust:exact;print-color-adjust:exact} body{background:#fff} }
+</style>
+
+<button class="toggle" id="tg" aria-label="Cambiar tema">◐ Tema</button>
+
+<header>
+  <div class="band">
+    <div class="brandrow">
+      <div class="mark" aria-hidden="true"></div>
+      <div class="brandtext">AZC Legal<small>AZCKeeper · Plataforma de monitoreo</small></div>
+    </div>
+    <div class="eyebrow" style="color:#9dc2d8">Resumen ejecutivo · Julio 2026</div>
+    <h1>Seguridad que protege al cliente y un servicio que se vende por niveles.</h1>
+    <p class="lede">La nueva generación de AZCKeeper cierra las vías de fuga de datos, deja rastro
+      auditable de todo, cumple la normativa de datos personales, y se ofrece como servicio a las firmas
+      con niveles y facturación por lo que cada una usa.</p>
+    <div class="headmeta">
+      <span>Área piloto: agentes de servicio</span>
+      <span>Modelo: servicio por niveles</span>
+      <span>Normativa: Ley 1581 / habeas data</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="pillars">
+    <div class="pillar sec">
+      <span class="tag">◇ Protege el negocio</span>
+      <h2>Seguridad</h2>
+      <p>Impide que la información de las firmas salga del puesto de trabajo, y demuestra —ante un cliente
+        o un auditor— exactamente quién accedió a qué y cuándo.</p>
+    </div>
+    <div class="pillar sale">
+      <span class="tag">◇ Genera ingresos</span>
+      <h2>Ventas</h2>
+      <p>Convierte una herramienta interna en un servicio: cada firma contrata un nivel, ve solo a sus
+        agentes, y paga por las funciones que activa. El cumplimiento es el argumento de venta.</p>
+    </div>
+  </div>
+
+  <section>
+    <div class="sechead"><h3>Seguridad — cómo protege los datos del cliente</h3><span class="num">01</span></div>
+    <div class="grid">
+      <div class="card">
+        <span class="chip build">En construcción</span>
+        <h4>Cierra las vías de fuga en el equipo</h4>
+        <p class="lead">Bloqueo de descargas, USB, extensiones de VPN, copiado a nube personal y
+          herramientas de desarrollador. El candado se aplica donde el sistema operativo lo hace cumplir
+          de verdad, con privilegios — no como los intentos anteriores que fallaban en silencio.</p>
+      </div>
+      <div class="card">
+        <span class="chip dev">Verificado en desarrollo</span>
+        <h4>Quién hizo qué, quién vio qué</h4>
+        <p>Cada acción y cada consulta de datos sensibles queda registrada con su responsable. La versión
+          anterior sabía a quién se afectó, nunca quién lo hizo. Ahora la bitácora responde lo que un
+          auditor pregunta.</p>
+      </div>
+      <div class="card">
+        <span class="chip dev">Verificado en desarrollo</span>
+        <h4>Protege el secreto profesional</h4>
+        <p>Los títulos de las ventanas pueden contener nombres de casos y clientes de las firmas. Solo un
+          rol autorizado ve el título completo; para el resto se oculta. La confidencialidad del cliente
+          está protegida por diseño.</p>
+      </div>
+      <div class="card">
+        <span class="chip dev">Verificado en desarrollo</span>
+        <h4>El sistema no miente</h4>
+        <p>Se corrigió un defecto por el que un equipo sin monitorear aparecía con 90 % de productividad
+          —el mejor de la flota—. Ahora cada dato declara si fue realmente medido. Se decide sobre datos
+          reales, no fabricados.</p>
+      </div>
+      <div class="card">
+        <span class="chip dev">Verificado en desarrollo</span>
+        <h4>A prueba de fallos</h4>
+        <p>Si un equipo pierde conexión, conserva las restricciones en vez de soltarlas. Un interruptor de
+          emergencia revierte todo si algo afecta la operación. Nada peligroso queda activo por olvido.</p>
+      </div>
+      <div class="card">
+        <span class="chip build">En construcción</span>
+        <h4>Control granular por persona</h4>
+        <p>El candado se asigna por agente, no de forma indiscriminada. Un abogado de la misma firma no
+          recibe el candado del agente. Las excepciones quedan justificadas y con vencimiento.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sechead"><h3>Ventas — el servicio por niveles</h3><span class="num">02</span></div>
+    <div class="grid" style="margin-bottom:22px">
+      <div class="card">
+        <span class="chip dev">Verificado en desarrollo</span>
+        <h4>Cada firma paga por lo que usa</h4>
+        <p class="lead">El sistema garantiza, en el servidor, que una firma solo reciba las funciones de
+          su nivel. Si no contrató capturas de pantalla, el módulo nunca llega a sus equipos — no depende
+          de la buena fe ni de una configuración que se pueda olvidar.</p>
+      </div>
+      <div class="card">
+        <span class="chip dev">Verificado en desarrollo</span>
+        <h4>Aislamiento entre clientes</h4>
+        <p>Cada firma ve únicamente a sus agentes y sus datos. La información de un cliente no se mezcla
+          con la de otro. Es un requisito estructural del sistema, no un filtro opcional.</p>
+      </div>
+      <div class="card">
+        <span class="chip dev">Verificado en desarrollo</span>
+        <h4>Paquetes flexibles</h4>
+        <p>Los niveles se editan sin tocar el sistema. A una firma se le puede conceder una función suelta
+          como complemento, o retirarle algo puntual, sin cambiarla de nivel. La oferta se arma a medida.</p>
+      </div>
+      <div class="card">
+        <span class="chip build">En construcción</span>
+        <h4>Funciones premium para vender</h4>
+        <p>Capturas de pantalla, ubicación, apagado remoto y diagnóstico de red bajo demanda. Son los
+          diferenciadores del nivel más alto — y las capturas y la ubicación llevan auditoría de acceso
+          incorporada.</p>
+      </div>
+    </div>
+
+    <div class="tiers-wrap">
+      <table class="tiers">
+        <thead><tr>
+          <th>Función</th><th class="tiername">Básico</th><th class="tiername">Pro</th><th class="tiername ent">Enterprise</th>
+        </tr></thead>
+        <tbody>
+          <tr><td>Seguimiento de actividad y ventanas</td><td><span class="dot y">✓</span></td><td><span class="dot y">✓</span></td><td><span class="dot y">✓</span></td></tr>
+          <tr><td>Vista de procesos (qué hace cada persona)</td><td><span class="dot y">✓</span></td><td><span class="dot y">✓</span></td><td><span class="dot y">✓</span></td></tr>
+          <tr><td class="mod">Bloqueo web y endurecimiento del puesto</td><td><span class="dot n">—</span></td><td><span class="dot y">✓</span></td><td><span class="dot y">✓</span></td></tr>
+          <tr><td class="mod">Módulo de seguridad y diagnóstico de red</td><td><span class="dot n">—</span></td><td><span class="dot y">✓</span></td><td><span class="dot y">✓</span></td></tr>
+          <tr><td class="mod">Apagado remoto</td><td><span class="dot n">—</span></td><td><span class="dot y">✓</span></td><td><span class="dot y">✓</span></td></tr>
+          <tr><td class="mod">Capturas de pantalla · Ubicación</td><td><span class="dot n">—</span></td><td><span class="dot n">—</span></td><td><span class="dot y">✓</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="eyebrow" style="margin-top:10px">Los niveles y su contenido son una propuesta ajustable · las funciones sensibles quedan en el nivel más alto, alineando el paquete comercial con el marco legal</p>
+  </section>
+
+  <section>
+    <div class="strip">
+      <h3>Cumplimiento como ventaja, no como carga</h3>
+      <div class="items">
+        <div class="item"><b>Finalidad y proporcionalidad</b>El control es el mínimo para el fin; se asigna por puesto, no de forma indiscriminada.</div>
+        <div class="item"><b>Trazabilidad</b>Quién accedió a qué dato de quién, y cuándo. Verificable en cualquier momento.</div>
+        <div class="item"><b>Protección del dato</b>Enmascarado de lo confidencial, prueba de integridad en capturas, aislamiento por cliente.</div>
+        <div class="item"><b>Evidencia por cliente</b>Se puede demostrar, firma por firma, qué controles protegen su información — insumo del contrato.</div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="status-legend">
+      <div><span class="chip vivo">En producción</span> ya en uso</div>
+      <div><span class="chip dev">Verificado en desarrollo</span> construido y probado, no desplegado aún</div>
+      <div><span class="chip build">En construcción</span> diseñado, en implementación</div>
+    </div>
+    <p class="fine"><b>Estado del proyecto.</b> La base de datos de la nueva generación está completa y
+      verificada. El corazón del servidor —que hace cumplir los niveles y alimenta la vista de procesos—
+      está construido y probado de punta a punta en desarrollo. Restan el resto de las funciones del
+      servidor, el agente en los equipos (que requiere pruebas en hardware real antes de llegar a la
+      flota) y el panel de administración. El orden es deliberado: primero la base correcta, luego cada
+      capa verificada antes de la siguiente. <b>Ningún cambio ha tocado los equipos en producción.</b></p>
+  </footer>
+</div>
+
+<script>
+  (function(){
+    var tg=document.getElementById('tg'), root=document.documentElement;
+    function cur(){ return root.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'); }
+    tg.addEventListener('click',function(){ root.setAttribute('data-theme', cur()==='dark'?'light':'dark'); });
+  })();
+</script>
