@@ -38,6 +38,7 @@ require_once __DIR__ . '/Repos/CoverageRepo.php';
 
 // Endpoints
 require_once __DIR__ . '/Endpoints/Health.php';
+require_once __DIR__ . '/Endpoints/ClientVersion.php';
 require_once __DIR__ . '/Endpoints/ClientLogin.php';
 require_once __DIR__ . '/Endpoints/ClientHandshake.php';
 require_once __DIR__ . '/Endpoints/EpisodeBatch.php';

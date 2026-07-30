@@ -94,13 +94,48 @@ internal static class Program
         AppDomain.CurrentDomain.ProcessExit += (_, _) => Shutdown();
         Microsoft.Win32.SystemEvents.SessionEnding += (_, _) => Shutdown();
 
+        // Arranque automático con Windows (HKCU Run, sin admin). Best-effort.
+        try { new StartupManager().EnableStartup(); } catch (Exception ex) { Log($"startup: {ex.Message}"); }
+
         // El loop corre en background; la UI invisible mantiene vivo el proceso.
         _ = _resident.RunLoopAsync(_cts.Token);
+        _ = RunUpdateLoopAsync(cfg, _cts.Token, Log);
 
         Application.Run(new ApplicationContext());
 
         Shutdown(); // por si Application.Run retornó sin pasar por ProcessExit
         GC.KeepAlive(mutex);
         return 0;
+    }
+
+    /// <summary>
+    /// Chequeo periódico de actualización. Por defecto (AutoDownload=false) solo AUTO-APLICA
+    /// lo crítico o forzado por el servidor; lo demás se registra y se deja a decisión manual.
+    /// Al aplicar, lanza el helper y cierra el cliente para que el swap ocurra.
+    /// </summary>
+    private static async Task RunUpdateLoopAsync(K4Config cfg, CancellationToken ct, Action<string> log)
+    {
+        if (!cfg.Updates.Enable) return;
+        var mgr = new K4UpdateManager(cfg.BaseUrl, cfg.Version, cfg.Updates.AutoDownload, log: log);
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(Math.Max(15, cfg.Updates.IntervalMinutes)));
+            do
+            {
+                try
+                {
+                    var d = await mgr.CheckAsync(cfg.Updates.AllowBeta);
+                    if (d.ShouldDownload && await mgr.ApplyAsync(d))
+                    {
+                        log("update: aplicado, cerrando para el swap");
+                        Application.Exit(); // dispara el flush y deja al helper hacer el swap
+                        return;
+                    }
+                }
+                catch (Exception ex) { log($"update loop: {ex.Message}"); }
+            }
+            while (await timer.WaitForNextTickAsync(ct));
+        }
+        catch (OperationCanceledException) { /* cierre normal */ }
     }
 }

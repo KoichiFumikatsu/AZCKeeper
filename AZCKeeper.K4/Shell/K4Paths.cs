@@ -23,6 +23,11 @@ public static class K4Paths
     public static string QueueDir   => Path.Combine(AppData, "Queue");
     public static string UpdatesDir => Path.Combine(LocalAppData, "Updates");
 
+    /// <summary>Dónde vive el cliente instalado (per-user, sin admin): %APPDATA%\AZCKeeper4\app.</summary>
+    public static string InstallDir => Path.Combine(AppData, "app");
+    /// <summary>Ejecutable instalado. AssemblyName = AZCKeeper4.</summary>
+    public static string AppExe     => Path.Combine(InstallDir, "AZCKeeper4.exe");
+
     /// <summary>Reporte que el agente elevado (proceso SYSTEM) deja para el courier.</summary>
     public static string AgentReportFile { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "AZCKeeper", "agent-report.json");

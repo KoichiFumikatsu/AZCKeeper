@@ -22,6 +22,7 @@ if ($endpoint === '') $endpoint = '/';
 $routes = [
   'GET' => [
     '/health'             => [Keeper\Endpoints\Health::class, 'handle'],
+    '/client/version'     => [Keeper\Endpoints\ClientVersion::class, 'handle'],
     '/admin/process-view' => [Keeper\Endpoints\ProcessView::class, 'handle'],
     '/admin/coverage'     => [Keeper\Endpoints\AdminCoverage::class, 'list'],
     '/client/commands'    => [Keeper\Endpoints\ClientCommands::class, 'poll'],
