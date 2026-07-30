@@ -43,7 +43,9 @@ Para aplicar un archivo: subirlo con `scp` y redirigirlo con `< archivo.sql` en 
 | `migrations/keeper4/02_actividad.sql` | Episodios, rollup diario, resumen con cobertura | 3 |
 | `migrations/keeper4/03_operacion.sql` | Políticas, estado de módulos, seguridad | 4 |
 | `migrations/keeper4/04_panel.sql` | Cuentas admin, roles, ajustes, auditoría con actor | 5 |
-| `migrations/keeper4/05_seed.sql` | Datos mínimos de arranque | 6 |
+| `migrations/keeper4/05_licenciamiento.sql` | Catálogo de módulos, tiers, tier de firma | 5b (hecho) |
+| `migrations/keeper4/06_comandos_y_datos_sensibles.sql` | Cola de comandos, screenshots, ubicación | 5c (hecho) |
+| `migrations/keeper4/07_seed.sql` | Datos mínimos de arranque | 6 |
 | `migrations/keeper4/README.md` | Orden de aplicación y qué cambia respecto al 3 | 6 |
 
 ---
