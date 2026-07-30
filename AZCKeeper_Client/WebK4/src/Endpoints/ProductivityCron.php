@@ -5,6 +5,7 @@ use Keeper\Http;
 use Keeper\Db;
 use Keeper\Config;
 use Keeper\Services\Metrics;
+use Keeper\Services\DualJobDetector;
 use Keeper\Repos\FocusRepo;
 
 /**
@@ -34,10 +35,11 @@ class ProductivityCron
         $st->execute([':d' => $day]);
         $userIds = array_map(fn($r) => (int)$r['user_id'], $st->fetchAll());
 
-        $processed = 0; $withFocus = 0; $noCoverage = 0;
+        $processed = 0; $withFocus = 0; $noCoverage = 0; $dualJobAlerts = 0;
         foreach ($userIds as $uid) {
             $m = Metrics::computeDay($pdo, $uid, $day);
             FocusRepo::upsert($pdo, $m);
+            if (DualJobDetector::detectDay($pdo, $uid, $day)) $dualJobAlerts++;
             $processed++;
             if ($m['focus_score'] === null) $noCoverage++; else $withFocus++;
         }
@@ -45,6 +47,7 @@ class ProductivityCron
         Http::json(200, [
             'ok' => true, 'day' => $day,
             'processed' => $processed, 'withFocus' => $withFocus, 'noCoverage' => $noCoverage,
+            'dualJobAlerts' => $dualJobAlerts,
         ]);
     }
 }

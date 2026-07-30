@@ -15,6 +15,7 @@ require_once __DIR__ . '/AuthService.php';
 // Servicios
 require_once __DIR__ . '/Services/TierResolver.php';
 require_once __DIR__ . '/Services/Metrics.php';
+require_once __DIR__ . '/Services/DualJobDetector.php';
 
 // Repos
 require_once __DIR__ . '/Repos/SessionRepo.php';
@@ -31,6 +32,7 @@ require_once __DIR__ . '/Repos/SecurityStateRepo.php';
 require_once __DIR__ . '/Repos/ScreenshotRepo.php';
 require_once __DIR__ . '/Repos/LocationRepo.php';
 require_once __DIR__ . '/Repos/FocusRepo.php';
+require_once __DIR__ . '/Repos/DualJobRepo.php';
 
 // Endpoints
 require_once __DIR__ . '/Endpoints/Health.php';
