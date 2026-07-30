@@ -87,5 +87,47 @@ var cmdCount = cmdStatus == 200 && cmdBody.TryGetProperty("commands", out var cm
 Check("recoger comandos", cmdStatus == 200 && cmdBody.GetProperty("ok").GetBoolean(),
     $"pendientes={cmdCount}");
 
+// 6. Reporte de seguridad con el estado del AGENTE ELEVADO (courier).
+//    Caso ROJO: el agente corre pero NO esta elevado -> canEnforce=false.
+//    El panel debe poder distinguir esto de "todo bien" con un WHERE.
+var (secRedStatus, secRedBody) = await Call(HttpMethod.Post, "client/security/report",
+    new {
+        deviceId = deviceGuid,
+        agentPresent = true,
+        controls = new { antivirus = "on", firewall = "on" },
+        agentEnforcement = new {
+            elevated = false,
+            canEnforce = false,
+            selfTestError = "access denied writing HKLM",
+            agentVersion = "4.0.0.0",
+            reportedAt = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+            applied = Array.Empty<string>(),
+            failed = Array.Empty<object>()
+        }
+    }, token);
+Check("security/report (agente NO elevado = ROJO)",
+    secRedStatus == 200 && secRedBody.GetProperty("ok").GetBoolean(),
+    secRedStatus == 200 ? $"changed={secRedBody.GetProperty("changed").GetBoolean()}" : $"HTTP {secRedStatus} {secRedBody}");
+
+// Caso VERDE: el agente esta elevado y aplico controles.
+var (secGrnStatus, secGrnBody) = await Call(HttpMethod.Post, "client/security/report",
+    new {
+        deviceId = deviceGuid,
+        agentPresent = true,
+        controls = new { antivirus = "on", firewall = "on" },
+        agentEnforcement = new {
+            elevated = true,
+            canEnforce = true,
+            selfTestError = (string?)null,
+            agentVersion = "4.0.0.0",
+            reportedAt = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+            applied = new[] { "chrome.DownloadRestrictions", "chrome.URLBlocklist" },
+            failed = new[] { new { code = "usb.block", reason = "clave inexistente en esta build de Windows" } }
+        }
+    }, token);
+Check("security/report (agente elevado = VERDE)",
+    secGrnStatus == 200 && secGrnBody.GetProperty("ok").GetBoolean(),
+    secGrnStatus == 200 ? $"changed={secGrnBody.GetProperty("changed").GetBoolean()}" : $"HTTP {secGrnStatus} {secGrnBody}");
+
 Console.WriteLine($"\n---\nPASS: {pass}  FAIL: {fail}");
 return fail == 0 ? 0 : 1;
