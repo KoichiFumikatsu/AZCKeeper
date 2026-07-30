@@ -7,7 +7,7 @@ namespace AZCKeeper.K4.Modules;
 /// título + duración). Los bufferiza y los envía en lote. No conoce a otros módulos:
 /// recibe el canal (IApiClient), el reloj y la ventana activa por constructor.
 /// </summary>
-public sealed class WindowModule : IKeeperModule
+public sealed class WindowModule : IKeeperModule, IFlushable
 {
     public string Code => "windowTracking";
 
@@ -117,5 +117,27 @@ public sealed class WindowModule : IKeeperModule
     {
         try { await _api.SendEpisodesAsync(episodes); }
         catch (Exception ex) { _log?.Invoke($"windowTracking flush: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// Cierre gracioso: para el timer, cierra el episodio en curso, y ESPERA a enviar lo
+    /// bufferizado. Deja _running=false, así un Stop() posterior no re-envía. Nunca lanza.
+    /// </summary>
+    public async Task FlushAsync()
+    {
+        List<EpisodeDto> toFlush;
+        lock (_lock)
+        {
+            _timer?.Dispose(); _timer = null;
+            CloseCurrent(_clock.Now);
+            toFlush = _buffer.Count > 0 ? new List<EpisodeDto>(_buffer) : new List<EpisodeDto>();
+            _buffer.Clear();
+            _running = false;
+        }
+        if (toFlush.Count > 0)
+        {
+            try { await _api.SendEpisodesAsync(toFlush); }
+            catch (Exception ex) { _log?.Invoke($"windowTracking flushAsync: {ex.Message}"); }
+        }
     }
 }

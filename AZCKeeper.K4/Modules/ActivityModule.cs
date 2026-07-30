@@ -8,7 +8,7 @@ namespace AZCKeeper.K4.Modules;
 /// GREATEST). Las banderas de cobertura windowTracked/callTracked las consulta al core
 /// vía una función inyectada (isModuleRunning), sin conocer esos módulos directamente.
 /// </summary>
-public sealed class ActivityModule : IKeeperModule
+public sealed class ActivityModule : IKeeperModule, IFlushable
 {
     public string Code => "activityTracking";
 
@@ -140,5 +140,29 @@ public sealed class ActivityModule : IKeeperModule
     {
         try { await _api.SendActivityDayAsync(day); }
         catch (Exception ex) { _log?.Invoke($"activityTracking send: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// Cierre gracioso: para el timer, arma el resumen final del día y ESPERA a enviarlo.
+    /// Deja _running=false para que un Stop() posterior no re-envíe. Nunca lanza.
+    /// </summary>
+    public async Task FlushAsync()
+    {
+        ActivityDayDto? finalDay;
+        lock (_lock)
+        {
+            if (!_running) { finalDay = null; }
+            else
+            {
+                _timer?.Dispose(); _timer = null;
+                finalDay = BuildDay();
+                _running = false;
+            }
+        }
+        if (finalDay != null)
+        {
+            try { await _api.SendActivityDayAsync(finalDay); }
+            catch (Exception ex) { _log?.Invoke($"activityTracking flushAsync: {ex.Message}"); }
+        }
     }
 }

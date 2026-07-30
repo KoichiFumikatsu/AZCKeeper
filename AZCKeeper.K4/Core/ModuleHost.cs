@@ -74,4 +74,19 @@ public sealed class ModuleHost
             catch (Exception ex) { _onError?.Invoke(module.Code, ex); }
         }
     }
+
+    /// <summary>
+    /// Drena con AWAIT real los módulos que bufferean (IFlushable), aislando el fallo de
+    /// cada uno. Es el paso previo al cierre: garantiza que lo pendiente se envíe antes de
+    /// que el proceso muera, en vez del flush fire-and-forget que se perdía al salir.
+    /// </summary>
+    public async Task FlushAllAsync()
+    {
+        foreach (var module in _modules.Values)
+        {
+            if (module is not IFlushable f) continue;
+            try { await f.FlushAsync(); }
+            catch (Exception ex) { _onError?.Invoke(module.Code, ex); }
+        }
+    }
 }

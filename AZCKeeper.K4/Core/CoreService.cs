@@ -38,7 +38,21 @@ public sealed class CoreService
         }
 
         var hs = await _api.HandshakeAsync(_version, _deviceName);
-        if (hs is null) { _log?.Invoke("handshake sin respuesta"); return false; }
+        if (hs is null)
+        {
+            // Token inválido/expirado -> re-login silencioso UNA vez. En K4 la identidad es
+            // cédula + equipo enrolado (sin contraseña), así que basta re-postear el CC que
+            // ya tenemos. Evita quedar sin sesión hasta el próximo reinicio.
+            if (_api.LastHandshakeStatus == 401)
+            {
+                _api.ClearToken();
+                var relog = await _api.LoginAsync(_cc, _deviceName, _version);
+                if (!relog.Ok) { _log?.Invoke($"re-login: {relog.Status}"); return false; }
+                _log?.Invoke("re-login silencioso ok");
+                hs = await _api.HandshakeAsync(_version, _deviceName);
+            }
+            if (hs is null) { _log?.Invoke("handshake sin respuesta"); return false; }
+        }
 
         var config = hs.ToModuleConfig();
         _host.Apply(config);
@@ -50,4 +64,15 @@ public sealed class CoreService
     }
 
     public void StopAll() => _host.StopAll();
+
+    /// <summary>
+    /// Cierre gracioso: primero drena los buffers con await real (FlushAllAsync), luego
+    /// para todo. Así el último resumen de actividad y los episodios pendientes SÍ salen
+    /// antes de que el proceso muera. Es lo que el runner resolvía con un Task.Delay.
+    /// </summary>
+    public async Task StopAndFlushAsync()
+    {
+        await _host.FlushAllAsync();
+        _host.StopAll();
+    }
 }

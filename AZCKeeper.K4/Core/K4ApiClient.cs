@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using AZCKeeper.K4.Contracts;
+using AZCKeeper.K4.Shell;
 
 namespace AZCKeeper.K4.Core;
 
@@ -9,22 +10,48 @@ namespace AZCKeeper.K4.Core;
 /// Canal HTTP con la API de Keeper 4. Implementa IApiClient para los módulos y añade
 /// login/handshake para el core. Auth por X-Auth-Token (el hosting no propaga
 /// Authorization). Ningún método lanza hacia los módulos: devuelven éxito/fracaso.
+///
+/// Posee el backoff de red (como el ApiClient de K3): cada envío real registra su
+/// resultado y, mientras haya backoff activo, NO abre socket — devuelve fallo inmediato
+/// para no sostener bans del hosting compartido (100+ equipos tras un NAT). El shell lee
+/// IsBackingOff para saltarse ciclos. La cola offline (Etapa 2) se enganchará aquí mismo.
 /// </summary>
 public sealed class K4ApiClient : IApiClient
 {
     private readonly HttpClient _http;
     private readonly JsonSerializerOptions _json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private readonly NetworkBackoffPolicy _backoff;
     private string _deviceGuid;
     private string? _token;
 
-    public K4ApiClient(string baseUrl, string deviceGuid, HttpClient? http = null)
+    public K4ApiClient(string baseUrl, string deviceGuid, HttpClient? http = null, NetworkBackoffPolicy? backoff = null)
     {
         _http = http ?? new HttpClient();
         _http.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
         _deviceGuid = deviceGuid;
+        _backoff = backoff ?? new NetworkBackoffPolicy();
     }
 
+    /// <summary>El cliente está en backoff de red: el shell debe saltarse el ciclo.</summary>
+    public bool IsBackingOff => _backoff.IsBackingOff;
+    public DateTime BackoffUntilUtc => _backoff.BackoffUntilUtc;
+
     public bool HasToken => _token is not null;
+
+    /// <summary>Token de sesión vigente, o null. Para persistirlo (DPAPI) al cambiar.</summary>
+    public string? CurrentToken => _token;
+
+    /// <summary>Estado HTTP del último handshake. Lo usa el re-login silencioso (401).</summary>
+    public int LastHandshakeStatus { get; private set; }
+
+    /// <summary>Se dispara cuando el token CAMBIA por un login (no por restaurarlo del disco).</summary>
+    public event Action<string?>? TokenChanged;
+
+    /// <summary>Restaura un token guardado (arranque). No dispara TokenChanged: no es un login nuevo.</summary>
+    public void RestoreToken(string token) => _token = token;
+
+    /// <summary>Descarta el token (p.ej. 401). Fuerza re-login en el siguiente ciclo.</summary>
+    public void ClearToken() => _token = null;
 
     public async Task<LoginResult> LoginAsync(string cc, string deviceName, string version)
     {
@@ -33,6 +60,7 @@ public sealed class K4ApiClient : IApiClient
         if (status == 200 && body.TryGetProperty("token", out var t))
         {
             _token = t.GetString();
+            TokenChanged?.Invoke(_token);
             return new LoginResult(true, "ok", null);
         }
         var st = body.TryGetProperty("status", out var s) ? s.GetString() : "error";
@@ -43,6 +71,7 @@ public sealed class K4ApiClient : IApiClient
     {
         var (status, body) = await PostAsync("client/handshake",
             new { deviceId = _deviceGuid, version, deviceName }, withToken: true);
+        LastHandshakeStatus = status;
         if (status != 200 || !body.TryGetProperty("effectiveConfig", out var cfg)) return null;
         return new HandshakeResult(cfg);
     }
@@ -112,6 +141,7 @@ public sealed class K4ApiClient : IApiClient
 
     private async Task<(int, JsonElement)> PostAsync(string path, object payload, bool withToken)
     {
+        if (_backoff.IsBackingOff) return (0, default); // no abrir socket durante backoff
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, path)
@@ -120,21 +150,26 @@ public sealed class K4ApiClient : IApiClient
             };
             if (withToken && _token is not null) req.Headers.Add("X-Auth-Token", _token);
             using var res = await _http.SendAsync(req);
-            return (( int)res.StatusCode, await ParseAsync(res));
+            var code = (int)res.StatusCode;
+            _backoff.Register(code, null); // 2xx/4xx resetea; 5xx/429/403 escala
+            return (code, await ParseAsync(res));
         }
-        catch { return (0, default); }
+        catch (Exception ex) { _backoff.Register(0, ex); return (0, default); }
     }
 
     private async Task<(int, JsonElement)> GetAsync(string path)
     {
+        if (_backoff.IsBackingOff) return (0, default);
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, path);
             if (_token is not null) req.Headers.Add("X-Auth-Token", _token);
             using var res = await _http.SendAsync(req);
-            return ((int)res.StatusCode, await ParseAsync(res));
+            var code = (int)res.StatusCode;
+            _backoff.Register(code, null);
+            return (code, await ParseAsync(res));
         }
-        catch { return (0, default); }
+        catch (Exception ex) { _backoff.Register(0, ex); return (0, default); }
     }
 
     private static async Task<JsonElement> ParseAsync(HttpResponseMessage res)
