@@ -89,4 +89,35 @@ public class AgentTests
         SelfTest.Run(reg, FixedNow);
         Assert.Null(reg.ReadValue(SelfTest.CanarySubkey, "probe")); // no deja rastro del canario
     }
+
+    [Fact]
+    public void Courier_SerializaLaFormaQueElBackendEspera()
+    {
+        // El JSON que el agente deja para el courier tiene que calzar campo a campo con
+        // SecurityReport::sanitizeAgent del backend, o el panel no vería el estado.
+        var reg = new MemoryRegistry { FailCodes = new HashSet<string> { "Bad\\Path" } };
+        var report = new AgentCycle(reg, "4.0.0.0", FixedNow)
+            .Run(new List<DesiredControl> {
+                new("aplicado", "Good\\Path", "V", 1),
+                new("fallido",  "Bad\\Path",  "V", 1) });
+
+        var json = CourierPayload.Build(report);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        Assert.True(root.GetProperty("canEnforce").GetBoolean());
+        Assert.Equal("4.0.0.0", root.GetProperty("agentVersion").GetString());
+        Assert.Equal("2026-07-30T12:00:00Z", root.GetProperty("reportedAt").GetString()); // ISO UTC con Z
+        Assert.Contains("aplicado", EnumStrings(root.GetProperty("applied")));
+
+        var failed = root.GetProperty("failed");
+        Assert.Equal(1, failed.GetArrayLength());
+        Assert.Equal("fallido", failed[0].GetProperty("code").GetString());   // code, no "Code"
+        Assert.False(string.IsNullOrEmpty(failed[0].GetProperty("reason").GetString())); // reason, no "Error"
+    }
+
+    private static IEnumerable<string> EnumStrings(System.Text.Json.JsonElement arr)
+    {
+        foreach (var e in arr.EnumerateArray()) yield return e.GetString() ?? "";
+    }
 }

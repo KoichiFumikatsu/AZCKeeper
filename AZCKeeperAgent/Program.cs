@@ -27,6 +27,22 @@ var report = cycle.Run(controls);
 Console.WriteLine("Reporte del agente:\n");
 Console.WriteLine(JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
 
+// Deja el reporte donde el cliente lo transportará al server (courier). El cliente lo
+// adjunta a client/security/report y el panel lo pinta. El agente no toca la red.
+// %ProgramData%\AZCKeeper solo lo escribe admin/SYSTEM. Si el runner corre sin elevar y
+// no puede escribir, es OTRA señal honesta (un usuario no puede falsificar el reporte).
+try
+{
+    var sink = new FileReportSink();
+    sink.Publish(report);
+    Console.WriteLine($"\nReporte publicado para el courier en: {sink.Path}");
+}
+catch (UnauthorizedAccessException)
+{
+    Console.WriteLine("\nNo se pudo publicar el reporte (sin privilegio para escribir %ProgramData%\\AZCKeeper). " +
+        "En producción el agente corre como SYSTEM y sí puede; el usuario no, por diseño.");
+}
+
 Console.WriteLine();
 if (!report.Elevated)
     Console.WriteLine(">> El agente NO está elevado: reporta el fallo honestamente (esto sería ROJO en el panel).");
