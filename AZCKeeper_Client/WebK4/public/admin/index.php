@@ -15,7 +15,7 @@ $scopeSql  = $firmScope ? " AND a.firma_id = " . (int)$firmScope . " " : "";
 $rows = [];
 try {
     $st = $pdo->query("
-        SELECT d.id AS device_id, d.device_name, d.device_guid, d.last_seen_at,
+        SELECT d.id AS device_id, d.device_name, d.label, d.device_guid, d.last_seen_at,
                u.display_name, u.cc,
                f.nombre AS firma,
                ss.agent_present, ss.agent_elevated, ss.agent_can_enforce,
@@ -139,9 +139,38 @@ require __DIR__ . '/partials/layout_header.php';
         $applied = jcount($r['agent_applied_json'] ?? null);
         $failed  = jcount($r['agent_failed_json'] ?? null);
         $ccMask  = $r['cc'] ? '•••'.substr(preg_replace('/\D/','',$r['cc']), -4) : '';
+        $machine = $r['device_name'] ?: substr($r['device_guid'],0,8);
+        $shown   = $r['label'] ?: $machine;          // etiqueta del admin, si no el nombre de máquina
+        $canRename = panelCan($adminUser, 'devices');
       ?>
         <tr class="border-b border-gray-100 last:border-0 <?= $cls==='red' ? 'bg-accent-500/5' : '' ?>">
-          <td class="px-5 py-3 font-mono text-xs text-gray-600"><?= htmlspecialchars($r['device_name'] ?: substr($r['device_guid'],0,8)) ?></td>
+          <td class="px-5 py-3" x-data="{edit:false}">
+            <div x-show="!edit" class="flex items-center gap-1.5 group">
+              <div>
+                <span class="font-mono text-xs text-gray-700"><?= htmlspecialchars($shown) ?></span>
+                <?php if ($r['label']): ?><div class="text-[10px] text-gray-400 font-mono"><?= htmlspecialchars($machine) ?></div><?php endif; ?>
+              </div>
+              <?php if ($canRename): ?>
+              <button @click="edit=true" class="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-corp-800" title="Renombrar equipo">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+              </button>
+              <?php endif; ?>
+            </div>
+            <?php if ($canRename): ?>
+            <form x-show="edit" method="post" action="device-rename.php" class="flex items-center gap-1" style="display:none">
+              <input type="hidden" name="device_id" value="<?= (int)$r['device_id'] ?>">
+              <input type="hidden" name="back" value="index.php">
+              <input name="label" value="<?= htmlspecialchars($r['label'] ?? '') ?>" placeholder="<?= htmlspecialchars($machine) ?>"
+                     class="px-2 py-1 border border-gray-300 rounded text-xs w-32 outline-none focus:ring-2 focus:ring-corp-200" x-ref="in" x-init="$watch('edit', v => v && $nextTick(()=>$refs.in.focus()))">
+              <button class="text-emerald-600 hover:text-emerald-700" title="Guardar">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+              </button>
+              <button type="button" @click="edit=false" class="text-gray-400 hover:text-gray-600" title="Cancelar">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </form>
+            <?php endif; ?>
+          </td>
           <td class="px-5 py-3">
             <div class="font-medium text-dark"><?= htmlspecialchars($r['display_name'] ?: 'Sin nombre') ?></div>
             <div class="text-xs text-muted font-mono"><?= htmlspecialchars($ccMask) ?></div>

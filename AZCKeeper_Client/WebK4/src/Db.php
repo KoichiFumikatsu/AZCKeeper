@@ -27,6 +27,10 @@ class Db {
       PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
       PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
       PDO::ATTR_EMULATE_PREPARES   => false,
+      // Fuerza la colacion de conexion a la de las columnas (utf8mb4_general_ci). Sin esto,
+      // MySQL 8 lanza error 3988 al pasar un parametro string con acentos a una comparacion/
+      // asignacion contra columnas utf8mb4_general_ci (la colacion del parametro no coincide).
+      PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4 COLLATE utf8mb4_general_ci",
     ]);
     return self::$pdo;
   }
