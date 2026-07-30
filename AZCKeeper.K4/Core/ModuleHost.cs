@@ -49,6 +49,14 @@ public sealed class ModuleHost
         }
     }
 
+    /// <summary>
+    /// ¿Está corriendo el módulo con este código? Lo usan otros módulos para consultar
+    /// cobertura (ej. actividad pregunta si windowTracking corre) SIN conocer la clase
+    /// del otro módulo: dependen de esta abstraccion del host, no unos de otros.
+    /// </summary>
+    public bool IsModuleRunning(string code)
+        => _modules.TryGetValue(code, out var m) && SafeRunning(m);
+
     /// <summary>Estado real de cada módulo, para el eco al servidor.</summary>
     public IReadOnlyList<ModuleStateDto> Snapshot()
         => _modules.Values.Select(m => new ModuleStateDto(m.Code, SafeRunning(m))).ToList();
