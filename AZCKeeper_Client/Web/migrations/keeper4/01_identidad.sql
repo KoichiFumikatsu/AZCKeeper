@@ -150,5 +150,9 @@ CREATE TABLE keeper_sessions (
   PRIMARY KEY (id),
   UNIQUE KEY uq_session_token (token_hash),
   KEY ix_session_user (user_id, revoked_at),
-  CONSTRAINT fk_session_user FOREIGN KEY (user_id) REFERENCES keeper_users (id) ON DELETE CASCADE
+  KEY ix_session_device (device_id),
+  CONSTRAINT fk_session_user FOREIGN KEY (user_id) REFERENCES keeper_users (id) ON DELETE CASCADE,
+  -- SET NULL y no CASCADE: dar de baja un equipo no debe borrar el rastro de la sesion.
+  -- Si se borra el usuario, fk_session_user ya arrastra la sesion por CASCADE.
+  CONSTRAINT fk_session_device FOREIGN KEY (device_id) REFERENCES keeper_devices (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
