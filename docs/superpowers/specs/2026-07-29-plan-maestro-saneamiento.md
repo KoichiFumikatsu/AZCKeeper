@@ -69,6 +69,22 @@ profesional del §11.1 del spec del módulo. El diseño debe resolver tres cosas
 ver títulos completos, si se enmascaran para roles no autorizados, y **auditar el acceso a la vista**
 (quién consultó la actividad de quién). Lo último no es burocracia: es lo que protege al responsable de TI.
 
+**0.6 — Todo el esfuerzo va a Keeper 4. Los hallazgos de la Fase A quedan sin corregir en Keeper 3.**
+Decisión explícita de Koichi (2026-07-30) tras exponerle el riesgo. Consecuencia asumida: los tres
+agujeros de autorización del §3.4 siguen abiertos en producción hasta que Keeper 4 reemplace al 3.
+
+Concretamente, lo que permanece expuesto en `keep.azclegal.com`:
+
+- `DeviceLock::tryUnlock` acepta cualquier PIN.
+- `users.php` sirve cédulas sin `requireModule`, y `?ajax=get_user&id=N` cruza scopes de firma (IDOR).
+- `policies.php` no evalúa ninguno de sus cinco permisos: cualquier rol con el módulo reescribe la
+  política global de los 251 equipos.
+- `organization.php` acepta credenciales por query string en el probador de conexión.
+
+Los tres primeros involucran datos personales de empleados, así que el riesgo es también de habeas data
+(Ley 1581, principio de seguridad). Queda documentado como **riesgo aceptado de forma informada**, no como
+hallazgo pendiente de descubrir. Si el plazo hasta Keeper 4 se alarga, conviene revisar la decisión.
+
 **0.5 — El sistema es multi-tenant por diseño: importa usuarios desde la BD del cliente.**
 Dato aportado por Koichi que no estaba en el diagnóstico. Existe un mecanismo parametrizable para que un
 cliente entregue sus usuarios sin capturarlos a mano: `keeper_data_sources` (host, puerto, base, usuario,
