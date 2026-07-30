@@ -23,10 +23,20 @@ $routes = [
   'GET' => [
     '/health'             => [Keeper\Endpoints\Health::class, 'handle'],
     '/admin/process-view' => [Keeper\Endpoints\ProcessView::class, 'handle'],
+    '/client/commands'    => [Keeper\Endpoints\ClientCommands::class, 'poll'],
   ],
   'POST' => [
-    '/client/handshake'       => [Keeper\Endpoints\ClientHandshake::class, 'handle'],
-    '/client/episodes/batch'  => [Keeper\Endpoints\EpisodeBatch::class, 'handle'],
+    '/client/login'            => [Keeper\Endpoints\ClientLogin::class, 'handle'],
+    '/client/handshake'        => [Keeper\Endpoints\ClientHandshake::class, 'handle'],
+    '/client/episodes/batch'   => [Keeper\Endpoints\EpisodeBatch::class, 'handle'],
+    '/client/activity-day'     => [Keeper\Endpoints\ActivityDay::class, 'handle'],
+    '/client/module-state'     => [Keeper\Endpoints\ModuleStateReport::class, 'handle'],
+    '/client/commands/result'  => [Keeper\Endpoints\ClientCommands::class, 'result'],
+    '/client/security/report'  => [Keeper\Endpoints\SecurityReport::class, 'handle'],
+    '/client/screenshots'      => [Keeper\Endpoints\ScreenshotMeta::class, 'handle'],
+    '/client/location'         => [Keeper\Endpoints\LocationReport::class, 'handle'],
+    '/admin/commands'          => [Keeper\Endpoints\AdminCommand::class, 'enqueue'],
+    '/admin/enrollment'        => [Keeper\Endpoints\AdminEnrollment::class, 'handle'],
   ],
 ];
 
