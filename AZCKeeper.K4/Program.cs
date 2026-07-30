@@ -41,8 +41,8 @@ internal static class Program
         // la copia instalada. En dev se salta con --no-install/--once.
         if (!noInstall && TrySelfInstall()) return 0;
 
-        // Instancia única. Nombre DISTINTO al de K3 ("AZCKeeper_Cliente_SingleInstance")
-        // para que producción 3.0.3.2 y K4 puedan coexistir durante la migración.
+        // Instancia única: que no corran dos clientes K4 a la vez. (K3 no corre: el
+        // instalador lo limpió antes de poner esta versión.)
         using var mutex = new Mutex(initiallyOwned: true, @"Local\AZCKeeper_K4_SingleInstance", out bool isNew);
         if (!isNew) return 0; // ya hay una instancia corriendo
 
@@ -136,6 +136,9 @@ internal static class Program
             var current = Environment.ProcessPath;
             if (string.IsNullOrEmpty(current)) return false;
             if (Installer.IsInInstallDir(current, K4Paths.InstallDir)) return false; // ya instalado
+
+            // Limpiar cualquier Keeper previo (K3 u otra K4) para que no corra doble.
+            try { new LegacyCleaner().CleanExisting(Environment.ProcessId); } catch { /* best-effort */ }
 
             var installer = new Installer();
             // El updater puede venir embebido (Setup de un solo archivo) o al lado del exe.

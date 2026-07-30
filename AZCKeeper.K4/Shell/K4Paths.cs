@@ -1,22 +1,23 @@
 namespace AZCKeeper.K4.Shell;
 
 /// <summary>
-/// Rutas per-user del cliente Keeper 4. Todo cuelga de %APPDATA%\AZCKeeper4 (NO
-/// "AZCKeeper" a secas) para NO chocar con Keeper 3, que sigue en producción (3.0.3.2)
-/// durante la migración. Nada aquí requiere admin.
+/// Rutas per-user del cliente Keeper. Todo cuelga de %APPDATA%\AZCKeeper (una sola carpeta
+/// "AZCKeeper", sin sufijo de versión). Keeper 4 NO coexiste con Keeper 3: el instalador
+/// limpia la instalación anterior antes de poner la nueva, así no corren dos a la vez.
+/// Nada aquí requiere admin.
 ///
 /// Las rutas se calculan una vez; los componentes que escriben aceptan además una ruta
 /// explícita para poder testear contra un directorio temporal.
 /// </summary>
 public static class K4Paths
 {
-    /// <summary>%APPDATA%\AZCKeeper4 — datos de roaming (config, auth, cola).</summary>
+    /// <summary>%APPDATA%\AZCKeeper — datos de roaming (config, auth, cola).</summary>
     public static string AppData { get; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AZCKeeper4");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AZCKeeper");
 
-    /// <summary>%LOCALAPPDATA%\AZCKeeper4 — datos locales (descargas de update, logs).</summary>
+    /// <summary>%LOCALAPPDATA%\AZCKeeper — datos locales (descargas de update, logs).</summary>
     public static string LocalAppData { get; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AZCKeeper4");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AZCKeeper");
 
     public static string ConfigFile => Path.Combine(AppData, "Config", "client_config.json");
     public static string AuthDir    => Path.Combine(AppData, "Auth");
