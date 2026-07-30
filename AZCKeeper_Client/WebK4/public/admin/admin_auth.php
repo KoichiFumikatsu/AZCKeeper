@@ -27,17 +27,5 @@ if (!$adminUser) {
     exit;
 }
 
-/**
- * Gate de módulos por rol. superadmin ve todo; los demás, según su rol.
- * Rebanada 1: mapa mínimo; el RBAC editable por keeper_panel_roles llega en la rebanada 5.
- */
-function panelCan(array $adminUser, string $module): bool
-{
-    if (($adminUser['panel_role'] ?? '') === 'superadmin') return true;
-    static $byRole = [
-        'admin'  => ['dashboard','process-view','users','devices','pending','tiers','coverage','dual-job','audit'],
-        'viewer' => ['dashboard','process-view','coverage'],
-    ];
-    $allowed = $byRole[$adminUser['panel_role'] ?? 'viewer'] ?? [];
-    return in_array($module, $allowed, true);
-}
+// Funciones de autorización (panelCan / panelLanding) — compartidas con login.php.
+require_once __DIR__ . '/admin_auth_helpers.php';

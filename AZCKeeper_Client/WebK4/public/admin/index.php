@@ -1,6 +1,9 @@
 <?php
 require_once __DIR__ . '/admin_auth.php';   // deja $adminUser y $pdo
 
+// El tablero de flota/seguridad es vista de IT/superadmin. Un gerente aterriza en procesos.
+if (!panelCan($adminUser, 'dashboard')) { header('Location: process-view.php'); exit; }
+
 $pageTitle   = 'Flota y seguridad';
 $currentPage = 'dashboard';
 

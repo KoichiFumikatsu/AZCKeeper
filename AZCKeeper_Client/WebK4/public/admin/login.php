@@ -11,8 +11,13 @@ $pdo = Db::pdo();
 $error = null;
 
 // Ya logueado -> al dashboard.
+require_once __DIR__ . '/admin_auth_helpers.php'; // panelCan / panelLanding sin exigir sesión
+
 $existing = $_COOKIE[KEEPER_ADMIN_COOKIE] ?? null;
-if ($existing && AdminAuthRepo::validateSession($pdo, $existing)) { header('Location: index.php'); exit; }
+if ($existing) {
+    $sess = AdminAuthRepo::validateSession($pdo, $existing);
+    if ($sess) { header('Location: ' . panelLanding($sess)); exit; }
+}
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $email = trim((string)($_POST['email'] ?? ''));
@@ -25,7 +30,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             'expires' => time() + 28800, 'path' => '/', 'httponly' => true,
             'samesite' => 'Lax', 'secure' => $secure,
         ]);
-        header('Location: index.php');
+        header('Location: ' . panelLanding($acct));
         exit;
     }
     $error = 'Credenciales inválidas.';
