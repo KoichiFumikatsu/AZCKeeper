@@ -10,6 +10,7 @@ node_modules/
 # Excepción: migraciones del backend PHP SÍ se versionan.
 *.sql
 !AZCKeeper_Client/Web/migrations/*.sql
+!AZCKeeper_Client/Web/migrations/**/*.sql
 
 # C# Build Artifacts
 bin/
