@@ -137,6 +137,44 @@ Tiers iniciales (ajustables — es una propuesta, no un contrato):
 Los dos módulos sensibles quedan en el tier más alto, lo que alinea el gating comercial con el gating
 legal: nadie los tiene por defecto.
 
+### 3.1 La gestión de tiers es un módulo aparte, parametrizable (Koichi, 2026-07-30)
+
+El manejo de tiers no está clavado en el código: es una sección propia del panel de administración, con su
+propio permiso RBAC, y todo lo suyo son datos editables. Tres niveles de control:
+
+**a) Tiers editables.** `keeper_tier` y `keeper_tier_module` son tablas; el panel hace CRUD sobre ellas. El
+seed solo pone valores iniciales (`básico`/`pro`/`enterprise`). Se pueden agregar tiers nuevos y cambiar
+qué módulos incluye cada uno sin tocar código.
+
+**b) Interruptor global de enforcement.** `keeper_panel_settings['tier_enforcement_enabled']`:
+
+- `'0'` → **todos los módulos activos disponibles para todos.** Modo interno de AZC: sin gating, útil
+  cuando Keeper se usa para la propia gente y no para clientes.
+- `'1'` → **se hace cumplir el tier de cada firma.** Modo venta de servicio.
+
+Un solo lugar decide si el gating aplica. Cambiarlo no toca ninguna firma ni política.
+
+**c) Override granular por firma.** `keeper_firma_module_override(firma_id, module_code, enabled)`:
+
+- `enabled=1` → concede el módulo a esa firma **aunque su tier no lo incluya** (add-on).
+- `enabled=0` → revoca el módulo de esa firma **aunque su tier sí lo incluya** (excepción).
+
+Sirve para vender un add-on suelto sin subir de tier, o para quitarle a un cliente algo puntual sin
+bajarlo de tier. Lleva `note` y `updated_by` para que la excepción quede justificada y auditada.
+
+**Resolución de módulos efectivos de una firma** (con enforcement en `'1'`):
+
+```
+( módulos del tier  MENOS  los revocados por override )
+  MÁS  los concedidos por override
+```
+
+Con enforcement en `'0'`, el resultado es simplemente todos los `keeper_module` activos.
+
+Esta es la consulta que el backend corre antes de recortar la política, verificada en DEV: una firma en
+`básico` con override `screenshots=1, windowTracking=0` resuelve exactamente
+`activityTracking, callTracking, processView, screenshots` — el revocado desaparece, el concedido aparece.
+
 ---
 
 ## 4. Comandos: apagado remoto y diagnóstico de red
@@ -268,6 +306,9 @@ título; la ubicación es dato de intimidad.** La gerencia jurídica ya contempl
 | Screenshots: blob en object storage, BD solo metadata + sha256 | A 1000 equipos son TB/año; respeta la decisión del 2026-06-09 |
 | Módulos sensibles solo en el tier alto | Alinea el gating comercial con el legal: nadie los tiene por defecto |
 | Historial de tier en `keeper_audit_log`, no en tabla | Responde quién y cuándo sin una tabla de vigencias poco consultada |
+| Gestión de tiers como módulo de panel, editable | No clavar tiers en código; agregar/modificar desde la UI |
+| Interruptor global `tier_enforcement_enabled` | Un lugar decide si el gating aplica; permite modo interno sin gating |
+| Override granular por firma | Vender un add-on o quitar algo puntual sin mover de tier |
 
 ---
 
