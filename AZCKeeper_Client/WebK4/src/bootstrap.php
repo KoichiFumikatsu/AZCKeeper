@@ -19,6 +19,7 @@ require_once __DIR__ . '/Services/Metrics.php';
 require_once __DIR__ . '/Services/DualJobDetector.php';
 
 // Repos
+require_once __DIR__ . '/Repos/AdminAuthRepo.php';
 require_once __DIR__ . '/Repos/SessionRepo.php';
 require_once __DIR__ . '/Repos/DeviceRepo.php';
 require_once __DIR__ . '/Repos/UserRepo.php';
