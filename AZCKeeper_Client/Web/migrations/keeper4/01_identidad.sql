@@ -80,6 +80,10 @@ CREATE TABLE keeper_users (
   created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at        TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
+  -- La cedula es la clave natural: es lo que permite a la importacion decidir
+  -- "esta persona ya existe, mapeala" en vez de duplicarla. UNIQUE admite varios
+  -- NULL en MySQL, asi que sigue siendo opcional.
+  UNIQUE KEY uq_users_cc (cc),
   KEY ix_users_status (status, employment_status),
   KEY ix_users_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -114,8 +118,18 @@ CREATE TABLE keeper_user_assignments (
   updated_at     TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_assign_user (user_id),
-  KEY ix_assign_scope (firma_id, sede_id, area_id, cargo_id),
-  CONSTRAINT fk_assign_user FOREIGN KEY (user_id) REFERENCES keeper_users (id) ON DELETE CASCADE
+  KEY ix_assign_scope (firma_id, sede_id, area_id, cargo_id, sociedad_id),
+  CONSTRAINT fk_assign_user FOREIGN KEY (user_id) REFERENCES keeper_users (id) ON DELETE CASCADE,
+  -- Las cinco FK siguientes son lo que hace VERIFICABLE la regla de arriba. Sin ellas,
+  -- un bug de importacion podria escribir aqui un id externo y MySQL lo aceptaria en
+  -- silencio: justo el fallo que keeper_external_ref existe para prevenir.
+  -- SET NULL y no CASCADE: perder una dimension organizacional no debe borrar la
+  -- asignacion completa de la persona.
+  CONSTRAINT fk_assign_firma    FOREIGN KEY (firma_id)    REFERENCES keeper_firmas (id)     ON DELETE SET NULL,
+  CONSTRAINT fk_assign_sociedad FOREIGN KEY (sociedad_id) REFERENCES keeper_sociedades (id) ON DELETE SET NULL,
+  CONSTRAINT fk_assign_area     FOREIGN KEY (area_id)     REFERENCES keeper_areas (id)      ON DELETE SET NULL,
+  CONSTRAINT fk_assign_cargo    FOREIGN KEY (cargo_id)    REFERENCES keeper_cargos (id)     ON DELETE SET NULL,
+  CONSTRAINT fk_assign_sede     FOREIGN KEY (sede_id)     REFERENCES keeper_sedes (id)      ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 CREATE TABLE keeper_devices (
