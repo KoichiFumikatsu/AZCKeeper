@@ -894,7 +894,23 @@ reportar por completo, asi que el seed no es opcional."
 ## Criterio de salida
 
 - [ ] `pipezafra_keepdev` tiene **26 tablas** y ninguna con collation distinta de `utf8mb4_general_ci`
-- [ ] `keeper_episode` tiene 7 particiones y `EXPLAIN` de la consulta de la vista usa `ix_ep_user_day_start` **sin filesort**
+- [ ] `keeper_episode` tiene 7 particiones y `EXPLAIN` de la consulta de la vista usa `ix_ep_user_day_start` con *partition pruning* (una sola partición) y **sin filesort**
+
+> **Corrección al criterio (2026-07-30, medido contra la base real).** La versión anterior exigía "sin
+> filesort" para `... WHERE user_id=? AND day_date BETWEEN ? AND ? ORDER BY start_at`. **Esa expectativa
+> era incorrecta:** con un rango en `day_date`, la tercera columna del índice no puede ordenar globalmente,
+> así que MySQL añade filesort. El índice está bien; el criterio estaba mal.
+>
+> Medido en DEV, las dos formas en que la vista consulta de verdad **sí evitan el filesort**:
+>
+> | Consulta | `Extra` |
+> |---|---|
+> | Un día: `day_date = ? ORDER BY start_at` | `NULL` |
+> | Rango: `day_date BETWEEN ? AND ? ORDER BY day_date, start_at` | `Using index condition` |
+>
+> **Requisito de diseño derivado para la vista:** el detalle sobre un rango de fechas debe ordenar por
+> `(day_date, start_at)` —cronológico completo— y no solo por `start_at`. Es además el orden natural para
+> leer una jornada.
 - [ ] `EXPLAIN` del agregado por proceso usa `ix_ep_day_proc` con `Using index`
 - [ ] `keeper_external_ref` tiene el UNIQUE `(source_id, entity_type, external_id)`
 - [ ] `keeper_audit_log` tiene `admin_id` indexado
