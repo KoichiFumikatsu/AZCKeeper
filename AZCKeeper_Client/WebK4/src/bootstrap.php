@@ -33,6 +33,7 @@ require_once __DIR__ . '/Repos/ScreenshotRepo.php';
 require_once __DIR__ . '/Repos/LocationRepo.php';
 require_once __DIR__ . '/Repos/FocusRepo.php';
 require_once __DIR__ . '/Repos/DualJobRepo.php';
+require_once __DIR__ . '/Repos/CoverageRepo.php';
 
 // Endpoints
 require_once __DIR__ . '/Endpoints/Health.php';
@@ -49,3 +50,4 @@ require_once __DIR__ . '/Endpoints/ProcessView.php';
 require_once __DIR__ . '/Endpoints/AdminCommand.php';
 require_once __DIR__ . '/Endpoints/AdminEnrollment.php';
 require_once __DIR__ . '/Endpoints/ProductivityCron.php';
+require_once __DIR__ . '/Endpoints/AdminCoverage.php';

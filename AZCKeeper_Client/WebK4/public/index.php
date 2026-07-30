@@ -23,6 +23,7 @@ $routes = [
   'GET' => [
     '/health'             => [Keeper\Endpoints\Health::class, 'handle'],
     '/admin/process-view' => [Keeper\Endpoints\ProcessView::class, 'handle'],
+    '/admin/coverage'     => [Keeper\Endpoints\AdminCoverage::class, 'list'],
     '/client/commands'    => [Keeper\Endpoints\ClientCommands::class, 'poll'],
   ],
   'POST' => [
@@ -38,6 +39,7 @@ $routes = [
     '/admin/commands'          => [Keeper\Endpoints\AdminCommand::class, 'enqueue'],
     '/admin/enrollment'        => [Keeper\Endpoints\AdminEnrollment::class, 'handle'],
     '/cron/productivity'       => [Keeper\Endpoints\ProductivityCron::class, 'handle'],
+    '/admin/coverage/note'     => [Keeper\Endpoints\AdminCoverage::class, 'setNote'],
   ],
 ];
 
