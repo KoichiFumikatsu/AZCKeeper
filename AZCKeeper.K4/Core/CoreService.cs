@@ -17,10 +17,13 @@ public sealed class CoreService
     private readonly ModuleHost _host;
     private readonly string _cc, _deviceName, _version;
     private readonly Action<string>? _log;
+    private readonly AZCKeeper.K4.Shell.AgentReportReader? _agentReader;
 
-    public CoreService(K4ApiClient api, ModuleHost host, string cc, string deviceName, string version, Action<string>? log = null)
+    public CoreService(K4ApiClient api, ModuleHost host, string cc, string deviceName, string version,
+        Action<string>? log = null, AZCKeeper.K4.Shell.AgentReportReader? agentReader = null)
     {
-        _api = api; _host = host; _cc = cc; _deviceName = deviceName; _version = version; _log = log;
+        _api = api; _host = host; _cc = cc; _deviceName = deviceName; _version = version;
+        _log = log; _agentReader = agentReader;
     }
 
     /// <summary>Un ciclo completo: asegura sesión, handshake, aplica, reporta estado.</summary>
@@ -60,6 +63,16 @@ public sealed class CoreService
         // Eco del estado real: qué módulos están corriendo de verdad.
         await _api.ReportModuleStateAsync(_host.Snapshot());
         _log?.Invoke($"handshake aplicado ({config.Count} módulos en config, {_host.Modules.Count} registrados)");
+
+        // Courier del agente elevado: transporta su reporte al panel. El cliente NO lo
+        // produce, solo lo reenvía. Ausente -> agentPresent=false (gris en el panel).
+        if (_agentReader is not null)
+        {
+            var courier = _agentReader.Read();
+            await _api.ReportSecurityAsync(courier.Present, new { }, courier.Enforcement);
+            if (courier.Present && courier.Stale) _log?.Invoke("agente: reporte viejo (posible agente colgado)");
+        }
+
         return true;
     }
 

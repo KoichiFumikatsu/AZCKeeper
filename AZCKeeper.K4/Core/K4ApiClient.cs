@@ -127,6 +127,20 @@ public sealed class K4ApiClient : IApiClient
         return code == 200;
     }
 
+    /// <summary>
+    /// Reporta el estado de seguridad, incluido el bloque del agente elevado que el cliente
+    /// transporta (courier). NO se encola: el estado es last-write-wins, así que reenviar
+    /// uno viejo desde la cola podría pisar uno más nuevo. Se reintenta solo en el próximo
+    /// ciclo con datos frescos. agentEnforcement null => el endpoint lo trata como ausente.
+    /// </summary>
+    public async Task<bool> ReportSecurityAsync(bool agentPresent, object controls, object? agentEnforcement)
+    {
+        var payload = new { deviceId = _deviceGuid, agentPresent, controls, agentEnforcement };
+        var (status, _) = await PostJsonAsync("client/security/report",
+            JsonSerializer.Serialize(payload, _json), withToken: true);
+        return status == 200;
+    }
+
     public async Task<bool> SendScreenshotMetaAsync(ScreenshotMetaDto meta)
     {
         var payload = new

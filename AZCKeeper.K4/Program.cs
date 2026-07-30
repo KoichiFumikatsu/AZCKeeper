@@ -60,7 +60,8 @@ internal static class Program
         host.Register(new CommandModule(api, clock, Log));
         host.Register(new ScreenshotModule(api, new WinScreenCapturer(), new StubBlobStore(), clock, Log));
 
-        var core = new CoreService(api, host, cfg.Cc, Environment.MachineName, cfg.Version, log: Log);
+        var core = new CoreService(api, host, cfg.Cc, Environment.MachineName, cfg.Version,
+            log: Log, agentReader: new AgentReportReader());
 
         if (once)
         {
