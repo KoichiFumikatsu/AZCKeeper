@@ -11,6 +11,11 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
+  <!-- WMI (Win32_ComputerSystem/Processor/BIOS/VideoController) para specs del equipo. -->
+  <ItemGroup>
+    <PackageReference Include="System.Management" Version="8.0.0" />
+  </ItemGroup>
+
   <!-- Publicacion self-contained (runtime .NET embebido: nada que instalar aparte).
        El RID/SelfContained/SingleFile se pasan al publicar (build-release). Trimming
        APAGADO: WinForms usa reflexion y el trim la rompe. -->

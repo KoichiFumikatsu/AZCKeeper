@@ -71,10 +71,10 @@ public sealed class K4ApiClient : IApiClient
         return new LoginResult(false, st ?? "error", status == 202 ? "pending" : null);
     }
 
-    public async Task<HandshakeResult?> HandshakeAsync(string version, string? deviceName = null, int idleSeconds = 0)
+    public async Task<HandshakeResult?> HandshakeAsync(string version, string? deviceName = null, int idleSeconds = 0, object? specs = null)
     {
         var (status, body) = await PostAsync("client/handshake",
-            new { deviceId = _deviceGuid, version, deviceName, idleSeconds }, withToken: true);
+            new { deviceId = _deviceGuid, version, deviceName, idleSeconds, specs }, withToken: true);
         LastHandshakeStatus = status;
         if (status != 200 || !body.TryGetProperty("effectiveConfig", out var cfg)) return null;
         return new HandshakeResult(cfg, body);

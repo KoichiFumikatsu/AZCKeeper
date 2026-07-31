@@ -125,8 +125,13 @@ internal static class Program
         host.Register(new CommandModule(api, clock, Log));
         host.Register(new ScreenshotModule(api, new WinScreenCapturer(), new StubBlobStore(), clock, Log));
 
+        // Specs del equipo, recogidas UNA vez (se envian en el primer handshake). Si algo falla,
+        // se envia lo que se pudo; nunca tumba el arranque.
+        object? deviceSpecs = null;
+        try { deviceSpecs = WinDeviceSpecs.Collect(); } catch (Exception ex) { Log($"specs: {ex.Message}"); }
+
         var core = new CoreService(api, host, cc, password, Environment.MachineName, version,
-            log: Log, agentReader: new AgentReportReader(), idleSeconds: () => idle.IdleSeconds);
+            log: Log, agentReader: new AgentReportReader(), idleSeconds: () => idle.IdleSeconds, deviceSpecs: deviceSpecs);
 
         if (once)
         {
