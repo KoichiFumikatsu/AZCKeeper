@@ -116,6 +116,19 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $id = (int)($_POST['id'] ?? 0);
         $pdo->prepare("UPDATE keeper_client_releases SET is_active = 0 WHERE id = :id")->execute([':id' => $id]);
         try { AuditRepo::log($pdo, $adminId, null, null, 'admin', 'release_deactivate', "Release id {$id} desactivada"); } catch (\Throwable $e) {}
+    } elseif ($action === 'toggle_force') {
+        // Paridad K3: forzar el salto de la flota. Con force_update, el cliente lo aplica aunque
+        // no tenga auto-descarga. Solo tiene sentido sobre la release ACTIVA.
+        $id = (int)($_POST['id'] ?? 0);
+        $on = ($_POST['on'] ?? '') === '1' ? 1 : 0;
+        $st = $pdo->prepare("SELECT version FROM keeper_client_releases WHERE id = :id");
+        $st->execute([':id' => $id]);
+        if ($row = $st->fetch(PDO::FETCH_ASSOC)) {
+            $pdo->prepare("UPDATE keeper_client_releases SET force_update = :f WHERE id = :id")->execute([':f' => $on, ':id' => $id]);
+            $flash = ['ok', $on ? "Actualización FORZADA para {$row['version']}: la flota saltará en su próximo chequeo." : "Forzado desactivado para {$row['version']}."];
+            try { AuditRepo::log($pdo, $adminId, null, null, 'admin', 'release_force_update',
+                    "Release {$row['version']} force_update={$on}", ['id' => $id]); } catch (\Throwable $e) {}
+        }
     } elseif ($action === 'verify') {
         $id = (int)($_POST['id'] ?? 0);
         $st = $pdo->prepare("SELECT version, download_url, size_bytes FROM keeper_client_releases WHERE id = :id");
@@ -178,7 +191,7 @@ $pageTitle = 'Versiones del cliente'; $currentPage = 'releases';
 
 $rows = [];
 try {
-    $rows = $pdo->query("SELECT id, version, download_url, size_bytes, is_active, is_beta, notes, created_at
+    $rows = $pdo->query("SELECT id, version, download_url, size_bytes, is_active, is_beta, force_update, notes, created_at
                          FROM keeper_client_releases ORDER BY is_active DESC, created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
 } catch (\Throwable $e) { error_log('releases list: ' . $e->getMessage()); }
 
@@ -286,6 +299,10 @@ require __DIR__ . '/partials/layout_header.php';
             </form>
             <?php if ($r['is_active']): ?>
               <form method="post" class="inline"><?= csrf_field() ?>
+                <input type="hidden" name="action" value="toggle_force"><input type="hidden" name="id" value="<?= (int)$r['id'] ?>"><input type="hidden" name="on" value="<?= $r['force_update'] ? '0' : '1' ?>">
+                <button class="text-xs px-2 py-1 rounded <?= $r['force_update'] ? 'bg-accent-500 hover:bg-accent-600 text-white' : 'border border-gray-200 hover:border-gray-300 text-gray-600' ?>" title="<?= $r['force_update'] ? 'La flota está forzada a saltar a esta versión' : 'Forzar el salto de la flota a esta versión (aunque no tenga auto-descarga)' ?>"><?= $r['force_update'] ? 'Forzando ✓' : 'Forzar' ?></button>
+              </form>
+              <form method="post" class="inline"><?= csrf_field() ?>
                 <input type="hidden" name="action" value="deactivate"><input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
                 <button class="text-xs px-2 py-1 border border-gray-200 rounded hover:border-gray-300 text-gray-600">Desactivar</button>
               </form>
@@ -294,7 +311,7 @@ require __DIR__ . '/partials/layout_header.php';
                 <input type="hidden" name="action" value="activate"><input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
                 <button class="text-xs px-2 py-1 bg-corp-800 hover:bg-corp-900 text-white rounded">Activar</button>
               </form>
-              <form method="post" class="inline" onsubmit="return confirm('¿Eliminar la versión <?= htmlspecialchars($r['version']) ?><?= csrf_field() ?> del feed?')">
+              <form method="post" class="inline" onsubmit="return confirm('¿Eliminar la versión <?= htmlspecialchars($r['version']) ?> del feed?')"><?= csrf_field() ?>
                 <input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
                 <button class="text-xs px-2 py-1 text-muted hover:text-accent-500">Eliminar</button>
               </form>

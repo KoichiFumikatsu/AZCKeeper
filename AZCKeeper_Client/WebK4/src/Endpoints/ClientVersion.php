@@ -11,8 +11,8 @@ use Keeper\Db;
  * desactualizado). Lee keeper_client_releases: el release activo más nuevo. Con
  * ?allowBeta=true incluye los marcados beta; si no, solo estables.
  *
- * minimumVersion/forceUpdate quedan como columnas futuras (no existen aún en el esquema);
- * se devuelven null/false para que el cliente los interprete como "sin exigencia".
+ * forceUpdate/minimumVersion salen del release activo (columnas agregadas en la mig 16): el
+ * panel puede forzar el salto de toda la flota, como en Keeper 3.
  */
 class ClientVersion
 {
@@ -21,7 +21,7 @@ class ClientVersion
         $pdo = Db::pdo();
         $allowBeta = isset($_GET['allowBeta']) && $_GET['allowBeta'] === 'true';
 
-        $sql = "SELECT version, download_url, size_bytes, is_beta, notes
+        $sql = "SELECT version, download_url, size_bytes, is_beta, notes, force_update, minimum_version
                 FROM keeper_client_releases
                 WHERE is_active = 1";
         if (!$allowBeta) $sql .= " AND is_beta = 0";
@@ -44,8 +44,8 @@ class ClientVersion
             'latestVersion'  => $row['version'],
             'downloadUrl'    => $row['download_url'],
             'sizeBytes'      => $row['size_bytes'] !== null ? (int)$row['size_bytes'] : null,
-            'minimumVersion' => null,
-            'forceUpdate'    => false,
+            'minimumVersion' => $row['minimum_version'] ?? null,
+            'forceUpdate'    => (bool)($row['force_update'] ?? 0),
             'isBeta'         => (bool)$row['is_beta'],
             'releaseNotes'   => $row['notes'],
         ]);

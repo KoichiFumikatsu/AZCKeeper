@@ -260,7 +260,7 @@ require __DIR__ . '/partials/layout_header.php';
         <?php foreach ($roles as $r): ?>
           <td class="px-4 py-2.5 text-center">
             <?php if (!(int)$r['is_system'] && (int)($usage[$r['role_code']] ?? 0) === 0): ?>
-              <form method="post" class="inline" onsubmit="return confirm('¿Eliminar el rol <?= htmlspecialchars($r['role_code']) ?><?= csrf_field() ?>?')">
+              <form method="post" class="inline" onsubmit="return confirm('¿Eliminar el rol <?= htmlspecialchars($r['role_code']) ?>?')"><?= csrf_field() ?>
                 <input type="hidden" name="action" value="delete_role">
                 <input type="hidden" name="role_code" value="<?= htmlspecialchars($r['role_code']) ?>">
                 <button class="text-xs text-muted hover:text-accent-500">eliminar</button>

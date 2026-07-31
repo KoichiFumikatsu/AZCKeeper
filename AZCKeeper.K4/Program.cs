@@ -51,6 +51,11 @@ internal static class Program
         // Config + identidad estable del equipo.
         var cfg = K4Config.LoadOrCreate();
 
+        // La version que CORRE sale del assembly (build-release lo sella con -p:Version), no del
+        // config. Sin esto el cliente se reportaria siempre como el default del config y el
+        // auto-update no podria distinguir un build de otro. En dev (sin -p:Version) cae al config.
+        string version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? cfg.Version;
+
         // Logging real (anillo en memoria + archivo diario). Reemplaza el Console.WriteLine
         // que bajo WinExe se perdia. En --once ademas eco a la consola del padre (diagnostico).
         var logger = new LocalLogger();
@@ -90,7 +95,7 @@ internal static class Program
                 try
                 {
                     var tmp = new K4ApiClient(bu, deviceId);   // efimero: solo valida credenciales
-                    var r = await tmp.LoginAsync(c, p, Environment.MachineName, cfg.Version);
+                    var r = await tmp.LoginAsync(c, p, Environment.MachineName, version);
                     return (r.Ok, r.Note == "pending" ? "pending" : (r.Ok ? "ok" : "bad"));
                 }
                 catch { return (false, "error"); }
@@ -120,7 +125,7 @@ internal static class Program
         host.Register(new CommandModule(api, clock, Log));
         host.Register(new ScreenshotModule(api, new WinScreenCapturer(), new StubBlobStore(), clock, Log));
 
-        var core = new CoreService(api, host, cc, password, Environment.MachineName, cfg.Version,
+        var core = new CoreService(api, host, cc, password, Environment.MachineName, version,
             log: Log, agentReader: new AgentReportReader());
 
         if (once)
@@ -167,14 +172,14 @@ internal static class Program
                 new DiagNet(
                     api.IsBackingOff,
                     api.IsBackingOff ? api.BackoffUntilUtc.ToString("yyyy-MM-ddTHH:mm:ssZ") : null,
-                    api.LastHandshakeStatus, api.PendingQueueCount, cfg.Version)),
+                    api.LastHandshakeStatus, api.PendingQueueCount, version)),
             send: payload => api.SendDiagnosticsAsync(payload),
             isBackingOff: () => api.IsBackingOff,
             log: Log);
 
         // El loop corre en background; la UI invisible mantiene vivo el proceso.
         _ = _resident.RunLoopAsync(_cts.Token);
-        _ = RunUpdateLoopAsync(cfg, _cts.Token, Log);
+        _ = RunUpdateLoopAsync(cfg, version, _cts.Token, Log);
         _ = diagLoop.RunAsync(_cts.Token);
 
         Application.Run(new ApplicationContext());
@@ -225,10 +230,10 @@ internal static class Program
     /// lo crítico o forzado por el servidor; lo demás se registra y se deja a decisión manual.
     /// Al aplicar, lanza el helper y cierra el cliente para que el swap ocurra.
     /// </summary>
-    private static async Task RunUpdateLoopAsync(K4Config cfg, CancellationToken ct, Action<string> log)
+    private static async Task RunUpdateLoopAsync(K4Config cfg, string version, CancellationToken ct, Action<string> log)
     {
         if (!cfg.Updates.Enable) return;
-        var mgr = new K4UpdateManager(cfg.BaseUrl, cfg.Version, cfg.Updates.AutoDownload, log: log);
+        var mgr = new K4UpdateManager(cfg.BaseUrl, version, cfg.Updates.AutoDownload, log: log);
         try
         {
             using var timer = new PeriodicTimer(TimeSpan.FromMinutes(Math.Max(15, cfg.Updates.IntervalMinutes)));
