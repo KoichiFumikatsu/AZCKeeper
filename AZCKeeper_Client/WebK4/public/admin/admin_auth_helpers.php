@@ -19,6 +19,30 @@
  * reproducir el token. Cada formulario POST del panel incrusta csrf_field(); admin_auth.php
  * rechaza cualquier POST cuyo _csrf no coincida.
  */
+/**
+ * Semáforo de presencia por persona, derivado de su equipo activo más reciente.
+ *   sin_keeper : no tiene equipo activo.
+ *   offline    : tiene equipo pero sin handshake reciente (> OFFLINE_SECONDS).
+ *   ausente    : online pero inactivo (idle >= AWAY_IDLE_SECONDS).
+ *   activa     : online y con actividad reciente.
+ * $lastSeenEpoch = UNIX_TIMESTAMP(last_seen_at) (evita el desfase de zona del panel), o null.
+ */
+if (!function_exists('presence')) {
+    if (!defined('PRESENCE_OFFLINE_SECONDS'))   define('PRESENCE_OFFLINE_SECONDS', 600);   // 10 min sin handshake = desconectada
+    if (!defined('PRESENCE_AWAY_IDLE_SECONDS')) define('PRESENCE_AWAY_IDLE_SECONDS', 300); // 5 min de inactividad = ausente
+
+    function presence(?int $lastSeenEpoch, ?int $idleSeconds, int $deviceCount): array
+    {
+        if ($deviceCount <= 0)
+            return ['key' => 'sin_keeper', 'label' => 'Sin keeper', 'cls' => 'text-gray-500 bg-gray-100'];
+        if ($lastSeenEpoch === null || (time() - $lastSeenEpoch) > PRESENCE_OFFLINE_SECONDS)
+            return ['key' => 'offline', 'label' => 'Desconectada', 'cls' => 'text-accent-500 bg-accent-500/10'];
+        if ($idleSeconds !== null && $idleSeconds >= PRESENCE_AWAY_IDLE_SECONDS)
+            return ['key' => 'ausente', 'label' => 'Ausente', 'cls' => 'text-amber-700 bg-amber-50'];
+        return ['key' => 'activa', 'label' => 'Activa', 'cls' => 'text-emerald-700 bg-emerald-50'];
+    }
+}
+
 if (!function_exists('csrf_token')) {
     function csrf_token(): string
     {

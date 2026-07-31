@@ -58,6 +58,24 @@ foreach ($rows as $r) {
     else $stalegone++;
 }
 
+// Resumen de PRESENCIA por persona (activa/ausente/offline/sin-keeper) del alcance.
+$presCounts = ['activa' => 0, 'ausente' => 0, 'offline' => 0, 'sin_keeper' => 0];
+try {
+    $pst = $pdo->query("
+        SELECT (SELECT COUNT(*) FROM keeper_devices d WHERE d.user_id=u.id AND d.status='active') AS devices,
+               (SELECT UNIX_TIMESTAMP(MAX(d2.last_seen_at)) FROM keeper_devices d2 WHERE d2.user_id=u.id AND d2.status='active') AS last_seen_epoch,
+               (SELECT d3.last_idle_seconds FROM keeper_devices d3 WHERE d3.user_id=u.id AND d3.status='active' ORDER BY d3.last_seen_at DESC LIMIT 1) AS last_idle
+        FROM keeper_users u
+        LEFT JOIN keeper_user_assignments a ON a.user_id = u.id
+        WHERE u.status='active' AND u.employment_status='active' $scopeSql
+    ");
+    foreach ($pst->fetchAll(PDO::FETCH_ASSOC) as $u) {
+        $p = presence($u['last_seen_epoch'] !== null ? (int)$u['last_seen_epoch'] : null,
+                      $u['last_idle'] !== null ? (int)$u['last_idle'] : null, (int)$u['devices']);
+        $presCounts[$p['key']] = ($presCounts[$p['key']] ?? 0) + 1;
+    }
+} catch (\Throwable $e) { error_log('dashboard presence: ' . $e->getMessage()); }
+
 require __DIR__ . '/partials/layout_header.php';
 ?>
 
@@ -103,6 +121,25 @@ require __DIR__ . '/partials/layout_header.php';
     <div class="text-3xl font-bold text-dark"><?= $stalegone ?></div>
     <div class="text-sm text-gray-500 mt-1">Sin reportar / viejo</div>
   </div>
+</div>
+
+<!-- PRESENCIA (por persona) -->
+<div class="bg-white rounded-xl border border-gray-100 p-4 mb-6 flex flex-wrap items-center gap-x-6 gap-y-2">
+  <span class="text-sm font-semibold text-dark">Presencia de personas</span>
+  <?php
+  $presMeta = [
+    'activa'     => ['Activas',      'bg-emerald-500'],
+    'ausente'    => ['Ausentes',     'bg-amber-500'],
+    'offline'    => ['Desconectadas','bg-accent-500'],
+    'sin_keeper' => ['Sin keeper',   'bg-gray-400'],
+  ];
+  foreach ($presMeta as $k => [$lbl, $dot]): ?>
+    <a href="users.php" class="flex items-center gap-2 text-sm text-gray-600 hover:text-corp-800">
+      <span class="w-2.5 h-2.5 rounded-full <?= $dot ?>"></span>
+      <span class="tabular-nums font-semibold text-dark"><?= (int)$presCounts[$k] ?></span> <?= $lbl ?>
+    </a>
+  <?php endforeach; ?>
+  <span class="text-xs text-muted ml-auto">Ausente = &gt;5 min inactiva · Desconectada = &gt;10 min sin reportar</span>
 </div>
 
 <!-- SECURITY BOARD -->

@@ -54,7 +54,9 @@ try {
         SELECT u.id, u.cc, u.display_name, u.status, u.employment_status,
                (u.password_hash IS NULL) AS no_password,
                f.nombre AS firma, ar.nombre AS area, c.nombre AS cargo, se.nombre AS sede,
-               (SELECT COUNT(*) FROM keeper_devices d WHERE d.user_id = u.id AND d.status='active') AS devices
+               (SELECT COUNT(*) FROM keeper_devices d WHERE d.user_id = u.id AND d.status='active') AS devices,
+               (SELECT UNIX_TIMESTAMP(MAX(d2.last_seen_at)) FROM keeper_devices d2 WHERE d2.user_id = u.id AND d2.status='active') AS last_seen_epoch,
+               (SELECT d3.last_idle_seconds FROM keeper_devices d3 WHERE d3.user_id = u.id AND d3.status='active' ORDER BY d3.last_seen_at DESC LIMIT 1) AS last_idle
         FROM keeper_users u
         LEFT JOIN keeper_user_assignments a ON a.user_id = u.id
         LEFT JOIN keeper_firmas f  ON f.id  = a.firma_id
@@ -95,6 +97,7 @@ require __DIR__ . '/partials/layout_header.php';
     <table class="w-full text-sm">
       <thead><tr class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
         <th class="text-left font-semibold px-5 py-2.5">Persona</th>
+        <th class="text-left font-semibold px-5 py-2.5">Presencia</th>
         <th class="text-left font-semibold px-5 py-2.5">Firma</th>
         <th class="text-left font-semibold px-5 py-2.5">Cargo / Área</th>
         <th class="text-left font-semibold px-5 py-2.5">Sede</th>
@@ -104,12 +107,16 @@ require __DIR__ . '/partials/layout_header.php';
         <th class="text-right font-semibold px-5 py-2.5"></th>
       </tr></thead>
       <tbody>
-      <?php if (!$rows): ?><tr><td colspan="8" class="px-5 py-10 text-center text-muted">Sin personas.</td></tr><?php endif; ?>
+      <?php if (!$rows): ?><tr><td colspan="9" class="px-5 py-10 text-center text-muted">Sin personas.</td></tr><?php endif; ?>
       <?php foreach ($rows as $r): ?>
         <tr class="border-b border-gray-100 last:border-0 align-top" x-data="{pw:false}">
           <td class="px-5 py-3">
             <div class="font-medium text-dark"><?= htmlspecialchars($r['display_name'] ?: 'Sin nombre') ?></div>
             <div class="text-xs text-muted font-mono"><?= htmlspecialchars($r['cc'] ? '•••'.substr(preg_replace('/\D/','',$r['cc']),-4) : '') ?></div>
+          </td>
+          <td class="px-5 py-3">
+            <?php $pr = presence($r['last_seen_epoch'] !== null ? (int)$r['last_seen_epoch'] : null, $r['last_idle'] !== null ? (int)$r['last_idle'] : null, (int)$r['devices']); ?>
+            <span class="text-xs font-medium px-2 py-0.5 rounded-full <?= $pr['cls'] ?>"><?= $pr['label'] ?></span>
           </td>
           <td class="px-5 py-3 text-gray-700"><?= htmlspecialchars($r['firma'] ?: '—') ?></td>
           <td class="px-5 py-3 text-gray-600"><?= htmlspecialchars($r['cargo'] ?: '—') ?><?php if ($r['area']): ?><span class="text-muted"> · <?= htmlspecialchars($r['area']) ?></span><?php endif; ?></td>
