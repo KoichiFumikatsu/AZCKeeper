@@ -38,9 +38,21 @@ foreach ($people as $p) { if ((int)$p['id'] === $userId) { $inScope = true; $per
 if (!$inScope) { $userId = 0; $person = null; }
 
 // Datos de la persona seleccionada.
-$summary = []; $day = null; $focus = null;
+$summary = []; $day = null; $focus = null; $specs = null; $specsDevice = null;
 if ($userId) {
     try { $summary = ProcessViewRepo::summary($pdo, $userId, $from, $to); } catch (\Throwable $e) { error_log($e->getMessage()); }
+    // Specs del equipo activo más reciente con datos.
+    try {
+        $st = $pdo->prepare("SELECT COALESCE(label, device_name) AS equipo, specs_json, specs_at
+                             FROM keeper_devices
+                             WHERE user_id = :u AND status='active' AND specs_json IS NOT NULL
+                             ORDER BY last_seen_at DESC LIMIT 1");
+        $st->execute([':u'=>$userId]);
+        if ($row = $st->fetch(PDO::FETCH_ASSOC)) {
+            $specsDevice = $row;
+            $specs = json_decode($row['specs_json'], true) ?: null;
+        }
+    } catch (\Throwable $e) { error_log($e->getMessage()); }
     try {
         $st = $pdo->prepare("
             SELECT MAX(activity_tracked) activity_tracked, MAX(window_tracked) window_tracked, MAX(call_tracked) call_tracked,
@@ -133,6 +145,34 @@ require __DIR__ . '/partials/layout_header.php';
     <?php endforeach; ?>
   </div>
 </div>
+
+<!-- Equipo (specs del hardware). IP/MAC solo para IT/superadmin. -->
+<?php if ($specs):
+  $isIT = in_array($adminUser['panel_role'] ?? '', ['superadmin','it'], true);
+  $sv = fn($k) => isset($specs[$k]) && $specs[$k] !== '' ? htmlspecialchars(is_array($specs[$k]) ? implode(', ', $specs[$k]) : (string)$specs[$k]) : '—';
+?>
+<div class="bg-white rounded-xl border border-gray-100 overflow-hidden mb-6">
+  <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+    <h3 class="text-sm font-semibold text-dark">Equipo</h3>
+    <span class="text-xs text-muted"><?= htmlspecialchars($specsDevice['equipo'] ?? '') ?><?php if ($specsDevice['specs_at']): ?> · reportado <?= htmlspecialchars(substr($specsDevice['specs_at'],0,10)) ?><?php endif; ?></span>
+  </div>
+  <div class="p-5 grid sm:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3 text-sm">
+    <div><p class="text-xs text-muted">Sistema</p><p class="text-gray-700"><?= $sv('os') ?></p></div>
+    <div><p class="text-xs text-muted">Procesador</p><p class="text-gray-700"><?= $sv('cpu') ?></p></div>
+    <div><p class="text-xs text-muted">Memoria</p><p class="text-gray-700"><?= isset($specs['ramGB']) ? htmlspecialchars($specs['ramGB']).' GB' : '—' ?></p></div>
+    <div><p class="text-xs text-muted">Disco</p><p class="text-gray-700"><?= isset($specs['diskFreeGB'],$specs['diskTotalGB']) ? htmlspecialchars($specs['diskFreeGB']).' libres de '.htmlspecialchars($specs['diskTotalGB']).' GB' : '—' ?></p></div>
+    <div><p class="text-xs text-muted">Equipo</p><p class="text-gray-700 font-mono"><?= $sv('hostname') ?></p></div>
+    <div><p class="text-xs text-muted">Modelo</p><p class="text-gray-700"><?= $sv('model') ?></p></div>
+    <div><p class="text-xs text-muted">Serial</p><p class="text-gray-700 font-mono"><?= $sv('serial') ?></p></div>
+    <div><p class="text-xs text-muted">Gráficos</p><p class="text-gray-700"><?= $sv('gpu') ?></p></div>
+    <div><p class="text-xs text-muted">Pantallas</p><p class="text-gray-700"><?= isset($specs['monitors']) ? htmlspecialchars($specs['monitors']).(isset($specs['resolutions']) ? ' ('.htmlspecialchars(implode(', ', (array)$specs['resolutions'])).')' : '') : '—' ?></p></div>
+    <?php if ($isIT): ?>
+      <div><p class="text-xs text-muted">IP local <span class="text-[10px] text-corp-700">· IT</span></p><p class="text-gray-700 font-mono"><?= $sv('ip') ?></p></div>
+      <div><p class="text-xs text-muted">MAC <span class="text-[10px] text-corp-700">· IT</span></p><p class="text-gray-700 font-mono"><?= $sv('mac') ?></p></div>
+    <?php endif; ?>
+  </div>
+</div>
+<?php endif; ?>
 
 <!-- KPIs de tiempo -->
 <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
