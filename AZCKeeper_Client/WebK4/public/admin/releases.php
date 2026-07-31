@@ -210,7 +210,7 @@ require __DIR__ . '/partials/layout_header.php';
     haciendo clic sobre la columna <span class="font-medium">Tamaño</span>; "Verificar" lo llenaría solo,
     pero hoy este hosting no tiene salida a internet (verificado el 31/07/2026).
   </p>
-  <form method="post" class="grid sm:grid-cols-12 gap-3 items-end">
+  <form method="post" class="grid sm:grid-cols-12 gap-3 items-end"><?= csrf_field() ?>
     <input type="hidden" name="action" value="add">
     <div class="sm:col-span-2">
       <label class="block text-xs font-medium text-gray-600 mb-1">Versión</label>
@@ -267,7 +267,7 @@ require __DIR__ . '/partials/layout_header.php';
                     title="<?= $r['size_bytes'] !== null ? number_format((int)$r['size_bytes']) . ' bytes — clic para corregir' : 'sin tamaño — clic para registrarlo' ?>">
               <?= mb($r['size_bytes'] !== null ? (int)$r['size_bytes'] : null) ?>
             </button>
-            <form method="post" x-show="edit" style="display:none" class="mt-1 flex items-center gap-1">
+            <form method="post" x-show="edit" style="display:none" class="mt-1 flex items-center gap-1"><?= csrf_field() ?>
               <input type="hidden" name="action" value="set_size"><input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
               <input name="size_bytes" inputmode="numeric" placeholder="bytes" value="<?= $r['size_bytes'] !== null ? (int)$r['size_bytes'] : '' ?>"
                      class="w-28 px-1.5 py-1 border border-gray-200 rounded text-xs tabular-nums">
@@ -280,21 +280,21 @@ require __DIR__ . '/partials/layout_header.php';
           </td>
           <td class="px-5 py-3 text-gray-600 whitespace-nowrap"><?= htmlspecialchars(substr((string)$r['created_at'], 0, 16)) ?></td>
           <td class="px-5 py-3 text-right whitespace-nowrap">
-            <form method="post" class="inline">
+            <form method="post" class="inline"><?= csrf_field() ?>
               <input type="hidden" name="action" value="verify"><input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
               <button class="text-xs px-2 py-1 border border-gray-200 rounded hover:border-gray-300 text-gray-600">Verificar</button>
             </form>
             <?php if ($r['is_active']): ?>
-              <form method="post" class="inline">
+              <form method="post" class="inline"><?= csrf_field() ?>
                 <input type="hidden" name="action" value="deactivate"><input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
                 <button class="text-xs px-2 py-1 border border-gray-200 rounded hover:border-gray-300 text-gray-600">Desactivar</button>
               </form>
             <?php else: ?>
-              <form method="post" class="inline">
+              <form method="post" class="inline"><?= csrf_field() ?>
                 <input type="hidden" name="action" value="activate"><input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
                 <button class="text-xs px-2 py-1 bg-corp-800 hover:bg-corp-900 text-white rounded">Activar</button>
               </form>
-              <form method="post" class="inline" onsubmit="return confirm('¿Eliminar la versión <?= htmlspecialchars($r['version']) ?> del feed?')">
+              <form method="post" class="inline" onsubmit="return confirm('¿Eliminar la versión <?= htmlspecialchars($r['version']) ?><?= csrf_field() ?> del feed?')">
                 <input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
                 <button class="text-xs px-2 py-1 text-muted hover:text-accent-500">Eliminar</button>
               </form>

@@ -76,7 +76,7 @@ require __DIR__ . '/partials/layout_header.php';
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
               </button>
             </div>
-            <form x-show="edit" method="post" action="device-rename.php" class="flex items-center gap-1" style="display:none">
+            <form x-show="edit" method="post" action="device-rename.php" class="flex items-center gap-1" style="display:none"><?= csrf_field() ?>
               <input type="hidden" name="device_id" value="<?= (int)$r['id'] ?>"><input type="hidden" name="back" value="devices.php">
               <input name="label" value="<?= htmlspecialchars($r['label'] ?? '') ?>" placeholder="<?= htmlspecialchars($machine) ?>" class="px-2 py-1 border border-gray-300 rounded text-xs w-32">
               <button class="text-emerald-600" title="Guardar etiqueta">✓</button>
@@ -102,14 +102,14 @@ require __DIR__ . '/partials/layout_header.php';
               <?php else: ?>
                 <button @click="rename=!rename" class="text-xs text-corp-800 hover:text-corp-600 font-medium">Renombrar equipo</button>
               <?php endif; ?>
-              <form method="post" onsubmit="return confirm('¿Revocar este equipo? Dejará de reportar.')">
+              <form method="post" onsubmit="return confirm('¿Revocar este equipo? Dejará de reportar.')"><?= csrf_field() ?>
                 <input type="hidden" name="action" value="revoke"><input type="hidden" name="device_id" value="<?= (int)$r['id'] ?>">
                 <button class="text-xs text-gray-400 hover:text-accent-500">Revocar</button>
               </form>
             </div>
             <!-- Form de renombre de Windows (comando) -->
             <form x-show="rename" method="post" action="device-command.php" class="flex items-center justify-end gap-1 mt-2" style="display:none"
-                  onsubmit="return confirm('Se enviará el nuevo nombre de Windows al equipo. Requiere permisos de admin y un reinicio para aplicarse. ¿Continuar?')">
+                  onsubmit="return confirm('Se enviará el nuevo nombre de Windows al equipo. Requiere permisos de admin y un reinicio para aplicarse. ¿Continuar?')"><?= csrf_field() ?>
               <input type="hidden" name="command_type" value="rename_computer"><input type="hidden" name="device_id" value="<?= (int)$r['id'] ?>">
               <input name="new_name" maxlength="15" placeholder="NUEVO-NOMBRE" class="px-2 py-1 border border-gray-300 rounded text-xs w-36 uppercase" pattern="[A-Za-z0-9\-]{1,15}" title="Máx 15, letras/números/guion (regla NetBIOS)">
               <button class="text-xs px-2 py-1 bg-corp-800 text-white rounded">Enviar</button>

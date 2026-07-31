@@ -161,7 +161,7 @@ require __DIR__ . '/partials/layout_header.php';
             <button @click="open=!open" class="text-xs text-corp-800 hover:text-corp-600 font-medium">
               <?= $r['is_exempt'] ? 'Exento' : ($r['note'] ? 'Con nota' : 'Editar') ?> <span x-text="open?'▴':'▾'"></span>
             </button>
-            <form method="post" x-show="open" class="mt-2 text-left flex flex-col gap-2 min-w-[16rem]" style="display:none">
+            <form method="post" x-show="open" class="mt-2 text-left flex flex-col gap-2 min-w-[16rem]" style="display:none"><?= csrf_field() ?>
               <input type="hidden" name="action" value="set_note">
               <input type="hidden" name="user_id" value="<?= (int)$r['user_id'] ?>">
               <label class="flex items-center gap-2 text-xs text-gray-600">

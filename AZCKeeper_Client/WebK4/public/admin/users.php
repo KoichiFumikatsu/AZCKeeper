@@ -128,14 +128,14 @@ require __DIR__ . '/partials/layout_header.php';
             <?php if ($canManageCreds): ?>
               <button @click="pw=!pw" class="text-xs text-muted hover:text-corp-800 ml-2">Contraseña</button>
               <div x-show="pw" style="display:none" class="mt-2 flex flex-col items-end gap-1.5">
-                <form method="post" class="flex items-center gap-1.5">
+                <form method="post" class="flex items-center gap-1.5"><?= csrf_field() ?>
                   <input type="hidden" name="action" value="reset_password">
                   <input type="hidden" name="user_id" value="<?= (int)$r['id'] ?>">
                   <input type="hidden" name="mode" value="set">
                   <input type="password" name="password" minlength="6" required placeholder="Nueva contraseña" class="text-xs border border-gray-200 rounded px-2 py-1 w-40">
                   <button class="text-xs px-2 py-1 bg-corp-800 hover:bg-corp-900 text-white rounded">Fijar</button>
                 </form>
-                <form method="post" onsubmit="return confirm('¿Limpiar la contraseña? El equipo la re-fijará con la regla por defecto en el próximo inicio.')">
+                <form method="post" onsubmit="return confirm('¿Limpiar la contraseña? El equipo la re-fijará con la regla por defecto en el próximo inicio.')"><?= csrf_field() ?>
                   <input type="hidden" name="action" value="reset_password">
                   <input type="hidden" name="user_id" value="<?= (int)$r['id'] ?>">
                   <input type="hidden" name="mode" value="clear">

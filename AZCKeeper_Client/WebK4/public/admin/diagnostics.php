@@ -147,7 +147,7 @@ require __DIR__ . '/partials/layout_header.php';
         </span>
       </p>
     </div>
-    <form method="post" class="flex-none">
+    <form method="post" class="flex-none"><?= csrf_field() ?>
       <input type="hidden" name="action" value="toggle">
       <input type="hidden" name="user_id" value="<?= (int)$userId ?>">
       <input type="hidden" name="on" value="<?= $session ? '0' : '1' ?>">

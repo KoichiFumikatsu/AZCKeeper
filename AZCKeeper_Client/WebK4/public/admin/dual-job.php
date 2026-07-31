@@ -209,7 +209,7 @@ require __DIR__ . '/partials/layout_header.php';
             <?php endif; ?>
           </td>
           <td class="px-5 py-3 text-right">
-            <form method="post" class="inline-flex items-center gap-1">
+            <form method="post" class="inline-flex items-center gap-1"><?= csrf_field() ?>
               <input type="hidden" name="action" value="set_status">
               <input type="hidden" name="alert_id" value="<?= (int)$a['id'] ?>">
               <select name="status" onchange="this.form.submit()" class="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white">
@@ -233,7 +233,7 @@ require __DIR__ . '/partials/layout_header.php';
       <h2 class="text-sm font-semibold text-dark">Aplicaciones que disparan la alerta</h2>
       <p class="text-xs text-muted mt-0.5">CRM de la competencia, otras herramientas de fichaje, apps de trabajo remoto. Mínimo 60 s de uso en el día.</p>
     </div>
-    <form method="post" class="flex items-center gap-2">
+    <form method="post" class="flex items-center gap-2"><?= csrf_field() ?>
       <input type="hidden" name="action" value="add_signal">
       <select name="match_type" class="px-2 py-1 border border-gray-200 rounded text-xs bg-white">
         <option value="process">Proceso</option>
@@ -249,7 +249,7 @@ require __DIR__ . '/partials/layout_header.php';
     <?php else: ?>
       <div class="flex flex-wrap gap-2">
         <?php foreach ($signals as $s): ?>
-          <form method="post" class="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full bg-gray-100 text-xs text-gray-700">
+          <form method="post" class="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full bg-gray-100 text-xs text-gray-700"><?= csrf_field() ?>
             <input type="hidden" name="action" value="drop_signal">
             <input type="hidden" name="class_id" value="<?= (int)$s['id'] ?>">
             <span class="font-mono"><?= htmlspecialchars($s['pattern']) ?></span>

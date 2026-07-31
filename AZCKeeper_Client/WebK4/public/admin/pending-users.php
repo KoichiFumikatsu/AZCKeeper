@@ -62,12 +62,12 @@ require __DIR__ . '/partials/layout_header.php';
           <td class="px-5 py-3 text-xs text-muted"><?= htmlspecialchars(substr((string)$r['created_at'],0,16)) ?></td>
           <td class="px-5 py-3">
             <div class="flex items-center justify-end gap-2">
-              <form method="post" onsubmit="return confirm('¿Aprobar el acceso de esta persona?')">
+              <form method="post" onsubmit="return confirm('¿Aprobar el acceso de esta persona?')"><?= csrf_field() ?>
                 <input type="hidden" name="user_id" value="<?= (int)$r['id'] ?>">
                 <input type="hidden" name="decision" value="approve">
                 <button class="px-3 py-1.5 text-xs font-medium rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white">Aprobar</button>
               </form>
-              <form method="post" onsubmit="return confirm('¿Rechazar esta solicitud?')">
+              <form method="post" onsubmit="return confirm('¿Rechazar esta solicitud?')"><?= csrf_field() ?>
                 <input type="hidden" name="user_id" value="<?= (int)$r['id'] ?>">
                 <input type="hidden" name="decision" value="reject">
                 <button class="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Rechazar</button>

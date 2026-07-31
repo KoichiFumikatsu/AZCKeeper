@@ -157,7 +157,7 @@ require __DIR__ . '/partials/layout_header.php';
               <?php endif; ?>
             </div>
             <?php if ($canRename): ?>
-            <form x-show="edit" method="post" action="device-rename.php" class="flex items-center gap-1" style="display:none">
+            <form x-show="edit" method="post" action="device-rename.php" class="flex items-center gap-1" style="display:none"><?= csrf_field() ?>
               <input type="hidden" name="device_id" value="<?= (int)$r['device_id'] ?>">
               <input type="hidden" name="back" value="index.php">
               <input name="label" value="<?= htmlspecialchars($r['label'] ?? '') ?>" placeholder="<?= htmlspecialchars($machine) ?>"

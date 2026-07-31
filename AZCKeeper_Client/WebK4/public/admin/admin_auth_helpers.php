@@ -13,6 +13,34 @@
  * sembrado — así una migración a medias degrada al comportamiento anterior en vez de dejar
  * a todo el mundo fuera del panel.
  */
+/**
+ * CSRF: token ligado a la sesión (sin almacenamiento extra). Se deriva por HMAC de la cookie
+ * de sesión, que es httpOnly y secreta — un sitio atacante no puede leerla ni, por tanto,
+ * reproducir el token. Cada formulario POST del panel incrusta csrf_field(); admin_auth.php
+ * rechaza cualquier POST cuyo _csrf no coincida.
+ */
+if (!function_exists('csrf_token')) {
+    function csrf_token(): string
+    {
+        $cookieName = defined('KEEPER_ADMIN_COOKIE') ? KEEPER_ADMIN_COOKIE : 'keeper_admin_token';
+        $sessTok = $_COOKIE[$cookieName] ?? '';
+        $key = \Keeper\Config::get('APP_KEY', '');
+        return hash_hmac('sha256', 'csrf|' . $sessTok, $key !== '' ? $key : 'k4-csrf-fallback');
+    }
+
+    function csrf_field(): string
+    {
+        return '<input type="hidden" name="_csrf" value="' . htmlspecialchars(csrf_token(), ENT_QUOTES) . '">';
+    }
+
+    /** ¿El POST actual trae un _csrf válido? */
+    function csrf_check(): bool
+    {
+        $sent = $_POST['_csrf'] ?? '';
+        return is_string($sent) && $sent !== '' && hash_equals(csrf_token(), $sent);
+    }
+}
+
 if (!function_exists('panelCan')) {
 
     /** Catálogo de módulos del panel: código => etiqueta. Es la fuente de la matriz de roles.php. */

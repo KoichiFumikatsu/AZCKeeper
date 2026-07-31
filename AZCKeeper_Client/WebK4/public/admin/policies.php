@@ -57,7 +57,7 @@ require __DIR__ . '/partials/layout_header.php';
 <p class="text-sm text-muted mb-6">La política dice qué módulos están <b>encendidos</b> operativamente. El servidor la recorta contra el <a href="tiers.php" class="text-corp-800">tier</a> de la firma antes de enviarla: si el tier no incluye un módulo, no llega aunque aquí esté encendido.</p>
 
 <!-- Política global -->
-<form method="post" class="bg-white rounded-xl border border-gray-100 overflow-hidden mb-6">
+<form method="post" class="bg-white rounded-xl border border-gray-100 overflow-hidden mb-6"><?= csrf_field() ?>
   <input type="hidden" name="action" value="save_global">
   <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
     <h2 class="text-sm font-semibold text-dark">Política global (base para todos)</h2>
@@ -80,7 +80,7 @@ require __DIR__ . '/partials/layout_header.php';
     <button type="button" @click="add=!add" class="text-xs text-corp-800 hover:text-corp-600 font-medium">+ Agregar excepción</button>
   </div>
 
-  <form method="post" class="px-5 py-4 border-b border-gray-100 bg-gray-50" x-show="add" style="display:none">
+  <form method="post" class="px-5 py-4 border-b border-gray-100 bg-gray-50" x-show="add" style="display:none"><?= csrf_field() ?>
     <input type="hidden" name="action" value="add_user_override">
     <div class="flex flex-wrap items-end gap-3">
       <div>
@@ -123,7 +123,7 @@ require __DIR__ . '/partials/layout_header.php';
             </div>
           </td>
           <td class="px-5 py-3 text-right">
-            <form method="post" onsubmit="return confirm('¿Eliminar esta excepción?')">
+            <form method="post" onsubmit="return confirm('¿Eliminar esta excepción?')"><?= csrf_field() ?>
               <input type="hidden" name="action" value="delete_override"><input type="hidden" name="policy_id" value="<?= (int)$o['id'] ?>">
               <button class="text-xs text-gray-400 hover:text-accent-500">Eliminar</button>
             </form>

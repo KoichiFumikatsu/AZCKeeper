@@ -82,7 +82,7 @@ require __DIR__ . '/partials/layout_header.php';
     <h2 class="text-sm font-semibold text-dark">Enforcement de tiers</h2>
     <p class="text-xs text-muted mt-0.5">Encendido: cada firma solo recibe los módulos de su tier (± overrides). Apagado: todos los módulos activos para todos (modo interno AZC).</p>
   </div>
-  <form method="post" class="flex-none">
+  <form method="post" class="flex-none"><?= csrf_field() ?>
     <input type="hidden" name="action" value="set_global">
     <input type="hidden" name="enabled" value="<?= $enfOn ? '0' : '1' ?>">
     <button class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors <?= $enfOn ? 'bg-corp-800' : 'bg-gray-300' ?>" title="<?= $enfOn?'Apagar':'Encender' ?>">
@@ -111,7 +111,7 @@ require __DIR__ . '/partials/layout_header.php';
         <tr class="border-b border-gray-100 last:border-0 align-top" x-data="{open:false}">
           <td class="px-5 py-3 font-medium text-dark"><?= htmlspecialchars($f['nombre']) ?></td>
           <td class="px-5 py-3">
-            <form method="post">
+            <form method="post"><?= csrf_field() ?>
               <input type="hidden" name="action" value="set_firm_tier"><input type="hidden" name="firma_id" value="<?= (int)$f['id'] ?>">
               <select name="tier_id" onchange="this.form.submit()" class="px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white">
                 <option value="" <?= $f['tier_id']===null?'selected':'' ?>>— sin tier —</option>
@@ -133,7 +133,7 @@ require __DIR__ . '/partials/layout_header.php';
               <p class="text-[11px] text-muted mb-2">Concede o revoca módulos más allá del tier. "Por tier" = sin excepción.</p>
               <div class="grid sm:grid-cols-2 gap-x-6 gap-y-1">
                 <?php foreach ($modules as $m): $st = $ovr[$m['code']] ?? null; ?>
-                  <form method="post" class="flex items-center justify-between gap-2 py-0.5">
+                  <form method="post" class="flex items-center justify-between gap-2 py-0.5"><?= csrf_field() ?>
                     <input type="hidden" name="action" value="set_firm_override"><input type="hidden" name="firma_id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="module_code" value="<?= htmlspecialchars($m['code']) ?>">
                     <span class="text-xs text-gray-600 truncate"><?= htmlspecialchars($m['label']) ?></span>
                     <select name="val" onchange="this.form.submit()" class="text-[11px] border border-gray-200 rounded px-1 py-0.5 flex-none">
@@ -157,7 +157,7 @@ require __DIR__ . '/partials/layout_header.php';
 <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
   <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
     <h2 class="text-sm font-semibold text-dark">Qué desbloquea cada tier</h2>
-    <form method="post" class="flex items-center gap-2">
+    <form method="post" class="flex items-center gap-2"><?= csrf_field() ?>
       <input type="hidden" name="action" value="add_tier">
       <input name="code" placeholder="codigo" class="px-2 py-1 border border-gray-200 rounded text-xs w-24" pattern="[a-z0-9_]+">
       <input name="label" placeholder="Nombre del tier" class="px-2 py-1 border border-gray-200 rounded text-xs w-36">
@@ -180,7 +180,7 @@ require __DIR__ . '/partials/layout_header.php';
           </td>
           <?php foreach ($tiers as $t): $on = isset($tierMods[(int)$t['id']][$m['code']]); ?>
             <td class="px-4 py-2.5 text-center">
-              <form method="post" class="inline">
+              <form method="post" class="inline"><?= csrf_field() ?>
                 <input type="hidden" name="action" value="toggle_tier_module"><input type="hidden" name="tier_id" value="<?= (int)$t['id'] ?>"><input type="hidden" name="module_code" value="<?= htmlspecialchars($m['code']) ?>"><input type="hidden" name="on" value="<?= $on?'0':'1' ?>">
                 <button class="w-6 h-6 rounded <?= $on ? 'bg-emerald-500 text-white' : 'bg-gray-100 text-gray-300 hover:bg-gray-200' ?>" title="<?= $on?'Quitar del tier':'Agregar al tier' ?>"><?= $on ? '✓' : '' ?></button>
               </form>

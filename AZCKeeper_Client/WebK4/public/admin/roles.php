@@ -206,7 +206,7 @@ require __DIR__ . '/partials/layout_header.php';
       <h2 class="text-sm font-semibold text-dark">Qué ve cada rol</h2>
       <p class="text-xs text-muted mt-0.5">Se aplica al siguiente clic: el panel lee esta tabla en cada carga.</p>
     </div>
-    <form method="post" class="flex items-center gap-2">
+    <form method="post" class="flex items-center gap-2"><?= csrf_field() ?>
       <input type="hidden" name="action" value="add_role">
       <input name="code" placeholder="codigo" pattern="[a-z0-9_-]+" class="px-2 py-1 border border-gray-200 rounded text-xs w-24">
       <input name="label" placeholder="Nombre del rol" class="px-2 py-1 border border-gray-200 rounded text-xs w-36">
@@ -242,7 +242,7 @@ require __DIR__ . '/partials/layout_header.php';
               <?php if ($all || (int)$r['is_system']): ?>
                 <span class="inline-flex w-6 h-6 rounded bg-emerald-100 text-emerald-600 items-center justify-center" title="Rol de sistema: acceso total, no editable">✓</span>
               <?php else: ?>
-                <form method="post" class="inline">
+                <form method="post" class="inline"><?= csrf_field() ?>
                   <input type="hidden" name="action" value="toggle_module">
                   <input type="hidden" name="role_code" value="<?= htmlspecialchars($r['role_code']) ?>">
                   <input type="hidden" name="module" value="<?= htmlspecialchars($code) ?>">
@@ -260,7 +260,7 @@ require __DIR__ . '/partials/layout_header.php';
         <?php foreach ($roles as $r): ?>
           <td class="px-4 py-2.5 text-center">
             <?php if (!(int)$r['is_system'] && (int)($usage[$r['role_code']] ?? 0) === 0): ?>
-              <form method="post" class="inline" onsubmit="return confirm('¿Eliminar el rol <?= htmlspecialchars($r['role_code']) ?>?')">
+              <form method="post" class="inline" onsubmit="return confirm('¿Eliminar el rol <?= htmlspecialchars($r['role_code']) ?><?= csrf_field() ?>?')">
                 <input type="hidden" name="action" value="delete_role">
                 <input type="hidden" name="role_code" value="<?= htmlspecialchars($r['role_code']) ?>">
                 <button class="text-xs text-muted hover:text-accent-500">eliminar</button>
@@ -298,7 +298,7 @@ require __DIR__ . '/partials/layout_header.php';
               <div class="text-gray-700"><?= htmlspecialchars($a['panel_role']) ?></div>
               <div class="text-xs text-muted"><?= htmlspecialchars($a['firma'] ?: 'Todas las firmas') ?></div>
             <?php else: ?>
-              <form method="post" class="flex flex-wrap items-center gap-1.5">
+              <form method="post" class="flex flex-wrap items-center gap-1.5"><?= csrf_field() ?>
                 <input type="hidden" name="action" value="update_account">
                 <input type="hidden" name="id" value="<?= (int)$a['id'] ?>">
                 <select name="panel_role" class="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white">
@@ -325,14 +325,14 @@ require __DIR__ . '/partials/layout_header.php';
           <td class="px-5 py-3 text-right whitespace-nowrap">
             <button @click="pw=!pw" class="text-xs text-corp-800 hover:text-corp-600">Contraseña</button>
             <?php if (!$self): ?>
-              <form method="post" class="inline">
+              <form method="post" class="inline"><?= csrf_field() ?>
                 <input type="hidden" name="action" value="toggle_account">
                 <input type="hidden" name="id" value="<?= (int)$a['id'] ?>">
                 <input type="hidden" name="on" value="<?= (int)$a['is_active'] ? '0' : '1' ?>">
                 <button class="text-xs px-2 py-1 border border-gray-200 rounded hover:border-gray-300 text-gray-600 ml-1"><?= (int)$a['is_active'] ? 'Desactivar' : 'Activar' ?></button>
               </form>
             <?php endif; ?>
-            <form method="post" x-show="pw" style="display:none" class="mt-2 flex items-center justify-end gap-1.5">
+            <form method="post" x-show="pw" style="display:none" class="mt-2 flex items-center justify-end gap-1.5"><?= csrf_field() ?>
               <input type="hidden" name="action" value="reset_password">
               <input type="hidden" name="id" value="<?= (int)$a['id'] ?>">
               <input type="password" name="password" minlength="8" required placeholder="Nueva contraseña" class="text-xs border border-gray-200 rounded px-2 py-1 w-40">
@@ -347,7 +347,7 @@ require __DIR__ . '/partials/layout_header.php';
 
   <div class="px-5 py-4 border-t border-gray-100 bg-gray-50">
     <h3 class="text-xs font-semibold text-dark mb-2">Nueva cuenta</h3>
-    <form method="post" class="grid sm:grid-cols-12 gap-2 items-end">
+    <form method="post" class="grid sm:grid-cols-12 gap-2 items-end"><?= csrf_field() ?>
       <input type="hidden" name="action" value="add_account">
       <div class="sm:col-span-3">
         <label class="block text-[11px] text-gray-600 mb-1">Correo</label>

@@ -27,5 +27,14 @@ if (!$adminUser) {
     exit;
 }
 
-// Funciones de autorización (panelCan / panelLanding) — compartidas con login.php.
+// Funciones de autorización (panelCan / panelLanding) y CSRF — compartidas con login.php.
 require_once __DIR__ . '/admin_auth_helpers.php';
+
+// Gate CSRF: todo POST del panel debe traer un _csrf valido. Centralizado aqui, protege a
+// TODAS las paginas que incluyen este middleware. Los formularios incrustan csrf_field().
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && !csrf_check()) {
+    http_response_code(403);
+    header('Content-Type: text/html; charset=utf-8');
+    echo 'Sesión de formulario inválida o expirada (CSRF). Recarga la página e inténtalo de nuevo.';
+    exit;
+}
