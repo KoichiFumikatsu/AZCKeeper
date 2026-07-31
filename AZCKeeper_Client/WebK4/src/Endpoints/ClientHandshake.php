@@ -7,6 +7,7 @@ use Keeper\PolicyService;
 use Keeper\Repos\SessionRepo;
 use Keeper\Repos\DeviceRepo;
 use Keeper\Repos\PolicyRepo;
+use Keeper\Repos\DiagnosticRepo;
 use Keeper\Services\TierResolver;
 
 /**
@@ -75,6 +76,15 @@ class ClientHandshake
         $allowed  = TierResolver::effectiveModules($pdo, $firmaId);
         $effective = self::clipToTier($effective, $allowed);
 
+        // 3. Modo diagnostico: si IT marco a esta persona en el panel, el cliente entra en
+        // el loop rapido (sube snapshots cada intervalSeconds hasta untilUtc). Sin sesion
+        // activa -> enabled:false y el cliente sigue en cadencia normal.
+        $diagSess = DiagnosticRepo::activeSession($pdo, $userId);
+        $diagnostics = $diagSess
+            ? ['enabled' => true, 'intervalSeconds' => 4,
+               'untilUtc' => gmdate('Y-m-d\TH:i:s\Z', strtotime($diagSess['expires_at'] . ' UTC'))]
+            : ['enabled' => false];
+
         Http::json(200, [
             'ok'            => true,
             'serverTimeUtc' => gmdate('Y-m-d\TH:i:s\Z'),
@@ -86,6 +96,7 @@ class ClientHandshake
                 'allowedModules' => $allowed,
             ],
             'effectiveConfig' => $effective,
+            'diagnostics'     => $diagnostics,
         ]);
     }
 
