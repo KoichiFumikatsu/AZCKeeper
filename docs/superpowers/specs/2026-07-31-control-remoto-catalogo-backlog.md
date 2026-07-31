@@ -19,6 +19,24 @@ El **canal de comandos está construido y es extensible**:
 **Agregar un control = (1) tipo nuevo, (2) handler en el cliente O en el agente elevado según el
 privilegio, (3) botón en el panel, (4) — auditoría y expiración ya vienen gratis.**
 
+## Doble candado del control remoto (decisión de Koichi, 2026-07-31)
+
+El control remoto NO es libre: pasa por dos gates independientes.
+
+1. **Tier (por firma) — ¿la firma lo tiene?** Ya modelado: el catálogo `keeper_module` tiene
+   `remoteShutdown`, `deviceLock`, `networkDiagnostic`, `screenshots`, `location` (categorías
+   control/data). La matriz tier×módulo (`tiers.php`) decide si la firma lo compró. Los nuevos
+   controles (lock, restart, logoff, screenshot on-demand) se agregan como módulos de catálogo o
+   se pliegan sobre los existentes (p.ej. `deviceLock` cubre bloquear pantalla; `remoteShutdown`
+   cubre apagar/reiniciar/logoff).
+2. **RBAC (por rol) — ¿este rol puede dispararlo?** Vía `keeper_panel_roles`/`panelCan`. Hoy
+   `device-command.php` es solo IT/superadmin. Se añade un módulo de panel `remote-control`;
+   **IT y el tier más alto lo tienen por defecto; supervisores, coordinadores y gerente PUEDEN
+   tenerlo pero con el permiso DESMARCADO** (roles.php ya permite crear esos roles y marcar/
+   desmarcar módulos). Regla efectiva: **firma con tier que lo incluya + rol con el permiso marcado.**
+
+("Llamar" y "mensaje" quedan DESCARTADOS — eran ejemplos, no se implementan.)
+
 ## Catálogo deseado por Koichi
 
 | Control | Estado hoy | Quién lo ejecuta | Notas / decisiones |
@@ -30,8 +48,7 @@ privilegio, (3) botón en el panel, (4) — auditoría y expiración ya vienen g
 | **Tomar screenshot on-demand** (`screenshot_now`) | PARCIAL: `ScreenshotModule` captura+hashea; tipo en el esquema; falta cablear el comando + storage del blob (hoy es stub) | Cliente per-user | Depende del object storage pendiente (Nextcloud en cloud.azclegal.com). |
 | **Diagnóstico de red** (`network_diag`) | EXISTE (real: ping 8.8.8.8 + DNS) | Cliente per-user | — |
 | **Diagnóstico en vivo** (por persona) | EXISTE (2026-07-31, panel) | Cliente per-user | Se puede disparar también por comando. |
-| **Mandar mensaje al usuario** | NUEVO | Cliente per-user | **ROMPE la premisa invisible** → necesita una superficie de UI deliberada (toast del sistema, o ventanita). ¿Unidireccional o el usuario responde? |
-| **Llamar al usuario** | NUEVO, GRANDE | ¿? | Definir qué es "llamar": ¿VoIP por la telefonía AZC (UCM6308/troncal), abrir Teams, o un timbre/aviso? Scope mucho mayor; probablemente su propio proyecto. |
+| ~~Mandar mensaje / llamar~~ | DESCARTADO | — | Eran ejemplos; Koichi los omite. |
 | **Renombrar Windows** (`rename_computer`) | EXISTE | Agente elevado (admin + reboot) | Ya cableado. |
 | Otros candidatos | — | según privilegio | matar proceso, ejecutar script acotado, reiniciar el agente/cliente, forzar update (ya vía releases). |
 
@@ -49,6 +66,25 @@ privilegio, (3) botón en el panel, (4) — auditoría y expiración ya vienen g
 5. **Masivo vs 1-a-1.** ¿Algunos controles se lanzan a varios equipos / a una firma entera (p.ej.
    apagar todo al final del turno) o siempre 1-a-1? El canal soporta ambos; el panel decide.
 6. **Object storage.** El screenshot on-demand necesita el almacén de blobs que sigue pendiente.
+
+## Backlog aparte — Semáforo de PRESENCIA por persona (2026-07-31)
+
+Koichi preguntó si existe el estado activa / ausente / desconectada de red / inactiva / sin keeper.
+**Hoy NO existe como indicador unificado**; los ladrillos están dispersos:
+
+| Estado deseado | Señal que ya existe | Dónde |
+|---|---|---|
+| **Sin keeper** (no instalado) | `never_enrolled` | Cobertura (`coverage.php`) ✅ |
+| **Desconectada / offline** | `keeper_devices.last_seen_at` (último handshake) | usado para "stale +7d" en cobertura y en devices; **falta un "offline ahora"** (sin handshake en los últimos ~5-10 min) |
+| **Inactiva / ausente** (idle) | inactividad del `WinIdleMonitor` | **solo se ve en vivo dentro del modo diagnóstico**; no hay estado de presencia fuera de ahí |
+| **Activa** | online + input reciente | derivable de last_seen + idle |
+
+**Falta juntarlos en un semáforo por persona.** Para que sea EN VIVO sin encender diagnóstico, el
+cliente debería reportar la inactividad (segundos de idle / último input) en el **handshake normal**
+(barato, ~1 campo). Con eso el panel calcula: sin-keeper (cobertura) → offline (last_seen viejo) →
+ausente (online pero idle > umbral) → activo. Candidato natural: columna/semáforo en Usuarios o en
+el dashboard, o una vista de presencia. Umbrales a definir (¿offline = >5 min sin handshake?,
+¿ausente = >N min idle?).
 
 ## Preguntas abiertas (para el brainstorming cuando se ataque)
 
