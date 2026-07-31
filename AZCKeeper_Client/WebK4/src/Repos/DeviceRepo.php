@@ -12,14 +12,15 @@ class DeviceRepo {
     return $row ?: null;
   }
 
-  public static function touch(PDO $pdo, int $deviceId, ?string $name, ?string $version): void {
+  public static function touch(PDO $pdo, int $deviceId, ?string $name, ?string $version, ?int $idleSeconds = null): void {
     $st = $pdo->prepare("
       UPDATE keeper_devices
       SET last_seen_at = NOW(),
           device_name = COALESCE(:n, device_name),
-          client_version = COALESCE(:v, client_version)
+          client_version = COALESCE(:v, client_version),
+          last_idle_seconds = COALESCE(:idle, last_idle_seconds)
       WHERE id = :id
     ");
-    $st->execute([':n' => $name, ':v' => $version, ':id' => $deviceId]);
+    $st->execute([':n' => $name, ':v' => $version, ':idle' => $idleSeconds, ':id' => $deviceId]);
   }
 }

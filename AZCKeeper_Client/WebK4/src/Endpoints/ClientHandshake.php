@@ -26,6 +26,7 @@ class ClientHandshake
         $version    = $body['version']    ?? ($body['Version']    ?? null);
         $deviceGuid = $body['deviceId']   ?? ($body['DeviceId']   ?? null);
         $deviceName = $body['deviceName'] ?? ($body['DeviceName'] ?? null);
+        $idleSeconds = isset($body['idleSeconds']) && is_numeric($body['idleSeconds']) ? max(0, (int)$body['idleSeconds']) : null;
 
         if (!$deviceGuid || !preg_match('/^[0-9a-fA-F-]{36}$/', $deviceGuid)) {
             Http::json(400, ['ok' => false, 'error' => 'Invalid or missing DeviceId']);
@@ -51,7 +52,7 @@ class ClientHandshake
         if (($dev['status'] ?? 'active') !== 'active') {
             Http::json(403, ['ok' => false, 'error' => 'Device revoked']);
         }
-        DeviceRepo::touch($pdo, $deviceId, $deviceName, $version);
+        DeviceRepo::touch($pdo, $deviceId, $deviceName, $version, $idleSeconds);
 
         // 1. Composicion de la politica: global -> user -> device.
         $policies = PolicyRepo::getAllPolicies($pdo, $userId, $deviceId);
