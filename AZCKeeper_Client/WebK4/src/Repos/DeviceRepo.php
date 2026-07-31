@@ -23,4 +23,10 @@ class DeviceRepo {
     ");
     $st->execute([':n' => $name, ':v' => $version, ':idle' => $idleSeconds, ':id' => $deviceId]);
   }
+
+  /** Guarda las specs del equipo (JSON crudo ya validado por el endpoint). */
+  public static function saveSpecs(PDO $pdo, int $deviceId, string $specsJson): void {
+    $st = $pdo->prepare("UPDATE keeper_devices SET specs_json = :s, specs_at = UTC_TIMESTAMP() WHERE id = :id");
+    $st->execute([':s' => $specsJson, ':id' => $deviceId]);
+  }
 }

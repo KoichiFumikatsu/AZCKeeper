@@ -54,6 +54,16 @@ class ClientHandshake
         }
         DeviceRepo::touch($pdo, $deviceId, $deviceName, $version, $idleSeconds);
 
+        // Specs del equipo (llegan solo en el primer handshake de cada arranque). Se guardan
+        // crudas; tope de 8 KB para que no infle la fila.
+        if (isset($body['specs']) && is_array($body['specs'])) {
+            $specsJson = json_encode($body['specs'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if ($specsJson !== false && strlen($specsJson) <= 8192) {
+                try { DeviceRepo::saveSpecs($pdo, $deviceId, $specsJson); }
+                catch (\Throwable $e) { error_log('saveSpecs: ' . $e->getMessage()); }
+            }
+        }
+
         // 1. Composicion de la politica: global -> user -> device.
         $policies = PolicyRepo::getAllPolicies($pdo, $userId, $deviceId);
         $global = $policies['global'];
