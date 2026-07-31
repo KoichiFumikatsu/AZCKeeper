@@ -36,6 +36,7 @@ require_once __DIR__ . '/Repos/LocationRepo.php';
 require_once __DIR__ . '/Repos/FocusRepo.php';
 require_once __DIR__ . '/Repos/DualJobRepo.php';
 require_once __DIR__ . '/Repos/CoverageRepo.php';
+require_once __DIR__ . '/Repos/DiagnosticRepo.php';
 
 // Endpoints
 require_once __DIR__ . '/Endpoints/Health.php';
