@@ -18,17 +18,22 @@ public sealed class CommandModule : IKeeperModule
     private readonly IClock _clock;
     private readonly Action<string>? _log;
 
+    // Ejecutor de acciones del sistema (apagar/reiniciar/logoff/bloquear), inyectable para
+    // testear sin ejecutar de verdad. Default = implementacion real de Windows.
+    private readonly ISystemActions _sys;
+
     private readonly object _gate = new();
     private System.Threading.Timer? _timer;
     private int _pollIntervalSeconds = 30;
     private volatile bool _running;
     private int _polling; // 0/1, guarda contra solapamiento de ciclos
 
-    public CommandModule(IApiClient api, IClock clock, Action<string>? log = null)
+    public CommandModule(IApiClient api, IClock clock, Action<string>? log = null, ISystemActions? sys = null)
     {
         _api = api;
         _clock = clock;
         _log = log;
+        _sys = sys ?? new WindowsSystemActions();
     }
 
     public bool IsRunning => _running;
@@ -86,6 +91,9 @@ public sealed class CommandModule : IKeeperModule
         });
     }
 
+    /// <summary>Ejecuta un ciclo de poll+ejecucion. Publico para pruebas (el flujo normal es por timer).</summary>
+    public Task PollOnceForTestAsync() => PollAndExecuteAsync();
+
     private async Task PollAndExecuteAsync()
     {
         var commands = await _api.PollCommandsAsync();
@@ -121,7 +129,23 @@ public sealed class CommandModule : IKeeperModule
                 break;
 
             case "shutdown":
-                await ExecuteShutdownAsync(cmd.Id);
+                await ExecuteShutdownAsync(cmd.Id, cmd.ParamsJson, "/s");
+                break;
+
+            case "restart":
+                await ExecuteShutdownAsync(cmd.Id, cmd.ParamsJson, "/r");
+                break;
+
+            case "logoff":
+                _sys.Logoff();
+                _log?.Invoke("commandModule: logoff solicitado");
+                await _api.ReportCommandResultAsync(cmd.Id, "done", new { scheduled = true, kind = "logoff" });
+                break;
+
+            case "lock":
+                _sys.LockWorkStation();
+                _log?.Invoke("commandModule: bloqueo de pantalla solicitado");
+                await _api.ReportCommandResultAsync(cmd.Id, "done", new { locked = true });
                 break;
 
             default:
@@ -184,18 +208,54 @@ public sealed class CommandModule : IKeeperModule
     }
 
     /// <summary>
-    /// Apagado remoto. En dev NO ejecuta un apagado real: solo loguea y reporta el
-    /// comando como simulado. El mecanismo real queda cableado pero comentado.
+    /// Apagado (/s) o reinicio (/r) REAL con ventana de gracia: el usuario ve el aviso nativo
+    /// de Windows y puede guardar. La gracia viene en params.graceSeconds (10..600, 60 por
+    /// defecto). Reporta 'done' con lo programado. El ejecutor es inyectable para tests.
     /// </summary>
-    private async Task ExecuteShutdownAsync(long commandId)
+    private async Task ExecuteShutdownAsync(long commandId, string? paramsJson, string flag)
     {
-        ExecuteShutdown();
-        await _api.ReportCommandResultAsync(commandId, "done", new { simulated = true });
+        int grace = ReadGraceSeconds(paramsJson);
+        _sys.Shutdown(flag, grace);
+        var kind = flag == "/r" ? "restart" : "shutdown";
+        _log?.Invoke($"commandModule: {kind} programado en {grace}s");
+        await _api.ReportCommandResultAsync(commandId, "done", new { scheduled = true, kind, graceSeconds = grace });
     }
 
-    private void ExecuteShutdown()
+    private static int ReadGraceSeconds(string? paramsJson)
     {
-        _log?.Invoke("commandModule: shutdown solicitado (no ejecutado en dev)");
-        // TODO produccion: Process.Start("shutdown", "/s /t 60") tras confirmacion/guardas
+        if (string.IsNullOrWhiteSpace(paramsJson)) return 60;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(paramsJson);
+            if (doc.RootElement.TryGetProperty("graceSeconds", out var g) && g.TryGetInt32(out var s))
+                return Math.Max(10, Math.Min(600, s));
+        }
+        catch { /* params invalido -> default */ }
+        return 60;
     }
+}
+
+/// <summary>Acciones del sistema operativo, abstraidas para poder testear el modulo sin ejecutarlas.</summary>
+public interface ISystemActions
+{
+    void Shutdown(string flag, int graceSeconds);   // flag = "/s" (apagar) | "/r" (reiniciar)
+    void Logoff();
+    void LockWorkStation();
+}
+
+/// <summary>Implementacion real en Windows: 'shutdown.exe' + user32 LockWorkStation.</summary>
+public sealed class WindowsSystemActions : ISystemActions
+{
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool LockWorkStation();
+
+    public void Shutdown(string flag, int graceSeconds)
+        => Run("shutdown", $"{flag} /t {graceSeconds}");
+
+    public void Logoff() => Run("shutdown", "/l");
+
+    void ISystemActions.LockWorkStation() => LockWorkStation();
+
+    private static void Run(string file, string args)
+        => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(file, args) { UseShellExecute = false, CreateNoWindow = true });
 }
