@@ -15,7 +15,7 @@ public sealed class CoreService
 {
     private readonly K4ApiClient _api;
     private readonly ModuleHost _host;
-    private readonly string _cc, _deviceName, _version;
+    private readonly string _cc, _password, _deviceName, _version;
     private readonly Action<string>? _log;
     private readonly AZCKeeper.K4.Shell.AgentReportReader? _agentReader;
 
@@ -30,10 +30,10 @@ public sealed class CoreService
     /// <summary>Flag de diagnostico del ultimo handshake (enabled/interval/until).</summary>
     public DiagnosticsFlag LastDiagnostics => _lastDiagnostics;
 
-    public CoreService(K4ApiClient api, ModuleHost host, string cc, string deviceName, string version,
+    public CoreService(K4ApiClient api, ModuleHost host, string cc, string password, string deviceName, string version,
         Action<string>? log = null, AZCKeeper.K4.Shell.AgentReportReader? agentReader = null)
     {
-        _api = api; _host = host; _cc = cc; _deviceName = deviceName; _version = version;
+        _api = api; _host = host; _cc = cc; _password = password; _deviceName = deviceName; _version = version;
         _log = log; _agentReader = agentReader;
     }
 
@@ -42,7 +42,7 @@ public sealed class CoreService
     {
         if (!_api.HasToken)
         {
-            var login = await _api.LoginAsync(_cc, _deviceName, _version);
+            var login = await _api.LoginAsync(_cc, _password, _deviceName, _version);
             if (!login.Ok)
             {
                 _log?.Invoke($"login: {login.Status}");
@@ -54,13 +54,13 @@ public sealed class CoreService
         var hs = await _api.HandshakeAsync(_version, _deviceName);
         if (hs is null)
         {
-            // Token inválido/expirado -> re-login silencioso UNA vez. En K4 la identidad es
-            // cédula + equipo enrolado (sin contraseña), así que basta re-postear el CC que
-            // ya tenemos. Evita quedar sin sesión hasta el próximo reinicio.
+            // Token inválido/expirado -> re-login silencioso UNA vez con cédula + contraseña
+            // (la contraseña se guardó cifrada con DPAPI en el primer arranque). Evita quedar
+            // sin sesión hasta el próximo reinicio.
             if (_api.LastHandshakeStatus == 401)
             {
                 _api.ClearToken();
-                var relog = await _api.LoginAsync(_cc, _deviceName, _version);
+                var relog = await _api.LoginAsync(_cc, _password, _deviceName, _version);
                 if (!relog.Ok) { _log?.Invoke($"re-login: {relog.Status}"); return false; }
                 _log?.Invoke("re-login silencioso ok");
                 hs = await _api.HandshakeAsync(_version, _deviceName);

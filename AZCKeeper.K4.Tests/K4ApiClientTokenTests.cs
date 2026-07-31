@@ -77,7 +77,7 @@ public class K4ApiClientTokenTests
         string? got = null;
         api.TokenChanged += t => got = t;
 
-        var res = await api.LoginAsync("K4TEST", "eq", "4.0.0.0");
+        var res = await api.LoginAsync("K4TEST", "pw", "eq", "4.0.0.0");
         Assert.True(res.Ok);
         Assert.Equal("fresco", got); // se persiste por este evento
     }
@@ -104,7 +104,7 @@ public class K4ApiClientTokenTests
         api.RestoreToken("viejo");
 
         var host = new ModuleHost();
-        var core = new CoreService(api, host, "K4TEST", "eq", "4.0.0.0");
+        var core = new CoreService(api, host, "K4TEST", "pw", "eq", "4.0.0.0");
 
         var ok = await core.RunOnceAsync();
 
@@ -124,7 +124,7 @@ public class K4ApiClientTokenTests
         var api = Make(h);
         api.RestoreToken("viejo");
 
-        var core = new CoreService(api, new ModuleHost(), "K4TEST", "eq", "4.0.0.0");
+        var core = new CoreService(api, new ModuleHost(), "K4TEST", "pw", "eq", "4.0.0.0");
         var ok = await core.RunOnceAsync();
 
         Assert.False(ok);

@@ -14,6 +14,16 @@ namespace AZCKeeper.K4.Shell;
 /// </summary>
 public sealed class K4Config
 {
+    /// <summary>
+    /// Entornos que ofrece la pantalla de primer arranque. IT elige uno y no puede escribir mal
+    /// una URL. Hoy solo Desarrollo: K4 aun no tiene produccion (prod es K3). Cuando exista, se
+    /// agrega una tupla aqui — no hay URLs muertas que confundan.
+    /// </summary>
+    public static readonly (string Label, string BaseUrl)[] Environments =
+    {
+        ("Desarrollo", "http://devkeep.azclegal.com/public/index.php/api"),
+    };
+
     public string BaseUrl { get; set; } = "http://devkeep.azclegal.com/public/index.php/api";
     public string DeviceId { get; set; } = "";
     public string Cc { get; set; } = "";

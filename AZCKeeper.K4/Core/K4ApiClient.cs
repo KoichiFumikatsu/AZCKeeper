@@ -57,10 +57,10 @@ public sealed class K4ApiClient : IApiClient
     /// <summary>Descarta el token (p.ej. 401). Fuerza re-login en el siguiente ciclo.</summary>
     public void ClearToken() => _token = null;
 
-    public async Task<LoginResult> LoginAsync(string cc, string deviceName, string version)
+    public async Task<LoginResult> LoginAsync(string cc, string password, string deviceName, string version)
     {
         var (status, body) = await PostAsync("client/login",
-            new { cc, deviceId = _deviceGuid, deviceName, version }, withToken: false);
+            new { cc, password, deviceId = _deviceGuid, deviceName, version }, withToken: false);
         if (status == 200 && body.TryGetProperty("token", out var t))
         {
             _token = t.GetString();

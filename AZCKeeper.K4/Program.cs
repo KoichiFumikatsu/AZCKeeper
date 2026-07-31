@@ -50,10 +50,6 @@ internal static class Program
 
         // Config + identidad estable del equipo.
         var cfg = K4Config.LoadOrCreate();
-        if (positional.Length > 0) cfg.BaseUrl = positional[0];
-        if (positional.Length > 1) cfg.Cc = positional[1];
-        if (string.IsNullOrWhiteSpace(cfg.Cc)) cfg.Cc = "K4TEST"; // fallback de desarrollo
-        cfg.Save();
 
         // Logging real (anillo en memoria + archivo diario). Reemplaza el Console.WriteLine
         // que bajo WinExe se perdia. En --once ademas eco a la consola del padre (diagnostico).
@@ -62,10 +58,52 @@ internal static class Program
             ? (m => { logger.Log(m); Console.WriteLine($"  {m}"); })
             : logger.Log;
 
-        // Token persistente (DPAPI). Se restaura al arrancar y se guarda cuando cambia.
         var creds = new K4CredentialStore();
         var queue = new OfflineQueue();
-        var api = new K4ApiClient(cfg.BaseUrl, cfg.DeviceId, queue: queue);
+
+        // --- Resolver identidad: entorno + cedula + contrasena ---
+        // Precedencia: argumentos (dev/--once) > credenciales guardadas (DPAPI) > dialogo de
+        // primer arranque. El token DPAPI persiste, asi que el login solo se pide una vez.
+        string baseUrl = positional.Length > 0 ? positional[0] : cfg.BaseUrl;
+        string cc, password;
+        var savedCreds = creds.LoadCredentials();
+
+        if (positional.Length > 1)
+        {
+            cc = positional[1];
+            password = positional.Length > 2 ? positional[2] : $"z{cc}Z@!$"; // patron por defecto
+        }
+        else if (savedCreds is { } sc)
+        {
+            cc = sc.Cc; password = sc.Password;   // identidad ya establecida: sin dialogo
+        }
+        else if (once || noInstall)
+        {
+            cc = "K4TEST"; password = "zK4TESTZ@!$";   // fallback de desarrollo sin dialogo
+        }
+        else
+        {
+            // Primer arranque real: unica UI del cliente. Entorno + cedula + contrasena.
+            var deviceId = cfg.DeviceId;
+            using var dlg = new FirstRunLogin(K4Config.Environments, async (bu, c, p) =>
+            {
+                try
+                {
+                    var tmp = new K4ApiClient(bu, deviceId);   // efimero: solo valida credenciales
+                    var r = await tmp.LoginAsync(c, p, Environment.MachineName, cfg.Version);
+                    return (r.Ok, r.Note == "pending" ? "pending" : (r.Ok ? "ok" : "bad"));
+                }
+                catch { return (false, "error"); }
+            });
+            if (dlg.ShowDialog() != DialogResult.OK) return 0;   // el usuario cancelo
+            baseUrl = dlg.ResultBaseUrl; cc = dlg.ResultCc; password = dlg.ResultPassword;
+            creds.SaveCredentials(cc, password);   // DPAPI: no se vuelve a pedir
+        }
+
+        cfg.BaseUrl = baseUrl; cfg.Cc = cc; cfg.Save();
+
+        // Token persistente (DPAPI). Se restaura al arrancar y se guarda cuando cambia.
+        var api = new K4ApiClient(baseUrl, cfg.DeviceId, queue: queue);
         var savedToken = creds.LoadToken();
         if (savedToken is not null) api.RestoreToken(savedToken);
         api.TokenChanged += t => { if (t is not null) creds.SaveToken(t); };
@@ -82,7 +120,7 @@ internal static class Program
         host.Register(new CommandModule(api, clock, Log));
         host.Register(new ScreenshotModule(api, new WinScreenCapturer(), new StubBlobStore(), clock, Log));
 
-        var core = new CoreService(api, host, cfg.Cc, Environment.MachineName, cfg.Version,
+        var core = new CoreService(api, host, cc, password, Environment.MachineName, cfg.Version,
             log: Log, agentReader: new AgentReportReader());
 
         if (once)

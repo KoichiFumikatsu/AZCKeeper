@@ -112,7 +112,7 @@ public class CoreSecurityReportTests
         var api = new K4ApiClient("http://x/api", "g", new HttpClient(h));
         api.RestoreToken("t");
         var reader = new AgentReportReader(file, nowUtc: () => new DateTime(2026, 7, 30, 12, 0, 0, DateTimeKind.Utc));
-        var core = new CoreService(api, new ModuleHost(), "K4TEST", "eq", "4.0.0.0", agentReader: reader);
+        var core = new CoreService(api, new ModuleHost(), "K4TEST", "pw", "eq", "4.0.0.0", agentReader: reader);
 
         var ok = await core.RunOnceAsync();
 
@@ -133,7 +133,7 @@ public class CoreSecurityReportTests
         api.RestoreToken("t");
         // reader apunta a un archivo inexistente
         var reader = new AgentReportReader(Path.Combine(Path.GetTempPath(), "no_existe_" + Guid.NewGuid().ToString("N") + ".json"));
-        var core = new CoreService(api, new ModuleHost(), "K4TEST", "eq", "4.0.0.0", agentReader: reader);
+        var core = new CoreService(api, new ModuleHost(), "K4TEST", "pw", "eq", "4.0.0.0", agentReader: reader);
 
         await core.RunOnceAsync();
 
