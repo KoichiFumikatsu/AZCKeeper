@@ -62,7 +62,8 @@ function navLink(string $href, string $slug, string $label, string $svg, string 
       navLink('devices.php','devices','Dispositivos','<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>',$cur,$adminUser,'devices');
       ?>
       <?php if (panelCan($adminUser,'tiers') || panelCan($adminUser,'coverage') || panelCan($adminUser,'dual-job')
-                || panelCan($adminUser,'audit') || panelCan($adminUser,'releases') || panelCan($adminUser,'diagnostics') || panelCan($adminUser,'roles')): ?>
+                || panelCan($adminUser,'audit') || panelCan($adminUser,'releases') || panelCan($adminUser,'diagnostics')
+                || panelCan($adminUser,'remote-control') || panelCan($adminUser,'roles')): ?>
       <div class="pt-4 mt-4 border-t border-gray-100">
         <p class="px-3 text-xs font-semibold text-muted uppercase tracking-wider mb-2">Gestión avanzada</p>
         <?php
@@ -73,6 +74,7 @@ function navLink(string $href, string $slug, string $label, string $svg, string 
         navLink('audit.php','audit','Auditoría','<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>',$cur,$adminUser,'audit');
         navLink('releases.php','releases','Versiones del cliente','<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4v12m0 0l-4-4m4 4l4-4M4 20h16"/></svg>',$cur,$adminUser,'releases');
         navLink('diagnostics.php','diagnostics','Diagnóstico en vivo','<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>',$cur,$adminUser,'diagnostics');
+        navLink('remote-control.php','remote-control','Control remoto','<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>',$cur,$adminUser,'remote-control');
         navLink('roles.php','roles','Roles y cuentas','<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>',$cur,$adminUser,'roles');
         ?>
       </div>

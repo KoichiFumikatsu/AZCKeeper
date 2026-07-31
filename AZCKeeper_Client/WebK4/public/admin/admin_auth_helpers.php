@@ -161,6 +161,7 @@ if (!function_exists('panelCan')) {
             'releases'     => 'releases.php',
             'audit'        => 'audit.php',
             'diagnostics'  => 'diagnostics.php',
+            'remote-control' => 'remote-control.php',
             'roles'        => 'roles.php',
         ];
         foreach ($pages as $mod => $page) {

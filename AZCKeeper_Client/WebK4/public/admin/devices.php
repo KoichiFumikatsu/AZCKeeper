@@ -1,17 +1,12 @@
 <?php
 require_once __DIR__ . '/admin_auth.php';   // $adminUser, $pdo
 require_once __DIR__ . '/../../src/Repos/AuditRepo.php';
-require_once __DIR__ . '/../../src/Services/TierResolver.php';
 
 use Keeper\Repos\AuditRepo;
-use Keeper\Services\TierResolver;
 
 if (!panelCan($adminUser, 'devices')) { header('Location: ' . panelLanding($adminUser)); exit; }
-
-// El control remoto (bloquear/apagar/reiniciar/logoff) exige el permiso remote-control (RBAC)
-// y el modulo de catalogo en el tier de la firma del equipo. Ambos gates viven tambien en
-// device-command.php (server-side); aqui solo decidimos que botones mostrar.
-$canRemote = panelCan($adminUser, 'remote-control');
+// El control remoto (bloquear/apagar/reiniciar) vive en su propia pagina remote-control.php,
+// no aqui: Dispositivos es gestion tecnica (etiqueta / renombrar Windows / revocar).
 
 // Revocar equipo (POST).
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['action'] ?? '') === 'revoke') {
@@ -34,7 +29,7 @@ $rows = [];
 try {
     $rows = $pdo->query("
         SELECT d.id, d.device_name, d.label, d.device_guid, d.client_version, d.status, d.last_seen_at,
-               u.display_name, u.cc, f.nombre AS firma, a.firma_id AS firma_id,
+               u.display_name, u.cc, f.nombre AS firma,
                (SELECT COUNT(*) FROM keeper_device_command c WHERE c.device_id=d.id AND c.command_type='rename_computer' AND c.status='pending') AS rename_pending
         FROM keeper_devices d
         INNER JOIN keeper_users u ON u.id = d.user_id
@@ -44,14 +39,6 @@ try {
         ORDER BY d.status='revoked', d.last_seen_at IS NULL, d.last_seen_at DESC
     ")->fetchAll(PDO::FETCH_ASSOC);
 } catch (\Throwable $e) { error_log('devices list: '.$e->getMessage()); }
-
-// Cache de modulos efectivos por firma (para mostrar/ocultar botones de control por tier).
-$firmMods = [];
-if ($canRemote) {
-    foreach (array_unique(array_filter(array_map(fn($r) => $r['firma_id'] !== null ? (int)$r['firma_id'] : null, $rows))) as $fid) {
-        $firmMods[$fid] = TierResolver::effectiveModules($pdo, $fid);
-    }
-}
 
 require __DIR__ . '/partials/layout_header.php';
 ?>
@@ -79,7 +66,7 @@ require __DIR__ . '/partials/layout_header.php';
         $shown   = $r['label'] ?: $machine;
         $revoked = $r['status'] === 'revoked';
       ?>
-        <tr class="border-b border-gray-100 last:border-0 <?= $revoked ? 'opacity-60' : '' ?>" x-data="{edit:false, rename:false, control:false}">
+        <tr class="border-b border-gray-100 last:border-0 <?= $revoked ? 'opacity-60' : '' ?>" x-data="{edit:false, rename:false}">
           <td class="px-5 py-3">
             <!-- Nombre mostrado + editar ETIQUETA del panel -->
             <div x-show="!edit" class="flex items-center gap-1.5 group">
@@ -117,14 +104,6 @@ require __DIR__ . '/partials/layout_header.php';
               <?php else: ?>
                 <button @click="rename=!rename" class="text-xs text-corp-800 hover:text-corp-600 font-medium">Renombrar equipo</button>
               <?php endif; ?>
-              <?php
-                $mods = $canRemote && $r['firma_id'] !== null ? ($firmMods[(int)$r['firma_id']] ?? []) : [];
-                $canLock  = $canRemote && in_array('deviceLock', $mods, true);
-                $canPower = $canRemote && in_array('remoteShutdown', $mods, true);
-              ?>
-              <?php if ($canLock || $canPower): ?>
-                <button @click="control=!control" class="text-xs text-corp-800 hover:text-corp-600 font-medium">Control</button>
-              <?php endif; ?>
               <form method="post" onsubmit="return confirm('¿Revocar este equipo? Dejará de reportar.')"><?= csrf_field() ?>
                 <input type="hidden" name="action" value="revoke"><input type="hidden" name="device_id" value="<?= (int)$r['id'] ?>">
                 <button class="text-xs text-gray-400 hover:text-accent-500">Revocar</button>
@@ -138,32 +117,6 @@ require __DIR__ . '/partials/layout_header.php';
               <button class="text-xs px-2 py-1 bg-corp-800 text-white rounded">Enviar</button>
               <button type="button" @click="rename=false" class="text-gray-400 text-xs">✕</button>
             </form>
-            <!-- Panel de control remoto (bloquear / apagar / reiniciar / cerrar sesión) -->
-            <?php if ($canLock || $canPower): ?>
-            <div x-show="control" style="display:none" class="flex flex-wrap items-center justify-end gap-1.5 mt-2">
-              <?php if ($canLock): ?>
-                <form method="post" action="device-command.php"><?= csrf_field() ?>
-                  <input type="hidden" name="command_type" value="lock"><input type="hidden" name="device_id" value="<?= (int)$r['id'] ?>">
-                  <button class="text-xs px-2 py-1 border border-gray-200 rounded hover:border-gray-300 text-gray-700">Bloquear</button>
-                </form>
-              <?php endif; ?>
-              <?php if ($canPower): ?>
-                <form method="post" action="device-command.php" onsubmit="return confirm('¿Apagar este equipo? Se avisará al usuario con 60 s de gracia.')"><?= csrf_field() ?>
-                  <input type="hidden" name="command_type" value="shutdown"><input type="hidden" name="device_id" value="<?= (int)$r['id'] ?>"><input type="hidden" name="grace_seconds" value="60">
-                  <button class="text-xs px-2 py-1 border border-accent-500/40 rounded text-accent-600 hover:bg-accent-500/5">Apagar</button>
-                </form>
-                <form method="post" action="device-command.php" onsubmit="return confirm('¿Reiniciar este equipo? 60 s de gracia.')"><?= csrf_field() ?>
-                  <input type="hidden" name="command_type" value="restart"><input type="hidden" name="device_id" value="<?= (int)$r['id'] ?>"><input type="hidden" name="grace_seconds" value="60">
-                  <button class="text-xs px-2 py-1 border border-gray-200 rounded hover:border-gray-300 text-gray-700">Reiniciar</button>
-                </form>
-                <form method="post" action="device-command.php" onsubmit="return confirm('¿Cerrar la sesión del usuario en este equipo?')"><?= csrf_field() ?>
-                  <input type="hidden" name="command_type" value="logoff"><input type="hidden" name="device_id" value="<?= (int)$r['id'] ?>">
-                  <button class="text-xs px-2 py-1 border border-gray-200 rounded hover:border-gray-300 text-gray-700">Cerrar sesión</button>
-                </form>
-              <?php endif; ?>
-              <button type="button" @click="control=false" class="text-gray-400 text-xs">✕</button>
-            </div>
-            <?php endif; ?>
             <?php endif; ?>
           </td>
         </tr>
