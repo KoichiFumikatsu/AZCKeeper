@@ -83,6 +83,7 @@ if (!function_exists('panelCan')) {
             'audit'        => 'Auditoría',
             'releases'     => 'Versiones del cliente',
             'diagnostics'  => 'Diagnóstico en vivo',
+            'remote-control' => 'Control remoto',
             'roles'        => 'Roles y cuentas',
         ];
     }
@@ -91,8 +92,8 @@ if (!function_exists('panelCan')) {
     function panelFallbackPermissions(): array
     {
         return [
-            'it'      => ['dashboard','process-view','users','devices','pending','tiers','policies','coverage','dual-job','audit','releases','diagnostics'],
-            'admin'   => ['dashboard','process-view','users','devices','pending','tiers','policies','coverage','dual-job','audit','releases','diagnostics'],
+            'it'      => ['dashboard','process-view','users','devices','pending','tiers','policies','coverage','dual-job','audit','releases','diagnostics','remote-control'],
+            'admin'   => ['dashboard','process-view','users','devices','pending','tiers','policies','coverage','dual-job','audit','releases','diagnostics','remote-control'],
             'gerente' => ['process-view','coverage','dual-job','users'],   // NO ve flota/seguridad
             'viewer'  => ['process-view','coverage'],
         ];

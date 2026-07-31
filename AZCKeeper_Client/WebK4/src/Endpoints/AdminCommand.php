@@ -7,6 +7,7 @@ use Keeper\Db;
 use Keeper\Repos\SessionRepo;
 use Keeper\Repos\DeviceRepo;
 use Keeper\Repos\CommandRepo;
+use Keeper\Services\TierResolver;
 
 /**
  * Panel -> equipo: encola comandos servidor->equipo (apagado remoto,
@@ -20,7 +21,15 @@ use Keeper\Repos\CommandRepo;
  */
 class AdminCommand
 {
-    private const TYPES = ['shutdown', 'network_diag', 'screenshot_now'];
+    // Comando -> modulo de catalogo requerido en el tier de la firma (null = sin tier).
+    private const MODULE_FOR = [
+        'lock'           => 'deviceLock',
+        'shutdown'       => 'remoteShutdown',
+        'restart'        => 'remoteShutdown',
+        'logoff'         => 'remoteShutdown',
+        'network_diag'   => 'networkDiagnostic',
+        'screenshot_now' => 'screenshots',
+    ];
 
     public static function enqueue(): void
     {
@@ -40,7 +49,7 @@ class AdminCommand
         $expiresInSeconds = $body['expiresInSeconds'] ?? null;
 
         if (!$deviceGuid) Http::json(400, ['ok' => false, 'error' => 'Missing deviceId']);
-        if (!is_string($commandType) || !in_array($commandType, self::TYPES, true)) {
+        if (!is_string($commandType) || !array_key_exists($commandType, self::MODULE_FOR)) {
             Http::json(400, ['ok' => false, 'error' => 'Invalid commandType']);
         }
         if ($params !== null && !is_array($params)) Http::json(400, ['ok' => false, 'error' => 'Invalid params']);
@@ -53,6 +62,12 @@ class AdminCommand
         $dev = DeviceRepo::findByGuid($pdo, $deviceGuid);
         if (!$dev) Http::json(404, ['ok' => false, 'error' => 'Device not found']);
         $deviceId = (int)$dev['id'];
+
+        // Candado de tier: la firma del equipo debe incluir el modulo del comando.
+        $module = self::MODULE_FOR[$commandType];
+        if ($module !== null && !TierResolver::userAllows($pdo, (int)$dev['user_id'], $module)) {
+            Http::json(403, ['ok' => false, 'error' => 'El tier de la firma no incluye este control']);
+        }
 
         try {
             // created_by = null por ahora; sera el admin_id real cuando exista RBAC.
