@@ -16,8 +16,15 @@ use Keeper\Repos\AuditRepo;
  *     que un admin aprueba desde el panel. Se pliega sobre keeper_users, sin tabla
  *     de solicitudes aparte.
  *
- * Nota: el password queda opcional en esta version. La identidad del agente es
- * cedula + equipo enrolado; el password es un endurecimiento futuro.
+ * Validacion de contrasena (decision de Koichi, 2026-07-31): la identidad del agente pasa a
+ * ser cedula + contrasena, como en Keeper 3. Tres caminos:
+ *   1. Cedula desconocida         -> pending (solicitud de enrolamiento). No fija contrasena.
+ *   2. Cedula existe, sin hash     -> el PRIMER login la fija. Se exige el patron por defecto
+ *                                     z<cedula>Z@!$; si no coincide, 401. Asi la contrasena de
+ *                                     un usuario sin credencial queda determinada por la regla,
+ *                                     no por lo primero que alguien teclee.
+ *   3. Cedula existe, con hash     -> password_verify; si falla, 401 (no enrola, no crea sesion).
+ * El token DPAPI persiste en el cliente, asi que esto solo se pide en el primer arranque.
  */
 class ClientLogin
 {
@@ -27,6 +34,7 @@ class ClientLogin
         $body = Http::readJson();
 
         $cc         = trim((string)($body['cc'] ?? ($body['CC'] ?? '')));
+        $password   = (string)($body['password'] ?? ($body['Password'] ?? ''));
         $deviceGuid = $body['deviceId']   ?? ($body['DeviceId']   ?? null);
         $deviceName = $body['deviceName'] ?? ($body['DeviceName'] ?? null);
         $version    = $body['version']    ?? ($body['Version']    ?? null);
@@ -63,7 +71,27 @@ class ClientLogin
             Http::json(403, ['ok' => false, 'status' => 'denied', 'error' => 'User not active']);
         }
 
+        // --- Validacion de contrasena (caminos 2 y 3) ---
         $userId = (int)$user['id'];
+        if ($password === '') {
+            Http::json(401, ['ok' => false, 'status' => 'bad_credentials', 'error' => 'Missing password']);
+        }
+        if (empty($user['password_hash'])) {
+            // Camino 2: sin hash -> se fija ahora, exigiendo el patron por defecto z<cc>Z@!$.
+            $expected = 'z' . $cc . 'Z@!$';
+            if (!hash_equals($expected, $password)) {
+                Http::json(401, ['ok' => false, 'status' => 'bad_credentials',
+                    'error' => 'La contrasena no cumple la regla por defecto']);
+            }
+            UserRepo::setPassword($pdo, $userId, password_hash($password, PASSWORD_DEFAULT));
+            AuditRepo::log($pdo, null, $userId, null, 'admin', 'password_set',
+                'Contrasena fijada en el primer login (patron por defecto)');
+        } else {
+            // Camino 3: verificar contra el hash guardado.
+            if (!password_verify($password, $user['password_hash'])) {
+                Http::json(401, ['ok' => false, 'status' => 'bad_credentials', 'error' => 'Invalid credentials']);
+            }
+        }
 
         // Enrolar/reasignar el equipo.
         $st = $pdo->prepare("SELECT id, user_id, status FROM keeper_devices WHERE device_guid = :g LIMIT 1");
