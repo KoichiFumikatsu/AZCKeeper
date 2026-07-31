@@ -30,6 +30,7 @@ if (!function_exists('panelCan')) {
             'dual-job'     => 'Doble empleo',
             'audit'        => 'Auditoría',
             'releases'     => 'Versiones del cliente',
+            'diagnostics'  => 'Diagnóstico en vivo',
             'roles'        => 'Roles y cuentas',
         ];
     }
@@ -38,8 +39,8 @@ if (!function_exists('panelCan')) {
     function panelFallbackPermissions(): array
     {
         return [
-            'it'      => ['dashboard','process-view','users','devices','pending','tiers','policies','coverage','dual-job','audit','releases'],
-            'admin'   => ['dashboard','process-view','users','devices','pending','tiers','policies','coverage','dual-job','audit','releases'],
+            'it'      => ['dashboard','process-view','users','devices','pending','tiers','policies','coverage','dual-job','audit','releases','diagnostics'],
+            'admin'   => ['dashboard','process-view','users','devices','pending','tiers','policies','coverage','dual-job','audit','releases','diagnostics'],
             'gerente' => ['process-view','coverage','dual-job','users'],   // NO ve flota/seguridad
             'viewer'  => ['process-view','coverage'],
         ];
@@ -106,6 +107,7 @@ if (!function_exists('panelCan')) {
             'policies'     => 'policies.php',
             'releases'     => 'releases.php',
             'audit'        => 'audit.php',
+            'diagnostics'  => 'diagnostics.php',
             'roles'        => 'roles.php',
         ];
         foreach ($pages as $mod => $page) {

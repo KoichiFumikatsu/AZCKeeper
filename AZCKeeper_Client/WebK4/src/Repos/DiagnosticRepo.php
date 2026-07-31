@@ -58,11 +58,16 @@ class DiagnosticRepo
         $st->execute([':u' => $userId, ':d' => $deviceId, ':ts' => $clientTs, ':p' => $payloadJson]);
     }
 
-    /** Snapshot mas reciente de un usuario, o null. */
+    /**
+     * Snapshot mas reciente de un usuario, o null. Incluye captured_epoch (UNIX_TIMESTAMP,
+     * independiente de la zona de sesion): el panel corre con time_zone=-05:00, asi que leer
+     * el TIMESTAMP crudo y tratarlo como UTC desfasaria la edad 5h. El epoch evita todo eso.
+     */
     public static function latestSnapshot(PDO $pdo, int $userId): ?array
     {
         $st = $pdo->prepare(
-            "SELECT id, device_id, captured_at, client_ts, payload
+            "SELECT id, device_id, captured_at, UNIX_TIMESTAMP(captured_at) AS captured_epoch,
+                    client_ts, payload
              FROM keeper_diagnostic_snapshot
              WHERE user_id = :u ORDER BY id DESC LIMIT 1");
         $st->execute([':u' => $userId]);
