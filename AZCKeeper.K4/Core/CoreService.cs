@@ -18,6 +18,7 @@ public sealed class CoreService
     private readonly string _cc, _password, _deviceName, _version;
     private readonly Action<string>? _log;
     private readonly AZCKeeper.K4.Shell.AgentReportReader? _agentReader;
+    private readonly Func<int>? _idleSeconds;   // inactividad del usuario, para el semaforo de presencia
 
     // Ultimo estado ESPERADO (de la config del handshake) y ultimo flag de diagnostico.
     // Los lee el loop de diagnostico para armar el snapshot y para saber si debe correr.
@@ -31,10 +32,10 @@ public sealed class CoreService
     public DiagnosticsFlag LastDiagnostics => _lastDiagnostics;
 
     public CoreService(K4ApiClient api, ModuleHost host, string cc, string password, string deviceName, string version,
-        Action<string>? log = null, AZCKeeper.K4.Shell.AgentReportReader? agentReader = null)
+        Action<string>? log = null, AZCKeeper.K4.Shell.AgentReportReader? agentReader = null, Func<int>? idleSeconds = null)
     {
         _api = api; _host = host; _cc = cc; _password = password; _deviceName = deviceName; _version = version;
-        _log = log; _agentReader = agentReader;
+        _log = log; _agentReader = agentReader; _idleSeconds = idleSeconds;
     }
 
     /// <summary>Un ciclo completo: asegura sesión, handshake, aplica, reporta estado.</summary>
@@ -51,7 +52,7 @@ public sealed class CoreService
             _log?.Invoke("login ok");
         }
 
-        var hs = await _api.HandshakeAsync(_version, _deviceName);
+        var hs = await _api.HandshakeAsync(_version, _deviceName, _idleSeconds?.Invoke() ?? 0);
         if (hs is null)
         {
             // Token inválido/expirado -> re-login silencioso UNA vez con cédula + contraseña
@@ -63,7 +64,7 @@ public sealed class CoreService
                 var relog = await _api.LoginAsync(_cc, _password, _deviceName, _version);
                 if (!relog.Ok) { _log?.Invoke($"re-login: {relog.Status}"); return false; }
                 _log?.Invoke("re-login silencioso ok");
-                hs = await _api.HandshakeAsync(_version, _deviceName);
+                hs = await _api.HandshakeAsync(_version, _deviceName, _idleSeconds?.Invoke() ?? 0);
             }
             if (hs is null) { _log?.Invoke("handshake sin respuesta"); return false; }
         }

@@ -126,7 +126,7 @@ internal static class Program
         host.Register(new ScreenshotModule(api, new WinScreenCapturer(), new StubBlobStore(), clock, Log));
 
         var core = new CoreService(api, host, cc, password, Environment.MachineName, version,
-            log: Log, agentReader: new AgentReportReader());
+            log: Log, agentReader: new AgentReportReader(), idleSeconds: () => idle.IdleSeconds);
 
         if (once)
         {
