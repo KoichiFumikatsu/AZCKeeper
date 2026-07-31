@@ -1,0 +1,13 @@
+# Comodidad de acceso al panel: escribir solo el dominio (o /admin) lleva al login del
+# panel, sin teclear /public/admin. La API (/public/index.php/api/...) y todo lo demas bajo
+# /public/ NO se tocan: siguen exactamente igual (las reglas solo matchean la raiz y /admin).
+#
+# Va en el docroot de devkeep (la carpeta que contiene public/ y src/).
+
+RewriteEngine On
+
+# Dominio pelado -> panel.
+RewriteRule ^$ /public/admin/login.php [R=302,L]
+
+# Atajo /admin (con o sin barra) -> panel.
+RewriteRule ^admin/?$ /public/admin/login.php [R=302,L]
