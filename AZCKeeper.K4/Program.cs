@@ -55,7 +55,12 @@ internal static class Program
         if (string.IsNullOrWhiteSpace(cfg.Cc)) cfg.Cc = "K4TEST"; // fallback de desarrollo
         cfg.Save();
 
-        void Log(string m) => Console.WriteLine($"  {m}"); // Etapa 2: LocalLogger a archivo
+        // Logging real (anillo en memoria + archivo diario). Reemplaza el Console.WriteLine
+        // que bajo WinExe se perdia. En --once ademas eco a la consola del padre (diagnostico).
+        var logger = new LocalLogger();
+        Action<string> Log = once
+            ? (m => { logger.Log(m); Console.WriteLine($"  {m}"); })
+            : logger.Log;
 
         // Token persistente (DPAPI). Se restaura al arrancar y se guarda cuando cambia.
         var creds = new K4CredentialStore();
@@ -67,7 +72,9 @@ internal static class Program
 
         // Core único + módulos independientes (ninguno conoce a otro).
         var clock = new SystemClock();
-        var host = new ModuleHost(onError: (code, ex) => Log($"[modulo {code}] error: {ex.Message}"));
+        // onError -> logger.Error(code,...) para que el snapshot de diagnostico pueda mostrar
+        // "modulo X: real=OFF, ultimo error=...". LastErrorFor(code) se llena aqui.
+        var host = new ModuleHost(onError: (code, ex) => logger.Error(code, ex.Message));
         var fg = new WinForegroundWindow();
         var idle = new WinIdleMonitor();
         host.Register(new ActivityModule(api, idle, clock, host.IsModuleRunning, Log));
@@ -113,9 +120,24 @@ internal static class Program
         // Arranque automático con Windows (HKCU Run, sin admin). Best-effort.
         try { new StartupManager().EnableStartup(); } catch (Exception ex) { Log($"startup: {ex.Message}"); }
 
+        // Loop de diagnostico: mientras IT marque a esta persona en el panel (el handshake lo
+        // anuncia), sube un snapshot cada pocos segundos. Independiente del loop de handshake.
+        var diagLoop = new DiagnosticLoop(
+            getFlag: () => core.LastDiagnostics,
+            build: cursor => DiagnosticSnapshot.Build(
+                host, core.LastExpected, logger, cursor, fg, idle,
+                new DiagNet(
+                    api.IsBackingOff,
+                    api.IsBackingOff ? api.BackoffUntilUtc.ToString("yyyy-MM-ddTHH:mm:ssZ") : null,
+                    api.LastHandshakeStatus, api.PendingQueueCount, cfg.Version)),
+            send: payload => api.SendDiagnosticsAsync(payload),
+            isBackingOff: () => api.IsBackingOff,
+            log: Log);
+
         // El loop corre en background; la UI invisible mantiene vivo el proceso.
         _ = _resident.RunLoopAsync(_cts.Token);
         _ = RunUpdateLoopAsync(cfg, _cts.Token, Log);
+        _ = diagLoop.RunAsync(_cts.Token);
 
         Application.Run(new ApplicationContext());
 

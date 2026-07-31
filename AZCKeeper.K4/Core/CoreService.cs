@@ -19,6 +19,17 @@ public sealed class CoreService
     private readonly Action<string>? _log;
     private readonly AZCKeeper.K4.Shell.AgentReportReader? _agentReader;
 
+    // Ultimo estado ESPERADO (de la config del handshake) y ultimo flag de diagnostico.
+    // Los lee el loop de diagnostico para armar el snapshot y para saber si debe correr.
+    private volatile IReadOnlyDictionary<string, bool> _lastExpected = new Dictionary<string, bool>();
+    private volatile DiagnosticsFlag _lastDiagnostics = DiagnosticsFlag.Off;
+
+    /// <summary>Modulos que el servidor espera ON/OFF, del ultimo handshake aplicado.</summary>
+    public IReadOnlyDictionary<string, bool> LastExpected => _lastExpected;
+
+    /// <summary>Flag de diagnostico del ultimo handshake (enabled/interval/until).</summary>
+    public DiagnosticsFlag LastDiagnostics => _lastDiagnostics;
+
     public CoreService(K4ApiClient api, ModuleHost host, string cc, string deviceName, string version,
         Action<string>? log = null, AZCKeeper.K4.Shell.AgentReportReader? agentReader = null)
     {
@@ -59,6 +70,10 @@ public sealed class CoreService
 
         var config = hs.ToModuleConfig();
         _host.Apply(config);
+
+        // Guardar ESPERADO y flag de diagnostico para el loop de diagnostico.
+        _lastExpected = config.ToDictionary(kv => kv.Key, kv => kv.Value.Enabled, StringComparer.Ordinal);
+        _lastDiagnostics = hs.Diagnostics;
 
         // Eco del estado real: qué módulos están corriendo de verdad.
         await _api.ReportModuleStateAsync(_host.Snapshot());

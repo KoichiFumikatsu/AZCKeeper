@@ -77,7 +77,19 @@ public sealed class K4ApiClient : IApiClient
             new { deviceId = _deviceGuid, version, deviceName }, withToken: true);
         LastHandshakeStatus = status;
         if (status != 200 || !body.TryGetProperty("effectiveConfig", out var cfg)) return null;
-        return new HandshakeResult(cfg);
+        return new HandshakeResult(cfg, body);
+    }
+
+    /// <summary>
+    /// Sube un snapshot de diagnostico. NO se encola: es telemetria efimera (si no entra, se
+    /// pierde ese snapshot y ya; el proximo tick manda uno fresco). Respeta el backoff igual
+    /// que el resto (PostJsonAsync no abre socket en backoff). clientTs = ahora en UTC.
+    /// </summary>
+    public async Task<bool> SendDiagnosticsAsync(object payload)
+    {
+        var body = new { deviceId = _deviceGuid, clientTs = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"), payload };
+        var (status, _) = await PostJsonAsync("client/diagnostics", JsonSerializer.Serialize(body, _json), withToken: true);
+        return status == 200;
     }
 
     public async Task<bool> SendEpisodesAsync(IReadOnlyList<EpisodeDto> episodes)
@@ -234,10 +246,39 @@ public sealed class K4ApiClient : IApiClient
 
 public sealed record LoginResult(bool Ok, string Status, string? Note);
 
+/// <summary>El flag de diagnostico que el handshake anuncia. Enabled=false por defecto.</summary>
+public sealed record DiagnosticsFlag(bool Enabled, int IntervalSeconds, DateTime? UntilUtc)
+{
+    public static readonly DiagnosticsFlag Off = new(false, 4, null);
+}
+
 public sealed class HandshakeResult
 {
     private readonly JsonElement _effectiveConfig;
-    public HandshakeResult(JsonElement effectiveConfig) => _effectiveConfig = effectiveConfig;
+
+    /// <summary>Modo diagnostico anunciado por el servidor (bloque 'diagnostics' del handshake).</summary>
+    public DiagnosticsFlag Diagnostics { get; }
+
+    public HandshakeResult(JsonElement effectiveConfig, JsonElement root)
+    {
+        _effectiveConfig = effectiveConfig;
+        Diagnostics = ParseDiagnostics(root);
+    }
+
+    private static DiagnosticsFlag ParseDiagnostics(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("diagnostics", out var d) || d.ValueKind != JsonValueKind.Object)
+            return DiagnosticsFlag.Off;
+
+        bool enabled = d.TryGetProperty("enabled", out var e) && e.ValueKind == JsonValueKind.True;
+        int interval = d.TryGetProperty("intervalSeconds", out var iv) && iv.TryGetInt32(out var i) ? Math.Max(1, i) : 4;
+        DateTime? until = null;
+        if (d.TryGetProperty("untilUtc", out var u) && u.ValueKind == JsonValueKind.String &&
+            DateTime.TryParse(u.GetString(), null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var parsed))
+            until = parsed;
+        return new DiagnosticsFlag(enabled, interval, until);
+    }
 
     /// <summary>Traduce effectiveConfig.modules a ModuleSettings por código de catálogo.</summary>
     public IReadOnlyDictionary<string, ModuleSettings> ToModuleConfig()
