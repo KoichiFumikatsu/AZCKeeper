@@ -14,20 +14,35 @@ class CoverageRepo {
   /** Umbral por defecto de "sin reportar" en dias. */
   public const STALE_DAYS = 7;
 
-  public static function list(PDO $pdo, int $staleDays = self::STALE_DAYS): array {
-    // Un dispositivo activo (el mas reciente) por usuario + su ultimo last_seen.
-    $st = $pdo->prepare("
+  /**
+   * @param int|null $firmaId Recorta a una firma (scope de un admin de firma). null = todas.
+   *
+   * Los conteos de equipos van por subconsulta y no por COUNT+GROUP BY: al sumar los JOIN
+   * organizacionales (firma/cargo/sede) un GROUP BY sobre el join inflaria device_count.
+   * keeper_user_assignments tiene UNIQUE(user_id), asi que ese join no duplica filas.
+   */
+  public static function list(PDO $pdo, int $staleDays = self::STALE_DAYS, ?int $firmaId = null): array {
+    $sql = "
       SELECT u.id AS user_id, u.cc, u.display_name,
-             COUNT(d.id) AS device_count,
-             MAX(d.last_seen_at) AS last_seen,
-             cn.is_exempt, cn.note
+             (SELECT COUNT(*) FROM keeper_devices d
+               WHERE d.user_id = u.id AND d.status = 'active') AS device_count,
+             (SELECT MAX(d2.last_seen_at) FROM keeper_devices d2
+               WHERE d2.user_id = u.id AND d2.status = 'active') AS last_seen,
+             cn.is_exempt, cn.note,
+             f.nombre AS firma, c.nombre AS cargo, se.nombre AS sede
       FROM keeper_users u
-      LEFT JOIN keeper_devices d ON d.user_id = u.id AND d.status = 'active'
-      LEFT JOIN keeper_coverage_note cn ON cn.user_id = u.id
+      LEFT JOIN keeper_coverage_note cn   ON cn.user_id = u.id
+      LEFT JOIN keeper_user_assignments a ON a.user_id  = u.id
+      LEFT JOIN keeper_firmas f  ON f.id  = a.firma_id
+      LEFT JOIN keeper_cargos c  ON c.id  = a.cargo_id
+      LEFT JOIN keeper_sedes  se ON se.id = a.sede_id
       WHERE u.status = 'active' AND u.employment_status = 'active'
-      GROUP BY u.id, u.cc, u.display_name, cn.is_exempt, cn.note
-      ORDER BY u.display_name
-    ");
+    ";
+    if ($firmaId !== null) $sql .= " AND a.firma_id = :firma ";
+    $sql .= " ORDER BY u.display_name IS NULL, u.display_name, u.cc";
+
+    $st = $pdo->prepare($sql);
+    if ($firmaId !== null) $st->bindValue(':firma', $firmaId, PDO::PARAM_INT);
     $st->execute();
     $rows = $st->fetchAll();
 
