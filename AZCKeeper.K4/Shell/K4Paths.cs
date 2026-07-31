@@ -23,6 +23,8 @@ public static class K4Paths
     public static string AuthDir    => Path.Combine(AppData, "Auth");
     public static string QueueDir   => Path.Combine(AppData, "Queue");
     public static string UpdatesDir => Path.Combine(LocalAppData, "Updates");
+    /// <summary>Carpeta de logs del cliente (LocalLogger). Local, no roaming.</summary>
+    public static string LogsDir    => Path.Combine(LocalAppData, "Logs");
 
     /// <summary>Dónde vive el cliente instalado (per-user, sin admin): %APPDATA%\AZCKeeper4\app.</summary>
     public static string InstallDir => Path.Combine(AppData, "app");
