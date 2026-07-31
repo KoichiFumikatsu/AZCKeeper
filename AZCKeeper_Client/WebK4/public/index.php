@@ -37,6 +37,7 @@ $routes = [
     '/client/security/report'  => [Keeper\Endpoints\SecurityReport::class, 'handle'],
     '/client/screenshots'      => [Keeper\Endpoints\ScreenshotMeta::class, 'handle'],
     '/client/location'         => [Keeper\Endpoints\LocationReport::class, 'handle'],
+    '/client/diagnostics'      => [Keeper\Endpoints\ClientDiagnostics::class, 'handle'],
     '/admin/commands'          => [Keeper\Endpoints\AdminCommand::class, 'enqueue'],
     '/admin/enrollment'        => [Keeper\Endpoints\AdminEnrollment::class, 'handle'],
     '/cron/productivity'       => [Keeper\Endpoints\ProductivityCron::class, 'handle'],
