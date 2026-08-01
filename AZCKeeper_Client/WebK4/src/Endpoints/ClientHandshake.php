@@ -87,6 +87,23 @@ class ClientHandshake
         $allowed  = TierResolver::effectiveModules($pdo, $firmaId);
         $effective = self::clipToTier($effective, $allowed);
 
+        // Bloqueo web: normaliza los dominios y SOLO manda la config si el modulo webBlocking
+        // quedo permitido (tier + politica). Si no, se remueve el nodo (el equipo no recibe
+        // dominios que no debe). El enforcement real lo hace el agente elevado (HKLM).
+        $wbOn = !empty($effective['modules']['enableWebBlocking']);
+        if ($wbOn && is_array($effective['webBlocking'] ?? null)) {
+            $wb = $effective['webBlocking'];
+            $effective['webBlocking'] = [
+                'enabled'             => true,
+                'blockDownloads'      => !empty($wb['blockDownloads']),
+                'blockAllExtensions'  => !empty($wb['blockAllExtensions']),
+                'domains'             => \Keeper\InputValidator::validateDomainArray($wb['domains'] ?? []),
+                'allowedExtensionIds' => \Keeper\InputValidator::validateDomainArray($wb['allowedExtensionIds'] ?? []),
+            ];
+        } else {
+            unset($effective['webBlocking']);
+        }
+
         // 3. Modo diagnostico: si IT marco a esta persona en el panel, el cliente entra en
         // el loop rapido (sube snapshots cada intervalSeconds hasta untilUtc). Sin sesion
         // activa -> enabled:false y el cliente sigue en cadencia normal.

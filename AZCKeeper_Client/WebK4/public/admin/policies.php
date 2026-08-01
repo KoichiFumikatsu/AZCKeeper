@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/admin_auth.php';   // $adminUser, $pdo
 require_once __DIR__ . '/../../src/Repos/AuditRepo.php';
+require_once __DIR__ . '/../../src/InputValidator.php';
 
 use Keeper\Repos\AuditRepo;
+use Keeper\InputValidator;
 
 if (!panelCan($adminUser, 'policies')) { header('Location: ' . panelLanding($adminUser)); exit; }
 $adminId = (int)$adminUser['admin_id'];
@@ -14,17 +16,43 @@ $flag = fn(string $code) => 'enable' . ucfirst($code);
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $action = $_POST['action'] ?? '';
     if ($action === 'save_global') {
-        $policy = [];
-        foreach ($modules as $m) $policy[$flag($m['code'])] = isset($_POST['mod'][$m['code']]);
+        // Conserva nodos de config no-módulo que ya vivan en la política global (p.ej. webBlocking
+        // se guarda por su propio botón; save_global no debe borrarlo).
+        $prev = $pdo->query("SELECT policy_json FROM keeper_policy_assignments WHERE scope='global' AND is_active=1 ORDER BY priority DESC, id DESC LIMIT 1")->fetchColumn();
+        $policy = $prev ? (json_decode($prev, true) ?: []) : [];
+        // Los flags de módulo van bajo 'modules' (lo que el handshake recorta por tier y el cliente
+        // lee en ToModuleConfig). Guardarlos planos hacía que NINGÚN módulo llegara al cliente.
+        $mods = is_array($policy['modules'] ?? null) ? $policy['modules'] : [];
+        foreach ($modules as $m) $mods[$flag($m['code'])] = isset($_POST['mod'][$m['code']]);
+        $policy['modules'] = $mods;
         $json = json_encode($policy, JSON_UNESCAPED_UNICODE);
         $cur = $pdo->query("SELECT id FROM keeper_policy_assignments WHERE scope='global' AND is_active=1 ORDER BY priority DESC, id DESC LIMIT 1")->fetchColumn();
         if ($cur) $pdo->prepare("UPDATE keeper_policy_assignments SET policy_json=:p, version=version+1, updated_by=:by WHERE id=:id")->execute([':p'=>$json,':by'=>$adminId,':id'=>$cur]);
         else      $pdo->prepare("INSERT INTO keeper_policy_assignments (scope,version,is_active,policy_json,updated_by) VALUES ('global',1,1,:p,:by)")->execute([':p'=>$json,':by'=>$adminId]);
         try { AuditRepo::log($pdo,$adminId,null,null,'admin','policy_global_saved','Política global actualizada',$policy); } catch(\Throwable $e){}
+    } elseif ($action === 'save_webblock') {
+        // Config del bloqueo web (dominios + descargas + extensiones) en el nodo webBlocking de
+        // la política global. El MÓDULO webBlocking (on/off) se maneja arriba; esto es su config.
+        // Enforcement real = agente elevado (HKLM); aquí solo se configura la política.
+        $prev = $pdo->query("SELECT policy_json FROM keeper_policy_assignments WHERE scope='global' AND is_active=1 ORDER BY priority DESC, id DESC LIMIT 1")->fetchColumn();
+        $policy = $prev ? (json_decode($prev, true) ?: []) : [];
+        $domains = preg_split('/[\r\n,]+/', (string)($_POST['domains'] ?? ''));
+        $policy['webBlocking'] = [
+            'blockDownloads'      => isset($_POST['block_downloads']),
+            'blockAllExtensions'  => isset($_POST['block_extensions']),
+            'domains'             => InputValidator::validateDomainArray($domains),
+            'allowedExtensionIds' => InputValidator::validateDomainArray(preg_split('/[\r\n,\s]+/', (string)($_POST['allowed_ext'] ?? ''))),
+        ];
+        $json = json_encode($policy, JSON_UNESCAPED_UNICODE);
+        $cur = $pdo->query("SELECT id FROM keeper_policy_assignments WHERE scope='global' AND is_active=1 ORDER BY priority DESC, id DESC LIMIT 1")->fetchColumn();
+        if ($cur) $pdo->prepare("UPDATE keeper_policy_assignments SET policy_json=:p, version=version+1, updated_by=:by WHERE id=:id")->execute([':p'=>$json,':by'=>$adminId,':id'=>$cur]);
+        else      $pdo->prepare("INSERT INTO keeper_policy_assignments (scope,version,is_active,policy_json,updated_by) VALUES ('global',1,1,:p,:by)")->execute([':p'=>$json,':by'=>$adminId]);
+        try { AuditRepo::log($pdo,$adminId,null,null,'admin','policy_webblock_saved','Config de bloqueo web actualizada',['domains'=>count($policy['webBlocking']['domains'])]); } catch(\Throwable $e){}
     } elseif ($action === 'add_user_override') {
         $uid = (int)($_POST['user_id'] ?? 0);
-        $policy = [];
-        foreach ($modules as $m) { $v = $_POST['mod'][$m['code']] ?? 'inherit'; if ($v==='on') $policy[$flag($m['code'])]=true; elseif ($v==='off') $policy[$flag($m['code'])]=false; }
+        $mods = [];
+        foreach ($modules as $m) { $v = $_POST['mod'][$m['code']] ?? 'inherit'; if ($v==='on') $mods[$flag($m['code'])]=true; elseif ($v==='off') $mods[$flag($m['code'])]=false; }
+        $policy = $mods ? ['modules' => $mods] : [];
         if ($uid && $policy) {
             $pdo->prepare("INSERT INTO keeper_policy_assignments (scope,user_id,version,priority,is_active,policy_json,updated_by)
                            VALUES ('user',:u,1,10,1,:p,:by)")->execute([':u'=>$uid,':p'=>json_encode($policy,JSON_UNESCAPED_UNICODE),':by'=>$adminId]);
@@ -43,6 +71,10 @@ $pageTitle = 'Políticas'; $currentPage = 'policies';
 // Política global vigente.
 $gRow = $pdo->query("SELECT policy_json FROM keeper_policy_assignments WHERE scope='global' AND is_active=1 ORDER BY priority DESC, id DESC LIMIT 1")->fetchColumn();
 $global = $gRow ? (json_decode($gRow, true) ?: []) : [];
+
+$wb = is_array($global['webBlocking'] ?? null) ? $global['webBlocking'] : [];
+$gmods = is_array($global['modules'] ?? null) ? $global['modules'] : $global;
+$wbEnabled = !empty($gmods[$flag('webBlocking')]);
 
 // Overrides por persona.
 $userOv = $pdo->query("
@@ -64,12 +96,52 @@ require __DIR__ . '/partials/layout_header.php';
     <button class="px-4 py-1.5 bg-corp-800 hover:bg-corp-900 text-white text-xs font-medium rounded-lg">Guardar</button>
   </div>
   <div class="p-5 grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-    <?php foreach ($modules as $m): $on = !empty($global[$flag($m['code'])]); ?>
+    <?php $gm = is_array($global['modules'] ?? null) ? $global['modules'] : $global; // tolera política vieja plana
+    foreach ($modules as $m): $on = !empty($gm[$flag($m['code'])]); ?>
       <label class="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-gray-100 hover:bg-gray-50 cursor-pointer">
         <span class="text-sm text-gray-700"><?= htmlspecialchars($m['label']) ?></span>
         <input type="checkbox" name="mod[<?= htmlspecialchars($m['code']) ?>]" <?= $on?'checked':'' ?> class="w-4 h-4 accent-corp-800">
       </label>
     <?php endforeach; ?>
+  </div>
+</form>
+
+<!-- Bloqueo web (config de dominios) -->
+<form method="post" class="bg-white rounded-xl border border-gray-100 overflow-hidden mb-6"><?= csrf_field() ?>
+  <input type="hidden" name="action" value="save_webblock">
+  <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+    <div>
+      <h2 class="text-sm font-semibold text-dark">Bloqueo web — dominios</h2>
+      <p class="text-xs text-muted mt-0.5">
+        El módulo <b>Bloqueo de sitios web</b> se enciende arriba y en el <a href="tiers.php" class="text-corp-800">tier</a>.
+        Aquí van los dominios. Lo aplica el <b>agente elevado</b> en el navegador (HKLM); un equipo sin agente elevado aún no bloquea.
+        <?php if (!$wbEnabled): ?><span class="text-amber-600">Módulo apagado en la política global — configúralo igual, pero no surtirá efecto hasta encenderlo.</span><?php endif; ?>
+      </p>
+    </div>
+    <button class="px-4 py-1.5 bg-corp-800 hover:bg-corp-900 text-white text-xs font-medium rounded-lg flex-none">Guardar dominios</button>
+  </div>
+  <div class="p-5 grid lg:grid-cols-2 gap-5">
+    <div>
+      <label class="block text-xs font-medium text-gray-600 mb-1">Dominios bloqueados (uno por línea)</label>
+      <textarea name="domains" rows="6" placeholder="facebook.com&#10;youtube.com&#10;*.tiktok.com"
+                class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono outline-none focus:ring-2 focus:ring-corp-200"><?= htmlspecialchars(implode("\n", $wb['domains'] ?? [])) ?></textarea>
+      <p class="text-[11px] text-muted mt-1"><?= count($wb['domains'] ?? []) ?> dominios. Se normalizan (sin http://, minúsculas, sin duplicados). <code>*.dominio</code> cubre subdominios.</p>
+    </div>
+    <div class="space-y-3">
+      <label class="flex items-center gap-2 text-sm text-gray-700">
+        <input type="checkbox" name="block_downloads" <?= !empty($wb['blockDownloads'])?'checked':'' ?> class="w-4 h-4 accent-corp-800">
+        Bloquear descargas en el navegador (DownloadRestrictions)
+      </label>
+      <label class="flex items-center gap-2 text-sm text-gray-700">
+        <input type="checkbox" name="block_extensions" <?= !empty($wb['blockAllExtensions'])?'checked':'' ?> class="w-4 h-4 accent-corp-800">
+        Bloquear instalación de extensiones (ExtensionInstallBlocklist=*)
+      </label>
+      <div>
+        <label class="block text-xs font-medium text-gray-600 mb-1">Extensiones permitidas (IDs, una por línea)</label>
+        <textarea name="allowed_ext" rows="3" placeholder="IDs de extensiones a permitir"
+                  class="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono outline-none focus:ring-2 focus:ring-corp-200"><?= htmlspecialchars(implode("\n", $wb['allowedExtensionIds'] ?? [])) ?></textarea>
+      </div>
+    </div>
   </div>
 </form>
 
@@ -112,7 +184,7 @@ require __DIR__ . '/partials/layout_header.php';
       </tr></thead>
       <tbody>
       <?php if(!$userOv): ?><tr><td colspan="3" class="px-5 py-8 text-center text-muted">Sin excepciones por persona. Todos siguen la política global.</td></tr><?php endif; ?>
-      <?php foreach ($userOv as $o): $p = json_decode($o['policy_json'], true) ?: []; ?>
+      <?php foreach ($userOv as $o): $pj = json_decode($o['policy_json'], true) ?: []; $p = is_array($pj['modules'] ?? null) ? $pj['modules'] : $pj; ?>
         <tr class="border-b border-gray-100 last:border-0">
           <td class="px-5 py-3 text-dark"><?= htmlspecialchars($o['display_name'] ?: ('CC '.$o['cc'])) ?></td>
           <td class="px-5 py-3">
