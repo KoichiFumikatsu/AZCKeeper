@@ -178,3 +178,38 @@ webblock-pac, firma-historial, 2026-07-31-{k4-diagnostico-y-login, presencia-y-c
 specs-equipo-y-tab-control-remoto, control-remoto-catalogo-backlog, **brechas-k3-vs-k4**, **ESTE doc**}.
 plans: keeper4-*, webblock, k4-diagnostico-y-login, presencia-y-control-remoto.
 Progreso SDD (gitignored): `.superpowers/sdd/progress.md`.
+
+---
+
+## 8. AVANCE AUTÓNOMO 2026-07-31 (Koichi fuera) — brechas cerradas
+
+Plan: `docs/superpowers/plans/2026-07-31-cierre-brechas-autonomo.md`. Todo commiteado+pusheado en
+`feature/modulo-seguridad`. Solo lo seguro/verificable en DEV; el enforcement elevado y las decisiones
+de sistema quedan para Koichi.
+
+- **BUG P0 CORREGIDO (crítico):** la política global se guardaba PLANA (`{enableX}`) pero el handshake
+  (clipToTier) y el cliente (ToModuleConfig) esperan los flags bajo `{"modules":{...}}` → **ningún
+  módulo llegaba al cliente** (0 en config, todo expected=false). Arreglado en policies.php (envuelve
+  en modules; lectura tolerante) + migrada la global de DEV. Verificado: cliente ahora aplica 11 módulos.
+- **A — Bloqueo web LADO SERVIDOR:** policies.php gana "Bloqueo web" (dominios/descargas/extensiones →
+  policy_json.webBlocking) + "Horario laboral"; handshake normaliza (InputValidator) y solo manda
+  webBlocking si el tier lo permite. Verificado E2E (dominios normalizados en el handshake).
+- **B — Logging cliente→panel:** POST /client/logs (redacta secretos) + ClientLogRepo + drain del
+  LocalLogger (Warn/Error, cursor) + página client-logs.php (pestaña desde audit) + purga 30d. Verificado.
+- **C — Tracking de llamadas real:** CallTrackingModule (segundos en llamada por día) + CallDetection
+  compartido; ActivityModule manda CallSeconds real. Verificado (tests).
+- **D — Horario + categorización:** WorkSchedule (trabajo/almuerzo/fuera) en handshake + panel;
+  ActivityModule categoriza y manda work/lunch/afterHours active+idle. Verificado E2E (handshake).
+- **E — Resiliencia:** re-enroll por device_guid (POST /client/re-enroll + fallback en el cliente) +
+  TimeSync (ServerSyncedClock, offset del serverTimeUtc, no toca el reloj del SO). Verificado (404/200).
+- 90/90 tests cliente. Firma 3 (K4TEST) tiene override de módulos de tracking+webBlocking para pruebas;
+  dominios web de ejemplo (facebook/youtube/*.tiktok) y horario 07:30-17:30 configurados en DEV.
+
+**QUEDA PENDIENTE (necesita a Koichi o es sub-feature aparte):**
+- **Bloqueo web ENFORCEMENT (agente elevado):** servicio Windows SYSTEM + instalador (`sc create`) +
+  **decisión de transporte** de la política al agente sin manipulación del usuario (ProgramData con ACL
+  vs agente jala del server) + su verificación en equipo de prueba. NO tocado (cambio de sistema).
+- **D3 — Resume del día:** GET /client/activity-day + el cliente retoma contadores al arrancar (no
+  perder datos al reiniciar a media jornada). Sub-feature aparte, no hecha.
+- **Device lock con PIN** (Tier 1 #2), **organización/import de usuarios** (Tier 1 #3): no tocadas.
+- Tier 4: productivity.php (Focus UI), sedes-dashboard, server-health, screenshot object storage.
