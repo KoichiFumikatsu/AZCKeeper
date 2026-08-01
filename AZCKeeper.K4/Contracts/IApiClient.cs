@@ -24,6 +24,8 @@ public sealed record ActivityDayDto(
     bool ActivityTracked, bool WindowTracked, bool CallTracked,
     int ActiveSeconds, int IdleSeconds, int CallSeconds,
     int WorkActiveSeconds, int WorkIdleSeconds,
+    int LunchActiveSeconds, int LunchIdleSeconds,
+    int AfterHoursActiveSeconds, int AfterHoursIdleSeconds,
     string? FirstEventAt, string? LastEventAt);
 
 public sealed record ModuleStateDto(string Code, bool Running, object? Detail = null);

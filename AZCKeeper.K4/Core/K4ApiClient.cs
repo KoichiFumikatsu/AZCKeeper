@@ -117,7 +117,10 @@ public sealed class K4ApiClient : IApiClient
             deviceId = _deviceGuid, day.DayDate, day.TzOffsetMinutes, day.IsWorkday,
             day.ActivityTracked, day.WindowTracked, day.CallTracked,
             day.ActiveSeconds, day.IdleSeconds, day.CallSeconds,
-            day.WorkActiveSeconds, day.WorkIdleSeconds, day.FirstEventAt, day.LastEventAt
+            day.WorkActiveSeconds, day.WorkIdleSeconds,
+            day.LunchActiveSeconds, day.LunchIdleSeconds,
+            day.AfterHoursActiveSeconds, day.AfterHoursIdleSeconds,
+            day.FirstEventAt, day.LastEventAt
         };
         return PostDataAsync("client/activity-day", payload);
     }
@@ -271,10 +274,17 @@ public sealed class HandshakeResult
     /// <summary>Modo diagnostico anunciado por el servidor (bloque 'diagnostics' del handshake).</summary>
     public DiagnosticsFlag Diagnostics { get; }
 
+    /// <summary>Horario laboral (effectiveConfig.workSchedule), o el default si no viene.</summary>
+    public AZCKeeper.K4.Contracts.WorkSchedule WorkSchedule { get; }
+
     public HandshakeResult(JsonElement effectiveConfig, JsonElement root)
     {
         _effectiveConfig = effectiveConfig;
         Diagnostics = ParseDiagnostics(root);
+        WorkSchedule = effectiveConfig.ValueKind == JsonValueKind.Object
+            && effectiveConfig.TryGetProperty("workSchedule", out var ws)
+            ? AZCKeeper.K4.Contracts.WorkSchedule.FromJson(ws)
+            : AZCKeeper.K4.Contracts.WorkSchedule.Default;
     }
 
     private static DiagnosticsFlag ParseDiagnostics(JsonElement root)

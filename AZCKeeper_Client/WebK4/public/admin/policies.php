@@ -48,6 +48,25 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         if ($cur) $pdo->prepare("UPDATE keeper_policy_assignments SET policy_json=:p, version=version+1, updated_by=:by WHERE id=:id")->execute([':p'=>$json,':by'=>$adminId,':id'=>$cur]);
         else      $pdo->prepare("INSERT INTO keeper_policy_assignments (scope,version,is_active,policy_json,updated_by) VALUES ('global',1,1,:p,:by)")->execute([':p'=>$json,':by'=>$adminId]);
         try { AuditRepo::log($pdo,$adminId,null,null,'admin','policy_webblock_saved','Config de bloqueo web actualizada',['domains'=>count($policy['webBlocking']['domains'])]); } catch(\Throwable $e){}
+    } elseif ($action === 'save_workschedule') {
+        // Horario laboral (trabajo/almuerzo + días) en policy_json.workSchedule. El cliente lo
+        // usa para categorizar la actividad (trabajo/almuerzo/fuera). Pass-through en el handshake.
+        $prev = $pdo->query("SELECT policy_json FROM keeper_policy_assignments WHERE scope='global' AND is_active=1 ORDER BY priority DESC, id DESC LIMIT 1")->fetchColumn();
+        $policy = $prev ? (json_decode($prev, true) ?: []) : [];
+        $hm = fn($v) => preg_match('/^\d{2}:\d{2}$/', (string)$v) ? $v : null;
+        $days = array_values(array_filter(array_map('intval', (array)($_POST['workdays'] ?? [])), fn($d)=>$d>=0&&$d<=6));
+        $policy['workSchedule'] = [
+            'workStart'  => $hm($_POST['work_start'] ?? '08:00') ?? '08:00',
+            'workEnd'    => $hm($_POST['work_end'] ?? '18:00') ?? '18:00',
+            'lunchStart' => $hm($_POST['lunch_start'] ?? '12:00') ?? '12:00',
+            'lunchEnd'   => $hm($_POST['lunch_end'] ?? '13:00') ?? '13:00',
+            'workdays'   => $days ?: [1,2,3,4,5],
+        ];
+        $json = json_encode($policy, JSON_UNESCAPED_UNICODE);
+        $cur = $pdo->query("SELECT id FROM keeper_policy_assignments WHERE scope='global' AND is_active=1 ORDER BY priority DESC, id DESC LIMIT 1")->fetchColumn();
+        if ($cur) $pdo->prepare("UPDATE keeper_policy_assignments SET policy_json=:p, version=version+1, updated_by=:by WHERE id=:id")->execute([':p'=>$json,':by'=>$adminId,':id'=>$cur]);
+        else      $pdo->prepare("INSERT INTO keeper_policy_assignments (scope,version,is_active,policy_json,updated_by) VALUES ('global',1,1,:p,:by)")->execute([':p'=>$json,':by'=>$adminId]);
+        try { AuditRepo::log($pdo,$adminId,null,null,'admin','policy_workschedule_saved','Horario laboral actualizado',$policy['workSchedule']); } catch(\Throwable $e){}
     } elseif ($action === 'add_user_override') {
         $uid = (int)($_POST['user_id'] ?? 0);
         $mods = [];
@@ -75,6 +94,8 @@ $global = $gRow ? (json_decode($gRow, true) ?: []) : [];
 $wb = is_array($global['webBlocking'] ?? null) ? $global['webBlocking'] : [];
 $gmods = is_array($global['modules'] ?? null) ? $global['modules'] : $global;
 $wbEnabled = !empty($gmods[$flag('webBlocking')]);
+$ws = is_array($global['workSchedule'] ?? null) ? $global['workSchedule'] : [];
+$wsDays = is_array($ws['workdays'] ?? null) ? $ws['workdays'] : [1,2,3,4,5];
 
 // Overrides por persona.
 $userOv = $pdo->query("
@@ -103,6 +124,34 @@ require __DIR__ . '/partials/layout_header.php';
         <input type="checkbox" name="mod[<?= htmlspecialchars($m['code']) ?>]" <?= $on?'checked':'' ?> class="w-4 h-4 accent-corp-800">
       </label>
     <?php endforeach; ?>
+  </div>
+</form>
+
+<!-- Horario laboral -->
+<form method="post" class="bg-white rounded-xl border border-gray-100 overflow-hidden mb-6"><?= csrf_field() ?>
+  <input type="hidden" name="action" value="save_workschedule">
+  <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+    <div>
+      <h2 class="text-sm font-semibold text-dark">Horario laboral</h2>
+      <p class="text-xs text-muted mt-0.5">El cliente reparte la actividad en trabajo / almuerzo / fuera-de-horario. El almuerzo y lo de después no cuentan como trabajo.</p>
+    </div>
+    <button class="px-4 py-1.5 bg-corp-800 hover:bg-corp-900 text-white text-xs font-medium rounded-lg flex-none">Guardar horario</button>
+  </div>
+  <div class="p-5 flex flex-wrap items-end gap-5">
+    <div><label class="block text-xs font-medium text-gray-600 mb-1">Entrada</label><input type="time" name="work_start" value="<?= htmlspecialchars($ws['workStart'] ?? '08:00') ?>" class="px-2 py-1.5 border border-gray-200 rounded-lg text-sm"></div>
+    <div><label class="block text-xs font-medium text-gray-600 mb-1">Salida</label><input type="time" name="work_end" value="<?= htmlspecialchars($ws['workEnd'] ?? '18:00') ?>" class="px-2 py-1.5 border border-gray-200 rounded-lg text-sm"></div>
+    <div><label class="block text-xs font-medium text-gray-600 mb-1">Almuerzo desde</label><input type="time" name="lunch_start" value="<?= htmlspecialchars($ws['lunchStart'] ?? '12:00') ?>" class="px-2 py-1.5 border border-gray-200 rounded-lg text-sm"></div>
+    <div><label class="block text-xs font-medium text-gray-600 mb-1">Almuerzo hasta</label><input type="time" name="lunch_end" value="<?= htmlspecialchars($ws['lunchEnd'] ?? '13:00') ?>" class="px-2 py-1.5 border border-gray-200 rounded-lg text-sm"></div>
+    <div>
+      <label class="block text-xs font-medium text-gray-600 mb-1">Días laborales</label>
+      <div class="flex gap-1.5">
+        <?php $dow = ['D'=>0,'L'=>1,'M'=>2,'X'=>3,'J'=>4,'V'=>5,'S'=>6]; foreach ($dow as $lbl=>$i): $on = in_array($i, $wsDays, true); ?>
+          <label class="w-7 h-7 flex items-center justify-center rounded-lg border cursor-pointer text-xs <?= $on?'bg-corp-800 text-white border-corp-800':'border-gray-200 text-gray-500' ?>">
+            <input type="checkbox" name="workdays[]" value="<?= $i ?>" <?= $on?'checked':'' ?> class="hidden" onchange="this.closest('label').classList.toggle('bg-corp-800');this.closest('label').classList.toggle('text-white')"><?= $lbl ?>
+          </label>
+        <?php endforeach; ?>
+      </div>
+    </div>
   </div>
 </form>
 

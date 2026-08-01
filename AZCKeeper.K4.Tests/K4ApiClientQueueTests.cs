@@ -71,7 +71,7 @@ public class K4ApiClientQueueTests : IDisposable
         var api = new K4ApiClient("http://x/api", "g", new HttpClient(h), backoff, q);
 
         await api.SendActivityDayAsync(new ActivityDayDto(
-            "2026-07-30", -300, true, true, false, false, 100, 20, 0, 100, 20, null, null));
+            "2026-07-30", -300, true, true, false, false, 100, 20, 0, 100, 20, 0, 0, 0, 0, null, null));
         Assert.Equal(1, q.PendingCount());
 
         h.Status = 200;            // "vuelve la red"

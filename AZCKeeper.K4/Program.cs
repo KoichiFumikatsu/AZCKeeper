@@ -121,7 +121,10 @@ internal static class Program
         var fg = new WinForegroundWindow();
         var idle = new WinIdleMonitor();
         var callTracking = new CallTrackingModule(fg, clock, Log);
-        host.Register(new ActivityModule(api, idle, clock, host.IsModuleRunning, Log, callTracking.CallSecondsForDay));
+        // core se crea mas abajo; el horario se lee al vuelo por closure para categorizar actividad.
+        CoreService? coreRef = null;
+        host.Register(new ActivityModule(api, idle, clock, host.IsModuleRunning, Log, callTracking.CallSecondsForDay,
+            () => coreRef?.LastWorkSchedule ?? AZCKeeper.K4.Contracts.WorkSchedule.Default));
         host.Register(new WindowModule(api, fg, clock, Log));
         host.Register(callTracking);
         host.Register(new CommandModule(api, clock, Log));
@@ -149,6 +152,7 @@ internal static class Program
         var core = new CoreService(api, host, cc, password, Environment.MachineName, version,
             log: Log, agentReader: new AgentReportReader(), idleSeconds: () => idle.IdleSeconds,
             deviceSpecs: deviceSpecs, drainLogs: DrainLogsAsync);
+        coreRef = core;   // el ActivityModule ya puede leer LastWorkSchedule
 
         if (once)
         {

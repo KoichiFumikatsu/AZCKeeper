@@ -27,6 +27,10 @@ public sealed class CoreService
     // Los lee el loop de diagnostico para armar el snapshot y para saber si debe correr.
     private volatile IReadOnlyDictionary<string, bool> _lastExpected = new Dictionary<string, bool>();
     private volatile DiagnosticsFlag _lastDiagnostics = DiagnosticsFlag.Off;
+    private volatile WorkSchedule _lastWorkSchedule = WorkSchedule.Default;
+
+    /// <summary>Horario laboral del ultimo handshake (para categorizar la actividad).</summary>
+    public WorkSchedule LastWorkSchedule => _lastWorkSchedule;
 
     /// <summary>Modulos que el servidor espera ON/OFF, del ultimo handshake aplicado.</summary>
     public IReadOnlyDictionary<string, bool> LastExpected => _lastExpected;
@@ -82,6 +86,7 @@ public sealed class CoreService
         // Guardar ESPERADO y flag de diagnostico para el loop de diagnostico.
         _lastExpected = config.ToDictionary(kv => kv.Key, kv => kv.Value.Enabled, StringComparer.Ordinal);
         _lastDiagnostics = hs.Diagnostics;
+        _lastWorkSchedule = hs.WorkSchedule;
 
         // Eco del estado real: qué módulos están corriendo de verdad.
         await _api.ReportModuleStateAsync(_host.Snapshot());
