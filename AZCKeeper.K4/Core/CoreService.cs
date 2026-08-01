@@ -22,6 +22,7 @@ public sealed class CoreService
     private readonly object? _deviceSpecs;      // specs del equipo, se envian solo en el primer handshake
     private bool _specsReported;
     private readonly Func<Task>? _drainLogs;    // drena Warn/Error al panel tras el handshake
+    private readonly Action<DateTime>? _onServerTime;   // TimeSync: hora UTC del servidor
 
     // Ultimo estado ESPERADO (de la config del handshake) y ultimo flag de diagnostico.
     // Los lee el loop de diagnostico para armar el snapshot y para saber si debe correr.
@@ -40,10 +41,11 @@ public sealed class CoreService
 
     public CoreService(K4ApiClient api, ModuleHost host, string cc, string password, string deviceName, string version,
         Action<string>? log = null, AZCKeeper.K4.Shell.AgentReportReader? agentReader = null, Func<int>? idleSeconds = null,
-        object? deviceSpecs = null, Func<Task>? drainLogs = null)
+        object? deviceSpecs = null, Func<Task>? drainLogs = null, Action<DateTime>? onServerTime = null)
     {
         _api = api; _host = host; _cc = cc; _password = password; _deviceName = deviceName; _version = version;
-        _log = log; _agentReader = agentReader; _idleSeconds = idleSeconds; _deviceSpecs = deviceSpecs; _drainLogs = drainLogs;
+        _log = log; _agentReader = agentReader; _idleSeconds = idleSeconds; _deviceSpecs = deviceSpecs;
+        _drainLogs = drainLogs; _onServerTime = onServerTime;
     }
 
     /// <summary>Un ciclo completo: asegura sesión, handshake, aplica, reporta estado.</summary>
@@ -54,10 +56,12 @@ public sealed class CoreService
             var login = await _api.LoginAsync(_cc, _password, _deviceName, _version);
             if (!login.Ok)
             {
-                _log?.Invoke($"login: {login.Status}");
-                return false;
+                // Fallback de resiliencia: recuperar sesion por device_guid (equipo ya enrolado
+                // que perdio el token). Si tampoco, ahi si se rinde el ciclo.
+                if (await _api.ReEnrollAsync(_deviceName, _version)) _log?.Invoke("re-enroll por device_guid ok");
+                else { _log?.Invoke($"login: {login.Status}"); return false; }
             }
-            _log?.Invoke("login ok");
+            else _log?.Invoke("login ok");
         }
 
         var hs = await _api.HandshakeAsync(_version, _deviceName, _idleSeconds?.Invoke() ?? 0, _specsReported ? null : _deviceSpecs);
@@ -87,6 +91,7 @@ public sealed class CoreService
         _lastExpected = config.ToDictionary(kv => kv.Key, kv => kv.Value.Enabled, StringComparer.Ordinal);
         _lastDiagnostics = hs.Diagnostics;
         _lastWorkSchedule = hs.WorkSchedule;
+        if (hs.ServerTimeUtc is { } srv && _onServerTime is not null) _onServerTime(srv);   // TimeSync
 
         // Eco del estado real: qué módulos están corriendo de verdad.
         await _api.ReportModuleStateAsync(_host.Snapshot());

@@ -43,6 +43,7 @@ require_once __DIR__ . '/Repos/DiagnosticRepo.php';
 require_once __DIR__ . '/Endpoints/Health.php';
 require_once __DIR__ . '/Endpoints/ClientVersion.php';
 require_once __DIR__ . '/Endpoints/ClientLogin.php';
+require_once __DIR__ . '/Endpoints/ClientReEnroll.php';
 require_once __DIR__ . '/Endpoints/ClientDiagnostics.php';
 require_once __DIR__ . '/Endpoints/ClientLogBatch.php';
 require_once __DIR__ . '/Endpoints/ClientHandshake.php';

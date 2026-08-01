@@ -29,6 +29,7 @@ $routes = [
   ],
   'POST' => [
     '/client/login'            => [Keeper\Endpoints\ClientLogin::class, 'handle'],
+    '/client/re-enroll'        => [Keeper\Endpoints\ClientReEnroll::class, 'handle'],
     '/client/handshake'        => [Keeper\Endpoints\ClientHandshake::class, 'handle'],
     '/client/episodes/batch'   => [Keeper\Endpoints\EpisodeBatch::class, 'handle'],
     '/client/activity-day'     => [Keeper\Endpoints\ActivityDay::class, 'handle'],

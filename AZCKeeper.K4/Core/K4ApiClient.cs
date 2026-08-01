@@ -71,6 +71,24 @@ public sealed class K4ApiClient : IApiClient
         return new LoginResult(false, st ?? "error", status == 202 ? "pending" : null);
     }
 
+    /// <summary>
+    /// Recupera sesion por device_guid (sin credenciales) para un equipo ya enrolado que perdio
+    /// el token. Devuelve true si obtuvo token. Fallback cuando el login por cedula+password no
+    /// esta disponible (creds borradas / DPAPI ilegible).
+    /// </summary>
+    public async Task<bool> ReEnrollAsync(string deviceName, string version)
+    {
+        var (status, body) = await PostAsync("client/re-enroll",
+            new { deviceId = _deviceGuid, deviceName, version }, withToken: false);
+        if (status == 200 && body.TryGetProperty("token", out var t))
+        {
+            _token = t.GetString();
+            TokenChanged?.Invoke(_token);
+            return true;
+        }
+        return false;
+    }
+
     public async Task<HandshakeResult?> HandshakeAsync(string version, string? deviceName = null, int idleSeconds = 0, object? specs = null)
     {
         var (status, body) = await PostAsync("client/handshake",
@@ -277,10 +295,17 @@ public sealed class HandshakeResult
     /// <summary>Horario laboral (effectiveConfig.workSchedule), o el default si no viene.</summary>
     public AZCKeeper.K4.Contracts.WorkSchedule WorkSchedule { get; }
 
+    /// <summary>Hora UTC del servidor (serverTimeUtc), para el TimeSync. Null si no vino/invalida.</summary>
+    public DateTime? ServerTimeUtc { get; }
+
     public HandshakeResult(JsonElement effectiveConfig, JsonElement root)
     {
         _effectiveConfig = effectiveConfig;
         Diagnostics = ParseDiagnostics(root);
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("serverTimeUtc", out var stv)
+            && stv.ValueKind == JsonValueKind.String
+            && DateTime.TryParse(stv.GetString(), null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var su))
+            ServerTimeUtc = su;
         WorkSchedule = effectiveConfig.ValueKind == JsonValueKind.Object
             && effectiveConfig.TryGetProperty("workSchedule", out var ws)
             ? AZCKeeper.K4.Contracts.WorkSchedule.FromJson(ws)

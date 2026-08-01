@@ -114,7 +114,9 @@ internal static class Program
         api.TokenChanged += t => { if (t is not null) creds.SaveToken(t); };
 
         // Core único + módulos independientes (ninguno conoce a otro).
-        var clock = new SystemClock();
+        // Reloj corregido con la hora del servidor (TimeSync): los módulos marcan tiempo con él,
+        // así un equipo con la hora desfasada no reporta timestamps torcidos. No toca el reloj del SO.
+        var clock = new ServerSyncedClock();
         // onError -> logger.Error(code,...) para que el snapshot de diagnostico pueda mostrar
         // "modulo X: real=OFF, ultimo error=...". LastErrorFor(code) se llena aqui.
         var host = new ModuleHost(onError: (code, ex) => logger.Error(code, ex.Message));
@@ -151,7 +153,7 @@ internal static class Program
 
         var core = new CoreService(api, host, cc, password, Environment.MachineName, version,
             log: Log, agentReader: new AgentReportReader(), idleSeconds: () => idle.IdleSeconds,
-            deviceSpecs: deviceSpecs, drainLogs: DrainLogsAsync);
+            deviceSpecs: deviceSpecs, drainLogs: DrainLogsAsync, onServerTime: clock.SyncTo);
         coreRef = core;   // el ActivityModule ya puede leer LastWorkSchedule
 
         if (once)
