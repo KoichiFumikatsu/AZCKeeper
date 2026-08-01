@@ -81,6 +81,18 @@ public sealed class K4ApiClient : IApiClient
     }
 
     /// <summary>
+    /// Drena logs Warn/Error al panel (POST /client/logs). NO se encola: es telemetria de
+    /// soporte; si no entra, se reintenta con los nuevos del proximo ciclo. entries =
+    /// [{level,source,message,ts}, ...].
+    /// </summary>
+    public async Task<bool> SendClientLogsAsync(IEnumerable<object> entries)
+    {
+        var body = new { deviceId = _deviceGuid, entries };
+        var (status, _) = await PostJsonAsync("client/logs", JsonSerializer.Serialize(body, _json), withToken: true);
+        return status == 200;
+    }
+
+    /// <summary>
     /// Sube un snapshot de diagnostico. NO se encola: es telemetria efimera (si no entra, se
     /// pierde ese snapshot y ya; el proximo tick manda uno fresco). Respeta el backoff igual
     /// que el resto (PostJsonAsync no abre socket en backoff). clientTs = ahora en UTC.

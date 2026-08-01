@@ -130,8 +130,23 @@ internal static class Program
         object? deviceSpecs = null;
         try { deviceSpecs = WinDeviceSpecs.Collect(); } catch (Exception ex) { Log($"specs: {ex.Message}"); }
 
+        // Drain de logs Warn/Error al panel: manda lo nuevo desde el cursor; avanza solo si el
+        // server confirma (no reenvia lo ya entregado). Mapea a la forma que espera /client/logs.
+        long lastLogSeq = 0;
+        async Task DrainLogsAsync()
+        {
+            var news = logger.RecentSince(lastLogSeq)
+                .Where(e => e.Level is "Warn" or "Error")
+                .Select(e => (object)new { level = e.Level.ToLowerInvariant(), source = string.IsNullOrEmpty(e.Source) ? "other" : e.Source, message = e.Message, ts = e.Ts.ToString("yyyy-MM-ddTHH:mm:ssZ") })
+                .ToList();
+            if (news.Count == 0) return;
+            long cursor = logger.CurrentSeq;
+            if (await api.SendClientLogsAsync(news)) lastLogSeq = cursor;
+        }
+
         var core = new CoreService(api, host, cc, password, Environment.MachineName, version,
-            log: Log, agentReader: new AgentReportReader(), idleSeconds: () => idle.IdleSeconds, deviceSpecs: deviceSpecs);
+            log: Log, agentReader: new AgentReportReader(), idleSeconds: () => idle.IdleSeconds,
+            deviceSpecs: deviceSpecs, drainLogs: DrainLogsAsync);
 
         if (once)
         {

@@ -38,6 +38,7 @@ $routes = [
     '/client/screenshots'      => [Keeper\Endpoints\ScreenshotMeta::class, 'handle'],
     '/client/location'         => [Keeper\Endpoints\LocationReport::class, 'handle'],
     '/client/diagnostics'      => [Keeper\Endpoints\ClientDiagnostics::class, 'handle'],
+    '/client/logs'             => [Keeper\Endpoints\ClientLogBatch::class, 'handle'],
     '/admin/commands'          => [Keeper\Endpoints\AdminCommand::class, 'enqueue'],
     '/admin/enrollment'        => [Keeper\Endpoints\AdminEnrollment::class, 'handle'],
     '/cron/productivity'       => [Keeper\Endpoints\ProductivityCron::class, 'handle'],

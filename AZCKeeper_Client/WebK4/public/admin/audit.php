@@ -91,6 +91,11 @@ function auditUrl(array $over = []): string {
 require __DIR__ . '/partials/layout_header.php';
 ?>
 
+<div class="flex gap-1.5 mb-5">
+  <a href="audit.php" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-corp-800 text-white">Auditoría (acciones)</a>
+  <a href="client-logs.php" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-white border border-gray-200 text-gray-600 hover:border-gray-300">Log del cliente</a>
+</div>
+
 <form method="get" class="bg-white rounded-xl border border-gray-100 p-4 mb-5 grid sm:grid-cols-12 gap-3 items-end">
   <div class="sm:col-span-2">
     <label class="block text-xs font-medium text-gray-600 mb-1">Categoría</label>

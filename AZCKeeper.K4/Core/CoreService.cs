@@ -21,6 +21,7 @@ public sealed class CoreService
     private readonly Func<int>? _idleSeconds;   // inactividad del usuario, para el semaforo de presencia
     private readonly object? _deviceSpecs;      // specs del equipo, se envian solo en el primer handshake
     private bool _specsReported;
+    private readonly Func<Task>? _drainLogs;    // drena Warn/Error al panel tras el handshake
 
     // Ultimo estado ESPERADO (de la config del handshake) y ultimo flag de diagnostico.
     // Los lee el loop de diagnostico para armar el snapshot y para saber si debe correr.
@@ -35,10 +36,10 @@ public sealed class CoreService
 
     public CoreService(K4ApiClient api, ModuleHost host, string cc, string password, string deviceName, string version,
         Action<string>? log = null, AZCKeeper.K4.Shell.AgentReportReader? agentReader = null, Func<int>? idleSeconds = null,
-        object? deviceSpecs = null)
+        object? deviceSpecs = null, Func<Task>? drainLogs = null)
     {
         _api = api; _host = host; _cc = cc; _password = password; _deviceName = deviceName; _version = version;
-        _log = log; _agentReader = agentReader; _idleSeconds = idleSeconds; _deviceSpecs = deviceSpecs;
+        _log = log; _agentReader = agentReader; _idleSeconds = idleSeconds; _deviceSpecs = deviceSpecs; _drainLogs = drainLogs;
     }
 
     /// <summary>Un ciclo completo: asegura sesión, handshake, aplica, reporta estado.</summary>
@@ -84,6 +85,9 @@ public sealed class CoreService
 
         // Eco del estado real: qué módulos están corriendo de verdad.
         await _api.ReportModuleStateAsync(_host.Snapshot());
+
+        // Drena Warn/Error al panel (soporte). Aislado: que falle no rompe el ciclo.
+        if (_drainLogs is not null) { try { await _drainLogs(); } catch (Exception ex) { _log?.Invoke($"drain logs: {ex.Message}"); } }
         _log?.Invoke($"handshake aplicado ({config.Count} módulos en config, {_host.Modules.Count} registrados)");
 
         // Courier del agente elevado: transporta su reporte al panel. El cliente NO lo

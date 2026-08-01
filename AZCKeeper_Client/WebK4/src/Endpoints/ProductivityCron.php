@@ -8,6 +8,7 @@ use Keeper\Services\Metrics;
 use Keeper\Services\DualJobDetector;
 use Keeper\Repos\FocusRepo;
 use Keeper\Repos\DiagnosticRepo;
+use Keeper\Repos\ClientLogRepo;
 
 /**
  * Recalculo de metricas de foco/productividad de un dia para toda la flota.
@@ -49,12 +50,15 @@ class ProductivityCron
         // Es telemetria efimera; que falle no debe tumbar el recalculo de productividad.
         $diagPurged = 0;
         try { $diagPurged = DiagnosticRepo::purge($pdo); } catch (\Throwable $e) { error_log('diag purge: ' . $e->getMessage()); }
+        $logsPurged = 0;
+        try { $logsPurged = ClientLogRepo::purge($pdo); } catch (\Throwable $e) { error_log('client-log purge: ' . $e->getMessage()); }
 
         Http::json(200, [
             'ok' => true, 'day' => $day,
             'processed' => $processed, 'withFocus' => $withFocus, 'noCoverage' => $noCoverage,
             'dualJobAlerts' => $dualJobAlerts,
             'diagnosticsPurged' => $diagPurged,
+            'clientLogsPurged'  => $logsPurged,
         ]);
     }
 }
