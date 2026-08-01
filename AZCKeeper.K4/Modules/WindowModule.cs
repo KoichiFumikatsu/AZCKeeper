@@ -106,12 +106,7 @@ public sealed class WindowModule : IKeeperModule, IFlushable
         _curProcess = null; _curTitle = null;
     }
 
-    private static bool IsCallApp(string proc, string? title)
-    {
-        var p = proc.ToLowerInvariant();
-        return p.Contains("teams") || p.Contains("zoom") || p.Contains("meet")
-            || (title?.ToLowerInvariant().Contains("llamada") ?? false);
-    }
+    private static bool IsCallApp(string proc, string? title) => CallDetection.IsCallApp(proc, title);
 
     private async void FireFlush(List<EpisodeDto> episodes)
     {

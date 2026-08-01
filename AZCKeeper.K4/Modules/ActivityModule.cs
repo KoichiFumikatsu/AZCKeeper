@@ -16,6 +16,7 @@ public sealed class ActivityModule : IKeeperModule, IFlushable
     private readonly IIdleMonitor _idle;
     private readonly IClock _clock;
     private readonly Func<string, bool> _isModuleRunning;
+    private readonly Func<DateTime, int>? _callSecondsForDay;   // segundos en llamada, del CallTrackingModule
     private readonly Action<string>? _log;
     private readonly object _lock = new();
 
@@ -30,9 +31,10 @@ public sealed class ActivityModule : IKeeperModule, IFlushable
     private DateTime _lastSend;
     private volatile bool _running;
 
-    public ActivityModule(IApiClient api, IIdleMonitor idle, IClock clock, Func<string, bool> isModuleRunning, Action<string>? log = null)
+    public ActivityModule(IApiClient api, IIdleMonitor idle, IClock clock, Func<string, bool> isModuleRunning,
+        Action<string>? log = null, Func<DateTime, int>? callSecondsForDay = null)
     {
-        _api = api; _idle = idle; _clock = clock; _isModuleRunning = isModuleRunning; _log = log;
+        _api = api; _idle = idle; _clock = clock; _isModuleRunning = isModuleRunning; _log = log; _callSecondsForDay = callSecondsForDay;
     }
 
     public bool IsRunning => _running;
@@ -115,6 +117,7 @@ public sealed class ActivityModule : IKeeperModule, IFlushable
     {
         bool window = SafeRunning("windowTracking");
         bool call = SafeRunning("callTracking");
+        int callSecs = call && _callSecondsForDay != null ? SafeCallSeconds(_day) : 0;
         return new ActivityDayDto(
             DayDate: _day.ToString("yyyy-MM-dd"),
             TzOffsetMinutes: (int)TimeZoneInfo.Local.GetUtcOffset(_day).TotalMinutes, // Colombia = -300
@@ -124,7 +127,7 @@ public sealed class ActivityModule : IKeeperModule, IFlushable
             CallTracked: call,
             ActiveSeconds: _active,
             IdleSeconds: _idleAcc,
-            CallSeconds: 0,
+            CallSeconds: callSecs,
             WorkActiveSeconds: _active,   // aproximacion: refinable con horario laboral
             WorkIdleSeconds: _idleAcc,
             FirstEventAt: _firstEvent?.ToString("yyyy-MM-dd HH:mm:ss"),
@@ -134,6 +137,11 @@ public sealed class ActivityModule : IKeeperModule, IFlushable
     private bool SafeRunning(string code)
     {
         try { return _isModuleRunning(code); } catch { return false; }
+    }
+
+    private int SafeCallSeconds(DateTime day)
+    {
+        try { return _callSecondsForDay?.Invoke(day) ?? 0; } catch { return 0; }
     }
 
     private async void FireSend(ActivityDayDto day)

@@ -120,8 +120,10 @@ internal static class Program
         var host = new ModuleHost(onError: (code, ex) => logger.Error(code, ex.Message));
         var fg = new WinForegroundWindow();
         var idle = new WinIdleMonitor();
-        host.Register(new ActivityModule(api, idle, clock, host.IsModuleRunning, Log));
+        var callTracking = new CallTrackingModule(fg, clock, Log);
+        host.Register(new ActivityModule(api, idle, clock, host.IsModuleRunning, Log, callTracking.CallSecondsForDay));
         host.Register(new WindowModule(api, fg, clock, Log));
+        host.Register(callTracking);
         host.Register(new CommandModule(api, clock, Log));
         host.Register(new ScreenshotModule(api, new WinScreenCapturer(), new StubBlobStore(), clock, Log));
 
