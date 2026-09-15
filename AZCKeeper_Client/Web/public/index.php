@@ -46,6 +46,8 @@ $routes = [
     '/health' => [Keeper\Endpoints\Health::class, 'handle'],
     '/client/activity-day' => [Keeper\Endpoints\ActivityDay::class, 'handleGet'],
     '/client/version' => [Keeper\Endpoints\ClientVersion::class, 'handle'],
+    '/external/roster' => [Keeper\Endpoints\ExternalAuth::class, 'roster'],
+    '/external/sites-and-firms' => [Keeper\Endpoints\ExternalAuth::class, 'sitesAndFirms'],
   ],
   'POST' => [
     '/client/handshake' => [Keeper\Endpoints\ClientHandshake::class, 'handle'],
@@ -59,6 +61,7 @@ $routes = [
     '/client/force-handshake' => [Keeper\Endpoints\ForceHandshake::class, 'handle'],
     '/client/re-enroll' => [Keeper\Endpoints\ClientReEnroll::class, 'handle'],
     '/cron/productivity' => [Keeper\Endpoints\ProductivityCron::class, 'handle'],
+    '/external/verify-credentials' => [Keeper\Endpoints\ExternalAuth::class, 'verifyCredentials'],
   ],
 ];
 

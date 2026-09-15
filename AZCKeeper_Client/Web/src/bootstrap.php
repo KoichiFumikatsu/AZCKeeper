@@ -43,6 +43,7 @@ require_once __DIR__ . '/Endpoints/EventIngest.php';
 require_once __DIR__ . '/Endpoints/ForceHandshake.php';
 require_once __DIR__ . '/Endpoints/DeviceLock.php';
 require_once __DIR__ . '/Endpoints/ProductivityCron.php';
+require_once __DIR__ . '/Endpoints/ExternalAuth.php';
 
 // Load .env
 Config::loadEnv(__DIR__ . '/../.env');
