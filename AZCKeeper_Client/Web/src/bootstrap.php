@@ -24,6 +24,7 @@ require_once __DIR__ . '/Repos/AdminAuthRepo.php';
 require_once __DIR__ . '/Repos/ProductivityRepo.php';
 require_once __DIR__ . '/Repos/PendingEnrollmentRepo.php';
 require_once __DIR__ . '/Repos/ClientLogRepo.php';
+require_once __DIR__ . '/Repos/ExternalReportsRepo.php';
 
 // Services
 require_once __DIR__ . '/Services/ProductivityCalculator.php';
@@ -44,6 +45,7 @@ require_once __DIR__ . '/Endpoints/ForceHandshake.php';
 require_once __DIR__ . '/Endpoints/DeviceLock.php';
 require_once __DIR__ . '/Endpoints/ProductivityCron.php';
 require_once __DIR__ . '/Endpoints/ExternalAuth.php';
+require_once __DIR__ . '/Endpoints/ExternalReports.php';
 
 // Load .env
 Config::loadEnv(__DIR__ . '/../.env');

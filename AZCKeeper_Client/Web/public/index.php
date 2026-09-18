@@ -48,6 +48,14 @@ $routes = [
     '/client/version' => [Keeper\Endpoints\ClientVersion::class, 'handle'],
     '/external/roster' => [Keeper\Endpoints\ExternalAuth::class, 'roster'],
     '/external/sites-and-firms' => [Keeper\Endpoints\ExternalAuth::class, 'sitesAndFirms'],
+    // Reportes para MOAZC/One (K3-ADP-01…06): X-Bridge-Secret + X-Acting-Admin; el ámbito lo aplica Keeper.
+    '/external/reports/contract'     => [Keeper\Endpoints\ExternalReports::class, 'contract'],
+    '/external/reports/summary'      => [Keeper\Endpoints\ExternalReports::class, 'summary'],
+    '/external/reports/users'        => [Keeper\Endpoints\ExternalReports::class, 'users'],
+    '/external/reports/productivity' => [Keeper\Endpoints\ExternalReports::class, 'productivity'],
+    '/external/reports/coverage'     => [Keeper\Endpoints\ExternalReports::class, 'coverage'],
+    '/external/reports/presence'     => [Keeper\Endpoints\ExternalReports::class, 'presence'],
+    '/external/reports/alerts'       => [Keeper\Endpoints\ExternalReports::class, 'alerts'],
   ],
   'POST' => [
     '/client/handshake' => [Keeper\Endpoints\ClientHandshake::class, 'handle'],
@@ -73,6 +81,12 @@ foreach ($routes as $m => $map) {
     $existsInOtherMethod = true;
     $allowed[] = $m;
   }
+}
+
+// Única ruta con parámetro en el camino: detalle de un colaborador para One (K3-ADP-02).
+if (preg_match('#^/external/reports/users/(\d+)$#', $endpoint, $m)) {
+  if ($method !== 'GET') json_405(['GET']);
+  Keeper\Endpoints\ExternalReports::userDetail((int)$m[1]);
 }
 
 if (!isset($routes[$method][$endpoint])) {

@@ -84,6 +84,8 @@ class ProductivityRepo {
         ROUND(AVG(f.constancy_pct), 1) AS avg_constancy,
         ROUND(AVG(f.context_switches), 0) AS avg_switches,
         ROUND(AVG(f.deep_work_seconds), 0) AS avg_deep_work_sec,
+        ROUND(AVG(f.distraction_seconds), 0) AS avg_distraction_sec,
+        ROUND(AVG(f.punctuality_minutes), 1) AS avg_punctuality,
         COUNT(f.id) AS days_tracked
       FROM keeper_focus_daily f
       INNER JOIN keeper_users u ON u.id = f.user_id AND u.status = 'active'
