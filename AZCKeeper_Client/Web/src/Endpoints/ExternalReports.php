@@ -136,7 +136,16 @@ class ExternalReports
             ], $rows),
             'weights'                    => $cfg['weights'],
             'deep_work_threshold_minutes' => $cfg['deep_work_threshold_minutes'],
-            'kpis'                       => ProductivityRepo::getGlobalKPIs($pdo, $period['from'], $period['to'], $scope['sql'], $scope['params']),
+            'kpis'                       => self::kpis(ProductivityRepo::getGlobalKPIs($pdo, $period['from'], $period['to'], $scope['sql'], $scope['params'])),
+            // Tendencias como productivity.php: las últimas 8 semanas hasta el fin del periodo, también sobre el piso.
+            'trends'                     => array_map(static fn(array $t): array => [
+                'week_start'       => $t['week_start'],
+                'focus_score'      => (int)round((float)$t['avg_focus']),
+                'productivity_pct' => (int)round((float)$t['avg_productivity']),
+                'constancy_pct'    => (int)round((float)$t['avg_constancy']),
+                'context_switches' => (int)$t['avg_switches'],
+                'users'            => (int)$t['user_count'],
+            ], ProductivityRepo::getWeeklyTrends($pdo, self::clampFrom($admin, date('Y-m-d', strtotime($period['to'] . ' -8 weeks monday'))), $period['to'], $scope['sql'], $scope['params'])),
             'page'                       => $page,
             'pages'                      => $pages,
             'total'                      => $total,
@@ -183,6 +192,22 @@ class ExternalReports
             'pages' => max(1, (int)ceil($total / self::PAGE_SIZE)),
             'total' => $total,
         ]);
+    }
+
+    /** KPIs de productividad con tipos fijos: null cuando no hay días con métricas (nunca 0 fingido). */
+    private static function kpis(array $k): array
+    {
+        $n = (int)($k['user_count'] ?? 0);
+        $num = static fn(string $key): ?int => $n === 0 || !isset($k[$key]) ? null : (int)round((float)$k[$key]);
+        return [
+            'users'               => $n,
+            'focus_score'         => $num('avg_focus'),
+            'productivity_pct'    => $num('avg_productivity'),
+            'constancy_pct'       => $num('avg_constancy'),
+            'context_switches'    => $num('avg_switches'),
+            'deep_work_seconds'   => $num('avg_deep_work_sec'),
+            'punctuality_minutes' => $num('avg_punctuality'),
+        ];
     }
 
     // ── identidad y ámbito ───────────────────────────────────────────────
