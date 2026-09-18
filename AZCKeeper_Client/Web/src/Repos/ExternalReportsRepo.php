@@ -17,12 +17,8 @@ use PDO;
  */
 class ExternalReportsRepo
 {
-    /** Estado de un dispositivo según el panel (index.php / users.php): online < 2 min, away < 15 min. */
-    private const ONLINE_SECONDS = 120;
-    private const AWAY_SECONDS = 900;
-
     /** Como index.php: KPIs, sumas del periodo, primer ingreso, top apps, ocio, Focus medio y alertas pendientes. */
-    public static function summary(PDO $pdo, array $scope, string $from, string $to): array
+    public static function summary(PDO $pdo, array $scope, string $from, string $to, ?string $floor = null): array
     {
         $sSql = $scope['sql'];
         $params = $scope['params'];
@@ -101,16 +97,10 @@ class ExternalReportsRepo
             $focusAvg = ($v === null || $v === false) ? null : (int)$v;
         } catch (\Throwable $e) { /* tabla aún no migrada */ }
 
+        // Como index.php: las señales pendientes respetan el piso de historial de la firma (igual que /alerts).
         $alertsPending = 0;
         try {
-            $st = $pdo->prepare("
-                SELECT COUNT(*) FROM keeper_dual_job_alerts a
-                INNER JOIN keeper_users u ON u.id = a.user_id
-                LEFT JOIN keeper_user_assignments ua ON ua.keeper_user_id = u.id
-                WHERE a.is_reviewed = 0 {$sSql}
-            ");
-            $st->execute($params);
-            $alertsPending = (int)$st->fetchColumn();
+            $alertsPending = self::alertsCount($pdo, $scope, null, null, false, $floor);
         } catch (\Throwable $e) {}
 
         $workTotal = (int)$tot['work_hours_active_seconds'] + (int)$tot['work_hours_idle_seconds'];
@@ -414,9 +404,9 @@ class ExternalReportsRepo
             SELECT
                 ua.sede_id, s.nombre AS sede_name,
                 COUNT(DISTINCT u.id) AS total_users,
-                COUNT(DISTINCT CASE WHEN d.last_seen_at >= NOW() - INTERVAL 2 MINUTE THEN u.id END) AS active_now,
-                COUNT(DISTINCT CASE WHEN d.last_seen_at >= NOW() - INTERVAL 15 MINUTE AND d.last_seen_at < NOW() - INTERVAL 2 MINUTE THEN u.id END) AS away_now,
-                COUNT(DISTINCT CASE WHEN d.id IS NOT NULL THEN u.id END) AS with_device,
+                COUNT(DISTINCT CASE WHEN dev.last_seen_at >= NOW() - INTERVAL 2 MINUTE THEN u.id END) AS active_now,
+                COUNT(DISTINCT CASE WHEN dev.last_seen_at >= NOW() - INTERVAL 15 MINUTE AND dev.last_seen_at < NOW() - INTERVAL 2 MINUTE THEN u.id END) AS away_now,
+                COUNT(DISTINCT CASE WHEN dev.user_id IS NOT NULL THEN u.id END) AS with_device,
                 COALESCE(SUM(a.active_seconds), 0) AS total_active,
                 COALESCE(SUM(a.idle_seconds), 0) AS total_idle,
                 COALESCE(SUM(a.work_hours_active_seconds), 0) AS total_work,
@@ -425,7 +415,10 @@ class ExternalReportsRepo
             FROM keeper_users u
             INNER JOIN keeper_user_assignments ua ON ua.keeper_user_id = u.id AND ua.sede_id IS NOT NULL
             INNER JOIN keeper_sedes s ON s.id = ua.sede_id AND s.activa = 1
-            LEFT JOIN keeper_devices d ON d.user_id = u.id AND d.status = 'active'
+            LEFT JOIN (
+                -- Un solo estado por persona: su último latido entre todos sus dispositivos activos (como users.php).
+                SELECT user_id, MAX(last_seen_at) AS last_seen_at FROM keeper_devices WHERE status = 'active' GROUP BY user_id
+            ) dev ON dev.user_id = u.id
             LEFT JOIN keeper_activity_day a ON a.user_id = u.id AND a.day_date BETWEEN :dfrom AND :dto
             WHERE u.status = 'active' {$sSql}
             GROUP BY ua.sede_id, s.nombre
@@ -556,7 +549,7 @@ class ExternalReportsRepo
     }
 
     /** Instante de MySQL (hora del panel, America/Bogota) → ISO 8601 con desfase explícito. */
-    private static function iso(string $mysqlDateTime): string
+    public static function iso(string $mysqlDateTime): string
     {
         return (new \DateTime($mysqlDateTime, new \DateTimeZone('America/Bogota')))->format(DATE_ATOM);
     }

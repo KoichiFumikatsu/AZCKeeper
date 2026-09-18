@@ -52,14 +52,14 @@ Errores: `{ "ok": false, "error": "...", "reason"?: "..." }` con 400 (parámetro
 | `GET /external/reports/productivity?period=&from=&to=&page=&sort=asc\|desc` | `productivity.php` (`ProductivityRepo`) | `rows[{keeper_user_id,full_name,firm_id,area_id,focus_score,productivity_pct,constancy_pct,deep_work_seconds,context_switches,distraction_seconds,punctuality_minutes,days}]`, `weights` (pesos vigentes del Focus Score), `deep_work_threshold_minutes`, `kpis` (`getGlobalKPIs`), `page`, `pages`, `total`. Periodo por defecto `week`. |
 | `GET /external/reports/coverage` | `install-coverage.php` sobre `keeper_users` del ámbito (sin cruzar el legacy) | `rows[{keeper_user_id,full_name,email,last_seen_at,latest_client_version,active_devices,coverage ok\|stale\|outdated\|no_device,exempt,note}]`, `heartbeat_days`, `active_release`. «Nunca instalado» lo deduce el consumidor comparando su plantilla con este listado. |
 | `GET /external/reports/presence?period=&from=&to=` | `sedes-dashboard.php` (tarjetas) **añadiendo** el recorte por ámbito que la página no tiene | `sites[{sede_id,name,users,active,away,offline,without_device,users_with_activity,active_seconds,idle_seconds,work_seconds,call_seconds,first_login_at,leisure_seconds}]` |
-| `GET /external/reports/alerts?type=&severity=&status=pending\|reviewed&page=` | `dual-job-alerts.php` (`ProductivityRepo::getAlerts`) | `alerts[{id,keeper_user_id,full_name,day_date,alert_type,severity,is_reviewed,reviewed_at,evidence}]`, `page`, `pages`, `total`. **Solo lectura**: revisar y anotar sigue en el panel. |
+| `GET /external/reports/alerts?type=&severity=&status=pending\|reviewed&page=` | `dual-job-alerts.php` (`ProductivityRepo::getAlerts`) | `alerts[{id,keeper_user_id,full_name,day_date,alert_type,severity,is_reviewed,reviewed_at (ISO o null),evidence}]`, `page`, `pages`, `total`. **Solo lectura**: revisar y anotar sigue en el panel. |
 
 Instantes en ISO 8601 con desfase `-05:00`. Fechas `AAAA-MM-DD`. Enteros como enteros; «sin dato» como `null`, nunca `0`.
 
 ## Pruebas
 
 `php tests/external_reports/run.php` crea la base `keeper_eval` desde `migrations/`, la siembra con datos
-sintéticos (correos `.invalid`), levanta `php -S` y ejecuta 55 comprobaciones de autorización, ámbito, periodo,
+sintéticos (correos `.invalid`), levanta `php -S` con un `.env` propio (`KEEPER_ENV_FILE`, nunca el `Web/.env` habitual) y ejecuta 56 comprobaciones de autorización, ámbito, periodo,
 piso de historial, paginación y forma de cada informe. `--serve` deja el entorno arriba para que un consumidor
 (One) valide su lector contra él. Variables: `KEEPER_TEST_DB_HOST/USER/PASS/NAME`, `KEEPER_TEST_PORT`,
 `KEEPER_TEST_SECRET`. Nunca usa producción ni la BD legacy.

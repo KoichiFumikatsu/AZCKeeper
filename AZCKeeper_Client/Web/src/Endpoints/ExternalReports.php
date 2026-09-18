@@ -68,7 +68,7 @@ class ExternalReports
     {
         [$pdo, $admin, $scope] = self::context();
         $period = self::period($admin);
-        self::respond('summary', $period, $scope, ExternalReportsRepo::summary($pdo, $scope, $period['from'], $period['to']));
+        self::respond('summary', $period, $scope, ExternalReportsRepo::summary($pdo, $scope, $period['from'], $period['to'], $admin['firm_floor'] ?? null));
     }
 
     public static function users(): void
@@ -176,7 +176,7 @@ class ExternalReports
                 'alert_type'     => $a['alert_type'],
                 'severity'       => $a['severity'],
                 'is_reviewed'    => (bool)$a['is_reviewed'],
-                'reviewed_at'    => $a['reviewed_at'],
+                'reviewed_at'    => $a['reviewed_at'] ? ExternalReportsRepo::iso((string)$a['reviewed_at']) : null,
                 'evidence'       => $a['evidence_json'] !== null ? json_decode((string)$a['evidence_json'], true) : null,
             ], $rows),
             'page'  => $page,

@@ -83,6 +83,8 @@ foreach ($people as [$id, $legacy, $name, $firm, $area, $sede, $soc, $seen, $ver
 }
 // Episodio antiguo del usuario 105 (firma 2), anterior al piso de historial de su firma.
 $seed[] = "INSERT INTO keeper_window_episode (user_id, device_id, start_at, end_at, duration_seconds, process_name, app_name, window_title, is_in_call, day_date) VALUES (105, 105, '{$d(6)} 08:00:00', '{$d(6)} 08:30:00', 1800, 'Word', 'Microsoft Word', 'Antiguo', 0, '{$d(6)}')";
+// Un segundo dispositivo del usuario 105, ausente: la presencia debe contarlo una sola vez (por su último latido).
+$seed[] = "INSERT INTO keeper_devices (id, user_id, device_guid, device_name, client_version, status, last_seen_at) VALUES (205, 105, '00000000-0000-4000-8000-000000000205', 'PORTATIL-105', '3.4.1', 'active', '{$ts('-5 minutes')}')";
 // Cuentas del panel: dirección (superadmin) = usuario 103; supervisor de firma 1 = 101; supervisor de firma 2 = 105; cuenta inactiva = 107.
 $seed[] = "INSERT INTO keeper_admin_accounts (keeper_user_id, panel_role, firm_scope_id, is_active) VALUES (103, 'superadmin', NULL, 1), (101, 'admin', 1, 1), (105, 'admin', 2, 1), (107, 'admin', 2, 0)";
 $seed[] = "UPDATE keeper_users SET email = 'direccion@keeper-eval.invalid' WHERE id = 103";
@@ -91,6 +93,7 @@ $seed[] = "UPDATE keeper_users SET email = 'supervisor2@keeper-eval.invalid' WHE
 $seed[] = "UPDATE keeper_users SET email = 'inactivo@keeper-eval.invalid' WHERE id = 107";
 // Señales para revisión: dos pendientes (una anterior al piso de la firma 2) y una revisada.
 $seed[] = "INSERT INTO keeper_dual_job_alerts (user_id, day_date, alert_type, severity, evidence_json, is_reviewed) VALUES (102, '{$d(1)}', 'remote_desktop', 'high', '{\"note\":\"sintética\"}', 0), (105, '{$d(5)}', 'after_hours_pattern', 'medium', NULL, 0), (106, '{$d(1)}', 'foreign_app', 'low', NULL, 1)";
+$seed[] = "UPDATE keeper_dual_job_alerts SET reviewed_at = '{$d(0)} 09:15:00' WHERE user_id = 106";
 $seed[] = "INSERT INTO keeper_install_coverage_notes (legacy_employee_id, note_text, is_exempt) VALUES (1008, 'Gerencia: no aplica', 1)";
 foreach ($seed as $sql) $pdo->exec($sql);
 echo "[eval] base {$cfg['name']} sembrada (8 colaboradores sintéticos, 4 cuentas de panel)\n";
@@ -108,8 +111,12 @@ if ($serverPass === '') {
 }
 
 // ─── 2. Servidor de evaluación ────────────────────────────────────────────
-$env = array_merge($_SERVER, ['DB_HOST' => $cfg['host'], 'DB_NAME' => $cfg['name'], 'DB_USER' => $serverUser, 'DB_PASS' => $serverPass, 'MOAZC_BRIDGE_SECRET' => $cfg['secret'], 'APP_ENV' => 'eval']);
-$env = array_filter($env, 'is_string');
+// La configuración va en un .env PROPIO del entorno de evaluación (KEEPER_ENV_FILE): así el servidor nunca lee el
+// Web/.env habitual ni su respaldo, aunque existan, y las peticiones consultan exactamente la base sembrada.
+$envFile = sys_get_temp_dir() . '/keeper-eval-' . getmypid() . '.env';
+file_put_contents($envFile, "APP_ENV=eval\nAPP_BASE_URL=\nAPI_PREFIX=/api\nDB_HOST={$cfg['host']}\nDB_NAME={$cfg['name']}\nDB_USER={$serverUser}\nDB_PASS={$serverPass}\nMOAZC_BRIDGE_SECRET={$cfg['secret']}\n");
+$env = array_filter(array_merge($_SERVER, ['KEEPER_ENV_FILE' => $envFile]), 'is_string');
+foreach (['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASS', 'MOAZC_BRIDGE_SECRET'] as $k) unset($env[$k]); // nada heredado del entorno de quien lanza
 $proc = proc_open([PHP_BINARY, '-S', "127.0.0.1:{$cfg['port']}", '-t', "{$root}/public", "{$root}/public/index.php"], [0 => ['pipe', 'r'], 1 => ['file', sys_get_temp_dir() . '/keeper-eval-server.log', 'a'], 2 => ['file', sys_get_temp_dir() . '/keeper-eval-server.log', 'a']], $pipes, $root, $env);
 if (!is_resource($proc)) { fwrite(STDERR, "No se pudo iniciar el servidor\n"); exit(2); }
 $base = "http://127.0.0.1:{$cfg['port']}/api";
@@ -159,7 +166,7 @@ echo "\nIdentidad\n";
 
 echo "\nResumen (K3-ADP-01) y ámbito\n";
 [$c, $b] = call('/external/reports/summary?period=today', $as('direccion'));
-check('superadmin: 8 usuarios, 6 dispositivos, 6 con actividad', $c === 200 && $b['data']['kpis']['total_users'] === 8 && $b['data']['kpis']['total_devices'] === 6 && $b['data']['kpis']['users_with_activity'] === 6, json_encode($b['data']['kpis'] ?? $b));
+check('superadmin: 8 usuarios, 7 dispositivos (105 tiene dos), 6 con actividad', $c === 200 && $b['data']['kpis']['total_users'] === 8 && $b['data']['kpis']['total_devices'] === 7 && $b['data']['kpis']['users_with_activity'] === 6, json_encode($b['data']['kpis'] ?? $b));
 check('superadmin: activo del día = 6 × 4 h', ($b['data']['totals']['active_seconds'] ?? 0) === 86400, (string)($b['data']['totals']['active_seconds'] ?? 'null'));
 check('superadmin: YouTube es ocio y el ocio suma 6 × 45 min', ($b['data']['leisure_seconds'] ?? 0) === 16200 && (bool)array_filter($b['data']['top_apps'] ?? [], static fn($a) => $a['process_name'] === 'YouTube' && $a['leisure'] === true), json_encode($b['data']['top_apps'] ?? null));
 check('superadmin: 2 señales pendientes, Focus medio entero, fecha del dato y periodo de hoy', ($b['data']['alerts_pending'] ?? -1) === 2 && is_int($b['data']['focus_avg'] ?? null) && isset($b['generated_at']) && $b['period'] === ['from' => $d(0), 'to' => $d(0)], json_encode([$b['data']['alerts_pending'] ?? null, $b['data']['focus_avg'] ?? null, $b['period'] ?? null]));
@@ -173,6 +180,8 @@ check('supervisor firma 1: 4 usuarios, 3 dispositivos (sin pedir ámbito)', $c =
 [$c, $b] = call('/external/reports/summary?scope_kind=area&scope_ref=12', $as('direccion'));             check('superadmin pide el área 12 → 3 usuarios', $c === 200 && $b['data']['kpis']['total_users'] === 3, json_encode($b['data']['kpis'] ?? $b));
 [$c, $b] = call('/external/reports/summary?scope_kind=sociedad&scope_ref=2', $as('direccion'));          check('superadmin pide la sociedad 2 → 4 usuarios y scope en la respuesta', $c === 200 && $b['data']['kpis']['total_users'] === 4 && $b['scope'] === ['kind' => 'sociedad', 'ref' => 2], json_encode($b['scope'] ?? $b));
 [$c, $b] = call('/external/reports/summary?scope_kind=planeta&scope_ref=1', $as('direccion'));           check('ámbito inválido → 400', $c === 400 && $b['error'] === 'invalid_scope', "código {$c}");
+
+[$c, $b] = call('/external/reports/summary?period=today', $as('supervisor2'));                                       check('supervisor firma 2: las señales pendientes del resumen respetan el piso (0, no 1)', $c === 200 && ($b['data']['alerts_pending'] ?? -1) === 0, json_encode($b['data']['alerts_pending'] ?? $b));
 
 echo "\nPeriodos y piso de historial\n";
 [$c, $b] = call('/external/reports/summary?period=week', $as('direccion'));                                         check('semana desde el lunes', $c === 200 && $b['period']['from'] === $today->modify('monday this week')->format('Y-m-d') && $b['period']['to'] === $d(0), json_encode($b['period'] ?? $b));
@@ -220,7 +229,7 @@ echo "\nPresencia por sede (K3-ADP-05)\n";
 $sites = [];
 foreach ($b['data']['sites'] ?? [] as $s) $sites[$s['sede_id']] = $s;
 check('superadmin: 2 sedes con 4 personas cada una', $c === 200 && count($sites) === 2 && $sites[1]['users'] === 4 && $sites[2]['users'] === 4, json_encode($b['data'] ?? $b));
-check('Norte: 3 con dispositivo (1 sin), activos ahora 2 (101 y 105), primer inicio y ocio', ($sites[1]['without_device'] ?? -1) === 0 && ($sites[1]['active'] ?? -1) === 2 && str_ends_with((string)($sites[1]['first_login_at'] ?? ''), '-05:00') && ($sites[1]['leisure_seconds'] ?? 0) === 4 * 2700, json_encode($sites[1] ?? null));
+check('Norte: 4 con dispositivo, activos ahora 2 (101 y 105 —105 con un segundo dispositivo ausente cuenta UNA vez—), primer inicio y ocio', ($sites[1]['without_device'] ?? -1) === 0 && ($sites[1]['active'] ?? -1) === 2 && str_ends_with((string)($sites[1]['first_login_at'] ?? ''), '-05:00') && ($sites[1]['leisure_seconds'] ?? 0) === 4 * 2700, json_encode($sites[1] ?? null));
 [$c, $b] = call('/external/reports/presence?period=today', $as('supervisor1'));
 $sites = [];
 foreach ($b['data']['sites'] ?? [] as $s) $sites[$s['sede_id']] = $s;
@@ -230,13 +239,14 @@ echo "\nSeñales para revisión (K3-ADP-06, sólo lectura)\n";
 [$c, $b] = call('/external/reports/alerts', $as('direccion'));                                                          check('superadmin: 3 señales con tipo, gravedad y evidencia decodificada', $c === 200 && $b['data']['total'] === 3 && count($b['data']['alerts']) === 3 && in_array('remote_desktop', array_column($b['data']['alerts'], 'alert_type'), true), json_encode($b['data'] ?? $b));
 [$c, $b] = call('/external/reports/alerts?status=pending', $as('direccion'));                                           check('pendientes: 2', $c === 200 && $b['data']['total'] === 2, json_encode($b['data']['total'] ?? $b));
 [$c, $b] = call('/external/reports/alerts?severity=high', $as('direccion'));                                            check('gravedad alta: 1, del colaborador 102', $c === 200 && $b['data']['total'] === 1 && $b['data']['alerts'][0]['keeper_user_id'] === 102, json_encode($b['data'] ?? $b));
-[$c, $b] = call('/external/reports/alerts', $as('supervisor2'));                                                        check('supervisor firma 2: la señal anterior al piso no aparece (1 de 2)', $c === 200 && $b['data']['total'] === 1 && $b['data']['alerts'][0]['keeper_user_id'] === 106, json_encode($b['data'] ?? $b));
+[$c, $b] = call('/external/reports/alerts', $as('supervisor2'));                                                        check('supervisor firma 2: la señal anterior al piso no aparece (1 de 2) y reviewed_at va en ISO −05:00', $c === 200 && $b['data']['total'] === 1 && $b['data']['alerts'][0]['keeper_user_id'] === 106 && str_ends_with((string)$b['data']['alerts'][0]['reviewed_at'], '-05:00'), json_encode($b['data'] ?? $b));
 [$c] = call('/external/reports/alerts?severity=enorme', $as('direccion'));                                              check('filtro inválido → 400', $c === 400, "código {$c}");
 $pending = (int)$pdo->query("SELECT COUNT(*) FROM keeper_dual_job_alerts WHERE is_reviewed = 0")->fetchColumn();
 check('nada se marcó como revisado: siguen 2 pendientes', $pending === 2, (string)$pending);
 
 // ─── 4. Cierre ────────────────────────────────────────────────────────────
 proc_terminate($proc);
+@unlink($envFile);
 echo "\n{$passes} comprobaciones correctas, " . count($failures) . " fallidas\n";
 foreach ($failures as $f) echo "  - {$f}\n";
 exit($failures === [] ? 0 : 1);
