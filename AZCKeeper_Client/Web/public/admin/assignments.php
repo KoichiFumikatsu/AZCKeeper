@@ -59,7 +59,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($existingId) {
                     $st = $pdo->prepare("
                         UPDATE keeper_user_assignments SET
-                            sociedad_id = ?, firm_id = ?, area_id = ?, cargo_id = ?, sede_id = ?, assigned_by = ?, manual_override = 1
+                            sociedad_id = ?, firm_id = ?, area_id = ?, cargo_id = ?, sede_id = ?, assigned_by = ?, manual_override = 1,
+                            source = 'panel', source_version = NULL, source_applied_at = NULL
                         WHERE id = ?
                     ");
                     $st->execute([$sociedadId, $firmId, $areaId, $cargoId, $sedeId, $adminUser['admin_id'], $existingId]);
@@ -67,8 +68,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     $st = $pdo->prepare("
                         INSERT INTO keeper_user_assignments
-                        (keeper_user_id, sociedad_id, firm_id, area_id, cargo_id, sede_id, assigned_by, manual_override)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                        (keeper_user_id, sociedad_id, firm_id, area_id, cargo_id, sede_id, assigned_by, manual_override, source)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'panel')
                     ");
                     $st->execute([$keeperUserId, $sociedadId, $firmId, $areaId, $cargoId, $sedeId, $adminUser['admin_id']]);
                     $msg = 'Asignación creada (override manual activado).';
@@ -110,11 +111,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $sets[] = 'assigned_by = ?';
                             $vals[] = $adminUser['admin_id'];
                             $sets[] = 'manual_override = 1';
+                            $sets[] = "source = 'panel', source_version = NULL, source_applied_at = NULL"; // la excepción del panel invalida la versión externa
                             $vals[] = $eid;
                             $pdo->prepare("UPDATE keeper_user_assignments SET " . implode(', ', $sets) . " WHERE id = ?")->execute($vals);
                         }
                     } else {
-                        $pdo->prepare("INSERT INTO keeper_user_assignments (keeper_user_id, sociedad_id, firm_id, area_id, cargo_id, sede_id, assigned_by, manual_override) VALUES (?, ?, ?, ?, ?, ?, ?, 1)")
+                        $pdo->prepare("INSERT INTO keeper_user_assignments (keeper_user_id, sociedad_id, firm_id, area_id, cargo_id, sede_id, assigned_by, manual_override, source) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'panel')")
                              ->execute([$uid, $sociedadId ?: null, $firmId ?: null, $areaId ?: null, $cargoId ?: null, $sedeId ?: null, $adminUser['admin_id']]);
                     }
                     $count++;
@@ -168,13 +170,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($legacy) {
                     $pdo->prepare("
                         UPDATE keeper_user_assignments SET
-                            firm_id = ?, area_id = ?, cargo_id = ?, sede_id = ?, manual_override = 0
+                            firm_id = ?, area_id = ?, cargo_id = ?, sede_id = ?, manual_override = 0,
+                            source = 'legacy', source_version = NULL, source_applied_at = NULL
                         WHERE id = ?
                     ")->execute([$legacy['firm_id'], $legacy['area_id'], $legacy['cargo_id'], $legacy['sede_id'], $id]);
                     $msg = 'Override removido. Datos restaurados desde legacy.';
                 } else {
                     // No legacy data, just remove the flag
-                    $pdo->prepare("UPDATE keeper_user_assignments SET manual_override = 0 WHERE id = ?")->execute([$id]);
+                    $pdo->prepare("UPDATE keeper_user_assignments SET manual_override = 0, source = 'legacy', source_version = NULL, source_applied_at = NULL WHERE id = ?")->execute([$id]);
                     $msg = 'Override removido (sin datos legacy disponibles).';
                 }
                 $msgType = 'success';

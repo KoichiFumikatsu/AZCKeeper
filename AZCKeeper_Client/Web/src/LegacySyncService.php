@@ -66,10 +66,12 @@ class LegacySyncService
                 || (int)($row['sede_id'] ?? 0) !== (int)($sedeId ?? 0)
                 || ($withSociedad && (int)($row['sociedad_id'] ?? 0) !== (int)($assignment['sociedad_id'] ?? 0))) {
                 $sociedadSql = $withSociedad ? ', sociedad_id = :soc' : '';
+                // La precedencia se repite en el UPDATE: si entre la lectura y la escritura One aplicó o el panel fijó una
+                // excepción, no se pisa nada (carrera).
                 $upd = $keeperPdo->prepare("
                     UPDATE keeper_user_assignments
                     SET firm_id = :fid, area_id = :aid, cargo_id = :cid, sede_id = :sid{$sociedadSql}, updated_at = NOW()
-                    WHERE id = :id
+                    WHERE id = :id AND manual_override = 0 AND source <> 'one'
                 ");
                 $params = [
                     'fid' => $firmId,
@@ -165,7 +167,7 @@ class LegacySyncService
         $stUpdate = $keeperPdo->prepare("
             UPDATE keeper_user_assignments
             SET firm_id = :fid, area_id = :aid, cargo_id = :cid, sede_id = :sid, updated_at = NOW()
-            WHERE id = :id
+            WHERE id = :id AND manual_override = 0 AND source <> 'one'
         ");
 
         foreach ($keeperUsers as $ku) {

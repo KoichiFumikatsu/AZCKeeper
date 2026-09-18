@@ -59,7 +59,7 @@ Instantes en ISO 8601 con desfase `-05:00`. Fechas `AAAA-MM-DD`. Enteros como en
 ## Pruebas
 
 `php tests/external_reports/run.php` crea la base `keeper_eval` desde `migrations/`, la siembra con datos
-sintéticos (correos `.invalid`), levanta `php -S` con un `.env` propio (`KEEPER_ENV_FILE`, nunca el `Web/.env` habitual) y ejecuta 74 comprobaciones de autorización, ámbito, periodo,
+sintéticos (correos `.invalid`), levanta `php -S` con un `.env` propio (`KEEPER_ENV_FILE`, nunca el `Web/.env` habitual) y ejecuta 77 comprobaciones de autorización, ámbito, periodo,
 piso de historial, paginación y forma de cada informe. `--serve` deja el entorno arriba para que un consumidor
 (One) valide su lector contra él. Variables: `KEEPER_TEST_DB_HOST/USER/PASS/NAME`, `KEEPER_TEST_PORT`,
 `KEEPER_TEST_SECRET`. Nunca usa producción ni la BD legacy.

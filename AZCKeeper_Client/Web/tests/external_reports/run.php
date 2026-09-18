@@ -290,6 +290,18 @@ check('listado (K3-ADP-08): 8 asignaciones con identidad, fuente y excepción', 
 [$c, $b] = call('/external/assignments?updated_since=' . urlencode((new DateTimeImmutable('+1 hour'))->format(DATE_ATOM)), $as('direccion')); check('updated_since en el futuro → ninguna', $c === 200 && $b['data']['total'] === 0, json_encode($b['data'] ?? $b));
 [$c, $b] = call('/external/assignments?updated_since=' . urlencode((new DateTimeImmutable('-1 hour'))->format(DATE_ATOM)), $as('supervisor1')); check('supervisor firma 1 lista sólo su firma (3 tras mover a 101 a la firma 2)', $c === 200 && $b['data']['total'] === 3, json_encode($b['data']['total'] ?? $b));
 [$c] = call('/external/assignments?updated_since=ayer', $as('direccion'));                                   check('updated_since inválido → 400', $c === 400, "código {$c}");
+// Una edición del panel invalida la versión externa: la misma intent_version ya no responde unchanged, y el legacy vuelve a mandar.
+$pdo->exec("UPDATE keeper_user_assignments SET manual_override = 1, source = 'panel', source_version = NULL, source_applied_at = NULL, area_id = 10 WHERE keeper_user_id = 101");
+[$c, $b] = put('/external/assignments/1001', $as('direccion'), [...$intent, 'area_id' => 13, 'intent_version' => 'one-1001-v8']); check('tras una excepción del panel, la versión aplicada antes responde kept_override, no unchanged', $c === 200 && $b['result'] === 'kept_override' && $b['keeper_values']['area_id'] === 10, json_encode($b));
+$pdo->exec("UPDATE keeper_user_assignments SET manual_override = 0, source = 'legacy' WHERE keeper_user_id = 101");
+\Keeper\LegacySyncService::syncOne($pdo, 101, ['firm_id' => 1, 'area_id' => 10, 'cargo_id' => 20, 'sede_id' => 1]);
+$after = $pdo->query("SELECT firm_id, area_id, source FROM keeper_user_assignments WHERE keeper_user_id = 101")->fetch(PDO::FETCH_ASSOC);
+check('sin excepción y con fuente legacy, el legacy vuelve a aplicar', (int)$after['firm_id'] === 1 && (int)$after['area_id'] === 10 && $after['source'] === 'legacy', json_encode($after));
+// Carrera: el UPDATE del legacy repite la condición de precedencia; una asignación que ya es de One no se pisa aunque el batch la haya leído antes.
+$pdo->exec("UPDATE keeper_user_assignments SET source = 'one', source_version = 'one-1001-v9', area_id = 12 WHERE keeper_user_id = 101");
+$st = $pdo->prepare("UPDATE keeper_user_assignments SET firm_id = :fid, area_id = :aid, cargo_id = :cid, sede_id = :sid, updated_at = NOW() WHERE id = :id AND manual_override = 0 AND source <> 'one'");
+$st->execute([':fid' => 1, ':aid' => 10, ':cid' => 20, ':sid' => 1, ':id' => (int)$pdo->query("SELECT id FROM keeper_user_assignments WHERE keeper_user_id = 101")->fetchColumn()]);
+check('el UPDATE del sincronizador legacy no toca una asignación de One (0 filas)', $st->rowCount() === 0 && (int)$pdo->query("SELECT area_id FROM keeper_user_assignments WHERE keeper_user_id = 101")->fetchColumn() === 12, (string)$st->rowCount());
 
 // ─── 4. Cierre ────────────────────────────────────────────────────────────
 proc_terminate($proc);

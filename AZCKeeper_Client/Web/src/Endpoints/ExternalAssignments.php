@@ -90,12 +90,24 @@ class ExternalAssignments
 
         try {
             if ($row) {
-                $pdo->prepare("
+                // Condicionado a que siga sin excepción manual: si el panel la fijó entre la lectura y esta escritura, no se
+                // pisa y se responde con lo que Keeper tiene (kept_override).
+                $st = $pdo->prepare("
                     UPDATE keeper_user_assignments
                     SET firm_id = :fid, area_id = :aid, cargo_id = :cid, sede_id = :sid, sociedad_id = :soc,
                         source = 'one', source_version = :ver, source_applied_at = NOW(), assigned_by = :by, updated_at = NOW()
-                    WHERE id = :id
-                ")->execute([':fid' => $values['firm_id'], ':aid' => $values['area_id'], ':cid' => $values['cargo_id'], ':sid' => $values['sede_id'], ':soc' => $values['sociedad_id'], ':ver' => $intent, ':by' => (int)$admin['admin_id'], ':id' => (int)$row['id']]);
+                    WHERE id = :id AND manual_override = 0
+                ");
+                $st->execute([':fid' => $values['firm_id'], ':aid' => $values['area_id'], ':cid' => $values['cargo_id'], ':sid' => $values['sede_id'], ':soc' => $values['sociedad_id'], ':ver' => $intent, ':by' => (int)$admin['admin_id'], ':id' => (int)$row['id']]);
+                if ($st->rowCount() === 0) {
+                    $again = $pdo->prepare("SELECT * FROM keeper_user_assignments WHERE id = :id LIMIT 1");
+                    $again->execute([':id' => (int)$row['id']]);
+                    $current = $again->fetch(\PDO::FETCH_ASSOC) ?: $row;
+                    if ((int)($current['manual_override'] ?? 0) === 1) {
+                        self::audit($pdo, $admin, $keeperUserId, 'external_assignment_kept_override', $intent);
+                        self::respond('kept_override', $current, $keeperUserId, $legacyEmployeeId);
+                    }
+                }
             } else {
                 $pdo->prepare("
                     INSERT INTO keeper_user_assignments (keeper_user_id, firm_id, area_id, cargo_id, sede_id, sociedad_id, manual_override, source, source_version, source_applied_at, assigned_by, assigned_at, updated_at)
