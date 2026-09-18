@@ -56,6 +56,8 @@ $routes = [
     '/external/reports/coverage'     => [Keeper\Endpoints\ExternalReports::class, 'coverage'],
     '/external/reports/presence'     => [Keeper\Endpoints\ExternalReports::class, 'presence'],
     '/external/reports/alerts'       => [Keeper\Endpoints\ExternalReports::class, 'alerts'],
+    // Sincronización compartida con One (K3-ADP-08): asignaciones con fuente y excepción manual.
+    '/external/assignments'          => [Keeper\Endpoints\ExternalAssignments::class, 'index'],
   ],
   'POST' => [
     '/client/handshake' => [Keeper\Endpoints\ClientHandshake::class, 'handle'],
@@ -83,10 +85,14 @@ foreach ($routes as $m => $map) {
   }
 }
 
-// Única ruta con parámetro en el camino: detalle de un colaborador para One (K3-ADP-02).
+// Rutas con parámetro en el camino (One): detalle de un colaborador (K3-ADP-02) y aplicar una asignación (K3-ADP-07).
 if (preg_match('#^/external/reports/users/(\d+)$#', $endpoint, $m)) {
   if ($method !== 'GET') json_405(['GET']);
   Keeper\Endpoints\ExternalReports::userDetail((int)$m[1]);
+}
+if (preg_match('#^/external/assignments/(\d+)$#', $endpoint, $m)) {
+  if ($method !== 'PUT') json_405(['PUT']);
+  Keeper\Endpoints\ExternalAssignments::apply((int)$m[1]);
 }
 
 if (!isset($routes[$method][$endpoint])) {

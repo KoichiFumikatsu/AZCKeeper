@@ -16,6 +16,13 @@ use PDO;
  * Cuando un admin edita una asignación desde el panel, se marca como override
  * y Keeper pasa a ser la fuente de verdad para ese usuario.
  *
+ * PRECEDENCIA DE FUENTES (K3-ADP-07c, integración con MOAZC/One): una asignación
+ * con `source = 'one'` fue aplicada desde One (/api/external/assignments) y el
+ * legacy tampoco la revierte —ni aquí ni en el login— mientras la fuente sea One.
+ * No es una excepción manual: manual_override sigue siendo del panel y manda
+ * sobre ambas. `sociedad_id` sólo se sincroniza cuando el origen la envía (el
+ * legacy no la tiene; One sí).
+ *
  * MULTI-DB: Las consultas a `employee` usan Db::legacyPdo() (o Db::sourceFor())
  * mientras que las consultas a `keeper_*` usan Db::pdo().
  */
@@ -33,7 +40,7 @@ class LegacySyncService
      */
     public static function syncOne(PDO $keeperPdo, int $keeperUserId, array $assignment): void
     {
-        $stmt = $keeperPdo->prepare("SELECT id, firm_id, area_id, cargo_id, sede_id, manual_override FROM keeper_user_assignments WHERE keeper_user_id = :uid LIMIT 1");
+        $stmt = $keeperPdo->prepare("SELECT id, firm_id, area_id, cargo_id, sede_id, sociedad_id, manual_override, source FROM keeper_user_assignments WHERE keeper_user_id = :uid LIMIT 1");
         $stmt->execute(['uid' => $keeperUserId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -41,34 +48,43 @@ class LegacySyncService
         $areaId  = $assignment['area_id'];
         $cargoId = $assignment['cargo_id'];
         $sedeId  = $assignment['sede_id'] ?? null;
+        $withSociedad = array_key_exists('sociedad_id', $assignment); // el legacy no la envía; One sí
 
         if ($row) {
             // Si fue editado desde el panel, Keeper es la fuente de verdad → no tocar
             if (!empty($row['manual_override'])) {
                 return;
             }
+            // Aplicada desde One: el legacy no la revierte (precedencia de fuentes, K3-ADP-07c)
+            if (($row['source'] ?? 'legacy') === 'one') {
+                return;
+            }
 
             if ((int)($row['firm_id'] ?? 0) !== (int)($firmId ?? 0)
                 || (int)($row['area_id'] ?? 0) !== (int)($areaId ?? 0)
                 || (int)($row['cargo_id'] ?? 0) !== (int)($cargoId ?? 0)
-                || (int)($row['sede_id'] ?? 0) !== (int)($sedeId ?? 0)) {
+                || (int)($row['sede_id'] ?? 0) !== (int)($sedeId ?? 0)
+                || ($withSociedad && (int)($row['sociedad_id'] ?? 0) !== (int)($assignment['sociedad_id'] ?? 0))) {
+                $sociedadSql = $withSociedad ? ', sociedad_id = :soc' : '';
                 $upd = $keeperPdo->prepare("
                     UPDATE keeper_user_assignments
-                    SET firm_id = :fid, area_id = :aid, cargo_id = :cid, sede_id = :sid, updated_at = NOW()
+                    SET firm_id = :fid, area_id = :aid, cargo_id = :cid, sede_id = :sid{$sociedadSql}, updated_at = NOW()
                     WHERE id = :id
                 ");
-                $upd->execute([
+                $params = [
                     'fid' => $firmId,
                     'aid' => $areaId,
                     'cid' => $cargoId,
                     'sid' => $sedeId,
                     'id'  => $row['id'],
-                ]);
+                ];
+                if ($withSociedad) $params['soc'] = $assignment['sociedad_id'];
+                $upd->execute($params);
             }
         } else {
             $ins = $keeperPdo->prepare("
-                INSERT INTO keeper_user_assignments (keeper_user_id, firm_id, area_id, cargo_id, sede_id, assigned_at, updated_at)
-                VALUES (:uid, :fid, :aid, :cid, :sid, NOW(), NOW())
+                INSERT INTO keeper_user_assignments (keeper_user_id, firm_id, area_id, cargo_id, sede_id, sociedad_id, assigned_at, updated_at)
+                VALUES (:uid, :fid, :aid, :cid, :sid, :soc, NOW(), NOW())
             ");
             $ins->execute([
                 'uid' => $keeperUserId,
@@ -76,6 +92,7 @@ class LegacySyncService
                 'aid' => $areaId,
                 'cid' => $cargoId,
                 'sid' => $sedeId,
+                'soc' => $withSociedad ? $assignment['sociedad_id'] : null,
             ]);
         }
     }
@@ -114,7 +131,8 @@ class LegacySyncService
                 kua.area_id,
                 kua.cargo_id,
                 kua.sede_id,
-                kua.manual_override
+                kua.manual_override,
+                kua.source
             FROM keeper_users ku
             LEFT JOIN keeper_user_assignments kua ON kua.keeper_user_id = ku.id
             WHERE ku.legacy_employee_id IS NOT NULL
@@ -169,8 +187,8 @@ class LegacySyncService
                     'cid' => $newCargo,
                     'sid' => $newSede,
                 ]);
-            } elseif (empty($ku['manual_override'])) {
-                // Con assignment sin override → verificar si cambió
+            } elseif (empty($ku['manual_override']) && ($ku['source'] ?? 'legacy') !== 'one') {
+                // Con assignment sin override y no aplicada desde One → verificar si cambió
                 $changed = (int)($ku['firm_id'] ?? 0) !== (int)($newFirm ?? 0)
                     || (int)($ku['area_id'] ?? 0) !== (int)($newArea ?? 0)
                     || (int)($ku['cargo_id'] ?? 0) !== (int)($newCargo ?? 0)
@@ -186,7 +204,7 @@ class LegacySyncService
                     ]);
                 }
             }
-            // manual_override = 1 → no tocar
+            // manual_override = 1 o source = 'one' → no tocar
         }
     }
 }

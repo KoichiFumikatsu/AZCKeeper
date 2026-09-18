@@ -46,6 +46,7 @@ require_once __DIR__ . '/Endpoints/DeviceLock.php';
 require_once __DIR__ . '/Endpoints/ProductivityCron.php';
 require_once __DIR__ . '/Endpoints/ExternalAuth.php';
 require_once __DIR__ . '/Endpoints/ExternalReports.php';
+require_once __DIR__ . '/Endpoints/ExternalAssignments.php';
 
 // Load .env
 // KEEPER_ENV_FILE permite arrancar con otra configuración (p. ej. el entorno de evaluación de tests/) sin leer el .env normal.

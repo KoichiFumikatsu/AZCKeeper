@@ -34,7 +34,11 @@ class ExternalAuth
             ua.firm_id,
             f.nombre        AS firm_name,
             ua.area_id,
-            a.nombre        AS area
+            a.nombre        AS area,
+            ua.cargo_id,
+            ua.sociedad_id,
+            ua.manual_override,
+            ua.source       AS assignment_source
         FROM keeper_users u
         LEFT JOIN keeper_user_assignments ua ON ua.keeper_user_id = u.id
         LEFT JOIN keeper_sedes  s ON s.id = ua.sede_id
@@ -216,6 +220,13 @@ class ExternalAuth
             'firm_id'           => $u['firm_id'] !== null ? (int)$u['firm_id'] : null,
             'firm_name'         => $u['firm_name'],
             'area'              => $u['area'],
+            // K3-ADP-09 (One): identidad por legacy_employee_id y referencias de asignación para el mapa de identidad.
+            'legacy_employee_id' => $u['legacy_employee_id'] !== null ? (int)$u['legacy_employee_id'] : null,
+            'area_id'           => $u['area_id'] !== null ? (int)$u['area_id'] : null,
+            'cargo_id'          => isset($u['cargo_id']) ? (int)$u['cargo_id'] : null,
+            'sociedad_id'       => isset($u['sociedad_id']) ? (int)$u['sociedad_id'] : null,
+            'manual_override'   => (bool)($u['manual_override'] ?? false),
+            'assignment_source' => $u['assignment_source'] ?? null,
         ];
     }
 }

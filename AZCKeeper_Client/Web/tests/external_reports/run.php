@@ -33,7 +33,7 @@ $pdo->exec("DROP DATABASE IF EXISTS `{$cfg['name']}`");
 $pdo->exec("CREATE DATABASE `{$cfg['name']}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
 $pdo->exec("USE `{$cfg['name']}`");
 $pdo->exec("SET time_zone = '-05:00'");
-foreach (['keeper_full_schema.sql', 'add_productivity_focus.sql', 'add_install_coverage.sql', 'add_install_coverage_exempt.sql', 'add_firma_historial_desde.sql', 'add_employment_status.sql'] as $file) {
+foreach (['keeper_full_schema.sql', 'add_productivity_focus.sql', 'add_install_coverage.sql', 'add_install_coverage_exempt.sql', 'add_firma_historial_desde.sql', 'add_employment_status.sql', 'add_assignment_source.sql'] as $file) {
     $sql = (string)file_get_contents("{$root}/migrations/{$file}");
     // Ejecuta sentencia a sentencia (el driver no admite varias en un prepare con emulación apagada).
     foreach (preg_split('/;\s*\n/', $sql) ?: [] as $statement) {
@@ -54,6 +54,7 @@ $seed = [
     "INSERT INTO keeper_sociedades (id, nombre) VALUES (1, 'Sociedad sintética 1'), (2, 'Sociedad sintética 2')",
     "INSERT INTO keeper_firmas (id, nombre, historial_desde) VALUES (1, 'Firma sintética 1', NULL), (2, 'Firma sintética 2', '{$d(3)}')",
     "INSERT INTO keeper_areas (id, nombre) VALUES (10, 'Operaciones'), (11, 'Contabilidad'), (12, 'Tecnología'), (13, 'Legal')",
+    "INSERT INTO keeper_cargos (id, nombre, nivel_jerarquico) VALUES (20, 'Analista', 3), (21, 'Coordinador', 2)",
     "INSERT INTO keeper_sedes (id, nombre, codigo, activa) VALUES (1, 'Sede sintética Norte', 'N', 1), (2, 'Sede sintética Centro', 'C', 1)",
     "INSERT INTO keeper_client_releases (version, download_url, is_active) VALUES ('3.4.1', 'https://keeper-eval.invalid/releases/3.4.1.zip', 1)",
     "INSERT INTO keeper_panel_settings (setting_key, setting_value) VALUES ('leisure_apps', '[\"YouTube\"]')",
@@ -245,6 +246,50 @@ echo "\nSeñales para revisión (K3-ADP-06, sólo lectura)\n";
 [$c] = call('/external/reports/alerts?severity=enorme', $as('direccion'));                                              check('filtro inválido → 400', $c === 400, "código {$c}");
 $pending = (int)$pdo->query("SELECT COUNT(*) FROM keeper_dual_job_alerts WHERE is_reviewed = 0")->fetchColumn();
 check('nada se marcó como revisado: siguen 2 pendientes', $pending === 2, (string)$pending);
+
+echo "\nSincronización compartida (K3-ADP-07/08/09)\n";
+function put(string $path, array $headers, array $body): array
+{
+    global $base;
+    $h = "Content-Type: application/json\r\n";
+    foreach ($headers as $k => $v) $h .= "{$k}: {$v}\r\n";
+    $ctx = stream_context_create(['http' => ['method' => 'PUT', 'header' => $h, 'content' => json_encode($body), 'ignore_errors' => true, 'timeout' => 10]]);
+    $raw = (string)@file_get_contents($base . $path, false, $ctx);
+    preg_match('#HTTP/\S+ (\d{3})#', $http_response_header[0] ?? 'HTTP/1.1 000', $m);
+    return [(int)$m[1], json_decode($raw, true) ?? ['raw' => $raw]];
+}
+$intent = ['firm_id' => 2, 'area_id' => 12, 'cargo_id' => 21, 'sede_id' => 2, 'sociedad_id' => 2, 'intent_version' => 'one-1001-v7'];
+[$c, $b] = call('/external/roster', $S);
+$roster = [];
+foreach ($b['users'] ?? [] as $u) $roster[$u['keeper_user_id']] = $u;
+check('roster (K3-ADP-09) devuelve legacy_employee_id, area_id, cargo_id, sociedad_id, manual_override y source', $c === 200 && ($roster[101]['legacy_employee_id'] ?? null) === 1001 && ($roster[101]['area_id'] ?? null) === 10 && ($roster[101]['sociedad_id'] ?? null) === 1 && array_key_exists('manual_override', $roster[101] ?? []) && ($roster[101]['assignment_source'] ?? '') === 'legacy', json_encode($roster[101] ?? $b));
+[$c] = put('/external/assignments/1001', $S, $intent);                                                       check('aplicar sin cuenta actuante → 400', $c === 400, "código {$c}");
+[$c, $b] = put('/external/assignments/1001', $as('supervisor2'), $intent);                                  check('supervisor de firma 2 aplica sobre alguien de la firma 1 → 404 not_mapped (no se revela)', $c === 404 && ($b['result'] ?? '') === 'not_mapped', "código {$c}");
+[$c, $b] = put('/external/assignments/9999', $as('direccion'), $intent);                                    check('legacy sin usuario en Keeper → 404 not_mapped', $c === 404 && ($b['result'] ?? '') === 'not_mapped', "código {$c}");
+[$c, $b] = put('/external/assignments/1001', $as('direccion'), ['firm_id' => 2, 'area_id' => 12, 'cargo_id' => 21, 'sede_id' => 2, 'sociedad_id' => 2]); check('sin intent_version → 400', $c === 400 && ($b['error'] ?? '') === 'invalid_intent_version', "código {$c}");
+[$c, $b] = put('/external/assignments/1001', $as('direccion'), [...$intent, 'cargo_id' => 999]);            check('referencia inexistente → 422 con el campo', $c === 422 && ($b['field'] ?? '') === 'cargo_id', "código {$c}");
+[$c, $b] = put('/external/assignments/1001', $as('direccion'), $intent);
+check('aplicar → applied con los valores de Keeper (incluida sociedad_id) y source one', $c === 200 && $b['result'] === 'applied' && $b['keeper_values'] === ['firm_id' => 2, 'area_id' => 12, 'cargo_id' => 21, 'sede_id' => 2, 'sociedad_id' => 2] && $b['source'] === 'one' && $b['source_version'] === 'one-1001-v7' && str_ends_with((string)$b['updated_at'], '-05:00'), json_encode($b));
+[$c, $b] = put('/external/assignments/1001', $as('direccion'), $intent);                                    check('misma intent_version → unchanged (idempotente)', $c === 200 && $b['result'] === 'unchanged', json_encode($b));
+// El legacy no la revierte: syncOne (login) y syncAllFromPanel (panel) dejan la asignación de One como está.
+require_once "{$root}/src/bootstrap.php";
+\Keeper\LegacySyncService::syncOne($pdo, 101, ['firm_id' => 1, 'area_id' => 10, 'cargo_id' => 20, 'sede_id' => 1]);
+$after = $pdo->query("SELECT firm_id, area_id, sociedad_id, source FROM keeper_user_assignments WHERE keeper_user_id = 101")->fetch(PDO::FETCH_ASSOC);
+check('syncOne desde el legacy no revierte una asignación de One', (int)$after['firm_id'] === 2 && (int)$after['area_id'] === 12 && (int)$after['sociedad_id'] === 2 && $after['source'] === 'one', json_encode($after));
+\Keeper\LegacySyncService::syncOne($pdo, 102, ['firm_id' => 1, 'area_id' => 11, 'cargo_id' => 20, 'sede_id' => 1, 'sociedad_id' => 2]);
+$after = $pdo->query("SELECT area_id, sociedad_id, source FROM keeper_user_assignments WHERE keeper_user_id = 102")->fetch(PDO::FETCH_ASSOC);
+check('syncOne sí aplica sociedad_id cuando el origen la envía (ampliación K3-ADP-07b) y la fuente sigue legacy', (int)$after['area_id'] === 11 && (int)$after['sociedad_id'] === 2 && $after['source'] === 'legacy', json_encode($after));
+[$c, $b] = put('/external/assignments/1001', $as('direccion'), [...$intent, 'area_id' => 13, 'intent_version' => 'one-1001-v8']); check('cambio posterior con nueva intent_version → applied', $c === 200 && $b['result'] === 'applied' && $b['keeper_values']['area_id'] === 13 && $b['source_version'] === 'one-1001-v8', json_encode($b));
+$pdo->exec("UPDATE keeper_user_assignments SET manual_override = 1, source = 'panel', firm_id = 1 WHERE keeper_user_id = 103");
+[$c, $b] = put('/external/assignments/1003', $as('direccion'), [...$intent, 'intent_version' => 'one-1003-v1']);
+check('excepción manual del panel → kept_override con los valores de Keeper, sin tocarla', $c === 200 && $b['result'] === 'kept_override' && $b['manual_override'] === true && $b['keeper_values']['firm_id'] === 1 && $b['source'] === 'panel', json_encode($b));
+[$c, $b] = call('/external/assignments', $as('direccion'));
+$rows = [];
+foreach ($b['data']['assignments'] ?? [] as $r) $rows[$r['keeper_user_id']] = $r;
+check('listado (K3-ADP-08): 8 asignaciones con identidad, fuente y excepción', $c === 200 && $b['data']['total'] === 8 && ($rows[101]['source'] ?? '') === 'one' && ($rows[101]['source_version'] ?? '') === 'one-1001-v8' && ($rows[103]['manual_override'] ?? false) === true && ($rows[101]['legacy_employee_id'] ?? null) === 1001, json_encode($rows[101] ?? $b));
+[$c, $b] = call('/external/assignments?updated_since=' . urlencode((new DateTimeImmutable('+1 hour'))->format(DATE_ATOM)), $as('direccion')); check('updated_since en el futuro → ninguna', $c === 200 && $b['data']['total'] === 0, json_encode($b['data'] ?? $b));
+[$c, $b] = call('/external/assignments?updated_since=' . urlencode((new DateTimeImmutable('-1 hour'))->format(DATE_ATOM)), $as('supervisor1')); check('supervisor firma 1 lista sólo su firma (3 tras mover a 101 a la firma 2)', $c === 200 && $b['data']['total'] === 3, json_encode($b['data']['total'] ?? $b));
+[$c] = call('/external/assignments?updated_since=ayer', $as('direccion'));                                   check('updated_since inválido → 400', $c === 400, "código {$c}");
 
 // ─── 4. Cierre ────────────────────────────────────────────────────────────
 proc_terminate($proc);
