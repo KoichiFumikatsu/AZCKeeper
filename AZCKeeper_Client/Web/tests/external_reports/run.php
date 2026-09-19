@@ -73,7 +73,10 @@ $people = [
 ];
 foreach ($people as [$id, $legacy, $name, $firm, $area, $sede, $soc, $seen, $version]) {
     $seed[] = "INSERT INTO keeper_users (id, legacy_employee_id, cc, email, display_name, status) VALUES ({$id}, {$legacy}, '{$legacy}', 'sintetico" . ($id - 100) . "@keeper-eval.invalid', '{$name}', 'active')";
-    $seed[] = "INSERT INTO keeper_user_assignments (keeper_user_id, sociedad_id, firm_id, area_id, sede_id) VALUES ({$id}, {$soc}, {$firm}, {$area}, {$sede})";
+    // El 108 nace con excepción manual del panel: la sincronización desde One debe conservarla (kept_override).
+    $seed[] = $id === 108
+        ? "INSERT INTO keeper_user_assignments (keeper_user_id, sociedad_id, firm_id, area_id, sede_id, manual_override, source) VALUES ({$id}, {$soc}, {$firm}, {$area}, {$sede}, 1, 'panel')"
+        : "INSERT INTO keeper_user_assignments (keeper_user_id, sociedad_id, firm_id, area_id, sede_id) VALUES ({$id}, {$soc}, {$firm}, {$area}, {$sede})";
     if ($seen === null) continue;
     $seed[] = "INSERT INTO keeper_devices (id, user_id, device_guid, device_name, client_version, status, last_seen_at) VALUES ({$id}, {$id}, '00000000-0000-4000-8000-0000000000" . ($id - 100) . "', 'PC-{$id}', '{$version}', 'active', '{$ts($seen)}')";
     foreach ([0, 1, 2] as $ago) {
