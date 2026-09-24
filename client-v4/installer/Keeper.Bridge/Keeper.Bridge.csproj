@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <BridgeTrustFile Condition="'$(BridgeTrustFile)' == ''">bridge-trust.unprovisioned.json</BridgeTrustFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Keeper.Agent/Keeper.Agent.csproj" />
+    <EmbeddedResource Include="$(BridgeTrustFile)" LogicalName="bridge-trust.json" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,1978 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Auditoría K3 AZCKeeper — 2026-09-15</title><style>
+:root{--bg:#fafafa;--fg:#1f2328;--muted:#57606a;--line:#d0d7de;--code:#f0f2f5;--accent:#0b5fff;--crit:#b42318;--alto:#b54708;--nav:#fff}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.wrap{display:grid;grid-template-columns:300px 1fr;min-height:100vh}
+nav{position:sticky;top:0;height:100vh;overflow:auto;background:var(--nav);border-right:1px solid var(--line);padding:16px 12px;font-size:13px}
+nav h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 8px}
+nav ul{list-style:none;margin:0;padding:0}nav li{margin:2px 0}nav a{color:var(--fg);text-decoration:none;display:block;padding:2px 6px;border-radius:4px}
+nav a:hover{background:var(--code)}nav li.d2 a{font-weight:600}nav li.d3 a{padding-left:18px;color:var(--muted)}
+main{padding:32px 48px;max-width:1300px;min-width:0}
+h1{font-size:28px;margin:0 0 8px}h2{font-size:22px;margin:40px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}h3{font-size:17px;margin:28px 0 8px}h4{font-size:15px;margin:20px 0 6px}
+p,li{max-width:100ch}a{color:var(--accent)}
+code{font:13px/1.4 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;background:var(--code);padding:1px 5px;border-radius:4px}
+pre{background:var(--code);padding:12px 14px;border-radius:6px;overflow:auto;border:1px solid var(--line)}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13.5px;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top;text-align:left}th{background:var(--code);position:sticky;top:0}
+tr:nth-child(even) td{background:#f6f8fa}
+td strong{white-space:nowrap}
+blockquote{margin:12px 0;padding:8px 14px;border-left:4px solid var(--line);color:var(--muted);background:#fff}
+hr{border:0;border-top:1px solid var(--line);margin:32px 0}
+.sev-crit{color:var(--crit);font-weight:700}.sev-alto{color:var(--alto);font-weight:700}
+@media(max-width:900px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:20px 16px}}
+@media print{nav{display:none}.wrap{display:block}main{padding:0;max-width:none}a{color:inherit;text-decoration:none}}
+</style></head><body><div class="wrap"><nav><h2>Índice</h2><ul><li class="d1"><a href="#auditoría-k3-de-azckeeper-15-de-septiembre-de-2026-0">Auditoría K3 de AZCKeeper — 15 de septiembre de 2026</a></li>
+<li class="d2"><a href="#base-de-evidencia-y-alcance-1">Base de evidencia y alcance</a></li>
+<li class="d2"><a href="#1-resumen-ejecutivo-top-10-por-severidad-2">1. Resumen ejecutivo: top 10 por severidad</a></li>
+<li class="d2"><a href="#2-pregunta-1-organización-del-endpointapi-3">2. Pregunta 1 — Organización del endpoint/API</a></li>
+<li class="d3"><a href="#21-arquitectura-validación-y-errores-4">2.1 Arquitectura, validación y errores</a></li>
+<li class="d3"><a href="#22-inventario-completo-del-router-api-5">2.2 Inventario completo del router API</a></li>
+<li class="d3"><a href="#23-inventario-completo-del-panel-php-6">2.3 Inventario completo del panel PHP</a></li>
+<li class="d3"><a href="#24-deuda-que-afecta-extensión-7">2.4 Deuda que afecta extensión</a></li>
+<li class="d2"><a href="#3-pregunta-2-portabilidad-a-vpsdocker-8">3. Pregunta 2 — Portabilidad a VPS/Docker</a></li>
+<li class="d3"><a href="#31-dependencias-y-configuración-real-9">3.1 Dependencias y configuración real</a></li>
+<li class="d3"><a href="#32-bloqueadores-de-portabilidad-10">3.2 Bloqueadores de portabilidad</a></li>
+<li class="d3"><a href="#33-migraciones-no-son-una-secuencia-reproducible-desde-cero-11">3.3 Migraciones: no son una secuencia reproducible desde cero</a></li>
+<li class="d3"><a href="#34-cron-y-archivos-generados-12">3.4 Cron y archivos generados</a></li>
+<li class="d3"><a href="#35-procedimiento-propuesto-de-despliegue-13">3.5 Procedimiento propuesto de despliegue</a></li>
+<li class="d2"><a href="#4-pregunta-3-cliente-modularidad-y-eficiencia-14">4. Pregunta 3 — Cliente: modularidad y eficiencia</a></li>
+<li class="d3"><a href="#41-estructura-y-configuración-15">4.1 Estructura y configuración</a></li>
+<li class="d3"><a href="#42-concurrencia-y-consistencia-16">4.2 Concurrencia y consistencia</a></li>
+<li class="d3"><a href="#43-cpu-memoria-disco-y-exactitud-17">4.3 CPU, memoria, disco y exactitud</a></li>
+<li class="d3"><a href="#44-código-residual-y-cobertura-18">4.4 Código residual y cobertura</a></li>
+<li class="d2"><a href="#5-pregunta-4-tormenta-de-peticiones-y-una-ip-por-empresa-19">5. Pregunta 4 — Tormenta de peticiones y una IP por empresa</a></li>
+<li class="d3"><a href="#51-defaults-efectivos-20">5.1 Defaults efectivos</a></li>
+<li class="d3"><a href="#52-inventario-de-productores-de-red-21">5.2 Inventario de productores de red</a></li>
+<li class="d3"><a href="#53-modelo-cuantitativo-22">5.3 Modelo cuantitativo</a></li>
+<li class="d3"><a href="#54-bloqueo-de-dominio-hechos-frente-a-hipótesis-23">5.4 Bloqueo de dominio: hechos frente a hipótesis</a></li>
+<li class="d3"><a href="#55-backoffrate-limiting-actual-24">5.5 Backoff/rate limiting actual</a></li>
+<li class="d3"><a href="#56-diseño-propuesto-de-reducción-25">5.6 Diseño propuesto de reducción</a></li>
+<li class="d3"><a href="#57-n-empresas-una-ip-backend-e-infraestructura-26">5.7 N empresas × una IP: backend e infraestructura</a></li>
+<li class="d2"><a href="#6-pregunta-5-multiempresa-y-más-de-1000-dispositivos-por-tenant-27">6. Pregunta 5 — Multiempresa y más de 1.000 dispositivos por tenant</a></li>
+<li class="d3"><a href="#61-organización-no-equivale-a-aislamiento-28">6.1 Organización no equivale a aislamiento</a></li>
+<li class="d3"><a href="#62-rupturas-concretas-de-aislamiento-29">6.2 Rupturas concretas de aislamiento</a></li>
+<li class="d3"><a href="#63-cambios-de-modelo-propuestos-30">6.3 Cambios de modelo propuestos</a></li>
+<li class="d3"><a href="#64-escrituras-por-segundo-y-crecimiento-31">6.4 Escrituras por segundo y crecimiento</a></li>
+<li class="d3"><a href="#65-índices-retención-y-particiones-32">6.5 Índices, retención y particiones</a></li>
+<li class="d3"><a href="#66-agregaciones-del-panel-33">6.6 Agregaciones del panel</a></li>
+<li class="d2"><a href="#7-pregunta-6-panel-rebrand-y-nuevas-features-34">7. Pregunta 6 — Panel: rebrand y nuevas features</a></li>
+<li class="d3"><a href="#71-construcción-y-dificultad-35">7.1 Construcción y dificultad</a></li>
+<li class="d3"><a href="#72-inventario-textual-de-marca-36">7.2 Inventario textual de marca</a></li>
+<li class="d3"><a href="#73-patrón-propuesto-de-features-y-tema-por-tenant-37">7.3 Patrón propuesto de features y tema por tenant</a></li>
+<li class="d2"><a href="#8-pregunta-7-documentación-de-api-para-terceros-38">8. Pregunta 7 — Documentación de API para terceros</a></li>
+<li class="d3"><a href="#81-qué-hay-hoy-39">8.1 Qué hay hoy</a></li>
+<li class="d3"><a href="#82-requisitos-propuestos-40">8.2 Requisitos propuestos</a></li>
+<li class="d3"><a href="#83-recursos-razonables-y-origen-actual-41">8.3 Recursos razonables y origen actual</a></li>
+<li class="d3"><a href="#84-esqueleto-openapi-3-propuesto-42">8.4 Esqueleto OpenAPI 3 propuesto</a></li>
+<li class="d2"><a href="#9-pregunta-8-seguridad-transversal-43">9. Pregunta 8 — Seguridad transversal</a></li>
+<li class="d3"><a href="#91-autenticación-y-ciclo-de-vida-44">9.1 Autenticación y ciclo de vida</a></li>
+<li class="d3"><a href="#92-autorización-administrativa-y-csrf-45">9.2 Autorización administrativa y CSRF</a></li>
+<li class="d3"><a href="#93-secretos-y-exposición-de-datos-46">9.3 Secretos y exposición de datos</a></li>
+<li class="d3"><a href="#94-sqli-validación-y-abuso-de-recursos-47">9.4 SQLi, validación y abuso de recursos</a></li>
+<li class="d3"><a href="#95-integridad-del-updater-48">9.5 Integridad del updater</a></li>
+<li class="d3"><a href="#96-pac-proxy-y-bloqueo-local-49">9.6 PAC, proxy y bloqueo local</a></li>
+<li class="d2"><a href="#suplemento-revisión-disponible-al-reanudar-1638bd4-50">Suplemento — Revisión disponible al reanudar: 1638bd4</a></li>
+<li class="d3"><a href="#diferencias-materiales-51">Diferencias materiales</a></li>
+<li class="d3"><a href="#inventario-adicional-de-endpoints-52">Inventario adicional de endpoints</a></li>
+<li class="d3"><a href="#hallazgos-del-complemento-53">Hallazgos del complemento</a></li>
+<li class="d2"><a href="#10-plan-de-acción-priorizado-54">10. Plan de acción priorizado</a></li>
+<li class="d3"><a href="#101-quick-wins-y-contención-55">10.1 Quick wins y contención</a></li>
+<li class="d3"><a href="#102-proyectos-estructurales-56">10.2 Proyectos estructurales</a></li>
+<li class="d3"><a href="#103-validación-de-capacidad-y-criterios-de-salida-57">10.3 Validación de capacidad y criterios de salida</a></li>
+<li class="d3"><a href="#104-pendientes-de-evidencia-externa-58">10.4 Pendientes de evidencia externa</a></li>
+<li class="d3"><a href="#105-comprobación-final-del-artefacto-59">10.5 Comprobación final del artefacto</a></li></ul></nav><main><h1 id="auditoría-k3-de-azckeeper-15-de-septiembre-de-2026-0">Auditoría K3 de AZCKeeper — 15 de septiembre de 2026</h1>
+<h2 id="base-de-evidencia-y-alcance-1">Base de evidencia y alcance</h2>
+<ul>
+<li>Repositorio: <code>C:\Users\FumiWork\Documents\AZCKeeper</code>. Rama auditada: <code>feature/modulo-seguridad</code>; commit <code>931fd1283ad4f356af5a592b26909ea9bc50f368</code>.</li>
+<li>Alcance: cliente Windows K3, AZCKeeperUpdater, AZCKeeper.Tests y backend/panel <code>AZCKeeper_Client/Web/</code>. Excluidos los árboles K4 indicados por el solicitante y <code>Web/migrations/keeper4/</code>.</li>
+<li>Se utilizó <code>graphify query &quot;&lt;pregunta&gt;&quot;</code> desde la raíz para mapear dependencias, endpoints, timers y tablas, antes de contrastar el código. El grafo conserva clases PAC retiradas: sirve como índice, no como prueba de comportamiento ni de números de línea.</li>
+<li><strong>Referencia de las citas:</strong> todo archivo:línea sin prefijo corresponde al commit auditado 931fd1283ad4f356af5a592b26909ea9bc50f368, consultable con git show COMMIT:ruta; no al número de línea del worktree de entrega. Al reanudar, el checkout estaba en feature/moazc-bridge, commit 1638bd493d884a0741e4131ee2d8089b5b2d9b76. El suplemento distingue esa revisión con prefijo 1638bd4:. En las secciones principales, «actual» describe la revisión base auditada. Las citas 4f6aea5: corresponden exclusivamente al commit histórico 4f6aea562c14c4b10d4b79f4d8ae8869cdba733d, consultado con git show, sin checkout. No había referencia master disponible.</li>
+<li>No se verificó equivalencia entre este checkout, archivos desplegados por scp y binarios instalados. <strong>Código actual, código histórico y producción se distinguen expresamente.</strong></li>
+<li>Se aceptan como hechos facilitados por el solicitante: PHP 8.2, MySQL 8.0.40 remoto, docroot Web/public, hosting cPanel/CSF-LFD, una IP pública NAT dedicada por empresa/sede, baneo ya ocurrido, flota aproximada de 180 equipos y unos 6,9 millones de episodios. No se volvió a investigar esa premisa ni se consultó producción.</li>
+<li>No se leyeron secretos reales ni se ejecutaron migraciones, endpoints productivos, builds del cliente o updater. Este reporte es el único archivo creado/modificado.</li>
+<li>Verificación local efectuada en la fase anterior sobre la revisión auditada: <strong>18 tests PHP aprobados, 0 fallos; 66 archivos PHP comprobados con php -l, 0 errores</strong>. PHP CLI disponible: 8.3.30; no sustituye verificación en PHP 8.2/MySQL productivos. El runner prueba merge, saneamiento y contratos, no carga ni aislamiento (<code>AZCKeeper_Client/Web/tests/run.php:26</code>). No se ejecutaron tests .NET que generan bin/obj o estado local.</li>
+<li>Las tasas y tamaños son <strong>modelos derivados del código</strong>, no mediciones. Las recomendaciones y OpenAPI son propuestas, no funcionalidades existentes. Ausencias de archivos/call sites son resultados de búsquedas en el alcance, no afirmaciones sobre archivos externos al repo.</li>
+</ul>
+<h2 id="1-resumen-ejecutivo-top-10-por-severidad-2">1. Resumen ejecutivo: top 10 por severidad</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Severidad</th>
+<th>Hallazgo e impacto</th>
+<th>Evidencia</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td><span class="sev-crit">Crítico</span></td>
+<td>Reenrolamiento sin prueba de posesión: conocer el GUID de un dispositivo activo permite solicitar un bearer de su usuario. El límite por IP no corrige la autenticación.</td>
+<td><code>AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:35</code>, <code>AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:56</code>, <code>AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:103</code>, <code>AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:120</code>.</td>
+</tr>
+<tr>
+<td>2</td>
+<td><span class="sev-crit">Crítico</span></td>
+<td>No hay frontera de tenant uniforme: handshake reasigna dispositivos ajenos y varias operaciones administrativas consultan/mutan por ID sin comprobar empresa.</td>
+<td><code>AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:77</code>; <code>AZCKeeper_Client/Web/public/admin/users.php:54</code>; <code>AZCKeeper_Client/Web/public/admin/devices.php:19</code>; <code>AZCKeeper_Client/Web/public/admin/admin_auth.php:150</code>.</td>
+</tr>
+<tr>
+<td>3</td>
+<td><span class="sev-crit">Crítico</span></td>
+<td>Updater descarga ZIP desde URL administrable y ejecuta el updater contenido en él sin comprobar firma ni hash contra una fuente confiable. Impacto potencial sobre la flota con privilegios del usuario.</td>
+<td><code>AZCKeeper_Client/Update/UpdateManager.cs:218</code>, <code>AZCKeeper_Client/Update/UpdateManager.cs:235</code>, <code>AZCKeeper_Client/Update/UpdateManager.cs:238</code>, <code>AZCKeeper_Client/Update/UpdateManager.cs:259</code>; <code>AZCKeeper_Client/Web/public/admin/releases.php:24</code>.</td>
+</tr>
+<tr>
+<td>4</td>
+<td><span class="sev-alto">Alto</span></td>
+<td>Amplificación HTTP: handshake reinicia comprobación de updates; defaults iniciales dan actividad cada 10 s y handshake efectivo cada 120 s; recuperación offline fragmenta lotes. Modelo activo: 4,4–9 solicitudes/min/equipo antes de logs y backlog.</td>
+<td><code>AZCKeeper_Client/Core/CoreService.cs:615</code>; <code>AZCKeeper_Client/Update/UpdateManager.cs:73</code>; <code>AZCKeeper_Client/Config/ConfigManager.cs:278</code>; <code>AZCKeeper_Client/Network/ApiClient.cs:1023</code>.</td>
+</tr>
+<tr>
+<td>5</td>
+<td><span class="sev-alto">Alto</span></td>
+<td>Revisiones divergentes: 931fd12 retiró PAC; checkout de entrega 1638bd4 lo conserva y añade bridge. Falta identificar el artefacto productivo. No se demostró request remoto por URL bloqueada.</td>
+<td><code>AZCKeeper_Client/Blocking/WebBlockingManager.cs:14</code>, <code>AZCKeeper_Client/Blocking/WebBlockingManager.cs:44</code>, <code>AZCKeeper_Client/Blocking/WebBlockingManager.cs:81</code>; contraste histórico en §5.4.</td>
+</tr>
+<tr>
+<td>6</td>
+<td><span class="sev-alto">Alto</span></td>
+<td>Instalación desde cero no reproducible ejecutando los SQL entregados: falta tabla de enrolamientos, hay ALTER redundantes, faltan seeds obligatorios y existe una migración destructiva legacy.</td>
+<td><code>AZCKeeper_Client/Web/src/Repos/PendingEnrollmentRepo.php:24</code>; <code>AZCKeeper_Client/Web/public/admin/pending-users.php:87</code>; <code>AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:90</code>; <code>AZCKeeper_Client/Web/migrations/keeper_org_independence.sql:167</code>.</td>
+</tr>
+<tr>
+<td>7</td>
+<td><span class="sev-alto">Alto</span></td>
+<td>Revocación incompleta: login crea sesiones sin expiración; bearer no comprueba estado actual del usuario; inactivarlo no revoca sesiones de cliente.</td>
+<td><code>AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:153</code>; <code>AZCKeeper_Client/Web/src/Repos/SessionRepo.php:9</code>; <code>AZCKeeper_Client/Web/public/admin/users.php:212</code>.</td>
+</tr>
+<tr>
+<td>8</td>
+<td><span class="sev-alto">Alto</span></td>
+<td>Autorización administrativa/CSRF inconsistentes: acceso al módulo puede permitir acciones globales; force-handshake exige únicamente sesión administrativa.</td>
+<td><code>AZCKeeper_Client/Web/public/admin/policies.php:19</code>; <code>AZCKeeper_Client/Web/public/admin/policies_diagnostic_backup.php:25</code>; <code>AZCKeeper_Client/Web/src/Endpoints/ForceHandshake.php:10</code>; <code>AZCKeeper_Client/Web/public/admin/admin_auth.php:274</code>.</td>
+</tr>
+<tr>
+<td>9</td>
+<td><span class="sev-alto">Alto</span></td>
+<td>PIN de desbloqueo guardado en configuración y escrito en logs; redacción remota no lo contempla y panel de logs es global.</td>
+<td><code>AZCKeeper_Client/Config/ConfigManager.cs:416</code>; <code>AZCKeeper_Client/Core/CoreService.cs:551</code>, <code>AZCKeeper_Client/Core/CoreService.cs:561</code>; <code>AZCKeeper_Client/Web/src/Endpoints/ClientLogBatch.php:113</code>; <code>AZCKeeper_Client/Web/public/admin/logs.php:47</code>.</td>
+</tr>
+<tr>
+<td>10</td>
+<td><span class="sev-alto">Alto</span></td>
+<td>Crecimiento/cálculo sin control suficiente: episodios sin idempotencia ni retención operativa identificada; panel con lecturas completas y cron global de cinco minutos sin checkpoint.</td>
+<td><code>AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:149</code>; <code>AZCKeeper_Client/Web/public/admin/user-dashboard.php:329</code>; <code>AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:58</code>; <code>AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:434</code>.</td>
+</tr>
+</tbody></table>
+<p><strong>Prioridad de decisión:</strong> corregir autenticación, aislamiento y actualización antes de abrir el sistema a empresas independientes; reducir tráfico antes de ampliar flota; consolidar esquema/despliegue antes de migrar infraestructura. Un VPS aumenta margen operativo, pero conserva esos defectos si solo se traslada el código.</p>
+<h2 id="2-pregunta-1-organización-del-endpointapi-3">2. Pregunta 1 — Organización del endpoint/API</h2>
+<h3 id="21-arquitectura-validación-y-errores-4">2.1 Arquitectura, validación y errores</h3>
+<p>El front controller lee PATH_INFO/REQUEST_URI, normaliza /index.php, APP_BASE_URL y API_PREFIX (default /api), y despacha una tabla explícita con 404/405. No publica versión de API ni OPTIONS. Bootstrap importa manualmente repositorios, servicios y todos los endpoints. La separación nominal existe, pero handlers y páginas también contienen SQL, autenticación y lógica de negocio: reutilizar casos de uso para terceros exige separarlos (AZCKeeper_Client/Web/public/index.php:7, AZCKeeper_Client/Web/public/index.php:13, AZCKeeper_Client/Web/public/index.php:20, AZCKeeper_Client/Web/public/index.php:26, AZCKeeper_Client/Web/public/index.php:44, AZCKeeper_Client/Web/public/index.php:66; AZCKeeper_Client/Web/src/bootstrap.php:15, AZCKeeper_Client/Web/src/bootstrap.php:34; AZCKeeper_Client/Web/src/Endpoints/ActivityDay.php:104).</p>
+<p>Http::jsonInput lee todo el cuerpo antes de los límites particulares y convierte vacío/JSON inválido en array vacío. No hay límite global de bytes ni validación central de Content-Type. El bearer admite Authorization, cabecera redirigida y X-Auth-Token. Hay validadores comunes de fechas, enteros, escape HTML y dominios, pero su uso no es uniforme (AZCKeeper_Client/Web/src/Http.php:19, AZCKeeper_Client/Web/src/Http.php:28; AZCKeeper_Client/Web/src/InputValidator.php:15, AZCKeeper_Client/Web/src/InputValidator.php:38, AZCKeeper_Client/Web/src/InputValidator.php:64, AZCKeeper_Client/Web/src/InputValidator.php:92).</p>
+<p><strong>Alto — límites/errores heterogéneos:</strong> no hay capturador global de Throwable alrededor del despacho; WindowEpisode y batch pueden devolver detalle SQL. El límite de actividad de 16 KiB se aplica después de deserializar. Logs limita registros/mensaje, pero no meta. Propuesta: límite webserver y aplicación, error uniforme con correlation ID, detalles solo en logs restringidos (AZCKeeper_Client/Web/public/index.php:66; AZCKeeper_Client/Web/src/Endpoints/WindowEpisode.php:125; AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:176; AZCKeeper_Client/Web/src/Endpoints/ActivityDay.php:92; AZCKeeper_Client/Web/src/Endpoints/ClientLogBatch.php:32, AZCKeeper_Client/Web/src/Endpoints/ClientLogBatch.php:90).</p>
+<h3 id="22-inventario-completo-del-router-api-5">2.2 Inventario completo del router API</h3>
+<p>Prefijo lógico /api, configurable; la URL física puede conservar /index.php/api. R = lectura; W = inserción, actualización o borrado. <strong>B</strong> = bearer validado mediante keeper_sessions JOIN keeper_users; todas las filas B añaden lectura de esas tablas. Tener device_id en sesión no equivale a verificar siempre el dispositivo exacto: varios handlers comparan su propietario con el usuario (AZCKeeper_Client/Web/src/AuthService.php:16; AZCKeeper_Client/Web/src/Repos/SessionRepo.php:9).</p>
+<table>
+<thead>
+<tr>
+<th>Método/ruta</th>
+<th>Auth/condición</th>
+<th>Tablas adicionales R / W</th>
+<th>Evidencia</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GET /health</td>
+<td>Pública; no comprueba BD</td>
+<td>Ninguna</td>
+<td>AZCKeeper_Client/Web/public/index.php:46; AZCKeeper_Client/Web/src/Endpoints/Health.php:7.</td>
+</tr>
+<tr>
+<td>GET /client/version</td>
+<td>Pública</td>
+<td>R keeper_client_releases</td>
+<td>AZCKeeper_Client/Web/public/index.php:48; AZCKeeper_Client/Web/src/Repos/ReleaseRepo.php:39.</td>
+</tr>
+<tr>
+<td>GET /client/activity-day</td>
+<td>B; dispositivo propio activo; 30/min por usuario</td>
+<td>R keeper_devices, keeper_activity_day</td>
+<td>AZCKeeper_Client/Web/public/index.php:47; AZCKeeper_Client/Web/src/Endpoints/ActivityDay.php:188, AZCKeeper_Client/Web/src/Endpoints/ActivityDay.php:210, AZCKeeper_Client/Web/src/Endpoints/ActivityDay.php:225.</td>
+</tr>
+<tr>
+<td>POST /client/login</td>
+<td>Sin sesión previa; CAZCKeeper_Client/contraseña, legacy y fallback Keeper</td>
+<td>R employee (legacy). R/W keeper_users, keeper_devices, keeper_user_assignments, keeper_enrollment_requests. W keeper_sessions, keeper_audit_log</td>
+<td>AZCKeeper_Client/Web/public/index.php:52; AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:31, AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:72, AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:130, AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:153; AZCKeeper_Client/Web/src/Repos/PendingEnrollmentRepo.php:43.</td>
+</tr>
+<tr>
+<td>POST /client/handshake</td>
+<td>B; crea GUID desconocido y puede reasignar existente</td>
+<td>R/W keeper_devices. R keeper_policy_assignments, keeper_work_schedules</td>
+<td>AZCKeeper_Client/Web/public/index.php:51; AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:59, AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:67, AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:77, AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:87, AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:142.</td>
+</tr>
+<tr>
+<td>POST /client/activity-day</td>
+<td>B; dispositivo propio activo</td>
+<td>R keeper_devices. R/W keeper_activity_day (upsert)</td>
+<td>AZCKeeper_Client/Web/public/index.php:53; AZCKeeper_Client/Web/src/Endpoints/ActivityDay.php:77, AZCKeeper_Client/Web/src/Endpoints/ActivityDay.php:104.</td>
+</tr>
+<tr>
+<td>POST /client/window-episode</td>
+<td>B; dispositivo propio activo</td>
+<td>R keeper_devices. W keeper_window_episode</td>
+<td>AZCKeeper_Client/Web/public/index.php:54; AZCKeeper_Client/Web/src/Endpoints/WindowEpisode.php:76, AZCKeeper_Client/Web/src/Endpoints/WindowEpisode.php:98.</td>
+</tr>
+<tr>
+<td>POST /client/window-episodes/batch</td>
+<td>B; dispositivo propio activo; máximo 50</td>
+<td>R keeper_devices. W keeper_window_episode</td>
+<td>AZCKeeper_Client/Web/public/index.php:55; AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:32, AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:43, AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:149.</td>
+</tr>
+<tr>
+<td>POST /client/logs</td>
+<td>B; dispositivo propio activo; máximo 50</td>
+<td>R keeper_devices. W keeper_client_log</td>
+<td>AZCKeeper_Client/Web/public/index.php:56; AZCKeeper_Client/Web/src/Endpoints/ClientLogBatch.php:36, AZCKeeper_Client/Web/src/Endpoints/ClientLogBatch.php:57, AZCKeeper_Client/Web/src/Endpoints/ClientLogBatch.php:105.</td>
+</tr>
+<tr>
+<td>POST /client/device-lock/unlock</td>
+<td>B; acepta cualquier PIN no vacío</td>
+<td>Ninguna adicional: no compara contra PIN servidor ni escribe bloqueo</td>
+<td>AZCKeeper_Client/Web/public/index.php:57; AZCKeeper_Client/Web/src/Endpoints/DeviceLock.php:65.</td>
+</tr>
+<tr>
+<td>POST /client/event</td>
+<td>Sin auth en stub; siempre 501</td>
+<td>Ninguna</td>
+<td>AZCKeeper_Client/Web/public/index.php:58; AZCKeeper_Client/Web/src/Endpoints/EventIngest.php:7.</td>
+</tr>
+<tr>
+<td>POST /client/force-handshake</td>
+<td>Cookie keeper_admin_token; no permiso de acción/scope</td>
+<td>R keeper_admin_sessions, keeper_admin_accounts, keeper_users. W keeper_policy_assignments globales</td>
+<td>AZCKeeper_Client/Web/public/index.php:59; AZCKeeper_Client/Web/src/Endpoints/ForceHandshake.php:10, AZCKeeper_Client/Web/src/Endpoints/ForceHandshake.php:38.</td>
+</tr>
+<tr>
+<td>POST /client/re-enroll</td>
+<td>Sin credenciales; GUID, flag y 10/min/IP</td>
+<td>R keeper_panel_settings, keeper_users. R/W keeper_devices, keeper_audit_log. W keeper_sessions</td>
+<td>AZCKeeper_Client/Web/public/index.php:60; AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:35, AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:43, AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:65, AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:103.</td>
+</tr>
+<tr>
+<td>POST /client/security/report</td>
+<td>B; dispositivo propio activo; hasta 100 controles</td>
+<td>R keeper_devices. R/W keeper_security_state</td>
+<td>AZCKeeper_Client/Web/public/index.php:61; AZCKeeper_Client/Web/src/Endpoints/SecurityReport.php:44, AZCKeeper_Client/Web/src/Endpoints/SecurityReport.php:65; AZCKeeper_Client/Web/src/Repos/SecurityStateRepo.php:20.</td>
+</tr>
+<tr>
+<td>POST /cron/productivity</td>
+<td>CRON_API_KEY en X-Cron-Key o query; global</td>
+<td>R keeper_panel_settings, keeper_users, keeper_activity_day, keeper_window_episode, keeper_work_schedules, keeper_suspicious_apps. R/W keeper_focus_daily, keeper_dual_job_alerts. W purga keeper_client_log</td>
+<td>AZCKeeper_Client/Web/public/index.php:62; AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:28, AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:66, AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:94, AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:119; AZCKeeper_Client/Web/src/Services/ProductivityCalculator.php:139, AZCKeeper_Client/Web/src/Services/ProductivityCalculator.php:467; AZCKeeper_Client/Web/src/Services/DualJobDetector.php:99, AZCKeeper_Client/Web/src/Services/DualJobDetector.php:291.</td>
+</tr>
+</tbody></table>
+<p>GET /cron/productivity no está en el router, aunque un comentario sugiera GET. DeviceLock::getStatus existe pero no tiene ruta. Force-handshake incrementa versiones; no empuja mensajes ni adelanta timers de los equipos (AZCKeeper_Client/Web/public/index.php:44; AZCKeeper_Client/Web/src/Endpoints/DeviceLock.php:15; AZCKeeper_Client/Web/src/Endpoints/ForceHandshake.php:38).</p>
+<h3 id="23-inventario-completo-del-panel-php-6">2.3 Inventario completo del panel PHP</h3>
+<p>Base /admin/ dentro del docroot declarado. Son scripts directos, fuera del router API.</p>
+<p><strong>P, autenticación común:</strong> cookie validada contra keeper_admin_sessions, keeper_admin_accounts y keeper_users; roles keeper_panel_roles, ajustes keeper_panel_settings y piso histórico keeper_firmas. Una visita también puede disparar sincronización global: R employee, keeper_users, keeper_user_assignments; W keeper_user_assignments, con throttle de sesión PHP. Por tanto GET autenticado puede escribir indirectamente. Aplica a todas las filas P (AZCKeeper_Client/Web/public/admin/admin_auth.php:39, AZCKeeper_Client/Web/public/admin/admin_auth.php:53, AZCKeeper_Client/Web/public/admin/admin_auth.php:63, AZCKeeper_Client/Web/public/admin/admin_auth.php:88; AZCKeeper_Client/Web/src/LegacySyncService.php:93, AZCKeeper_Client/Web/src/LegacySyncService.php:107, AZCKeeper_Client/Web/src/LegacySyncService.php:129, AZCKeeper_Client/Web/src/LegacySyncService.php:144).</p>
+<p><strong>M:</strong> guard de acceso al módulo del menú; <strong>A:</strong> canDo en acciones. Ninguna abreviatura implica por sí sola comprobación del tenant del objeto. Tablas siguientes adicionales a P; “catálogos organizativos” se concreta como keeper_sociedades, keeper_firmas, keeper_areas, keeper_cargos y keeper_sedes cuando se usa ese conjunto.</p>
+<table>
+<thead>
+<tr>
+<th>Script / método y acciones</th>
+<th>Auth</th>
+<th>Tablas R/W y observaciones</th>
+<th>Evidencia</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>login.php GET formulario / POST login</td>
+<td>Pública; email/password, estado de cuenta/usuario</td>
+<td>R keeper_users, keeper_admin_accounts; W keeper_admin_sessions, last_login de keeper_admin_accounts</td>
+<td>AZCKeeper_Client/Web/public/admin/login.php:28, AZCKeeper_Client/Web/public/admin/login.php:37, AZCKeeper_Client/Web/public/admin/login.php:47; AZCKeeper_Client/Web/src/Repos/AdminAuthRepo.php:42.</td>
+</tr>
+<tr>
+<td>logout.php GET accesible, sin guard de método</td>
+<td>Cookie si existe</td>
+<td>W revocación keeper_admin_sessions</td>
+<td>AZCKeeper_Client/Web/public/admin/logout.php:12.</td>
+</tr>
+<tr>
+<td>index.php GET</td>
+<td>P; scope en lectura</td>
+<td>R keeper_users, keeper_user_assignments, keeper_devices, keeper_activity_day, keeper_window_episode, keeper_focus_daily, keeper_dual_job_alerts</td>
+<td>AZCKeeper_Client/Web/public/admin/index.php:46, AZCKeeper_Client/Web/public/admin/index.php:58, AZCKeeper_Client/Web/public/admin/index.php:142, AZCKeeper_Client/Web/public/admin/index.php:254.</td>
+</tr>
+<tr>
+<td>users.php GET lista; GET ajax=search_employee/get_user; POST create_user/toggle_admin/edit_user/delete_user</td>
+<td>P; A en POST; AJAX no hereda scope de lista</td>
+<td>R employee, keeper_users, keeper_devices, keeper_user_assignments, keeper_sociedades, keeper_firmas, keeper_areas, keeper_cargos, keeper_activity_day, keeper_window_episode. W keeper_users, keeper_admin_accounts</td>
+<td>AZCKeeper_Client/Web/public/admin/users.php:19, AZCKeeper_Client/Web/public/admin/users.php:54, AZCKeeper_Client/Web/public/admin/users.php:68, AZCKeeper_Client/Web/public/admin/users.php:154, AZCKeeper_Client/Web/public/admin/users.php:176, AZCKeeper_Client/Web/public/admin/users.php:212, AZCKeeper_Client/Web/public/admin/users.php:260, AZCKeeper_Client/Web/public/admin/users.php:363.</td>
+</tr>
+<tr>
+<td>user-dashboard.php GET HTML/ajax=episodes/csv/daily_csv</td>
+<td>P + canViewUser, que omite sede</td>
+<td>R keeper_users, keeper_user_assignments, keeper_sociedades, keeper_firmas, keeper_areas, keeper_cargos, keeper_devices, keeper_activity_day, keeper_window_episode, keeper_focus_daily, keeper_dual_job_alerts, keeper_work_schedules, keeper_panel_settings</td>
+<td>AZCKeeper_Client/Web/public/admin/user-dashboard.php:15, AZCKeeper_Client/Web/public/admin/user-dashboard.php:36, AZCKeeper_Client/Web/public/admin/user-dashboard.php:203, AZCKeeper_Client/Web/public/admin/user-dashboard.php:220, AZCKeeper_Client/Web/public/admin/user-dashboard.php:338, AZCKeeper_Client/Web/public/admin/user-dashboard.php:362, AZCKeeper_Client/Web/public/admin/user-dashboard.php:384, AZCKeeper_Client/Web/public/admin/user-dashboard.php:443.</td>
+</tr>
+<tr>
+<td>devices.php GET; POST revoke/activate/decommission/delete</td>
+<td>P+M+A; ID de mutación sin scope</td>
+<td>R keeper_devices, keeper_users, keeper_user_assignments, keeper_sociedades, keeper_firmas, keeper_areas, keeper_sedes. W keeper_devices; efectos FK al borrar</td>
+<td>AZCKeeper_Client/Web/public/admin/devices.php:7, AZCKeeper_Client/Web/public/admin/devices.php:19, AZCKeeper_Client/Web/public/admin/devices.php:28, AZCKeeper_Client/Web/public/admin/devices.php:37, AZCKeeper_Client/Web/public/admin/devices.php:48, AZCKeeper_Client/Web/public/admin/devices.php:100.</td>
+</tr>
+<tr>
+<td>assignments.php GET; POST save/batch_assign/delete/reset_override</td>
+<td>P+M+A; lista y mutación con alcance diferente</td>
+<td>R keeper_users, employee, keeper_user_assignments y catálogos organizativos. W keeper_user_assignments</td>
+<td>AZCKeeper_Client/Web/public/admin/assignments.php:15, AZCKeeper_Client/Web/public/admin/assignments.php:42, AZCKeeper_Client/Web/public/admin/assignments.php:80, AZCKeeper_Client/Web/public/admin/assignments.php:127, AZCKeeper_Client/Web/public/admin/assignments.php:139, AZCKeeper_Client/Web/public/admin/assignments.php:204, AZCKeeper_Client/Web/public/admin/assignments.php:227.</td>
+</tr>
+<tr>
+<td>organization.php GET; GET ajax=test_connection; POST create/edit/delete por entidad</td>
+<td>P+M+A</td>
+<td>R/W catálogos organizativos, keeper_data_sources, keeper_user_assignments al desvincular. Prueba externa SELECT 1</td>
+<td>AZCKeeper_Client/Web/public/admin/organization.php:23, AZCKeeper_Client/Web/public/admin/organization.php:28, AZCKeeper_Client/Web/public/admin/organization.php:142, AZCKeeper_Client/Web/public/admin/organization.php:186, AZCKeeper_Client/Web/public/admin/organization.php:218.</td>
+</tr>
+<tr>
+<td>policies.php GET; POST update_global/save_user_override/remove_override/batch_apply/batch_remove/force_push/save_global_schedule/save_user_schedule/remove_user_schedule/save_leisure_apps</td>
+<td>P+M; sin canDo específico en handlers</td>
+<td>R/W keeper_policy_assignments, keeper_work_schedules, keeper_panel_settings. R keeper_users, keeper_user_assignments, keeper_sociedades, keeper_firmas, keeper_areas, keeper_devices</td>
+<td>AZCKeeper_Client/Web/public/admin/policies.php:11, AZCKeeper_Client/Web/public/admin/policies.php:19, AZCKeeper_Client/Web/public/admin/policies.php:26, AZCKeeper_Client/Web/public/admin/policies.php:83, AZCKeeper_Client/Web/public/admin/policies.php:123, AZCKeeper_Client/Web/public/admin/policies.php:131, AZCKeeper_Client/Web/public/admin/policies.php:184, AZCKeeper_Client/Web/public/admin/policies.php:250.</td>
+</tr>
+<tr>
+<td>policies_diagnostic_backup.php GET; POST activate/deactivate/delete/create/update/force_push</td>
+<td>P + superadmin; csrfOk=true</td>
+<td>R/W keeper_policy_assignments; R keeper_users, keeper_devices</td>
+<td>AZCKeeper_Client/Web/public/admin/policies_diagnostic_backup.php:11, AZCKeeper_Client/Web/public/admin/policies_diagnostic_backup.php:23, AZCKeeper_Client/Web/public/admin/policies_diagnostic_backup.php:25, AZCKeeper_Client/Web/public/admin/policies_diagnostic_backup.php:83, AZCKeeper_Client/Web/public/admin/policies_diagnostic_backup.php:135.</td>
+</tr>
+<tr>
+<td>releases.php GET; POST create/update/toggle_active/delete</td>
+<td>P+M+A</td>
+<td>R/W keeper_client_releases</td>
+<td>AZCKeeper_Client/Web/public/admin/releases.php:9, AZCKeeper_Client/Web/public/admin/releases.php:24, AZCKeeper_Client/Web/public/admin/releases.php:57, AZCKeeper_Client/Web/public/admin/releases.php:94, AZCKeeper_Client/Web/public/admin/releases.php:107, AZCKeeper_Client/Web/public/admin/releases.php:144.</td>
+</tr>
+<tr>
+<td>admin-users.php GET; POST create/update/toggle/delete</td>
+<td>P+M+A; checks de jerarquía del rol solicitado, no frontera completa de scope/objeto</td>
+<td>R/W keeper_admin_accounts; W keeper_admin_sessions al borrar; R keeper_users, keeper_panel_roles, keeper_firmas, keeper_areas, keeper_sedes, keeper_sociedades</td>
+<td>AZCKeeper_Client/Web/public/admin/admin-users.php:9, AZCKeeper_Client/Web/public/admin/admin-users.php:24, AZCKeeper_Client/Web/public/admin/admin-users.php:46, AZCKeeper_Client/Web/public/admin/admin-users.php:66, AZCKeeper_Client/Web/public/admin/admin-users.php:88, AZCKeeper_Client/Web/public/admin/admin-users.php:108, AZCKeeper_Client/Web/public/admin/admin-users.php:121.</td>
+</tr>
+<tr>
+<td>roles.php GET; POST create/edit/delete</td>
+<td>P+M; lógica de jerarquía, sin guard uniforme de acción</td>
+<td>R/W keeper_panel_roles, keeper_panel_settings; R keeper_admin_accounts</td>
+<td>AZCKeeper_Client/Web/public/admin/roles.php:12, AZCKeeper_Client/Web/public/admin/roles.php:130, AZCKeeper_Client/Web/public/admin/roles.php:161, AZCKeeper_Client/Web/public/admin/roles.php:206, AZCKeeper_Client/Web/public/admin/roles.php:262, AZCKeeper_Client/Web/public/admin/roles.php:276.</td>
+</tr>
+<tr>
+<td>panel-settings.php GET; POST save_visibility</td>
+<td>P+M</td>
+<td>R/W keeper_panel_settings; R keeper_panel_roles</td>
+<td>AZCKeeper_Client/Web/public/admin/panel-settings.php:9, AZCKeeper_Client/Web/public/admin/panel-settings.php:45, AZCKeeper_Client/Web/public/admin/panel-settings.php:58.</td>
+</tr>
+<tr>
+<td>pending-users.php GET; POST approve/reject</td>
+<td>P+M+A; lista global</td>
+<td>R/W keeper_enrollment_requests; R/W keeper_users al aprobar; W keeper_audit_log</td>
+<td>AZCKeeper_Client/Web/public/admin/pending-users.php:10, AZCKeeper_Client/Web/public/admin/pending-users.php:33, AZCKeeper_Client/Web/public/admin/pending-users.php:49, AZCKeeper_Client/Web/public/admin/pending-users.php:84; AZCKeeper_Client/Web/src/Repos/PendingEnrollmentRepo.php:131.</td>
+</tr>
+<tr>
+<td>productivity.php GET; POST calculate/save_focus_weights</td>
+<td>P+M; can_view habilita POST; sí valida CSRF</td>
+<td>R keeper_users, keeper_user_assignments, keeper_firmas, keeper_areas, keeper_activity_day, keeper_window_episode, keeper_work_schedules, keeper_suspicious_apps; R/W keeper_focus_daily, keeper_dual_job_alerts, keeper_panel_settings</td>
+<td>AZCKeeper_Client/Web/public/admin/productivity.php:6, AZCKeeper_Client/Web/public/admin/productivity.php:13, AZCKeeper_Client/Web/public/admin/productivity.php:29, AZCKeeper_Client/Web/public/admin/productivity.php:48, AZCKeeper_Client/Web/public/admin/productivity.php:77, AZCKeeper_Client/Web/public/admin/productivity.php:101.</td>
+</tr>
+<tr>
+<td>dual-job-alerts.php GET; POST review/add_classification/delete_classification/toggle_classification</td>
+<td>P+M+can_review; UPDATE review sin scope del objeto</td>
+<td>R keeper_dual_job_alerts, keeper_users, keeper_user_assignments, keeper_firmas, keeper_areas, keeper_admin_accounts, keeper_window_episode. R/W keeper_app_classifications; W keeper_dual_job_alerts</td>
+<td>AZCKeeper_Client/Web/public/admin/dual-job-alerts.php:6, AZCKeeper_Client/Web/public/admin/dual-job-alerts.php:18, AZCKeeper_Client/Web/public/admin/dual-job-alerts.php:33, AZCKeeper_Client/Web/public/admin/dual-job-alerts.php:43, AZCKeeper_Client/Web/public/admin/dual-job-alerts.php:49, AZCKeeper_Client/Web/public/admin/dual-job-alerts.php:192; AZCKeeper_Client/Web/src/Repos/ProductivityRepo.php:281.</td>
+</tr>
+<tr>
+<td>install-coverage.php GET; POST update_note/toggle_exempt/update_threshold</td>
+<td>P+M+A</td>
+<td>R employee, keeper_users, keeper_devices, keeper_client_releases, keeper_firmas, keeper_areas, keeper_cargos, keeper_sedes; R/W keeper_install_coverage_notes, keeper_panel_settings</td>
+<td>AZCKeeper_Client/Web/public/admin/install-coverage.php:15, AZCKeeper_Client/Web/public/admin/install-coverage.php:27, AZCKeeper_Client/Web/public/admin/install-coverage.php:54, AZCKeeper_Client/Web/public/admin/install-coverage.php:75, AZCKeeper_Client/Web/public/admin/install-coverage.php:136, AZCKeeper_Client/Web/public/admin/install-coverage.php:168.</td>
+</tr>
+<tr>
+<td>logs.php GET logs/audit/filtros</td>
+<td>P+M; consultas globales</td>
+<td>R keeper_client_log, keeper_audit_log, keeper_devices, keeper_users</td>
+<td>AZCKeeper_Client/Web/public/admin/logs.php:14, AZCKeeper_Client/Web/public/admin/logs.php:40, AZCKeeper_Client/Web/public/admin/logs.php:47, AZCKeeper_Client/Web/public/admin/logs.php:50, AZCKeeper_Client/Web/public/admin/logs.php:67.</td>
+</tr>
+<tr>
+<td>sedes-dashboard.php GET lista/detalle</td>
+<td>P+M; menú previsto para superadmin; queries globales</td>
+<td>R keeper_sedes, keeper_users, keeper_user_assignments, keeper_devices, keeper_activity_day, keeper_window_episode</td>
+<td>AZCKeeper_Client/Web/public/admin/sedes-dashboard.php:8, AZCKeeper_Client/Web/public/admin/sedes-dashboard.php:50, AZCKeeper_Client/Web/public/admin/sedes-dashboard.php:54, AZCKeeper_Client/Web/public/admin/sedes-dashboard.php:95, AZCKeeper_Client/Web/public/admin/sedes-dashboard.php:112.</td>
+</tr>
+<tr>
+<td>server-health.php GET, refresco navegador 30 s</td>
+<td>P+M</td>
+<td>R information_schema.TABLES, SHOW STATUS/VARIABLES, keeper_sessions, keeper_devices; diagnóstico host</td>
+<td>AZCKeeper_Client/Web/public/admin/server-health.php:9, AZCKeeper_Client/Web/public/admin/server-health.php:55, AZCKeeper_Client/Web/public/admin/server-health.php:110, AZCKeeper_Client/Web/public/admin/server-health.php:137, AZCKeeper_Client/Web/public/admin/server-health.php:144, AZCKeeper_Client/Web/public/admin/server-health.php:226.</td>
+</tr>
+</tbody></table>
+<p>admin_auth.php y partials/layout_header.php/layout_footer.php también están bajo docroot, pero son includes, no casos de uso. Propuesta: denegar acceso HTTP directo manteniendo inclusión PHP. Header no autentica por sí mismo (AZCKeeper_Client/Web/public/admin/admin_auth.php:15; AZCKeeper_Client/Web/public/admin/partials/layout_header.php:1; AZCKeeper_Client/Web/public/admin/partials/layout_footer.php:5).</p>
+<h3 id="24-deuda-que-afecta-extensión-7">2.4 Deuda que afecta extensión</h3>
+<ul>
+<li><strong>Alto:</strong> separar autenticación, permiso de acción y alcance del objeto; el menú debe decidir presentación, no ser la única autorización (AZCKeeper_Client/Web/public/admin/admin_auth.php:133, AZCKeeper_Client/Web/public/admin/admin_auth.php:150, AZCKeeper_Client/Web/public/admin/admin_auth.php:179, AZCKeeper_Client/Web/public/admin/admin_auth.php:274).</li>
+<li><strong>Medio:</strong> mover sync legacy de navegación GET a jobs explícitos por tenant, con checkpoint (AZCKeeper_Client/Web/public/admin/admin_auth.php:53; AZCKeeper_Client/Web/src/LegacySyncService.php:93).</li>
+<li><strong>Medio:</strong> formalizar contratos/casing, errores e inserción parcial: batch puede responder 200 con descartes y el cliente considera éxito todo el lote (AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:161; AZCKeeper_Client/Network/ApiClient.cs:749).</li>
+<li><strong>Bajo:</strong> candidatos residuales sin consumidores K3 encontrados: HandshakeRepo, LegacyAuthRepo, DeviceLock::getStatus y stub EventIngest; confirmar antes de retirarlos (AZCKeeper_Client/Web/src/bootstrap.php:15; AZCKeeper_Client/Web/src/Repos/LegacyAuthRepo.php:13; AZCKeeper_Client/Web/src/Endpoints/DeviceLock.php:15; AZCKeeper_Client/Web/src/Endpoints/EventIngest.php:7).</li>
+</ul>
+<h2 id="3-pregunta-2-portabilidad-a-vpsdocker-8">3. Pregunta 2 — Portabilidad a VPS/Docker</h2>
+<h3 id="31-dependencias-y-configuración-real-9">3.1 Dependencias y configuración real</h3>
+<p>No se encontró dependencia de una API de cPanel: los handlers usan PHP/PDO/archivos. No se encontró Composer, Docker ni .htaccess propio en el árbol web auditado. Esa ausencia no describe archivos externos instalados en el hosting. Bootstrap manual y router requieren proporcionar configuración web explícita (AZCKeeper_Client/Web/src/bootstrap.php:4; AZCKeeper_Client/Web/public/index.php:10; AZCKeeper_Client/Web/src/Db.php:106).</p>
+<table>
+<thead>
+<tr>
+<th>Componente</th>
+<th>Necesidad / evidencia</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>PHP</td>
+<td>Mantener PHP 8.2 como objetivo inicial y verificar ahí; lint local 8.3 no prueba todo el runtime (AZCKeeper_Client/Web/tests/run.php:26).</td>
+</tr>
+<tr>
+<td>Extensiones</td>
+<td>PDO/pdo_mysql, mbstring y openssl; JSON, session, hash, filter y fechas. Evidencia: AZCKeeper_Client/Web/src/Db.php:106, AZCKeeper_Client/Web/src/Db.php:241; AZCKeeper_Client/Web/src/Endpoints/ClientLogBatch.php:123; AZCKeeper_Client/Web/src/Endpoints/WindowEpisode.php:140; AZCKeeper_Client/Web/public/admin/login.php:13.</td>
+</tr>
+<tr>
+<td>MySQL</td>
+<td>MySQL 8.0, JSON/upserts/collations del esquema. No asumir MariaDB intercambiable (AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:170, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:319; AZCKeeper_Client/Web/src/Endpoints/ActivityDay.php:104).</td>
+</tr>
+<tr>
+<td>Webserver</td>
+<td>Apache o Nginx+PHP-FPM, HTTPS, Authorization preservada, PATH_INFO/aliases compatibles (AZCKeeper_Client/Web/public/index.php:13; AZCKeeper_Client/Web/src/Http.php:28; AZCKeeper_Client/Config/ConfigManager.cs:241).</td>
+</tr>
+<tr>
+<td>Legacy</td>
+<td>Tabla employee y columnas que login/sync esperan; no se entrega su esquema completo en la baseline K3 (AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:38; AZCKeeper_Client/Web/src/LegacySyncService.php:129).</td>
+</tr>
+<tr>
+<td>Runtime escribible</td>
+<td>Sesiones PHP, error_log y buckets temporales del limiter; no necesita que todo el código sea escribible (AZCKeeper_Client/Web/public/admin/admin_auth.php:26; AZCKeeper_Client/Web/src/RateLimiter.php:110, AZCKeeper_Client/Web/src/RateLimiter.php:123; AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:82).</td>
+</tr>
+<tr>
+<td>Frontend externo</td>
+<td>Tailwind, Google Fonts, Alpine CDN; aislar de Internet cambia presentación/interacción (AZCKeeper_Client/Web/public/admin/partials/layout_header.php:18, AZCKeeper_Client/Web/public/admin/partials/layout_header.php:49; AZCKeeper_Client/Web/public/admin/partials/layout_footer.php:5).</td>
+</tr>
+</tbody></table>
+<p>El archivo de entorno se busca en Web/.env, hermano de public; el backup en Web/.env.backup. Parser simple, no dotenv completo; valores del archivo prevalecen sobre getenv. Montar variables Docker sin controlar esa precedencia puede conservar configuración antigua (AZCKeeper_Client/Web/src/bootstrap.php:50; AZCKeeper_Client/Web/src/config.php:7, AZCKeeper_Client/Web/src/config.php:25; AZCKeeper_Client/Web/src/Db.php:82).</p>
+<table>
+<thead>
+<tr>
+<th>Variables consumidas</th>
+<th>Función / evidencia</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>DB_HOST, DB_NAME, DB_USER, DB_PASS</td>
+<td>Principal obligatoria (AZCKeeper_Client/Web/src/Db.php:64).</td>
+</tr>
+<tr>
+<td>DB_CHARSET, DB_COLLATION</td>
+<td>Charset/collation conexión (AZCKeeper_Client/Web/src/Db.php:106).</td>
+</tr>
+<tr>
+<td>LEGACY_DB_HOST, LEGACY_DB_NAME, LEGACY_DB_USER, LEGACY_DB_PASS</td>
+<td>Fuente legacy global; fallback principal si falta configuración requerida (AZCKeeper_Client/Web/src/Db.php:181).</td>
+</tr>
+<tr>
+<td>APP_BASE_URL, API_PREFIX</td>
+<td>Routing (AZCKeeper_Client/Web/public/index.php:20, AZCKeeper_Client/Web/public/index.php:26).</td>
+</tr>
+<tr>
+<td>APP_KEY</td>
+<td>Cifra passwords de fuentes; conservar al migrar datos cifrados (AZCKeeper_Client/Web/src/Db.php:238, AZCKeeper_Client/Web/src/Db.php:267).</td>
+</tr>
+<tr>
+<td>CRON_API_KEY</td>
+<td>Auth de cron independiente (AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:119).</td>
+</tr>
+<tr>
+<td>DEBUG</td>
+<td>Puede exponer detalle de excepción de login (AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:184).</td>
+</tr>
+<tr>
+<td>APP_ENV, APP_BASE_PATH</td>
+<td>Aparecen en ejemplo; no se encontraron consumidores K3 (AZCKeeper_Client/Web/.env.example:20, AZCKeeper_Client/Web/.env.example:24).</td>
+</tr>
+</tbody></table>
+<p>El ejemplo no documenta todas las variables consumidas: faltan LEGACY_DB_*, APP_KEY, CRON_API_KEY y DEBUG. Preparar especificación de despliegue sin secretos en Git (AZCKeeper_Client/Web/.env.example:20, AZCKeeper_Client/Web/.env.example:31, AZCKeeper_Client/Web/.env.example:63; consumidores anteriores).</p>
+<h3 id="32-bloqueadores-de-portabilidad-10">3.2 Bloqueadores de portabilidad</h3>
+<ul>
+<li><strong>Alto — failover de escritura:</strong> Db::pdo cambia automáticamente a BD de respaldo al fallar la principal; no verifica réplica, consistencia ni escritor único. Puede bifurcar datos si el respaldo no es una autoridad consistente. “Backup” no garantiza failover seguro (AZCKeeper_Client/Web/src/Db.php:26, AZCKeeper_Client/Web/src/Db.php:80).</li>
+<li><strong>Alto — legacy no es opcional robustamente:</strong> login abre legacyPdo antes del try interno de fallback; fallo de conexión puede impedir llegar al login Keeper. sourceFor(firma) existe y la UI guarda fuentes, pero login/sync usan la fuente global. Se lee db_port pero no se pasa a createConnection (AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:31, AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:37; AZCKeeper_Client/Web/src/LegacySyncService.php:93; AZCKeeper_Client/Web/src/Db.php:204, AZCKeeper_Client/Web/src/Db.php:227).</li>
+<li><strong>Medio — DSN:</strong> principal sin puerto ni opciones explícitas de TLS MySQL. No se comprobó si la conexión productiva está cifrada; definir red privada/TLS y puerto en la migración (AZCKeeper_Client/Web/src/Db.php:106).</li>
+<li><strong>Alto — URL/docroot discrepantes:</strong> cliente inicial usa <a href="https://keep.azclegal.com/public/index.php/api/">https://keep.azclegal.com/public/index.php/api/</a> aunque public ya es el docroot declarado. Plantilla administrativa conserva <a href="https://one.azclegal.com/keeper/public/index.php/api/">https://one.azclegal.com/keeper/public/index.php/api/</a>. Pueden existir aliases externos, pero no están reproducidos en el repo. Además, guardar ApiBaseUrl en handshake no reconstruye HttpClient/BaseAddress (AZCKeeper_Client/Config/ConfigManager.cs:241; AZCKeeper_Client/Web/public/admin/policies.php:1144; AZCKeeper_Client/Web/public/admin/policies_diagnostic_backup.php:896; AZCKeeper_Client/Core/CoreService.cs:523; AZCKeeper_Client/Network/ApiClient.cs:81).</li>
+<li><strong>Medio — fechas:</strong> panel fuerza America/Bogota y conexión -05:00; sesiones combinan UTC con funciones PHP/SQL y exportación resta cinco horas. El desfase real depende de configuración no inspeccionada. Normalizar UTC almacenado/conversión explícita por tenant (AZCKeeper_Client/Web/public/admin/admin_auth.php:24, AZCKeeper_Client/Web/public/admin/admin_auth.php:31; AZCKeeper_Client/Web/src/Repos/AdminAuthRepo.php:47; AZCKeeper_Client/Web/public/admin/user-dashboard.php:394; AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:137).</li>
+</ul>
+<h3 id="33-migraciones-no-son-una-secuencia-reproducible-desde-cero-11">3.3 Migraciones: no son una secuencia reproducible desde cero</h3>
+<p>Se inventariaron 23 SQL K3, sin ejecutar ninguno.</p>
+<table>
+<thead>
+<tr>
+<th>Problema</th>
+<th>Consecuencia / evidencia</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Falta CREATE de keeper_enrollment_requests</td>
+<td>Pendientes/enrolamiento fallan en instalación limpia; UI cita add_enrollment_requests.sql inexistente (AZCKeeper_Client/Web/src/Repos/PendingEnrollmentRepo.php:24, AZCKeeper_Client/Web/src/Repos/PendingEnrollmentRepo.php:43; AZCKeeper_Client/Web/public/admin/pending-users.php:87).</td>
+</tr>
+<tr>
+<td>legacy_employee_id NOT NULL en baseline</td>
+<td>Alta local requiere reconciliar nullable (AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:172; AZCKeeper_Client/Web/migrations/fix_keeper_users_legacy_nullable.sql:8; AZCKeeper_Client/Web/src/Repos/PendingEnrollmentRepo.php:131).</td>
+</tr>
+<tr>
+<td>ALTER de columnas ya existentes</td>
+<td>applicable_days/manual_override se añaden otra vez (AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:243, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:262; AZCKeeper_Client/Web/migrations/add_schedule_days.sql:9; AZCKeeper_Client/Web/migrations/add_manual_override_assignments.sql:6).</td>
+</tr>
+<tr>
+<td>Limpieza de índices depende de modificaciones manuales previas</td>
+<td>DROP de índices ausentes y ADD de presentes según baseline (AZCKeeper_Client/Web/migrations/keeper_index_cleanup.sql:15, AZCKeeper_Client/Web/migrations/keeper_index_cleanup.sql:20, AZCKeeper_Client/Web/migrations/keeper_index_cleanup.sql:48, AZCKeeper_Client/Web/migrations/keeper_index_cleanup.sql:69; AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:184, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:439).</td>
+</tr>
+<tr>
+<td>Unicidad de assignment divergente</td>
+<td>keeper_admin_auth usa usuario único; full schema solo índice (AZCKeeper_Client/Web/migrations/keeper_admin_auth.sql:60; AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:267).</td>
+</tr>
+<tr>
+<td>Migración destructiva del legado</td>
+<td>keeper_org_independence elimina tabla sociedades; no ejecutar ciegamente en BD compartida (AZCKeeper_Client/Web/migrations/keeper_org_independence.sql:167).</td>
+</tr>
+<tr>
+<td>Seeds incompletos</td>
+<td>Roles/catálogo no dejan primer admin, política global activa, release ni cron operativo; handshake falla sin global (AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:503, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:510; AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:90).</td>
+</tr>
+<tr>
+<td>Dependencias/columnas posteriores</td>
+<td>Empleo, decommission, cobertura, productividad y seguridad necesitan orden/reconciliación; populate depende de employee (AZCKeeper_Client/Web/migrations/populate_keeper_user_assignments.sql:47; AZCKeeper_Client/Web/migrations/add_employment_status.sql:4; AZCKeeper_Client/Web/migrations/add_device_decommission.sql:4; AZCKeeper_Client/Web/migrations/keeper_security_state.sql:1).</td>
+</tr>
+</tbody></table>
+<p>*<em>No ejecutar todos los <em>.sql alfabéticamente.</em></em> Propuesta: comparar SHOW CREATE TABLE de una copia autorizada de producción, consolidar baseline y migraciones versionadas y probar instalación vacía, upgrade desde snapshot y restauración. Los índices del repo no prueban su presencia en el servidor.</p>
+<h3 id="34-cron-y-archivos-generados-12">3.4 Cron y archivos generados</h3>
+<p>Único cron publicado: POST productividad. Lotes 50, presupuesto global 300 s, pausa entre lotes; “timeout por usuario” solo registra exceso después de terminar, no cancela SQL/cálculo. Sin lock/checkpoint; puede responder ok:true habiendo procesado solo parte. Purga de logs al final se omite si productividad está deshabilitada (AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:20, AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:35, AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:58, AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:73, AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:94, AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:104).</p>
+<p>Propuesta inicial: scheduler diario 02:00 America/Bogota para ayer, POST con X-Cron-Key desde archivo protegido del scheduler, comprobando processed == total_users. Esa hora es recomendación, no cron encontrado. Separar después retención y productividad en jobs reanudables.</p>
+<p>Backend genera sesiones, temporales de rate limit y logs; CSV se emite a respuesta, no requiere directorio persistente de exports. Cliente genera config, DPAPI, SQLite, logs, caché de política y ZIP temporal; esos archivos no van al contenedor PHP (AZCKeeper_Client/Web/src/RateLimiter.php:110; AZCKeeper_Client/Web/public/admin/login.php:13; AZCKeeper_Client/Web/public/admin/user-dashboard.php:362; AZCKeeper_Client/Network/OfflineQueue.cs:26; AZCKeeper_Client/Auth/AuthManager.cs:96; AZCKeeper_Client/Blocking/WebBlockingManager.cs:39; AZCKeeper_Client/Update/UpdateManager.cs:208).</p>
+<h3 id="35-procedimiento-propuesto-de-despliegue-13">3.5 Procedimiento propuesto de despliegue</h3>
+<p>No ejecutado; resuelve los bloqueadores anteriores.</p>
+<ol>
+<li>Fijar artefacto productivo con hashes de scp/binarios y configuración efectiva; resolver implementación de bloqueo.</li>
+<li>Respaldar BD, configuración protegida y APP_KEY; comprobar restauración; identificar dependencia legacy. Un único escritor.</li>
+<li>Consolidar baseline MySQL 8.0 y upgrades versionados, constraints, índices y seeds.</li>
+<li>Preparar PHP-FPM 8.2/extensiones, Nginx/Apache, HTTPS, límites de cuerpo/tiempo, logs, BD privada/TLS; código inmutable y runtime escribible mínimo.</li>
+<li>Publicar solo public; proteger env/src/migrations, diagnóstico backup e includes directos; mantener aliases exactos y Authorization de clientes existentes.</li>
+<li>Montar configuración fuera de imagen/Git, establecer UTAZCKeeper_Client/conversiones y probar fallos de principal/legacy.</li>
+<li>Inicializar primer admin seguro, permisos, política, horarios, release validada y cron; alertar jobs incompletos.</li>
+<li>Probar en staging login/renovación/revocación, alta nativa, batch parcial, duplicados, offline, dos tenants, CSRF, firma del updater y rutas antiguas.</li>
+<li>Reducir timers y migrar por anillos conservando hostname/contratos; observar sockets/IP, 403/429/5xx, latencia BD y edad de cola.</li>
+<li>Rollback de artefacto y datos compatible durante transición. Dimensionar VPS mediante carga representativa, sin prometer capacidad por una talla arbitraria.</li>
+</ol>
+<h2 id="4-pregunta-3-cliente-modularidad-y-eficiencia-14">4. Pregunta 3 — Cliente: modularidad y eficiencia</h2>
+<h3 id="41-estructura-y-configuración-15">4.1 Estructura y configuración</h3>
+<p>WinForms net8.0-windows con SQLite; CoreService concentra aproximadamente 1.487 líneas de auth, UI, trackers, timers, políticas, red y updater. Program mantiene core estático; TimeSync/LocalLogger son estáticos y CurrentConfig mutable compartido (AZCKeeper_Client/AZCKeeper_Client.csproj:5, AZCKeeper_Client/AZCKeeper_Client.csproj:7, AZCKeeper_Client/AZCKeeper_Client.csproj:22; AZCKeeper_Client/Core/CoreService.cs:138; AZCKeeper_Client/Program.cs:30; AZCKeeper_Client/Core/TimeSync.cs:4; AZCKeeper_Client/Logging/LocalLogger.cs:12; AZCKeeper_Client/Config/ConfigManager.cs:149).</p>
+<p><strong>Medio:</strong> los módulos se construyen al inicializar; actualizar flags no reconstruye consistentemente módulos ni valores capturados. El handshake copia minutos pero no HandshakeIntervalSeconds del DTO antes de preferir los segundos locales. Hot reload no es uniforme (AZCKeeper_Client/Core/CoreService.cs:108, AZCKeeper_Client/Core/CoreService.cs:655, AZCKeeper_Client/Core/CoreService.cs:691, AZCKeeper_Client/Core/CoreService.cs:862, AZCKeeper_Client/Core/CoreService.cs:1008; AZCKeeper_Client/Network/ApiClient.cs:1244).</p>
+<p>Propuesta: separar planificador de red, cola persistente, captura, política y updater; configuración efectiva inmutable/versionada; aplicar diferencias, sin reiniciar todo por heartbeat.</p>
+<h3 id="42-concurrencia-y-consistencia-16">4.2 Concurrencia y consistencia</h3>
+<table>
+<thead>
+<tr>
+<th>Severidad</th>
+<th>Hallazgo</th>
+<th>Evidencia</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Alto</td>
+<td>Timers auto-reset y async sin exclusión común; handshake bloquea sobre async y offline no tiene gate de pasada. Solapamiento si una pasada tarda más que el intervalo</td>
+<td>AZCKeeper_Client/Core/CoreService.cs:398, AZCKeeper_Client/Core/CoreService.cs:472; AZCKeeper_Client/Network/ApiClient.cs:986, AZCKeeper_Client/Network/ApiClient.cs:1013.</td>
+</tr>
+<tr>
+<td>Alto</td>
+<td>Start recupera actividad y el primer handshake exitoso también. Método async void no se espera; SeedDayTotals suma cuando tracker corre. Dos respuestas del mismo acumulado pueden duplicarlo. <strong>Carrera deducida, no reproducción observada</strong></td>
+<td>AZCKeeper_Client/Core/CoreService.cs:144, AZCKeeper_Client/Core/CoreService.cs:146, AZCKeeper_Client/Core/CoreService.cs:149, AZCKeeper_Client/Core/CoreService.cs:716, AZCKeeper_Client/Core/CoreService.cs:1066, AZCKeeper_Client/Core/CoreService.cs:1095; AZCKeeper_Client/Tracking/ActivityTracker.cs:155, AZCKeeper_Client/Tracking/ActivityTracker.cs:161.</td>
+</tr>
+<tr>
+<td>Alto</td>
+<td>Flush final ocurre antes de Stop de WindowsTracker; Stop cierra episodio después, que puede quedar en buffer al salir</td>
+<td>AZCKeeper_Client/Core/CoreService.cs:189, AZCKeeper_Client/Core/CoreService.cs:198, AZCKeeper_Client/Core/CoreService.cs:1369; AZCKeeper_Client/Tracking/WindowsTracker.cs:178, AZCKeeper_Client/Tracking/WindowsTracker.cs:188.</td>
+</tr>
+<tr>
+<td>Medio</td>
+<td>Config JSON se escribe directamente sin reemplazo atómico/lock; varios guardados en handshake. Riesgo de corrupción, no corrupción observada</td>
+<td>AZCKeeper_Client/Config/ConfigManager.cs:149; AZCKeeper_Client/Core/CoreService.cs:713.</td>
+</tr>
+<tr>
+<td>Medio</td>
+<td>UpdateManager.Start no comprueba timer existente; llamado desde handshake y Start del core. Posible timer anterior sin referencia; gate del chequeo no evita creación duplicada</td>
+<td>AZCKeeper_Client/Update/UpdateManager.cs:56, AZCKeeper_Client/Update/UpdateManager.cs:68, AZCKeeper_Client/Update/UpdateManager.cs:107; AZCKeeper_Client/Core/CoreService.cs:151, AZCKeeper_Client/Core/CoreService.cs:615.</td>
+</tr>
+</tbody></table>
+<p>Cerrar sesión espera sincrónicamente red. Persistir primero todos los cierres y luego flush acotado evita depender del tiempo de cierre de Windows (AZCKeeper_Client/Core/CoreService.cs:131, AZCKeeper_Client/Core/CoreService.cs:133, AZCKeeper_Client/Core/CoreService.cs:1249).</p>
+<h3 id="43-cpu-memoria-disco-y-exactitud-17">4.3 CPU, memoria, disco y exactitud</h3>
+<ul>
+<li><strong>CPU:</strong> eventos de foreground y fallback de un segundo, más muestreo local de actividad. Muestreo no equivale a HTTP; no se midió CPU real (AZCKeeper_Client/Tracking/ActivityTracker.cs:268; AZCKeeper_Client/Tracking/WindowsTracker.cs:154, AZCKeeper_Client/Tracking/WindowsTracker.cs:166, AZCKeeper_Client/Tracking/WindowsTracker.cs:228; AZCKeeper_Client/Config/ConfigManager.cs:466).</li>
+<li><strong>Disco, alto:</strong> cada fallo de actividad se encola; SQLite por entrada sin coalescencia día/dispositivo ni cuota de bytes. A=10 s durante ocho horas caídas: 2.880 snapshots/equipo más episodios, si permanece activo (AZCKeeper_Client/Network/ApiClient.cs:354, AZCKeeper_Client/Network/ApiClient.cs:360; AZCKeeper_Client/Network/OfflineQueue.cs:72).</li>
+<li><strong>Datos, alto:</strong> cola procesa hasta 10, menos de 5 intentos; elimina agotados. Sin idempotencia, timeout tras commit duplica episodios. HTTP 200 de batch parcial descarta la recuperación de rechazados (AZCKeeper_Client/Network/OfflineQueue.cs:107, AZCKeeper_Client/Network/OfflineQueue.cs:177, AZCKeeper_Client/Network/OfflineQueue.cs:210; AZCKeeper_Client/Network/ApiClient.cs:749; AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:149, AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:161).</li>
+<li><strong>Memoria, medio:</strong> cola de logs acotada a 200 y dedup contiene memoria pero pierde evidencia prolongada; ZIP se carga completo y carece de máximo de bytes (AZCKeeper_Client/Logging/LocalLogger.cs:59, AZCKeeper_Client/Logging/LocalLogger.cs:77; AZCKeeper_Client/Update/UpdateManager.cs:218).</li>
+<li><strong>Métricas, alto:</strong> actividad usa GREATEST, no permite corrección hacia abajo, asigna tiempos de recepción y puede sobrescribir JSON con snapshots antiguos manteniendo máximos (AZCKeeper_Client/Web/src/Endpoints/ActivityDay.php:104).</li>
+<li><strong>Métricas, medio:</strong> batch valida duración declarada/orden temporal, pero no igualdad exacta con diferencia de timestamps; day_date se toma del inicio. Definir división al cruzar medianoche/horarios (AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:76).</li>
+<li><strong>Métricas, alto:</strong> panel persiste applicable_days, pero PolicyRepo no lo selecciona ni devuelve en horario al cliente (AZCKeeper_Client/Web/public/admin/policies.php:141; AZCKeeper_Client/Web/src/Repos/PolicyRepo.php:94, AZCKeeper_Client/Web/src/Repos/PolicyRepo.php:104).</li>
+</ul>
+<h3 id="44-código-residual-y-cobertura-18">4.4 Código residual y cobertura</h3>
+<p>Sin consumidores K3 encontrados de MasterTimer, KeyboardHook/MouseHook independientes y EnablePac actual; ProcessTracking se guarda sin ciclo independiente identificado. Son candidatos a confirmar/retirar posteriormente, no cambios de esta auditoría (AZCKeeper_Client/Core/MasterTimer.cs:18; AZCKeeper_Client/Tracking/KeyboardHook.cs:26; AZCKeeper_Client/Tracking/MouseHook.cs:22; AZCKeeper_Client/Blocking/SystemProxyManager.cs:31; AZCKeeper_Client/Core/CoreService.cs:655).</p>
+<p>Tests existentes cubren backoff, buffers de logs y contratos/caché/orden de seguridad. No se ejecutó .NET para evitar outputs y estado local. Faltan pruebas significativas de solapamiento, seed doble, shutdown, batch parcial, idempotencia, tenancy y updater (AZCKeeper.Tests/NetworkBackoffPolicyTests.cs:7; AZCKeeper.Tests/LocalLoggerReportQueueTests.cs:5; AZCKeeper.Tests/SecurityReportCacheTests.cs:4; AZCKeeper_Client/Web/tests/run.php:26).</p>
+<h2 id="5-pregunta-4-tormenta-de-peticiones-y-una-ip-por-empresa-19">5. Pregunta 4 — Tormenta de peticiones y una IP por empresa</h2>
+<h3 id="51-defaults-efectivos-20">5.1 Defaults efectivos</h3>
+<table>
+<thead>
+<tr>
+<th>Fuente</th>
+<th align="right">Actividad A</th>
+<th align="right">Handshake configurado / efectivo H</th>
+<th align="right">Episodios B</th>
+<th align="right">Offline Q</th>
+<th align="right">Update nominal</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Propiedades de clases</td>
+<td align="right">30 s</td>
+<td align="right">300 / 300 s</td>
+<td align="right">30 s</td>
+<td align="right">30 s</td>
+<td align="right">60 min</td>
+</tr>
+<tr>
+<td>CreateDefaultConfig</td>
+<td align="right">10 s</td>
+<td align="right">60 / <strong>120 s por mínimo del core</strong></td>
+<td align="right">30 s</td>
+<td align="right">30 s</td>
+<td align="right">60 min</td>
+</tr>
+</tbody></table>
+<p>Evidencia: AZCKeeper_Client/Config/ConfigManager.cs:278, AZCKeeper_Client/Config/ConfigManager.cs:371, AZCKeeper_Client/Config/ConfigManager.cs:377, AZCKeeper_Client/Config/ConfigManager.cs:379, AZCKeeper_Client/Config/ConfigManager.cs:385, AZCKeeper_Client/Config/ConfigManager.cs:393; AZCKeeper_Client/Core/CoreService.cs:398, AZCKeeper_Client/Core/CoreService.cs:862.</p>
+<p>Configuración persistida/políticas productivas no inspeccionadas: son escenarios del código, no valores asegurados en la flota. El problema de aplicación de segundos remotos descrito en §4 impide asumir que basta editar JSON para cambiar H.</p>
+<h3 id="52-inventario-de-productores-de-red-21">5.2 Inventario de productores de red</h3>
+<p>Tamaños aproximados de JSON UTF-8 sin cabeceras/TLS/compresión, <strong>no mediciones</strong>. Texto, escapes y Unicode cambian bytes; límite de caracteres no es límite de cuerpo.</p>
+<table>
+<thead>
+<tr>
+<th>Productor</th>
+<th>Intervalo/condición</th>
+<th>Endpoint y tamaño</th>
+<th>Reintento / evidencia</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Handshake</td>
+<td>Inicio inmediato, disparo adicional tras jitter y luego H&gt;=120 s</td>
+<td>POST client/handshake: ~100–250 B; respuesta política completa ~1–5 KiB más dominios</td>
+<td>Token, backoff compartido, sin gate único. AZCKeeper_Client/Core/CoreService.cs:144, AZCKeeper_Client/Core/CoreService.cs:398, AZCKeeper_Client/Core/CoreService.cs:435, AZCKeeper_Client/Core/CoreService.cs:472; AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:147.</td>
+</tr>
+<tr>
+<td>Actividad</td>
+<td>Cada A&gt;=10 s, jitter inicial; cierre diario y final adicionales</td>
+<td>POST client/activity-day: ~0,5–0,9 KiB</td>
+<td>Envía también inactividad; fallo HTTP/red se encola. AZCKeeper_Client/Core/CoreService.cs:1123, AZCKeeper_Client/Core/CoreService.cs:1165, AZCKeeper_Client/Core/CoreService.cs:918, AZCKeeper_Client/Core/CoreService.cs:1249; AZCKeeper_Client/Network/ApiClient.cs:360.</td>
+</tr>
+<tr>
+<td>Episodios</td>
+<td>Cada B&gt;=15 s si buffer no vacío; también al llegar a 40</td>
+<td>POST client/window-episodes/batch: ~0,3–1 KiB/episodio corriente; ~12–40 KiB para 40</td>
+<td>Filtra duración &lt;2 s; fallo encola individualmente; 404 fallback individual. AZCKeeper_Client/Core/CoreService.cs:67, AZCKeeper_Client/Core/CoreService.cs:974, AZCKeeper_Client/Core/CoreService.cs:1369, AZCKeeper_Client/Core/CoreService.cs:1398, AZCKeeper_Client/Core/CoreService.cs:1430; AZCKeeper_Client/Network/ApiClient.cs:698, AZCKeeper_Client/Network/ApiClient.cs:729.</td>
+</tr>
+<tr>
+<td>Offline</td>
+<td>Q=30 s inicial, configurable; 10 elementos/pasada</td>
+<td>POST activity-day/window-episode, uno por elemento</td>
+<td>Sin jitter específico ni gate de pasada; &lt;5 intentos; backoff compartido. AZCKeeper_Client/Network/ApiClient.cs:986, AZCKeeper_Client/Network/ApiClient.cs:999, AZCKeeper_Client/Network/ApiClient.cs:1013, AZCKeeper_Client/Network/ApiClient.cs:1023, AZCKeeper_Client/Network/ApiClient.cs:1034; AZCKeeper_Client/Network/OfflineQueue.cs:107.</td>
+</tr>
+<tr>
+<td>Versión</td>
+<td>Nominal 60 min (mínimo 1); <strong>inmediata en Start, reiniciado por cada handshake que aplica updates</strong></td>
+<td>GET client/version: ~0,3–2 KiB más notas</td>
+<td>Auto-update habilitado; gate de chequeo; próximo chequeo tras fallo; API backoff. AZCKeeper_Client/Update/UpdateManager.cs:56, AZCKeeper_Client/Update/UpdateManager.cs:67, AZCKeeper_Client/Update/UpdateManager.cs:73, AZCKeeper_Client/Update/UpdateManager.cs:107; AZCKeeper_Client/Core/CoreService.cs:615.</td>
+</tr>
+<tr>
+<td>Logs backend</td>
+<td>Tras handshake exitoso, pendientes, hasta 50</td>
+<td>POST client/logs: ~0,5–40 KiB habitual, sin cota global garantizada</td>
+<td>Reencola fallo, buffer 200, dedup, supresión de recursión. AZCKeeper_Client/Core/CoreService.cs:745, AZCKeeper_Client/Core/CoreService.cs:759, AZCKeeper_Client/Core/CoreService.cs:766, AZCKeeper_Client/Core/CoreService.cs:773; AZCKeeper_Client/Logging/LocalLogger.cs:59, AZCKeeper_Client/Logging/LocalLogger.cs:64; AZCKeeper_Client/Network/ApiClient.cs:586.</td>
+</tr>
+<tr>
+<td>Seguridad</td>
+<td>Evaluación tras handshake; POST si cambia hash o cada 24 h</td>
+<td>POST client/security/report: orden ~1–5 KiB</td>
+<td>Caché de último éxito; agent_present=false en este flujo. AZCKeeper_Client/Core/CoreService.cs:746, AZCKeeper_Client/Core/CoreService.cs:786, AZCKeeper_Client/Core/CoreService.cs:800; AZCKeeper_Client/Security/SecurityReportCache.cs:22, AZCKeeper_Client/Security/SecurityReportCache.cs:60.</td>
+</tr>
+<tr>
+<td>Política web</td>
+<td>Incluida en handshake</td>
+<td>No endpoint/timer independiente identificado; dominios aumentan respuesta</td>
+<td>SyncIntervalSeconds es metadato. AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:133, AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:157; AZCKeeper_Client/Blocking/WebBlockingManager.cs:60, AZCKeeper_Client/Blocking/WebBlockingManager.cs:100.</td>
+</tr>
+<tr>
+<td>Recuperación diaria</td>
+<td>Inicio y primer handshake; posible duplicación</td>
+<td>GET client/activity-day: orden ~0,5–1,5 KiB</td>
+<td>Sin loop propio; limiter GET y API backoff. AZCKeeper_Client/Core/CoreService.cs:146, AZCKeeper_Client/Core/CoreService.cs:721, AZCKeeper_Client/Core/CoreService.cs:1082; AZCKeeper_Client/Web/src/Endpoints/ActivityDay.php:192.</td>
+</tr>
+<tr>
+<td>Login / reenrolamiento</td>
+<td>Arranque, UI o recuperación tras 401/403</td>
+<td>POST client/login / client/re-enroll; JSON pequeño con secretos de autenticación</td>
+<td>No tasa fija; AZCKeeper_Client/Core/CoreService.cs:243, AZCKeeper_Client/Core/CoreService.cs:314, AZCKeeper_Client/Core/CoreService.cs:366; AZCKeeper_Client/Core/CoreService.cs:483.</td>
+</tr>
+<tr>
+<td>Desbloqueo</td>
+<td>Acción local tras comparación local</td>
+<td>POST client/device-lock/unlock, PIN pequeño</td>
+<td>Sin timer; AZCKeeper_Client/Blocking/KeyBlocker.cs:568; AZCKeeper_Client/Web/src/Endpoints/DeviceLock.php:65.</td>
+</tr>
+<tr>
+<td>Webhook</td>
+<td>Por log autorizado si habilitado; default deshabilitado</td>
+<td>URL configurada, <strong>destino distinto al hosting</strong> normalmente</td>
+<td>HttpClient propio, Task/envío, sin batching/backoff API. AZCKeeper_Client/Logging/LocalLogger.cs:90, AZCKeeper_Client/Logging/LocalLogger.cs:515, AZCKeeper_Client/Logging/LocalLogger.cs:609; AZCKeeper_Client/Config/ConfigManager.cs:275.</td>
+</tr>
+<tr>
+<td>ZIP</td>
+<td>Versión elegible + modo descarga/forzado</td>
+<td>URL de release, GitHub según operación declarada; tamaño real no medido</td>
+<td>Cliente independiente, UseProxy=false, timeout 5 min; siguiente check puede repetir descarga. AZCKeeper_Client/Update/UpdateManager.cs:145, AZCKeeper_Client/Update/UpdateManager.cs:192, AZCKeeper_Client/Update/UpdateManager.cs:215, AZCKeeper_Client/Update/UpdateManager.cs:218.</td>
+</tr>
+<tr>
+<td>PAC histórico</td>
+<td>Navegador solicita PAC loopback; reassert por handshake</td>
+<td>GET local 127.0.0.1, proporcional a dominios</td>
+<td>No hosting en código histórico; ausente del checkout actual. 4f6aea5:AZCKeeper_Client/Blocking/LocalPacServer.cs:117; 4f6aea5:AZCKeeper_Client/Blocking/PacContentBuilder.cs:43.</td>
+</tr>
+</tbody></table>
+<p>Timers sin red propia: actividad local, foreground/fallback, debug, keep-front y MasterTimer residual. TimeSync recibe hora del handshake, no consulta NTP. Updater ejecutable sustituye/reinicia localmente después de que el cliente descargue (AZCKeeper_Client/Tracking/ActivityTracker.cs:268; AZCKeeper_Client/Tracking/WindowsTracker.cs:228; AZCKeeper_Client/Core/DebugWindowForm.cs:50; AZCKeeper_Client/Blocking/KeyBlocker.cs:167; AZCKeeper_Client/Core/MasterTimer.cs:18; AZCKeeper_Client/Core/CoreService.cs:518; AZCKeeperUpdater/Program.cs:29).</p>
+<h3 id="53-modelo-cuantitativo-22">5.3 Modelo cuantitativo</h3>
+<p>Definir L como fracción de handshakes con logs; U checks de versión/min; Rb batches/min; S reportes seguridad/min; Rq recuperación/min; Re eventos extraordinarios:</p>
+<p><strong>R = 60/H + 60/A + Rb + U + L×60/H + S + Rq + Re.</strong></p>
+<p>Con updates habilitado y reinicio actual, U≈60/H. Rb=0 sin episodios o ≈60/B si cada periodo tiene episodios sin llegar antes al umbral. S≈1/1.440 para estado invariable. Rq≈10×60/Q con backlog y respuestas rápidas. Fuentes: timers/límites anteriores, especialmente AZCKeeper_Client/Core/CoreService.cs:398, AZCKeeper_Client/Core/CoreService.cs:1123, AZCKeeper_Client/Core/CoreService.cs:1430; AZCKeeper_Client/Update/UpdateManager.cs:73; AZCKeeper_Client/Network/ApiClient.cs:1023.</p>
+<p>Supuestos de tabla: todos activos/autenticados a la vez, B=30, buffer con episodios en cada periodo, updates aplicado en cada handshake. No incluye arranque, seguridad diaria, webhook ni ZIP. Flota: <strong>solicitudes/minuto (solicitudes/segundo)</strong> desde una IP.</p>
+<table>
+<thead>
+<tr>
+<th>Escenario</th>
+<th align="right">Equipo/min</th>
+<th align="right">180 equipos</th>
+<th align="right">1.000 equipos</th>
+<th align="right">5.000 equipos</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>H=300, A=30, sin logs</td>
+<td align="right">4,4</td>
+<td align="right">792 (13,20)</td>
+<td align="right">4.400 (73,33)</td>
+<td align="right">22.000 (366,67)</td>
+</tr>
+<tr>
+<td>Anterior + logs cada handshake</td>
+<td align="right">4,6</td>
+<td align="right">828 (13,80)</td>
+<td align="right">4.600 (76,67)</td>
+<td align="right">23.000 (383,33)</td>
+</tr>
+<tr>
+<td>Inicial H=120, A=10</td>
+<td align="right">9,0</td>
+<td align="right">1.620 (27,00)</td>
+<td align="right">9.000 (150,00)</td>
+<td align="right">45.000 (750,00)</td>
+</tr>
+<tr>
+<td>Anterior + logs cada handshake</td>
+<td align="right">9,5</td>
+<td align="right">1.710 (28,50)</td>
+<td align="right">9.500 (158,33)</td>
+<td align="right">47.500 (791,67)</td>
+</tr>
+<tr>
+<td>H=300/A=30 + backlog 20/min/equipo</td>
+<td align="right">24,4</td>
+<td align="right">4.392 (73,20)</td>
+<td align="right">24.400 (406,67)</td>
+<td align="right">122.000 (2.033,33)</td>
+</tr>
+<tr>
+<td>H=120/A=10 + backlog 20/min/equipo</td>
+<td align="right">29,0</td>
+<td align="right">5.220 (87,00)</td>
+<td align="right">29.000 (483,33)</td>
+<td align="right">145.000 (2.416,67)</td>
+</tr>
+</tbody></table>
+<p>Límites:</p>
+<ul>
+<li>Sin episodios se restan hasta 2 solicitudes/min; muestrear cada segundo no produce un POST cada segundo (AZCKeeper_Client/Core/CoreService.cs:974, AZCKeeper_Client/Core/CoreService.cs:1400).</li>
+<li>Sin updates restar 60/H; si no se aplica el bloque updates, usar frecuencia efectiva del manager (AZCKeeper_Client/Core/CoreService.cs:615; AZCKeeper_Client/Update/UpdateManager.cs:61).</li>
+<li>20/min offline <strong>no es techo universal</strong>: Q configurable, solapamiento, latencia y circuito abierto cambian solicitudes efectivas. Pasar por lógica de retry no implica que se haya abierto un socket (AZCKeeper_Client/Network/ApiClient.cs:999, AZCKeeper_Client/Network/ApiClient.cs:1013, AZCKeeper_Client/Network/ApiClient.cs:965).</li>
+<li>Arranque no está totalmente disperso: handshake inmediato, posible recuperación doble y update inmediato; timer duplicado puede añadir checks, pero no se asigna tasa fija no demostrada (AZCKeeper_Client/Core/CoreService.cs:144, AZCKeeper_Client/Core/CoreService.cs:146, AZCKeeper_Client/Core/CoreService.cs:435, AZCKeeper_Client/Core/CoreService.cs:721; AZCKeeper_Client/Update/UpdateManager.cs:68).</li>
+<li><strong>Solicitudes HTTP ≠ conexiones TCP nuevas ≠ conexiones concurrentes.</strong> HttpClient reutiliza pool, pero no conocemos contadores/umbrales CSF instalados. La tabla no identifica la regla exacta del baneo (AZCKeeper_Client/Network/ApiClient.cs:63, AZCKeeper_Client/Network/ApiClient.cs:81).</li>
+</ul>
+<h3 id="54-bloqueo-de-dominio-hechos-frente-a-hipótesis-23">5.4 Bloqueo de dominio: hechos frente a hipótesis</h3>
+<p><strong>Actual:</strong> WebBlockingManager declara caché sin enforcement, limpia URLBlocklist y restaura proxy; compara versión/hash/estado y guarda solo cambios. LocalPacServer/PacContentBuilder no existen en este checkout (AZCKeeper_Client/Blocking/WebBlockingManager.cs:14, AZCKeeper_Client/Blocking/WebBlockingManager.cs:44, AZCKeeper_Client/Blocking/WebBlockingManager.cs:60, AZCKeeper_Client/Blocking/WebBlockingManager.cs:81).</p>
+<p><strong>Histórico, separado:</strong> en 4f6aea5, manager construye PAC con dominios recibidos, apunta AutoConfigURL a loopback y reassert reconstruye localmente. Servidor acepta solo loopback; PAC compara host exacto/sufijo, devuelve DIRECT o PROXY 127.0.0.1:9, sin fetch al backend ni resolución remota por dominio (4f6aea5:AZCKeeper_Client/Blocking/WebBlockingManager.cs:102, 4f6aea5:AZCKeeper_Client/Blocking/WebBlockingManager.cs:128; 4f6aea5:AZCKeeper_Client/Blocking/LocalPacServer.cs:13, 4f6aea5:AZCKeeper_Client/Blocking/LocalPacServer.cs:69, 4f6aea5:AZCKeeper_Client/Blocking/LocalPacServer.cs:117; 4f6aea5:AZCKeeper_Client/Blocking/PacContentBuilder.cs:15, 4f6aea5:AZCKeeper_Client/Blocking/PacContentBuilder.cs:30, 4f6aea5:AZCKeeper_Client/Blocking/PacContentBuilder.cs:43).</p>
+<p>Respuestas directas:</p>
+<ol>
+<li><strong>¿Redescarga política? Sí:</strong> handshake retorna toda effectiveConfig sin comparación condicional ni ETag (AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:147).</li>
+<li><strong>¿SyncIntervalSeconds crea polling extra?</strong> No hay productor de red independiente identificado; se almacena como metadato (AZCKeeper_Client/Blocking/WebBlockingManager.cs:100).</li>
+<li><strong>¿PAC llama al hosting por URL?</strong> No en el histórico inspeccionado; sus conexiones son locales. No atribuir ese comportamiento al binario productivo sin comparar hashes.</li>
+<li><strong>¿Reintentos sin backoff?</strong> API sí tiene backoff; ZIP/webhook están fuera y offline/fallback fragmentan lotes; falta presupuesto global de concurrencia (AZCKeeper_Client/Network/ApiClient.cs:965, AZCKeeper_Client/Network/ApiClient.cs:729; AZCKeeper_Client/Update/UpdateManager.cs:215; AZCKeeper_Client/Logging/LocalLogger.cs:609).</li>
+<li><strong>¿Eco de logs infinito?</strong> Hay supresión/filtros; no se demostró loop infinito. Errores reales llenan cola y logs se envían por un POST separado, no dentro del handshake (AZCKeeper_Client/Logging/LocalLogger.cs:64, AZCKeeper_Client/Logging/LocalLogger.cs:281; AZCKeeper_Client/Network/ApiClient.cs:586; AZCKeeper_Client/Core/CoreService.cs:742, AZCKeeper_Client/Core/CoreService.cs:769).</li>
+</ol>
+<p><strong>Hipótesis pendiente:</strong> política que bloquee host de gestión/dominio padre + ApiClient que hereda proxy puede interferir con su propia conexión y disparar errores/recuperación. ZIP sí configura UseProxy=false; validador no excluye host de API. No se afirma causa productiva demostrada (AZCKeeper_Client/Network/ApiClient.cs:63; AZCKeeper_Client/Update/UpdateManager.cs:215; AZCKeeper_Client/Web/src/InputValidator.php:92).</p>
+<p>Cerrar esa incertidumbre en una ventana posterior autorizada: hash binario, configuración efectiva y correlación de activación con access logs por endpoint/dispositivo y errores locales. No volver a investigar NAT/baneo ya verificados.</p>
+<h3 id="55-backoffrate-limiting-actual-24">5.5 Backoff/rate limiting actual</h3>
+<p>DNS base 5 s/cap 60; transitorio 30/300; 403/429 30/1.800; jitter positivo hasta 20%, acotado al cap. Cambiar clase de fallo reinicia progresión. No hay semáforo global ni una sola prueba de recuperación; varias solicitudes pueden salir antes del primer fallo (AZCKeeper_Client/Network/NetworkBackoffPolicy.cs:38, AZCKeeper_Client/Network/NetworkBackoffPolicy.cs:41, AZCKeeper_Client/Network/NetworkBackoffPolicy.cs:44, AZCKeeper_Client/Network/NetworkBackoffPolicy.cs:82, AZCKeeper_Client/Network/NetworkBackoffPolicy.cs:116, AZCKeeper_Client/Network/NetworkBackoffPolicy.cs:149; AZCKeeper_Client/Network/ApiClient.cs:965).</p>
+<p><strong>Alto:</strong> 403 también conduce a auth inválida/relogin, pudiendo borrar token por un rechazo de infraestructura. No se consume Retry-After en el cálculo revisado (AZCKeeper_Client/Network/ApiClient.cs:269; AZCKeeper_Client/Core/CoreService.cs:483, AZCKeeper_Client/Core/CoreService.cs:487, AZCKeeper_Client/Core/CoreService.cs:498; AZCKeeper_Client/Network/NetworkBackoffPolicy.cs:149).</p>
+<p>Limiter PHP reutilizable solo identificado en GET actividad, por usuario+endpoint. Read-modify-write sin lock integral, archivos locales no compartidos entre réplicas; cleanup busca raíz y almacenamiento usa buckets. Reenroll tiene aparte 10/min/IP, adverso para recuperación NAT masiva (AZCKeeper_Client/Web/src/Endpoints/ActivityDay.php:192; AZCKeeper_Client/Web/src/RateLimiter.php:28, AZCKeeper_Client/Web/src/RateLimiter.php:77, AZCKeeper_Client/Web/src/RateLimiter.php:98, AZCKeeper_Client/Web/src/RateLimiter.php:123, AZCKeeper_Client/Web/src/RateLimiter.php:164; AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:43).</p>
+<h3 id="56-diseño-propuesto-de-reducción-25">5.6 Diseño propuesto de reducción</h3>
+<p><strong>Etapa A — mantener contratos:</strong></p>
+<ol>
+<li>H=600 s, A=120 s, B=120 s si negocio acepta retraso de dos minutos; conservar captura/persistencia local. Corregir prioridad segundos/minutos primero.</li>
+<li>Updates cada seis horas con fase por dispositivo; no reiniciar ante política idéntica; anillos de descarga.</li>
+<li>Fase determinista por device y jitter de arranque 0–120 s, sin handshake inmediato adicional; backoff con jitter.</li>
+<li>Planificador máximo 1–2 solicitudes simultáneas/dispositivo, una prueba al terminar backoff, Retry-After y error auth inequívoco.</li>
+<li>Cola con snapshot más reciente por día/device, UUID estable de episodio, lotes persistidos y ACK individual; recuperación máximo un lote/30–60 s dentro del presupuesto compartido.</li>
+<li>No consumir intentos cuando circuito impide hacer red; fallos permanentes con retención/cuota diagnóstica, sin borrado silencioso al quinto.</li>
+<li>Recordar capacidad batch tras 404 para no repetir fallback por cada lote.</li>
+</ol>
+<p>Puntos de cambio: AZCKeeper_Client/Core/CoreService.cs:615, AZCKeeper_Client/Core/CoreService.cs:691, AZCKeeper_Client/Core/CoreService.cs:1398; AZCKeeper_Client/Network/ApiClient.cs:729, AZCKeeper_Client/Network/ApiClient.cs:965, AZCKeeper_Client/Network/ApiClient.cs:1013; AZCKeeper_Client/Network/OfflineQueue.cs:210; AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:149.</p>
+<p>Con buffers activos: 0,1 handshake + 0,5 actividad + 0,5 batches + 1/360 versión = <strong>1,103 solicitudes/min/equipo</strong>, más extras; ~75% menos que 4,4, condicionado a desplegar esos cambios.</p>
+<p><strong>Etapa B — POST /api/client/sync propuesto cada 120 s:</strong> identificación autenticada, secuencia/idempotency key, hash conocido de política, snapshot, episodios/logs y delta seguridad. Respuesta con ACK por registro, hora, versión disponible y política solo si cambia. Objetivo inicial a probar: 128 KiB/request, 100–200 episodios; requiere elevar límite servidor actual de 50 y buffer de 40, y mantener contrato viejo durante transición (AZCKeeper_Client/Core/CoreService.cs:67; AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:32, AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:149).</p>
+<table>
+<thead>
+<tr>
+<th align="right">Equipos/IP</th>
+<th align="right">Base propuesta solicitudes/min</th>
+<th align="right">Solicitudes/s</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">180</td>
+<td align="right">90</td>
+<td align="right">1,50</td>
+</tr>
+<tr>
+<td align="right">1.000</td>
+<td align="right">500</td>
+<td align="right">8,33</td>
+</tr>
+<tr>
+<td align="right">5.000</td>
+<td align="right">2.500</td>
+<td align="right">41,67</td>
+</tr>
+</tbody></table>
+<p>Base 0,5/min/equipo: reducción ~88,6% frente a 4,4 y ~94,4% frente a 9. Batching reduce solicitudes, no elimina filas de telemetría.</p>
+<p><strong>Caché/ETag:</strong> un GET de política propuesto puede responder 304 a If-None-Match. No usar 304 como sustituto genérico del POST actual; ETag ahorra bytes/cálculo, no solicitudes por sí solo. <a href="https://www.rfc-editor.org/rfc/rfc9110.html">RFC 9110</a>.</p>
+<p>Hash efectivo debe abarcar composición global/tenant/sede/user/device, horario y revisión del validador. policyApplied.version de la capa más específica no identifica todos los cambios heredados; composition ofrece base mejor (AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:97, AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:118, AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:151). Usar caché compartida por tenant/device/versiones: static de PolicyRepo no equivale a caché distribuida entre requests PHP-FPM (AZCKeeper_Client/Web/src/Repos/PolicyRepo.php:63, AZCKeeper_Client/Web/src/Repos/PolicyRepo.php:86).</p>
+<p><strong>Long-poll/push:</strong> long-poll de 25 s puede generar 2,4 requests/min/device y sostener workers; no mejora automáticamente polling cada 5–10 min. Para reacción en segundos, gateway asíncrono SSE/WebSocket con pub/sub, auth device/tenant, backoff y evento “versión cambió”, más polling de recuperación. Es componente nuevo; no existe en router actual (AZCKeeper_Client/Web/public/index.php:44).</p>
+<h3 id="57-n-empresas-una-ip-backend-e-infraestructura-26">5.7 N empresas × una IP: backend e infraestructura</h3>
+<p>Propuestas ligadas a las carencias de §5.5:</p>
+<ul>
+<li>Identidad estable device+tenant derivada de token; limiter por device autenticado, no IP como empresa ni solo hash de token que cambia al rotarlo.</li>
+<li>Contadores compartidos atómicos (por ejemplo Redis). Para nuevo sync, empezar pruebas con 1/min sostenida y burst 3–5; presupuesto tenant proporcional a flota y recuperación. Cliente viejo de hasta 9/min requiere perfil transitorio diferente.</li>
+<li>429 + Retry-After; mantener antiabuso de endpoints públicos por credencial/invitación/device y límites IP suficientemente amplios. GUID no es prueba de identidad.</li>
+<li>CSF/LFD actúa antes de PHP: rate limit de aplicación no deshace ban de red. Allowlist temporal de IP dedicadas y ajuste de umbrales de infraestructura junto con controles L7; no eliminar toda protección IP.</li>
+<li>Reutilizar keep-alive y verificar HTTP/2 negociado. Handler actual tiene pool lifetime 5 min/connect timeout 15 s, sin HTTP/2 ni MaxConnectionsPerServer explícitos. HTTP/2 no convierte mil equipos NAT en una conexión TCP (AZCKeeper_Client/Network/ApiClient.cs:63).</li>
+<li>Separar capacidad de ingestión, panel y jobs. PDO por request sin persistencia configurada; dimensionar con latencia real y pool PHP, no con usuarios solamente (AZCKeeper_Client/Web/src/Db.php:106; AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:66).</li>
+<li>Métricas: requests y sockets/IP, latencia p50/p95/p99, 403/429/5xx por causa, SQL/locks, backlog y edad del episodio más antiguo; tenant no se deduce de IP.</li>
+</ul>
+<h2 id="6-pregunta-5-multiempresa-y-más-de-1000-dispositivos-por-tenant-27">6. Pregunta 5 — Multiempresa y más de 1.000 dispositivos por tenant</h2>
+<h3 id="61-organización-no-equivale-a-aislamiento-28">6.1 Organización no equivale a aislamiento</h3>
+<p>Existen sociedades, firmas, áreas, cargos, sedes y assignments; admins tienen scopes organizativos. Users/devices/sesiones/telemetría no llevan una identidad tenant obligatoria independiente. CC y legacy_employee_id son únicos globales en baseline; login busca CC globalmente. Políticas solo global/user/device; horarios global/user (AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:84, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:98, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:150, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:181, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:182, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:192, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:211, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:254, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:298, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:321; AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:56; AZCKeeper_Client/Web/src/Repos/PolicyRepo.php:94).</p>
+<p>Crear una fila en keeper_firmas no aísla una empresa. Propuesta: decidir si tenant comercial equivale a firma o agrupa varias sociedades/firmas y darle ID obligatorio estable; no derivarlo de IP ni de assignment modificable.</p>
+<h3 id="62-rupturas-concretas-de-aislamiento-29">6.2 Rupturas concretas de aislamiento</h3>
+<table>
+<thead>
+<tr>
+<th>Severidad</th>
+<th>Punto y consecuencia</th>
+<th>Evidencia</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Crítico</td>
+<td>Handshake/login reasignan un GUID existente; no transferencia explícita con autorización y revocación</td>
+<td>AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:77; AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:230.</td>
+</tr>
+<tr>
+<td>Crítico</td>
+<td>GET get_user y búsqueda employee fuera de scope de lista</td>
+<td>AZCKeeper_Client/Web/public/admin/users.php:19, AZCKeeper_Client/Web/public/admin/users.php:54.</td>
+</tr>
+<tr>
+<td>Alto</td>
+<td>canViewUser omite sede, scopeFilter sí la aplica: detalle/exportación y lista difieren</td>
+<td>AZCKeeper_Client/Web/public/admin/admin_auth.php:150, AZCKeeper_Client/Web/public/admin/admin_auth.php:179; AZCKeeper_Client/Web/public/admin/user-dashboard.php:15.</td>
+</tr>
+<tr>
+<td>Alto</td>
+<td>Scopes todos nulos en no-superadmin pueden dejar alcance global</td>
+<td>AZCKeeper_Client/Web/public/admin/admin_auth.php:179.</td>
+</tr>
+<tr>
+<td>Alto</td>
+<td>users/devices/assignments y reviewAlert mutan por ID sin predicado tenant</td>
+<td>AZCKeeper_Client/Web/public/admin/users.php:176; AZCKeeper_Client/Web/public/admin/devices.php:19; AZCKeeper_Client/Web/public/admin/assignments.php:42; AZCKeeper_Client/Web/src/Repos/ProductivityRepo.php:285.</td>
+</tr>
+<tr>
+<td>Alto</td>
+<td>Admin-users comprueba jerarquía del rol nuevo, pero no garantiza permiso sobre el objeto ni scope nuevo subconjunto del propio</td>
+<td>AZCKeeper_Client/Web/public/admin/admin-users.php:29, AZCKeeper_Client/Web/public/admin/admin-users.php:46, AZCKeeper_Client/Web/public/admin/admin-users.php:69, AZCKeeper_Client/Web/public/admin/admin-users.php:88.</td>
+</tr>
+<tr>
+<td>Alto</td>
+<td>Políticas, horarios globales, releases, ajustes y clasificaciones compartidos</td>
+<td>AZCKeeper_Client/Web/public/admin/policies.php:26, AZCKeeper_Client/Web/public/admin/policies.php:131; AZCKeeper_Client/Web/public/admin/releases.php:24; AZCKeeper_Client/Web/public/admin/panel-settings.php:45; AZCKeeper_Client/Web/src/Repos/ProductivityRepo.php:337.</td>
+</tr>
+<tr>
+<td>Alto</td>
+<td>Logs, pendientes y sync legacy globales</td>
+<td>AZCKeeper_Client/Web/public/admin/logs.php:47; AZCKeeper_Client/Web/public/admin/pending-users.php:84; AZCKeeper_Client/Web/src/LegacySyncService.php:107.</td>
+</tr>
+<tr>
+<td>Alto</td>
+<td>Recalcular desde panel selecciona usuarios globales aunque lectura tenga scope</td>
+<td>AZCKeeper_Client/Web/public/admin/productivity.php:29, AZCKeeper_Client/Web/public/admin/productivity.php:48.</td>
+</tr>
+</tbody></table>
+<p>No se inspeccionaron los roles/permisos productivos: exposición efectiva depende de ellos. Los handlers deben aplicar aislamiento aun cuando el administrador conozca IDs o URLs fuera del menú.</p>
+<h3 id="63-cambios-de-modelo-propuestos-30">6.3 Cambios de modelo propuestos</h3>
+<ul>
+<li>tenant_id derivado de credenciales en identidades/membresías, dispositivos, sesiones, enrolamientos, políticas y toda telemetría/agregados.</li>
+<li>Si una persona pertenece a varias empresas, separar persona de membresía; en cualquier caso, identidad legacy única por fuente+tenant, no un entero global.</li>
+<li>Transferencia de dispositivo explícita/auditada, revocando sesiones y definiendo propiedad del histórico.</li>
+<li>Política global plataforma → tenant → sede/grupo → usuario → dispositivo; versiones compuestas y privilegio de plataforma separado.</li>
+<li>Assignment vigente único por membresía, o historial con intervalos no solapados; no escoger LIMIT 1 arbitrario.</li>
+<li>Repositorios con TenantContext obligatorio y constraints compuestas contra referencias cruzadas; configuración/branding/clasificaciones por tenant.</li>
+</ul>
+<p>Requiere backfill y reconciliación, no solo una columna nullable. Bases actuales que cambiar: AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:254, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:267, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:321; AZCKeeper_Client/Web/src/LegacySyncService.php:36.</p>
+<h3 id="64-escrituras-por-segundo-y-crecimiento-31">6.4 Escrituras por segundo y crecimiento</h3>
+<p>Modelo, no medición: N equipos, E episodios elegibles/minuto, jornada activa de ocho horas.</p>
+<ul>
+<li>Filas episodios/día = N×E×480.</li>
+<li>Filas episodios/segundo durante jornada = N×E/60.</li>
+<li>Upserts actividad/s = N/A.</li>
+</ul>
+<p>Derivación del envío/cierre: AZCKeeper_Client/Core/CoreService.cs:974, AZCKeeper_Client/Core/CoreService.cs:1366, AZCKeeper_Client/Core/CoreService.cs:1123.</p>
+<table>
+<thead>
+<tr>
+<th align="right">E supuesto</th>
+<th align="right">Equipos</th>
+<th align="right">Episodios/día</th>
+<th align="right">Filas episodios/s</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">2/min</td>
+<td align="right">180</td>
+<td align="right">172.800</td>
+<td align="right">6,00</td>
+</tr>
+<tr>
+<td align="right">2/min</td>
+<td align="right">1.000</td>
+<td align="right">960.000</td>
+<td align="right">33,33</td>
+</tr>
+<tr>
+<td align="right">2/min</td>
+<td align="right">5.000</td>
+<td align="right">4.800.000</td>
+<td align="right">166,67</td>
+</tr>
+<tr>
+<td align="right">10/min</td>
+<td align="right">180</td>
+<td align="right">864.000</td>
+<td align="right">30,00</td>
+</tr>
+<tr>
+<td align="right">10/min</td>
+<td align="right">1.000</td>
+<td align="right">4.800.000</td>
+<td align="right">166,67</td>
+</tr>
+<tr>
+<td align="right">10/min</td>
+<td align="right">5.000</td>
+<td align="right">24.000.000</td>
+<td align="right">833,33</td>
+</tr>
+</tbody></table>
+<p>A=30 suma 6/33,33/166,67 upserts/s; A=10 suma 18/100/500. Más last_seen, sesiones, logs, índices y agregación. Filas, sentencias y round-trips son distintos: batch inserta muchas filas con una sentencia (AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:149; AZCKeeper_Client/Web/src/Endpoints/ActivityDay.php:104; AZCKeeper_Client/Web/src/Repos/DeviceRepo.php:28).</p>
+<p>Handshake normal existente/activo: aproximadamente seis sentencias de aplicación: bearer, device lookup, touch, global policy, union user/device y horario. Touch puede evitar modificar last_seen, pero envía query. No cuenta SET NAMES ni protocolo prepared (AZCKeeper_Client/Web/src/Repos/SessionRepo.php:9; AZCKeeper_Client/Web/src/Repos/DeviceRepo.php:7, AZCKeeper_Client/Web/src/Repos/DeviceRepo.php:28; AZCKeeper_Client/Web/src/Repos/PolicyRepo.php:30, AZCKeeper_Client/Web/src/Repos/PolicyRepo.php:63, AZCKeeper_Client/Web/src/Repos/PolicyRepo.php:94; AZCKeeper_Client/Web/src/Db.php:120).</p>
+<p>6,9 millones es dato facilitado. Comentario histórico menciona 6,87M, no una medición actual (AZCKeeper_Client/Web/migrations/add_client_logs.sql:8). Con N=1.000/E=2 se añaden 6,9M en ~7,2 jornadas del modelo.</p>
+<h3 id="65-índices-retención-y-particiones-32">6.5 Índices, retención y particiones</h3>
+<p><strong>Ya presentes en esquema del repo; no añadir duplicados sin inspeccionar servidor:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Tabla</th>
+<th>Índices existentes / evidencia</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>keeper_devices</td>
+<td>GUID único, user, last_seen (AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:204).</td>
+</tr>
+<tr>
+<td>keeper_activity_day</td>
+<td>UNIQUE(user,device,day), day, user/day, device/day y otros (AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:361).</td>
+</tr>
+<tr>
+<td>keeper_window_episode</td>
+<td>user/day, device/day, start_at, process y user/day/process (AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:435).</td>
+</tr>
+<tr>
+<td>keeper_client_log</td>
+<td>created y compuestos device/created, user/created, level/created, source/created (AZCKeeper_Client/Web/migrations/add_client_logs.sql:29).</td>
+</tr>
+<tr>
+<td>keeper_user_assignments</td>
+<td>Índices individuales user/firm/area/sede/sociedad; user no único en full schema (AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:267).</td>
+</tr>
+</tbody></table>
+<p>Propuestas sujetas a EXPLAIN sobre copia representativa:</p>
+<ul>
+<li>UNIQUE(tenant_id,device_id,event_uuid) para idempotencia; hoy solo INSERT/autoincrement (AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:149; AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:434).</li>
+<li>Índice tenant/user/device/tiempo según filtros/orden real de detalle; no inventar orden óptimo sin plan de ejecución (AZCKeeper_Client/Web/public/admin/user-dashboard.php:329).</li>
+<li>Acceso por fecha al inicio para retención global; user/day no sustituye índice temporal global (AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:435).</li>
+<li>Agregados tenant/día/usuario/sede y claves acordes, para evitar releer crudos por dashboard (AZCKeeper_Client/Web/public/admin/index.php:142; AZCKeeper_Client/Web/src/Services/ProductivityCalculator.php:139).</li>
+<li>Unicidad de assignment vigente e índices compuestos tenant/scope/user; evitar fanout (AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:267; AZCKeeper_Client/Web/src/LegacySyncService.php:36).</li>
+<li>Rate limiter atómico fuera de JSON audit; mantener audit para trazabilidad (AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:43).</li>
+</ul>
+<p>No se identificó purga operativa de episodios en los flujos revisados. Logs sí tiene 30 días y lotes DELETE de 5.000, pero depende de productividad habilitada y su bucle no tiene presupuesto temporal propio. Falta política integral de episodios, auditoría y sesiones expiradas (AZCKeeper_Client/Web/src/Repos/ClientLogRepo.php:15, AZCKeeper_Client/Web/src/Repos/ClientLogRepo.php:128; AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:35, AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:94).</p>
+<p>Propuesta para acordar con negocio: crudos/títulos 30–90 días, agregados 13 meses, logs 30 días; archivo cifrado si hace falta más. No se presenta como obligación legal. Jobs separados con presupuesto, checkpoint y comprobación de restauración.</p>
+<p><strong>Particionar no es ALTER rápido:</strong> episodios tiene FK con cascada a users/devices. MySQL 8.0 no combina particionamiento de usuario InnoDB con esas FK; también hay restricciones de claves únicas/columnas de partición. Requiere rediseño, no receta ciega (AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:440). <a href="https://dev.mysql.com/doc/refman/8.0/en/partitioning-limitations-storage-engines.html">Documentación MySQL</a>.</p>
+<h3 id="66-agregaciones-del-panel-33">6.6 Agregaciones del panel</h3>
+<ul>
+<li><strong>Alto:</strong> users hace fetchAll y array_slice: paginación de lista en PHP; resúmenes sí se restringen a IDs de página (AZCKeeper_Client/Web/public/admin/users.php:278, AZCKeeper_Client/Web/public/admin/users.php:314, AZCKeeper_Client/Web/public/admin/users.php:317).</li>
+<li><strong>Alto:</strong> user-dashboard descarga episodios del rango sin LIMIT; decide AJAX tras varias consultas pesadas (AZCKeeper_Client/Web/public/admin/user-dashboard.php:183, AZCKeeper_Client/Web/public/admin/user-dashboard.php:305, AZCKeeper_Client/Web/public/admin/user-dashboard.php:329, AZCKeeper_Client/Web/public/admin/user-dashboard.php:338).</li>
+<li><strong>Alto condicionado:</strong> sedes-dashboard une dispositivos y actividad antes de SUM; varios dispositivos por usuario pueden multiplicar actividad por fanout. Probar fixture multidispositivo (AZCKeeper_Client/Web/public/admin/sedes-dashboard.php:95).</li>
+<li><strong>Alto:</strong> cron por usuario hace fetchAll de episodios y detección histórica; 300 s sin checkpoint limita crecimiento (AZCKeeper_Client/Web/src/Services/ProductivityCalculator.php:134; AZCKeeper_Client/Web/src/Services/DualJobDetector.php:23; AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:58).</li>
+<li><strong>Medio:</strong> recalcular fecha histórica usa esa fecha para focus, pero DualJobDetector calcula respecto a hoy, sin recibir fecha objetivo (AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:66, AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:69; AZCKeeper_Client/Web/src/Services/DualJobDetector.php:23).</li>
+</ul>
+<p>Propuesta: modelos de lectura agregados, cursor para episodios, exports como job, endpoints AJAX pequeños y workers por tenant/fecha con checkpoint. Mostrar frescura; probar dos dispositivos, cambio de assignment, medianoche, horarios y duplicados.</p>
+<h2 id="7-pregunta-6-panel-rebrand-y-nuevas-features-34">7. Pregunta 6 — Panel: rebrand y nuevas features</h2>
+<h3 id="71-construcción-y-dificultad-35">7.1 Construcción y dificultad</h3>
+<p>PHP con HTML/SQL/JS por página, partials header/footer, Tailwind CDN, Alpine y Google Fonts; sin React en K3. Header define navy #003A5D/rojo #BE1622; login duplica tema/cargas (AZCKeeper_Client/Web/public/admin/partials/layout_header.php:16, AZCKeeper_Client/Web/public/admin/partials/layout_header.php:18, AZCKeeper_Client/Web/public/admin/partials/layout_header.php:20, AZCKeeper_Client/Web/public/admin/partials/layout_header.php:49; AZCKeeper_Client/Web/public/admin/login.php:69, AZCKeeper_Client/Web/public/admin/login.php:77; AZCKeeper_Client/Web/public/admin/partials/layout_footer.php:5).</p>
+<p><strong>Medio:</strong> rebrand global acotado para elementos comunes, pero no basta editar CSS: tema inline y duplicado. assets/style.css existe, sin referencia encontrada desde páginas auditadas. Por tenant exige resolver empresa antes del render y un layout temático compartido (AZCKeeper_Client/Web/public/admin/assets/style.css:9; AZCKeeper_Client/Web/public/admin/partials/layout_header.php:51; AZCKeeper_Client/Web/public/admin/login.php:77).</p>
+<p><strong>Medio:</strong> Alpine se incluye también en páginas además de footer; revisar doble inicialización y fijar/self-hostear dependencias para despliegue reproducible (AZCKeeper_Client/Web/public/admin/roles.php:623; AZCKeeper_Client/Web/public/admin/panel-settings.php:292; AZCKeeper_Client/Web/public/admin/partials/layout_footer.php:5).</p>
+<h3 id="72-inventario-textual-de-marca-36">7.2 Inventario textual de marca</h3>
+<p>Búsqueda K3 de AZCKeeper o palabra AZC sin distinguir mayúsculas en código/documentación/proyectos; no secretos. Líneas de coincidencia, <strong>no todas son texto visible</strong>: muchas son namespaces/rutas/nombre de ejecutable.</p>
+<table>
+<thead>
+<tr>
+<th>Archivo</th>
+<th>Líneas</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>AZCKeeper_Client/Auth/AuthManager.cs</td>
+<td>5, 7, 31, 193, 203</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Auth/LoginForm.cs</td>
+<td>5, 29</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/AZCKeeper_Client.csproj</td>
+<td>18, 29, 30</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Blocking/KeyBlocker.cs</td>
+<td>8, 9, 11</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Blocking/SystemProxyManager.cs</td>
+<td>7, 9</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Blocking/WebBlockingManager.cs</td>
+<td>7, 8, 11, 19, 39, 56</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/BLOCKING_SYSTEM.md</td>
+<td>119</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Config/ConfigManager.cs</td>
+<td>5, 7, 10, 32, 54, 55</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Contracts/SecurityControlState.cs</td>
+<td>1</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Core/CoreService.cs</td>
+<td>5, 6, 7, 8, 9, 10, 11, 12, 14, 235, 783, 828, 1032</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Core/DebugSnapshot.cs</td>
+<td>3</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Core/DebugWindowForm.cs</td>
+<td>4, 5, 7, 30</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Core/MasterTimer.cs</td>
+<td>2, 4</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Core/TimeSync.cs</td>
+<td>2, 4</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Logging/LocalLogger.cs</td>
+<td>9, 12, 124, 603</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Network/ApiClient.cs</td>
+<td>8, 9, 10, 11, 13, 92, 626</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Network/NetworkBackoffPolicy.cs</td>
+<td>4</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Network/OfflineQueue.cs</td>
+<td>6, 8, 26</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Program.cs</td>
+<td>4, 5, 7, 10, 23, 25, 54</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Security/SecurityControls.cs</td>
+<td>2, 4</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Security/SecurityReportCache.cs</td>
+<td>8, 9, 11</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Security/SecurityStateReader.cs</td>
+<td>3, 4, 7, 12</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/SQL1.txt</td>
+<td>2</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Startup/StartupManager.cs</td>
+<td>4, 6, 16, 28, 93</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Tracking/ActivityTracker.cs</td>
+<td>3, 4, 6</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Tracking/KeyboardHook.cs</td>
+<td>1, 26</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Tracking/MouseHook.cs</td>
+<td>1, 22</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Tracking/WindowsTracker.cs</td>
+<td>5, 7</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Tracking/WorkSchedule.cs</td>
+<td>3</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Update/UpdateManager.cs</td>
+<td>9, 10, 11, 13, 203, 208, 238</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Web/CHANGELOG_SESSION.md</td>
+<td>1, 12, 13, 267</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Web/DATABASE_FALLBACK.md</td>
+<td>203</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Web/Docs/PLAN_PRODUCTIVITY.md</td>
+<td>5</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Web/migrations/add_client_logs.sql</td>
+<td>5</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Web/public/admin/logs.php</td>
+<td>7</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Web/public/admin/policies_diagnostic_backup.php</td>
+<td>265</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Web/public/admin/releases.php</td>
+<td>3, 197</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Web/public/admin/server-health.php</td>
+<td>295</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Web/src/Endpoints/SecurityReport.php</td>
+<td>20</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Web/src/Repos/ReleaseRepo.php</td>
+<td>17</td>
+</tr>
+<tr>
+<td>AZCKeeper_Client/Web/tests/run.php</td>
+<td>4</td>
+</tr>
+<tr>
+<td>AZCKeeperUpdater/Program.cs</td>
+<td>6, 18, 24, 29</td>
+</tr>
+<tr>
+<td>AZCKeeper.Tests/AZCKeeper.Tests.csproj</td>
+<td>14</td>
+</tr>
+<tr>
+<td>AZCKeeper.Tests/LocalLoggerReportQueueTests.cs</td>
+<td>2, 5, 83</td>
+</tr>
+<tr>
+<td>AZCKeeper.Tests/LocalLoggerRingBufferTests.cs</td>
+<td>2, 5</td>
+</tr>
+<tr>
+<td>AZCKeeper.Tests/NetworkBackoffPolicyTests.cs</td>
+<td>4, 7</td>
+</tr>
+<tr>
+<td>AZCKeeper.Tests/SecurityControlsTests.cs</td>
+<td>2</td>
+</tr>
+<tr>
+<td>AZCKeeper.Tests/SecurityReportCacheTests.cs</td>
+<td>3, 4</td>
+</tr>
+<tr>
+<td>AZCKeeper.Tests/SecurityReportContractTests.cs</td>
+<td>3, 6, 10</td>
+</tr>
+<tr>
+<td>AZCKeeper.Tests/SecurityStateReaderOrderTests.cs</td>
+<td>2</td>
+</tr>
+</tbody></table>
+<p>Otros elementos relevantes aunque no coincidan con esa regex:</p>
+<table>
+<thead>
+<tr>
+<th>Elemento</th>
+<th>Evidencia</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Keeper Admin / Keeper, favicon y logo navegación</td>
+<td>AZCKeeper_Client/Web/public/admin/partials/layout_header.php:16, AZCKeeper_Client/Web/public/admin/partials/layout_header.php:17, AZCKeeper_Client/Web/public/admin/partials/layout_header.php:75, AZCKeeper_Client/Web/public/admin/partials/layout_header.php:77.</td>
+</tr>
+<tr>
+<td>Keeper en login, favicon y logo_main</td>
+<td>AZCKeeper_Client/Web/public/admin/login.php:69, AZCKeeper_Client/Web/public/admin/login.php:70, AZCKeeper_Client/Web/public/admin/login.php:95, AZCKeeper_Client/Web/public/admin/login.php:96.</td>
+</tr>
+<tr>
+<td>Host productivo y antiguo</td>
+<td>AZCKeeper_Client/Config/ConfigManager.cs:241; AZCKeeper_Client/Web/public/admin/policies.php:1144; AZCKeeper_Client/Web/public/admin/policies_diagnostic_backup.php:896.</td>
+</tr>
+<tr>
+<td>Prefijo técnico azc_keeper del limiter</td>
+<td>AZCKeeper_Client/Web/src/RateLimiter.php:110.</td>
+</tr>
+<tr>
+<td>Nombre visible/login/tray/debug y rutas de estado</td>
+<td>AZCKeeper_Client/Auth/LoginForm.cs:29; AZCKeeper_Client/Program.cs:54; AZCKeeper_Client/Core/DebugWindowForm.cs:30; AZCKeeper_Client/Logging/LocalLogger.cs:124; AZCKeeper_Client/Update/UpdateManager.cs:238.</td>
+</tr>
+</tbody></table>
+<p>Assets raster inventariados en admin/assets: ico.png, icoBlack.png, icoMain.png, Icon Black.png, Icon White.png, Logo White.png, logo.png, logo_main.png. Usos activos de icoMain/logo_main en header/login citados. No se infiere contenido textual interno de imágenes no inspeccionadas visualmente.</p>
+<p>Separar branding visible de identidad técnica: renombrar AppData, mutex, namespaces o ejecutables requiere migración/compatibilidad; no es requisito automático de cambio visual.</p>
+<h3 id="73-patrón-propuesto-de-features-y-tema-por-tenant-37">7.3 Patrón propuesto de features y tema por tenant</h3>
+<ol>
+<li>Catálogo único de módulos/rutas/permisos, compartido por menú y guards. Hoy catálogo SQL y listas PHP se duplican (AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:18, AZCKeeper_Client/Web/migrations/keeper_full_schema.sql:510; AZCKeeper_Client/Web/public/admin/panel-settings.php:15; AZCKeeper_Client/Web/public/admin/admin_auth.php:251).</li>
+<li>Caso de uso/servicio, repositorio TenantContext, validación y DTO por feature; página solo entrada/invocación/render.</li>
+<li>Layout para panel/login/errores/export, CSS variables y assets versionados locales.</li>
+<li>Configuración tenant de nombre/logos/paleta/textos validada; sin HTML/CSS arbitrario, fallback de plataforma.</li>
+<li>Listas SQL paginadas y AJAX específico, no render completo para extraer JSON (AZCKeeper_Client/Web/public/admin/user-dashboard.php:338).</li>
+<li>Tests de permiso de acción y acceso cruzado por tenant; menú oculto no prueba seguridad.</li>
+</ol>
+<h2 id="8-pregunta-7-documentación-de-api-para-terceros-38">8. Pregunta 7 — Documentación de API para terceros</h2>
+<h3 id="81-qué-hay-hoy-39">8.1 Qué hay hoy</h3>
+<p>Hay router explícito, handlers, DTO C# y documentación de módulos/cambios. No se encontró OpenAPI/Swagger ni portal de API pública en el alcance K3. El contrato real está repartido entre router, endpoints y DTO (AZCKeeper_Client/Web/public/index.php:44; AZCKeeper_Client/Network/ApiClient.cs:1244; AZCKeeper_Client/Web/Docs/PLAN_PRODUCTIVITY.md:5; AZCKeeper_Client/Web/CHANGELOG_SESSION.md:1).</p>
+<p>La autenticación existente resuelve sesiones del cliente o cookies del panel. CRON_API_KEY es un secreto global de operación, no una API key empresarial con scopes. No debe entregarse a integradores ni reutilizarse un bearer de empleado (AZCKeeper_Client/Web/src/Repos/SessionRepo.php:9; AZCKeeper_Client/Web/src/Repos/AdminAuthRepo.php:70; AZCKeeper_Client/Web/src/Endpoints/ProductivityCron.php:119).</p>
+<p><strong>Alto:</strong> publicar endpoints de lectura antes de corregir tenancy expondría los problemas de §6. Primero fijar pertenencia/permiso del objeto, después documentar/exponer.</p>
+<h3 id="82-requisitos-propuestos-40">8.2 Requisitos propuestos</h3>
+<ul>
+<li>Base /api/v1 para API externa, separada del protocolo legacy del cliente.</li>
+<li>Integraciones registradas por tenant, dueño, scopes, expiración y estado; API keys aleatorias guardadas con hash, prefijo identificador, rotación y auditoría.</li>
+<li>OAuth2 client_credentials para integraciones servidor-servidor; access token corto, audiencia/scopes/tenant. Si después hay delegación de usuario, Authorization Code con PKCE, como proyecto separado.</li>
+<li>Scopes de solo lectura por recurso; títulos de ventanas, logs y controles sensibles requieren scopes adicionales explícitos. No publicar hashes, tokens, PIN, política con secretos ni credenciales de fuentes.</li>
+<li>Tenant inferido de credenciales. Un parámetro tenant_id suministrado no concede acceso.</li>
+<li>Paginación por cursor y límite máximo; rango de fechas acotado; UTC ISO 8601, zona de negocio declarada; errores 401/403/404/422/429/5xx y request ID.</li>
+<li>Cuotas por integración y tenant, no solamente IP; Retry-After, observabilidad, logs sin secretos, política de deprecación y pruebas de contrato/aislamiento.</li>
+<li>Exportaciones grandes como jobs autorizados, no una consulta ilimitada del endpoint de episodios.</li>
+<li>CORS solo si se habilitan clientes de navegador autorizados; no habilitar comodín con cookies del panel.</li>
+</ul>
+<p>Formato propuesto OpenAPI 3.0.3, con mecanismos apiKey y OAuth2: <a href="https://spec.openapis.org/oas/v3.0.3">especificación oficial</a>. No existe hoy este servicio OAuth ni las rutas /v1.</p>
+<h3 id="83-recursos-razonables-y-origen-actual-41">8.3 Recursos razonables y origen actual</h3>
+<table>
+<thead>
+<tr>
+<th>Recurso propuesto</th>
+<th>Campos/alcance inicial</th>
+<th>Fuente actual</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>users</td>
+<td>Identificador de membresía, nombre, estado y assignment; minimizar CAZCKeeper_Client/email</td>
+<td>AZCKeeper_Client/Web/public/admin/users.php:260.</td>
+</tr>
+<tr>
+<td>devices</td>
+<td>ID, usuario, versión, estado, last_seen; omitir secretos/GUID de enrolamiento hasta corregirlo</td>
+<td>AZCKeeper_Client/Web/public/admin/devices.php:100; AZCKeeper_Client/Web/src/Repos/DeviceRepo.php:28.</td>
+</tr>
+<tr>
+<td>organization</td>
+<td>Firmas, sociedades, sedes, áreas/cargos propios</td>
+<td>AZCKeeper_Client/Web/public/admin/organization.php:28.</td>
+</tr>
+<tr>
+<td>activity-days</td>
+<td>Día, acumulados y zona; por usuario/device autorizado</td>
+<td>AZCKeeper_Client/Web/src/Endpoints/ActivityDay.php:225.</td>
+</tr>
+<tr>
+<td>window-episodes</td>
+<td>Proceso, intervalo, duración; título solo con permiso adicional</td>
+<td>AZCKeeper_Client/Web/public/admin/user-dashboard.php:329.</td>
+</tr>
+<tr>
+<td>productivity/daily</td>
+<td>Focus/productividad y fecha de cálculo/frescura</td>
+<td>AZCKeeper_Client/Web/src/Repos/ProductivityRepo.php:15.</td>
+</tr>
+<tr>
+<td>alerts</td>
+<td>Tipo, fecha, estado de revisión; no permitir revisión en primera versión</td>
+<td>AZCKeeper_Client/Web/src/Repos/ProductivityRepo.php:190.</td>
+</tr>
+<tr>
+<td>devices/{id}/security</td>
+<td>Último estado reportado; no confundir declaración con attestation</td>
+<td>AZCKeeper_Client/Web/src/Repos/SecurityStateRepo.php:20.</td>
+</tr>
+<tr>
+<td>devices/{id}/policy</td>
+<td>Política efectiva <strong>saneada</strong>, hash/versión/composición; excluir PIN/webhooks</td>
+<td>AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:147.</td>
+</tr>
+</tbody></table>
+<h3 id="84-esqueleto-openapi-3-propuesto-42">8.4 Esqueleto OpenAPI 3 propuesto</h3>
+<p>Dominio example.invalid deliberadamente ilustrativo. API key y OAuth son alternativas; los scopes de API key se validan en servidor aunque OpenAPI no los enumere como scopes OAuth. Page es un contenedor inicial genérico; antes de publicar se deben fijar DTO específicos de la tabla anterior, ejemplos, límites temporales y tipos de cada campo. No es descripción de endpoints ya implementados.</p>
+<pre><code class="language-yaml">openapi: 3.0.3
+info:
+  title: Keeper - API empresarial de lectura
+  version: 1.0.0-draft
+  description: &gt;
+    Propuesta. El tenant se obtiene de las credenciales.
+    No incluye endpoints de control ni datos secretos.
+servers:
+  - url: https://api.example.invalid/api/v1
+security:
+  - TenantApiKey: []
+  - TenantOAuth: [users:read]
+paths:
+  /users:
+    get:
+      operationId: listUsers
+      security:
+        - TenantApiKey: []
+        - TenantOAuth: [users:read]
+      parameters:
+        - $ref: &#39;#/components/parameters/Cursor&#39;
+        - $ref: &#39;#/components/parameters/Limit&#39;
+      responses:
+        &#39;200&#39;: { $ref: &#39;#/components/responses/Page&#39; }
+        &#39;401&#39;: { $ref: &#39;#/components/responses/Unauthorized&#39; }
+        &#39;403&#39;: { $ref: &#39;#/components/responses/Forbidden&#39; }
+        &#39;429&#39;: { $ref: &#39;#/components/responses/RateLimited&#39; }
+  /devices:
+    get:
+      operationId: listDevices
+      security:
+        - TenantApiKey: []
+        - TenantOAuth: [devices:read]
+      parameters:
+        - $ref: &#39;#/components/parameters/Cursor&#39;
+        - $ref: &#39;#/components/parameters/Limit&#39;
+      responses:
+        &#39;200&#39;: { $ref: &#39;#/components/responses/Page&#39; }
+        &#39;401&#39;: { $ref: &#39;#/components/responses/Unauthorized&#39; }
+        &#39;403&#39;: { $ref: &#39;#/components/responses/Forbidden&#39; }
+        &#39;429&#39;: { $ref: &#39;#/components/responses/RateLimited&#39; }
+  /organization:
+    get:
+      operationId: getOrganization
+      security:
+        - TenantApiKey: []
+        - TenantOAuth: [organization:read]
+      responses:
+        &#39;200&#39;: { $ref: &#39;#/components/responses/Resource&#39; }
+        &#39;401&#39;: { $ref: &#39;#/components/responses/Unauthorized&#39; }
+        &#39;403&#39;: { $ref: &#39;#/components/responses/Forbidden&#39; }
+        &#39;429&#39;: { $ref: &#39;#/components/responses/RateLimited&#39; }
+  /activity-days:
+    get:
+      operationId: listActivityDays
+      security:
+        - TenantApiKey: []
+        - TenantOAuth: [activity:read]
+      parameters:
+        - $ref: &#39;#/components/parameters/From&#39;
+        - $ref: &#39;#/components/parameters/To&#39;
+        - $ref: &#39;#/components/parameters/UserId&#39;
+        - $ref: &#39;#/components/parameters/Cursor&#39;
+        - $ref: &#39;#/components/parameters/Limit&#39;
+      responses:
+        &#39;200&#39;: { $ref: &#39;#/components/responses/Page&#39; }
+        &#39;401&#39;: { $ref: &#39;#/components/responses/Unauthorized&#39; }
+        &#39;403&#39;: { $ref: &#39;#/components/responses/Forbidden&#39; }
+        &#39;422&#39;: { $ref: &#39;#/components/responses/InvalidQuery&#39; }
+        &#39;429&#39;: { $ref: &#39;#/components/responses/RateLimited&#39; }
+  /window-episodes:
+    get:
+      operationId: listWindowEpisodes
+      description: El título se omite salvo scope adicional episodes:titles:read.
+      security:
+        - TenantApiKey: []
+        - TenantOAuth: [episodes:read]
+      parameters:
+        - $ref: &#39;#/components/parameters/From&#39;
+        - $ref: &#39;#/components/parameters/To&#39;
+        - $ref: &#39;#/components/parameters/UserId&#39;
+        - $ref: &#39;#/components/parameters/Cursor&#39;
+        - $ref: &#39;#/components/parameters/Limit&#39;
+      responses:
+        &#39;200&#39;: { $ref: &#39;#/components/responses/Page&#39; }
+        &#39;401&#39;: { $ref: &#39;#/components/responses/Unauthorized&#39; }
+        &#39;403&#39;: { $ref: &#39;#/components/responses/Forbidden&#39; }
+        &#39;422&#39;: { $ref: &#39;#/components/responses/InvalidQuery&#39; }
+        &#39;429&#39;: { $ref: &#39;#/components/responses/RateLimited&#39; }
+  /productivity/daily:
+    get:
+      operationId: listDailyProductivity
+      security:
+        - TenantApiKey: []
+        - TenantOAuth: [productivity:read]
+      parameters:
+        - $ref: &#39;#/components/parameters/From&#39;
+        - $ref: &#39;#/components/parameters/To&#39;
+        - $ref: &#39;#/components/parameters/UserId&#39;
+        - $ref: &#39;#/components/parameters/Cursor&#39;
+        - $ref: &#39;#/components/parameters/Limit&#39;
+      responses:
+        &#39;200&#39;: { $ref: &#39;#/components/responses/Page&#39; }
+        &#39;401&#39;: { $ref: &#39;#/components/responses/Unauthorized&#39; }
+        &#39;403&#39;: { $ref: &#39;#/components/responses/Forbidden&#39; }
+        &#39;422&#39;: { $ref: &#39;#/components/responses/InvalidQuery&#39; }
+        &#39;429&#39;: { $ref: &#39;#/components/responses/RateLimited&#39; }
+  /alerts:
+    get:
+      operationId: listAlerts
+      security:
+        - TenantApiKey: []
+        - TenantOAuth: [alerts:read]
+      parameters:
+        - $ref: &#39;#/components/parameters/From&#39;
+        - $ref: &#39;#/components/parameters/To&#39;
+        - $ref: &#39;#/components/parameters/Cursor&#39;
+        - $ref: &#39;#/components/parameters/Limit&#39;
+      responses:
+        &#39;200&#39;: { $ref: &#39;#/components/responses/Page&#39; }
+        &#39;401&#39;: { $ref: &#39;#/components/responses/Unauthorized&#39; }
+        &#39;403&#39;: { $ref: &#39;#/components/responses/Forbidden&#39; }
+        &#39;422&#39;: { $ref: &#39;#/components/responses/InvalidQuery&#39; }
+        &#39;429&#39;: { $ref: &#39;#/components/responses/RateLimited&#39; }
+  /devices/{deviceId}/security:
+    get:
+      operationId: getDeviceSecurity
+      security:
+        - TenantApiKey: []
+        - TenantOAuth: [security:read]
+      parameters:
+        - $ref: &#39;#/components/parameters/DeviceId&#39;
+      responses:
+        &#39;200&#39;: { $ref: &#39;#/components/responses/Resource&#39; }
+        &#39;401&#39;: { $ref: &#39;#/components/responses/Unauthorized&#39; }
+        &#39;403&#39;: { $ref: &#39;#/components/responses/Forbidden&#39; }
+        &#39;404&#39;: { $ref: &#39;#/components/responses/NotFound&#39; }
+        &#39;429&#39;: { $ref: &#39;#/components/responses/RateLimited&#39; }
+  /devices/{deviceId}/policy:
+    get:
+      operationId: getSanitizedDevicePolicy
+      description: Excluye PIN, tokens y credenciales; soporta ETag.
+      security:
+        - TenantApiKey: []
+        - TenantOAuth: [policies:read]
+      parameters:
+        - $ref: &#39;#/components/parameters/DeviceId&#39;
+        - in: header
+          name: If-None-Match
+          schema: { type: string }
+      responses:
+        &#39;200&#39;:
+          description: Política efectiva saneada.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version_hash, composition, settings]
+                properties:
+                  version_hash: { type: string }
+                  composition:
+                    type: array
+                    items: { type: object }
+                  settings:
+                    type: object
+                    description: Lista explícita de campos seguros.
+        &#39;304&#39;:
+          description: La representación no cambió.
+        &#39;401&#39;: { $ref: &#39;#/components/responses/Unauthorized&#39; }
+        &#39;403&#39;: { $ref: &#39;#/components/responses/Forbidden&#39; }
+        &#39;404&#39;: { $ref: &#39;#/components/responses/NotFound&#39; }
+        &#39;429&#39;: { $ref: &#39;#/components/responses/RateLimited&#39; }
+components:
+  securitySchemes:
+    TenantApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Integración con tenant y permisos de lectura asignados.
+    TenantOAuth:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://auth.example.invalid/oauth/token
+          scopes:
+            users:read: Consultar usuarios autorizados
+            devices:read: Consultar dispositivos
+            organization:read: Consultar organización
+            activity:read: Consultar actividad diaria
+            episodes:read: Consultar episodios sin títulos
+            episodes:titles:read: Consultar títulos autorizados
+            productivity:read: Consultar agregados
+            alerts:read: Consultar alertas
+            security:read: Consultar estado reportado
+            policies:read: Consultar política saneada
+  parameters:
+    Cursor:
+      in: query
+      name: cursor
+      schema: { type: string }
+      description: Cursor opaco ligado a tenant, filtros y orden.
+    Limit:
+      in: query
+      name: limit
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    From:
+      in: query
+      name: from
+      required: true
+      schema: { type: string, format: date }
+    To:
+      in: query
+      name: to
+      required: true
+      schema: { type: string, format: date }
+      description: Validar orden y máximo de rango en servidor.
+    UserId:
+      in: query
+      name: user_id
+      schema: { type: string }
+      description: Identificador propio del tenant; no concede acceso.
+    DeviceId:
+      in: path
+      name: deviceId
+      required: true
+      schema: { type: string }
+  schemas:
+    Page:
+      type: object
+      required: [data, next_cursor, generated_at]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            description: DTO del recurso, pendiente de fijar antes de publicar.
+        next_cursor: { type: string, nullable: true }
+        generated_at: { type: string, format: date-time }
+    Error:
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        request_id: { type: string }
+  responses:
+    Page:
+      description: Página del recurso dentro del tenant autenticado.
+      content:
+        application/json:
+          schema: { $ref: &#39;#/components/schemas/Page&#39; }
+    Resource:
+      description: Recurso autorizado y saneado.
+      content:
+        application/json:
+          schema: { type: object }
+    Unauthorized:
+      description: Credencial ausente, inválida o expirada.
+      content:
+        application/json:
+          schema: { $ref: &#39;#/components/schemas/Error&#39; }
+    Forbidden:
+      description: Permiso insuficiente.
+      content:
+        application/json:
+          schema: { $ref: &#39;#/components/schemas/Error&#39; }
+    NotFound:
+      description: Recurso no encontrado dentro del ámbito autorizado.
+      content:
+        application/json:
+          schema: { $ref: &#39;#/components/schemas/Error&#39; }
+    InvalidQuery:
+      description: Filtros, fechas o rango inválidos.
+      content:
+        application/json:
+          schema: { $ref: &#39;#/components/schemas/Error&#39; }
+    RateLimited:
+      description: Cuota de integración o tenant agotada.
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1 }
+          description: Segundos hasta el siguiente intento.
+      content:
+        application/json:
+          schema: { $ref: &#39;#/components/schemas/Error&#39; }
+</code></pre>
+<p>Antes de convertirlo en contrato público: tipar DTO por recurso, agregar ejemplos/errores 5xx y límites concretos, implementar scopes/tenancy, generar validación de contrato y fijar compatibilidad. No exponer automáticamente SELECT * ni effectiveConfig completa.</p>
+<h2 id="9-pregunta-8-seguridad-transversal-43">9. Pregunta 8 — Seguridad transversal</h2>
+<h3 id="91-autenticación-y-ciclo-de-vida-44">9.1 Autenticación y ciclo de vida</h3>
+<p><strong>Crítico — reenrolamiento:</strong> se activa por defecto si falta setting, exige GUID conocido y estados activos, pero no contraseña, secreto por dispositivo, certificado ni invitación. Crea token válido por 30 días. No publicar como “recuperación segura” y no considerar GUID secreto suficiente. Contención: deshabilitarlo hasta requerir prueba de posesión; mantener proceso de recuperación explícito/auditado (AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:35, AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:56, AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:75, AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:88, AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:103, AZCKeeper_Client/Web/src/Endpoints/ClientReEnroll.php:120; AZCKeeper_Client/Web/src/Repos/SessionRepo.php:27).</p>
+<p><strong>Crítico — dispositivo/IDOR:</strong> handshake cambia propietario de dispositivo ya existente; login también asegura/reasigna device por GUID. Un bearer de un usuario no debe poder tomar otro dispositivo. Vincular sesión a device/tenant y exigir transferencia administrativa explícita (AZCKeeper_Client/Web/src/Endpoints/ClientHandshake.php:77; AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:230; AZCKeeper_Client/Web/src/Repos/SessionRepo.php:9).</p>
+<p><strong>Alto — revocación:</strong> login inserta expires_at NULL, mientras reenroll usa 30 días. Validación bearer revisa expiración/revocación, no estado actual del usuario; inactivar usuario no revoca sesiones. Fallback de login Keeper tampoco filtra status. Definir expiración uniforme, refresh/rotación y revocación al cambiar usuario/device/tenant (AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:72, AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:153; AZCKeeper_Client/Web/src/Repos/UserRepo.php:8; AZCKeeper_Client/Web/src/Repos/SessionRepo.php:9; AZCKeeper_Client/Web/public/admin/users.php:212).</p>
+<p><strong>Alto — contraseñas legacy:</strong> login compara directamente password legacy con el valor recibido. Hay fallback con password_verify local, pero no sustituye el legado. Migrar a hashes robustos y verificar transición; no se leyeron passwords reales (AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:72, AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:113).</p>
+<p><strong>Medio — login admin:</strong> verifica estado de cuenta/usuario y password_verify, pero sin rate limiter/CSRF ni regeneración de sesión identificados en el handler; errores distinguen condiciones. Cookie HttpOnly, SameSite=Lax y secure condicionado a HTTPS son controles positivos, con revisión necesaria tras reverse proxy (AZCKeeper_Client/Web/public/admin/login.php:28, AZCKeeper_Client/Web/public/admin/login.php:37, AZCKeeper_Client/Web/public/admin/login.php:43, AZCKeeper_Client/Web/public/admin/login.php:50).</p>
+<p><strong>Controles positivos:</strong> tokens aleatorios de 32 bytes y hash SHA-256 en BD; credenciales/token locales protegidos con DPAPI CurrentUser. DPAPI no protege frente al mismo usuario comprometido ni hace al agente resistente a manipulación local (AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:153; AZCKeeper_Client/Web/src/Repos/SessionRepo.php:27; AZCKeeper_Client/Auth/AuthManager.cs:96, AZCKeeper_Client/Auth/AuthManager.cs:150, AZCKeeper_Client/Auth/AuthManager.cs:255).</p>
+<h3 id="92-autorización-administrativa-y-csrf-45">9.2 Autorización administrativa y CSRF</h3>
+<p><strong>Alto:</strong> scope de lista no autoriza ID de mutación. Hallazgos concretos de users, devices, assignments, admin-users y alertas están en §6. Centralizar autorización de objeto y default-deny, incluidas exportaciones/AJAX (AZCKeeper_Client/Web/public/admin/admin_auth.php:150, AZCKeeper_Client/Web/public/admin/admin_auth.php:179; AZCKeeper_Client/Web/src/Repos/ProductivityRepo.php:285).</p>
+<p><strong>Alto:</strong> políticas aplica acciones globales sin canDo específico; force-handshake valida solo cookie; backup diagnóstico conserva csrfOk=true. Hay protección CSRF real en productivity: no se afirma que todo el panel carezca de ella. SameSite=Lax reduce algunos ataques cross-site, pero no sustituye token CSRF y método seguro, especialmente logout por GET y operaciones same-site (AZCKeeper_Client/Web/public/admin/policies.php:19; AZCKeeper_Client/Web/src/Endpoints/ForceHandshake.php:10; AZCKeeper_Client/Web/public/admin/policies_diagnostic_backup.php:25; AZCKeeper_Client/Web/public/admin/productivity.php:16, AZCKeeper_Client/Web/public/admin/productivity.php:80; AZCKeeper_Client/Web/public/admin/logout.php:12).</p>
+<p><strong>Medio:</strong> panel-settings usa adminUser[&#39;id&#39;] para atribución, mientras el repositorio expone admin_id. Puede causar atribución nula/incorrecta o aviso según ejecución; no se comprobó en runtime (AZCKeeper_Client/Web/public/admin/panel-settings.php:64, AZCKeeper_Client/Web/public/admin/panel-settings.php:66; AZCKeeper_Client/Web/src/Repos/AdminAuthRepo.php:77).</p>
+<h3 id="93-secretos-y-exposición-de-datos-46">9.3 Secretos y exposición de datos</h3>
+<ul>
+<li><strong>Alto:</strong> PIN en configuración JSON y mensajes de Info/Warn; redactor remoto cubre bearer/token/password/webhook, no PIN/UnlockPin. Warn puede llegar al backend y panel global. Dejar de registrar valores, sanear origen+servidor y revisar histórico/rotar PIN por procedimiento controlado (AZCKeeper_Client/Config/ConfigManager.cs:416; AZCKeeper_Client/Core/CoreService.cs:551, AZCKeeper_Client/Core/CoreService.cs:555, AZCKeeper_Client/Core/CoreService.cs:561, AZCKeeper_Client/Core/CoreService.cs:576; AZCKeeper_Client/Web/src/Endpoints/ClientLogBatch.php:113; AZCKeeper_Client/Web/public/admin/logs.php:47).</li>
+<li><strong>Alto:</strong> prueba de conexión de fuentes recibe password por GET, exponiéndolo potencialmente a URL/historial/access logs. El backend conecta al host/puerto proporcionado con PDO. Es una capacidad de conexión saliente sensible; restringir destino/permiso y transportar secretos fuera de URL. No se hizo una prueba de acceso a redes internas (AZCKeeper_Client/Web/public/admin/organization.php:186, AZCKeeper_Client/Web/public/admin/organization.php:196, AZCKeeper_Client/Web/public/admin/organization.php:202).</li>
+<li><strong>Medio:</strong> passwords de keeper_data_sources cifrados AES-256-CBC con APP_KEY; no autenticación del ciphertext identificada. Mantener clave fuera del repo y usar cifrado autenticado si se conserva esa función (AZCKeeper_Client/Web/src/Db.php:238, AZCKeeper_Client/Web/src/Db.php:251, AZCKeeper_Client/Web/src/Db.php:267).</li>
+<li><strong>Alto:</strong> títulos de ventana, metadatos y logs pueden contener información sensible. Meta JSON no se limita/redacta integralmente; API pública debe usar allowlist de campos y permiso separado para títulos (AZCKeeper_Client/Web/src/Endpoints/ClientLogBatch.php:90; AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:76; AZCKeeper_Client/Web/public/admin/user-dashboard.php:329).</li>
+<li><strong>Medio:</strong> errores SQL de endpoints y DEBUG pueden revelar internos; server-health muestra datos globales de host/BD a quien acceda al módulo (AZCKeeper_Client/Web/src/Endpoints/WindowEpisode.php:125; AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:176; AZCKeeper_Client/Web/src/Endpoints/ClientLogin.php:184; AZCKeeper_Client/Web/public/admin/server-health.php:110).</li>
+<li><strong>Medio, condicionado al consumidor:</strong> exportación CSV usa títulos sin neutralización de fórmulas de hoja de cálculo. Un valor que empiece con fórmula puede interpretarse al abrir el archivo en un spreadsheet. No se ejecutó exploit (AZCKeeper_Client/Web/public/admin/user-dashboard.php:373, AZCKeeper_Client/Web/public/admin/user-dashboard.php:374).</li>
+</ul>
+<p>No se encontró necesario leer .env, .env.backup, tokens ni contraseñas reales para estos hallazgos. No se afirma que estén filtrados públicamente: se identificaron rutas de exposición en código.</p>
+<h3 id="94-sqli-validación-y-abuso-de-recursos-47">9.4 SQLi, validación y abuso de recursos</h3>
+<p>PDO usa prepared statements nativos y parámetros; el CRUD dinámico de organización aplica un mapa cerrado de tablas. No hay evidencia suficiente para declarar una SQLi explotable en esos puntos, ni se certifica ausencia total de SQLi por revisión estática (AZCKeeper_Client/Web/src/Db.php:106; AZCKeeper_Client/Web/public/admin/organization.php:28, AZCKeeper_Client/Web/public/admin/organization.php:36).</p>
+<p><strong>Alto:</strong> cuerpo completo antes de validar, metadatos/logs y lista de dominios sin presupuesto global de bytes; límites de registros no evitan un request enorme. Añadir límites coherentes webserver/aplicación, timeout, validación de tipos/duración y cuotas autenticadas (AZCKeeper_Client/Web/src/Http.php:19; AZCKeeper_Client/Web/src/Endpoints/ClientLogBatch.php:90; AZCKeeper_Client/Web/src/InputValidator.php:92; AZCKeeper_Client/Web/src/Endpoints/WindowEpisodeBatch.php:76).</p>
+<p>Telemetría y controles son declaraciones del cliente per-user: un token permite enviar datos construidos por software del usuario. No tratar agent_present/registry report como attestation criptográfica ni como prueba incorruptible de actividad (AZCKeeper_Client/Web/src/Endpoints/SecurityReport.php:44; AZCKeeper_Client/Web/src/Repos/SecurityStateRepo.php:20; AZCKeeper_Client/Core/CoreService.cs:800).</p>
+<h3 id="95-integridad-del-updater-48">9.5 Integridad del updater</h3>
+<p><strong>Crítico:</strong> URL viene de release administrable, descarga completa, solo umbral mínimo de tamaño, extracción y ejecución del updater contenido en el mismo ZIP. No se identificaron hash/firma, allowlist estricta de origen ni pin de clave de firma. HTTPS por sí solo no protege de una release maliciosa autorizada por servidor comprometido. No se afirmó ZIP-slip: ese ataque no fue demostrado (AZCKeeper_Client/Web/public/admin/releases.php:24; AZCKeeper_Client/Update/UpdateManager.cs:218, AZCKeeper_Client/Update/UpdateManager.cs:219, AZCKeeper_Client/Update/UpdateManager.cs:235, AZCKeeper_Client/Update/UpdateManager.cs:238, AZCKeeper_Client/Update/UpdateManager.cs:259).</p>
+<p>Propuesta:</p>
+<ol>
+<li>Manifest firmado con versión, canal, longitud, hash SHA-256 y compatibilidad mínima.</li>
+<li>Clave pública de verificación anclada en cliente/updater; hash recibido solo del mismo servidor comprometido no basta.</li>
+<li>Verificación antes de extraer/ejecutar, política anti-downgrade, límites de bytes y espacio.</li>
+<li>No ejecutar helper no verificado extraído de paquete; firma del ejecutable y del artefacto, reemplazo/rollback probado.</li>
+<li>Releases por anillos/tenant con jitter y permisos separados; auditar creación, activación y actualización forzada.</li>
+</ol>
+<p>ReleaseRepo ordena por created_at, no por versión semántica: una release cargada después no necesariamente es versión más alta. Definir orden/canales explícitos (AZCKeeper_Client/Web/src/Repos/ReleaseRepo.php:39).</p>
+<h3 id="96-pac-proxy-y-bloqueo-local-49">9.6 PAC, proxy y bloqueo local</h3>
+<p><strong>Alto — estado actual:</strong> K3 actual no hace enforcement web; no se auditó el Agent excluido. No presentar caché de política como protección aplicada (AZCKeeper_Client/Blocking/WebBlockingManager.cs:14, AZCKeeper_Client/Blocking/WebBlockingManager.cs:81).</p>
+<p><strong>Medio — propiedad de configuración:</strong> limpieza elimina listas URLBlocklist HKCU de navegadores y restaura proxy; la heurística de propiedad basada en contener 127.0.0.1 puede afectar otro proxy local corporativo. No hay evidencia de que haya ocurrido, pero el criterio es demasiado amplio (AZCKeeper_Client/Blocking/WebBlockingManager.cs:86; AZCKeeper_Client/Blocking/SystemProxyManager.cs:83, AZCKeeper_Client/Blocking/SystemProxyManager.cs:124).</p>
+<p>PAC histórico es local y devuelve blackhole loopback, no exfiltra hacia el backend en la implementación inspeccionada. El servicio local acepta solicitudes por tareas y su disponibilidad también necesita límites si vuelve a usarse; no se hizo prueba de saturación local (4f6aea5:AZCKeeper_Client/Blocking/PacContentBuilder.cs:15; 4f6aea5:AZCKeeper_Client/Blocking/LocalPacServer.cs:105).</p>
+<p><strong>Medio:</strong> endpoint unlock acepta cualquier PIN no vacío, aunque KeyBlocker compara localmente antes de invocarlo. No se concluye que llamar al endpoint desbloquee por sí solo la pantalla; el contrato servidor no verifica la autorización que aparenta representar (AZCKeeper_Client/Web/src/Endpoints/DeviceLock.php:65; AZCKeeper_Client/Blocking/KeyBlocker.cs:568).</p>
+<p>Propuesta: propiedad explícita de cambios HKCU, backup/restore verificable, excluir host de gestión de política y distinguir control efectivo de caché/estado declarado. Un programa per-user sin admin no ofrece resistencia fuerte frente al mismo usuario con control de su sesión.</p>
+<h2 id="suplemento-revisión-disponible-al-reanudar-1638bd4-50">Suplemento — Revisión disponible al reanudar: 1638bd4</h2>
+<p><strong>No sustituye la auditoría completa de 931fd12 solicitada originalmente.</strong> Al reanudar, HEAD era 1638bd493d884a0741e4131ee2d8089b5b2d9b76, rama feature/moazc-bridge; el commit original sigue disponible. No se hizo checkout ni se modificó código. Citas de este suplemento llevan prefijo <strong>1638bd4:</strong>. Una consulta graphify adicional no identificó bien ExternalAuth; se contrastó router/handler directamente.</p>
+<h3 id="diferencias-materiales-51">Diferencias materiales</h3>
+<ul>
+<li><strong>PAC sí existe en esta revisión:</strong> WebBlockingManager crea LocalPacServer, aplica estado local y añade lock/marca de shutdown. La ausencia de enforcement de 931fd12 no se atribuye a este checkout (1638bd4:AZCKeeper_Client/Blocking/WebBlockingManager.cs:14, 1638bd4:AZCKeeper_Client/Blocking/WebBlockingManager.cs:30, 1638bd4:AZCKeeper_Client/Blocking/WebBlockingManager.cs:50, 1638bd4:AZCKeeper_Client/Blocking/WebBlockingManager.cs:56).</li>
+<li>Router de entrega no publica /client/security/report y añade tres rutas externas. El inventario §2 es completo para 931fd12, no para cualquier rama sin fijar versión (1638bd4:AZCKeeper_Client/Web/public/index.php:44).</li>
+<li>Ya existe un bridge externo concreto, documentado en comentario del handler; no es OAuth/OpenAPI multiempresa. Añadir MOAZC_BRIDGE_SECRET al inventario de entorno si se despliega esta revisión (1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:11, 1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:133).</li>
+<li>Marca adicional MOAZC en ExternalAuth.php:11, :13, :88 y :93. Inventario principal de marca comprobado contra 931fd12, no líneas desplazadas del worktree.</li>
+</ul>
+<h3 id="inventario-adicional-de-endpoints-52">Inventario adicional de endpoints</h3>
+<p>Todos requieren X-Bridge-Secret comparado con MOAZC_BRIDGE_SECRET mediante hash_equals; configuración ausente devuelve 503 y secreto inválido 401. No hay tenant/scopes por integración en ese mecanismo (1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:133).</p>
+<table>
+<thead>
+<tr>
+<th>Método/ruta</th>
+<th>Tablas / comportamiento</th>
+<th>Evidencia</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GET /api/external/roster</td>
+<td>R keeper_users, keeper_user_assignments, keeper_sedes, keeper_firmas, keeper_areas; todos los activos, fetchAll sin paginación/tenant</td>
+<td>1638bd4:AZCKeeper_Client/Web/public/index.php:49; 1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:23, 1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:101.</td>
+</tr>
+<tr>
+<td>GET /api/external/sites-and-firms</td>
+<td>R keeper_sedes y keeper_firmas globales</td>
+<td>1638bd4:AZCKeeper_Client/Web/public/index.php:50; 1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:113.</td>
+</tr>
+<tr>
+<td>POST /api/external/verify-credentials</td>
+<td>R users/assignments/sedes/firmas/áreas y employee legacy; INSERT/UPDATE keeper_users, sync keeper_user_assignments y W keeper_audit_log</td>
+<td>1638bd4:AZCKeeper_Client/Web/public/index.php:64; 1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:45, 1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:74, 1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:87, 1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:180.</td>
+</tr>
+</tbody></table>
+<h3 id="hallazgos-del-complemento-53">Hallazgos del complemento</h3>
+<ol>
+<li><strong>Alto:</strong> secreto compartido accede al roster global con CC/email/organización. publicUser omite password_hash, pero no restringe tenant (1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:105, 1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:205).</li>
+<li><strong>Alto:</strong> verificación por email no exige status activo; devolverlo al consumidor no equivale a rechazarlo (1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:68, 1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:142).</li>
+<li><strong>Alto:</strong> compara password legacy en claro y puede crear/actualizar usuario/assignment. Esta ruta no es completamente de lectura y no pertenece al contrato read-only propuesto (1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:71, 1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:191, 1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:195).</li>
+<li><strong>Medio/Alto operativo:</strong> 60 intentos/300 s por IP y 10/300 s por email, claves crc32 en limiter de archivos. El límite IP equivale a 12/min: login masivo desde NAT puede agotarlo. No se afirma despliegue productivo de esta rama (1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:49, 1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:59).</li>
+<li><strong>Medio:</strong> roster necesita paginación/cuotas. OpenAPI §8 sigue siendo propuesta; debe encapsular/reemplazar bridge con autorización tenant (1638bd4:AZCKeeper_Client/Web/src/Endpoints/ExternalAuth.php:105).</li>
+</ol>
+<p>Acción prioritaria adicional: antes de desplegar bridge a terceros, restringir integración/tenant, rechazar inactivos, separar verificación de credenciales de lectura y dimensionar login NAT. Esfuerzo M, dependiente del proyecto de identidad/tenancy.</p>
+<h2 id="10-plan-de-acción-priorizado-54">10. Plan de acción priorizado</h2>
+<p>Esfuerzo relativo: <strong>S</strong> cambio localizado; <strong>M</strong> varios componentes/pruebas; <strong>L</strong> subsistema/migración; <strong>XL</strong> rediseño transversal. No son estimaciones en días. Ninguna acción de esta tabla se ejecutó durante la auditoría.</p>
+<h3 id="101-quick-wins-y-contención-55">10.1 Quick wins y contención</h3>
+<table>
+<thead>
+<tr>
+<th>Prioridad</th>
+<th>Acción</th>
+<th align="right">Esfuerzo</th>
+<th>Criterio de cierre / dependencia</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>P0</td>
+<td>Deshabilitar reenrolamiento sin prueba de posesión y preparar recuperación autenticada</td>
+<td align="right">S / M para sustitución</td>
+<td>GUID solo no obtiene token; recuperación legítima auditada (§9.1).</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>Rechazar reasignación implícita de GUID y comprobar device de sesión</td>
+<td align="right">M</td>
+<td>Token de A no toma dispositivo de B; transferencia explícita revoca sesiones (§6.2).</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>Dejar de registrar PIN y sanear envío; revisar histórico/rotación</td>
+<td align="right">S</td>
+<td>PIN no aparece en local/remoto/meta; recuperación de usuarios prevista (§9.3).</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>Contener distribución de artefactos no verificados y restringir gestión de releases</td>
+<td align="right">S</td>
+<td>Ningún paquete nuevo sin validación; solución criptográfica es proyecto separado (§9.5).</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>Corregir guards de objeto en AJAX/mutaciones y restringir páginas globales</td>
+<td align="right">M</td>
+<td>Matriz de dos tenants/roles prueba 403/404, incluida exportación (§6.2).</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>No reiniciar update timer en política idéntica; evitar Start duplicado</td>
+<td align="right">S</td>
+<td>Cadencia de versión responde al intervalo, no al handshake (§5.2).</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Corregir segundos/minutos y aumentar intervalos con jitter de arranque</td>
+<td align="right">M</td>
+<td>Config efectiva coincide con política; curva real por endpoint se acerca al modelo (§5.1, §5.6).</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Diferenciar 403 de auth inválida y respetar Retry-After</td>
+<td align="right">M</td>
+<td>Ban/429 no borra credenciales; no retry anticipado (§5.5).</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>CSRF uniforme en mutaciones; retirar exposición del backup diagnóstico</td>
+<td align="right">M</td>
+<td>Acciones sin token válido fallan; menú no sustituye canDo (§9.2).</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Expiración/revocación uniforme y rechazo de usuario inactivo</td>
+<td align="right">M</td>
+<td>Token anterior deja de servir al inactivar/transferir (§9.1).</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Corregir seed doble, cierre final y applicable_days</td>
+<td align="right">M</td>
+<td>Pruebas de reinicio/retoma/medianoche conservan métricas (§4.2, §4.3).</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Separar purga de logs, añadir presupuesto/checkpoint y límites de request</td>
+<td align="right">M</td>
+<td>Retención funciona con productividad desactivada; request grande se rechaza temprano (§3.4, §9.4).</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Mitigación CSF/LFD para IPs dedicadas más límites L7 por identidad</td>
+<td align="right">S operativo</td>
+<td>Operación acuerda umbrales/allowlist temporal; monitoreo distingue sockets de HTTP (§5.7).</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>Eliminar password de GET de prueba de conexión y acotar destinos</td>
+<td align="right">S/M</td>
+<td>URL/log no lleva secreto; prueba solo para destinos autorizados (§9.3).</td>
+</tr>
+</tbody></table>
+<h3 id="102-proyectos-estructurales-56">10.2 Proyectos estructurales</h3>
+<table>
+<thead>
+<tr>
+<th>Prioridad</th>
+<th>Proyecto</th>
+<th align="right">Esfuerzo</th>
+<th>Dependencias / salida verificable</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>P0</td>
+<td>Updater con manifest/firma, confianza anclada, rollback y anillos</td>
+<td align="right">L</td>
+<td>Contención inmediata; rechaza ZIP modificado, origen/firma inválida y downgrade (§9.5).</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>TenantContext de extremo a extremo y migración de identidades/assignments</td>
+<td align="right">XL</td>
+<td>Decidir tenant comercial; backfill y constraints; tests cruzados de todas las rutas (§6).</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Planificador común, lotes persistentes, coalescencia e idempotencia</td>
+<td align="right">L</td>
+<td>API ACK por registro; pruebas de timeout tras commit, circuito abierto y reconexión NAT (§4, §5).</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>/client/sync versionado + caché de política y límites device/tenant compartidos</td>
+<td align="right">L</td>
+<td>Convivencia legacy; medir objetivo ~0,5 requests/min/device sin extras (§5.6).</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Baseline/migraciones reproducibles y despliegue VPS/Docker</td>
+<td align="right">L</td>
+<td>Fresh install + upgrade + restore; rutas antiguas y legacy controlado (§3).</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Retención/archivo, agregados y workers reanudables</td>
+<td align="right">L</td>
+<td>EXPLAIN, jobs por tenant/fecha, presupuesto de escritura y frescura visible (§6.4–§6.6).</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>Panel: servicios/repos, paginación SQL, AJAX separado y catálogo único</td>
+<td align="right">L</td>
+<td>Sin fanout multidispositivo; permisos de acción centralizados (§2, §6.6, §7.3).</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>Rebrand global y tema tenant</td>
+<td align="right">M global / L tenant</td>
+<td>Layout/login/export coherentes; assets locales; identidad técnica conservada (§7).</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>API pública read-only, integración/OAuth/scopes y OpenAPI completo</td>
+<td align="right">L</td>
+<td>Depende de tenancy; contrato tipado, cuotas y pruebas de consumo externo (§8).</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>Gateway asíncrono de notificaciones, solo si se requiere reacción en segundos</td>
+<td align="right">L</td>
+<td>Justificar necesidad frente a polling; backoff/reconexión y auth tenant/device (§5.6).</td>
+</tr>
+</tbody></table>
+<h3 id="103-validación-de-capacidad-y-criterios-de-salida-57">10.3 Validación de capacidad y criterios de salida</h3>
+<p>En staging, después de correcciones, probar 180/1.000/5.000 dispositivos simulados con tiempos/payloads representativos, arranque sincronizado, backlog, 429, caída de BD y recuperación. No se ejecutó carga sobre producción.</p>
+<p>Criterios:</p>
+<ul>
+<li>Cero acceso cruzado en la matriz de endpoints, objetos, exports y scopes.</li>
+<li>Cero ejecución de ZIP sin firma válida.</li>
+<li>Reenvío tras commit ambiguo no duplica episodios; ACK parcial conserva rechazados.</li>
+<li>Recuperación offline no excede presupuesto y no pierde datos por intentos omitidos.</li>
+<li>Registros de actividad correctos tras reinicio/doble dispositivo/medianoche.</li>
+<li>Peticiones, conexiones y trabajos de BD medidos separadamente; umbrales empresariales validados con infraestructura.</li>
+<li>Jobs completan o reanudan, purga funciona independientemente y restauración está comprobada.</li>
+<li>Contrato legacy sigue funcionando durante rollout.</li>
+</ul>
+<h3 id="104-pendientes-de-evidencia-externa-58">10.4 Pendientes de evidencia externa</h3>
+<p>Estos puntos no bloquean las conclusiones estáticas, pero sí una afirmación sobre el comportamiento exacto desplegado:</p>
+<ol>
+<li>Hashes y configuración efectiva de binarios 3.0.3.x y archivos scp.</li>
+<li>SHOW CREATE TABLE/índices en copia de producción y estado real de migraciones.</li>
+<li>Access logs y métricas CSF/LFD por endpoint/dispositivo/IP para cuantificar conexiones y correlacionar bloqueo web.</li>
+<li>Cadencia cron efectiva, timezone de PHP/BD, disponibilidad y configuración de legacy.</li>
+<li>Prueba de carga/EXPLAIN con distribución real de episodios y periodos de consulta.</li>
+<li>Matriz de roles/scopes instalada y disponibilidad de enforcement fuera del K3 auditado; árboles excluidos permanecen fuera de esta auditoría.</li>
+</ol>
+<p><strong>Estado:</strong> auditoría estática completada; cambios de producto e infraestructura únicamente propuestos. Archivo de entrega único: docs/audits/2026-09-15-auditoria-k3.md.</p>
+<h3 id="105-comprobación-final-del-artefacto-59">10.5 Comprobación final del artefacto</h3>
+<ul>
+<li>856 citas comprobadas contra 108 fuentes en sus commits correspondientes: ninguna ruta ausente ni línea fuera de rango. Esto verifica ubicación; no sustituye las lecturas semánticas realizadas durante la auditoría.</li>
+<li>50 filas del inventario de marca contrastadas con el contenido de 931fd12: sin discrepancias en las líneas indicadas.</li>
+<li>Esqueleto OpenAPI: nueve operationId únicos y ninguna referencia interna inexistente. Comprobación estructural de referencias; no se ejecutó un validador OpenAPI completo ni un servicio OAuth.</li>
+<li>Git no muestra cambios en archivos de código versionados. El reporte es nuevo; graphify-out aparece como árbol no versionado preexistente a la consulta de reanudación. No se incorporó ni modificó deliberadamente ese árbol.</li>
+<li>No se hizo commit, checkout ni despliegue. Las únicas escrituras de esta entrega fueron al archivo del reporte.</li>
+</ul>
+</main></div></body></html>

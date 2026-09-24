@@ -1,0 +1,1 @@
+{"private":true,"type":"module","scripts":{"generate":"node generate.mjs","check":"node generate.mjs --check"},"devDependencies":{"yaml":"2.8.1"}}

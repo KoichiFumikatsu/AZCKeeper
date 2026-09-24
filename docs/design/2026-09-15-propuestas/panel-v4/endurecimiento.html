@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Endurecimiento · AZC Keeper v4</title>
+  <link rel="icon" href="../assets/favicon.ico">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+  <style>
+    .h-intro{margin-bottom:1.75rem;font-size:.875rem;color:var(--muted)}
+    .h-intro code{overflow-wrap:anywhere}
+    .h-settings{display:grid;gap:1.75rem}
+    .h-settings h2{margin:0 0 .5rem}
+    .h-settings p,.h-devices>p{font-size:.9375rem;color:var(--muted)}
+    .h-settings .v-field{margin:1.2rem 0 .4rem}
+    .h-settings small{margin-top:.4rem}
+    .h-settings fieldset{padding:1.25rem 0;border-block:1px solid var(--line)}
+    .h-settings legend{font-size:1.05rem;font-weight:650;padding-right:.6rem}
+    .h-mode{display:grid;grid-template-columns:22px minmax(0,1fr);gap:.75rem;margin:0;padding:.65rem 0;cursor:pointer}
+    .h-mode input[type=radio]{width:22px;min-height:22px;height:22px;margin:.2rem 0;accent-color:var(--accent)}
+    .h-mode small{font-weight:400;margin:.2rem 0 0}
+    .h-switch{display:flex;align-items:start;gap:.85rem;cursor:pointer;margin:1.25rem 0 .5rem}
+    .h-switch input[role=switch]{appearance:none;flex:0 0 46px;width:46px;height:28px;border:2px solid var(--control);border-radius:16px;background:var(--surface);position:relative;margin:.15rem 0}
+    .h-switch input:before{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--control)}
+    .h-switch input:checked{background:var(--accent);border-color:var(--accent)}
+    .h-switch input:checked:before{left:21px;background:#F8F8F8}
+    .h-security{border-top:1px solid var(--line);padding-top:1.5rem}
+    .h-warning{color:#86121C!important;background:#FAE8E9;border:1px solid #86121C;padding:1rem;border-radius:8px;margin:1rem 0}
+    .h-state-picker{display:flex;align-items:end;justify-content:space-between;gap:1rem;flex-wrap:wrap;border-block:1px solid var(--line);margin:1.5rem 0;padding:.5rem 0}
+    .h-state-picker .v-field{max-width:22rem;flex:1 1 15rem;margin:.5rem 0}
+    .h-chip{display:inline-block;border:1px solid currentColor;border-radius:5px;padding:.2rem .55rem;font-size:.8125rem;font-weight:650;line-height:1.5}
+    .h-chip[data-severity=warning]{color:#704800;background:#FFF0CB}
+    .h-chip[data-severity=info]{color:#003A5D;background:#E2EDF5}
+    .h-chip[data-severity=success]{color:#205238;background:#E4F1E8}
+    .h-chip[data-severity=danger]{color:#86121C;background:#FAE8E9}
+    .h-danger{color:#86121C;border-color:#86121C}
+    .h-danger.primary,.h-danger.primary:hover{background:#86121C;color:#F8F8F8}
+    .h-table table{min-width:0;table-layout:fixed}
+    .h-table th:first-child{width:29%;min-width:0}
+    .h-table th:nth-child(2){width:40%}
+    .h-table th,.h-table td{overflow-wrap:anywhere}
+    .h-table .v-rowactions{gap:.65rem}
+    .h-table button{min-width:100px}
+    .h-table button:disabled{opacity:1;color:#505050;border-color:#686868}
+    .h-empty{padding:2rem 0;border-bottom:1px solid var(--line)}
+    .h-empty p{max-width:42rem;margin:.75rem 0}
+    .h-feedback:not(:empty){border:1px solid var(--control);padding:1rem;margin:1rem 0;background:var(--surface)}
+    .h-feedback:empty{display:none}
+    .h-dialog h2{font-size:1.65rem;margin:0 0 .75rem}
+    .h-dialog h3{margin:1.4rem 0 .5rem}
+    .h-dialog p{margin:.75rem 0}
+    .h-dialog li{padding:.3rem 0}
+    .h-dialog code{overflow-wrap:anywhere}
+    .h-dialog .v-actions{justify-content:flex-end;margin-bottom:0}
+    .h-secret{display:block;font-family:var(--mono);font-size:1.15rem;border:1px solid var(--control);padding:1rem;overflow-wrap:anywhere}
+    .h-demo-review{margin-top:2rem;border-top:1px solid var(--line);padding-top:1rem}
+    .h-demo-review summary{min-height:44px;cursor:pointer;font-weight:600;padding:.6rem 0}
+    .h-demo-review p{font-size:.875rem;margin:.5rem 0}
+    @media(min-width:1100px){.h-settings{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:2.5rem}.h-security{border:0;border-left:1px solid var(--line);padding:0 0 0 2.5rem}}
+    @media(max-width:700px){
+      .h-settings.work-surface{padding:1.25rem}.h-table{overflow:visible;scrollbar-gutter:auto}
+      .h-table table,.h-table tbody,.h-table tr,.h-table th,.h-table td{display:block;width:100%;min-width:0}
+      .h-table caption{display:block;padding-bottom:1rem}.h-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+      .h-table tr{border-top:1px solid var(--control);padding:.85rem 0}
+      .h-table th:first-child,.h-table th:nth-child(2){width:100%}
+      .h-table th,.h-table td,.h-table th:first-child,.h-table td:first-child{padding:.5rem 0;border:0}
+      .h-table .v-rowactions{max-width:none}.h-table button{flex:1}
+      .h-dialog .v-actions{flex-direction:column}.h-dialog .v-actions button{width:100%}
+    }
+    @media(forced-colors:active){.h-chip,.h-warning,.h-switch input[role=switch]{border-color:CanvasText}.h-switch input:before{background:CanvasText}.h-switch input:checked:before{background:Highlight}.h-danger{color:LinkText}}
+  </style>
+</head>
+<body data-page="endurecimiento">
+  <a class="skip-link" href="#main">Saltar al contenido</a>
+  <header class="v-topbar">
+    <a class="v-brandlink" href="index.html?session=super&amp;tenant=azc"><img class="brand" src="../assets/logo_main.png" alt="AZC Keeper · Inicio" width="168"></a>
+    <div class="v-context"><span>Empresa</span><strong>Grupo AZC</strong><nav aria-label="Ruta de navegación"><a href="index.html?session=super&amp;tenant=azc">Inicio</a> / <span>Endurecimiento</span></nav></div>
+    <div class="v-account"><strong>Koichi Fumikatsu</strong><span>Super admin</span><a href="login.html">Cambiar cuenta de prueba</a></div>
+    <details class="v-mobile-nav"><summary>Menú de navegación</summary><nav aria-label="Navegación móvil">
+      <a href="index.html?session=super&amp;tenant=azc">Inicio</a><a href="equipos.html?session=super&amp;tenant=azc">Equipos</a><a href="usuarios.html?session=super&amp;tenant=azc">Usuarios</a><a href="reglas.html?session=super&amp;tenant=azc">Reglas</a><a href="reportes.html?session=super&amp;tenant=azc">Reportes</a><a href="ajustes.html?session=super&amp;tenant=azc">Ajustes</a>
+      <div class="v-navextra"><p>Administración AZC</p><a href="empresas.html?session=super&amp;tenant=azc">Empresas</a><a href="roles.html?session=super&amp;tenant=azc">Roles y permisos</a><a href="endurecimiento.html?session=super&amp;tenant=azc" data-permission="hardening.gestionar" aria-current="page">Endurecimiento</a></div>
+    </nav></details>
+  </header>
+  <div class="v-layout">
+    <aside class="v-sidebar"><nav aria-label="Secciones principales">
+      <a href="index.html?session=super&amp;tenant=azc">Inicio</a><a href="equipos.html?session=super&amp;tenant=azc">Equipos</a><a href="usuarios.html?session=super&amp;tenant=azc">Usuarios</a><a href="reglas.html?session=super&amp;tenant=azc">Reglas</a><a href="reportes.html?session=super&amp;tenant=azc">Reportes</a><a href="ajustes.html?session=super&amp;tenant=azc">Ajustes</a>
+      <div class="v-navextra"><p>Administración AZC</p><a href="empresas.html?session=super&amp;tenant=azc">Empresas</a><a href="roles.html?session=super&amp;tenant=azc">Roles y permisos</a><a href="endurecimiento.html?session=super&amp;tenant=azc" data-permission="hardening.gestionar" aria-current="page">Endurecimiento</a></div>
+    </nav><p>AZC Keeper<br>Panel v4</p></aside>
+    <div class="v-work">
+      <main id="main" tabindex="-1">
+        <header class="v-pagehead"><div><h1>Endurecimiento</h1><p>Modo B · <span data-company>Grupo AZC</span>. El usuario trabaja con una cuenta estándar; IT conserva un administrador local gestionado.</p></div></header>
+        <p class="h-intro"><strong>Diseño estático · Datos ficticios.</strong> Las acciones solo simulan el recorrido. Acceso gobernado por <code>hardening.gestionar</code>.</p>
+        <noscript><p class="h-warning">Activa JavaScript local para revisar permisos, estados y confirmaciones. Este archivo no se conecta a equipos reales.</p></noscript>
+        <form id="h-settings" class="work-surface h-settings" autocomplete="off">
+          <section aria-labelledby="h-settings-title">
+            <h2 id="h-settings-title">Ajustes por empresa</h2>
+            <p>Configuración de <strong data-company>Grupo AZC</strong>.</p>
+            <label class="v-field" for="h-admin">Nombre del admin gestionado<input id="h-admin" name="managedAdmin" value="azcadmin" required aria-describedby="h-admin-help"></label>
+            <small id="h-admin-help">Predeterminado: azcadmin. Cuenta local reservada para administración y recuperación por IT.</small>
+            <label class="v-field" for="h-password">Contraseña compartida<input id="h-password" name="sharedPassword" type="password" placeholder="••••" autocomplete="new-password" aria-describedby="h-password-help h-password-risk"></label>
+            <small id="h-password-help">Solo escritura. Deja el campo vacío para conservar la clave configurada. La clave se guarda cifrada; no se devuelve en la consulta de ajustes.</small>
+            <p id="h-password-risk" class="h-warning">misma para toda la flota; mitigada con bloqueo de acceso por red</p>
+            <p>La clave compartida sigue siendo un riesgo si se filtra. El bloqueo de red reduce ese riesgo; no lo elimina.</p>
+            <div class="v-actions"><button id="h-reveal" type="button">Revelar contraseña</button></div>
+            <small>La revelación exige confirmar y queda auditada. En este diseño solo se muestra una clave ficticia.</small>
+          </section>
+          <section class="h-security" aria-labelledby="h-apply-title">
+            <h2 id="h-apply-title">Cómo se aplica</h2>
+            <fieldset><legend>Modo</legend>
+              <label class="h-mode"><input type="radio" name="mode" value="auto"><span>Auto<small>El agente aplica el endurecimiento al recibir la configuración. El usuario activo pasa a estándar; el cambio se hace efectivo en su próximo inicio de sesión.</small></span></label>
+              <label class="h-mode"><input type="radio" name="mode" value="panel" checked><span>Panel<small>El equipo espera una orden. IT revisa el usuario activo y confirma «Endurecer» en cada equipo.</small></span></label>
+            </fieldset>
+            <label class="h-switch"><input id="h-network" type="checkbox" role="switch" checked aria-describedby="h-network-help"><span>Bloquear acceso por red a cuentas locales (recomendado)<small id="h-network-value">Activado</small></span></label>
+            <p id="h-network-help">Corta el movimiento lateral con administradores locales: impide usar sus credenciales para acceder por red de un equipo a otro. La recuperación local por IT sigue disponible.</p>
+            <small>Alcance de esta medida: cuentas locales que son administradoras (S-1-5-114).</small>
+            <p id="h-network-off" class="h-warning" hidden>Bloqueo desactivado: una clave compartida filtrada podría utilizarse por red contra otros equipos. Se recomienda mantenerlo activado.</p>
+            <div class="v-actions"><button class="primary" type="submit">Guardar ajustes de muestra</button></div>
+            <small>Solo cambia esta vista. No introduzcas contraseñas reales.</small>
+          </section>
+        </form>
+        <p id="h-settings-feedback" class="h-feedback" role="status"></p>
+        <section class="v-section h-devices" aria-labelledby="h-devices-title">
+          <h2 id="h-devices-title">Estado por equipo</h2>
+          <p>Revisa la cuenta activa antes de quitarle permisos de administrador. Un comando pendiente no equivale a un equipo endurecido.</p>
+          <div class="h-state-picker">
+            <label class="v-field" for="h-scenario">Estado de muestra<select id="h-scenario"><option value="ready">Con equipos</option><option value="empty">Vacío</option><option value="loading">Cargando</option><option value="error">Error de consulta</option></select></label>
+            <p>Corte de muestra: 16 sep 2026 · 09:42</p>
+          </div>
+          <p id="h-command-feedback" class="h-feedback" role="status"></p>
+          <div id="h-register" class="v-table h-table" role="region" aria-label="Estado de endurecimiento de los equipos">
+            <table role="table"><caption>Cinco equipos ficticios para revisar los estados de Modo B.</caption><thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader">Equipo / usuario activo</th><th scope="col" role="columnheader">Estado / siguiente paso</th><th scope="col" role="columnheader">Acciones</th></tr></thead>
+              <tbody id="h-device-rows" role="rowgroup">
+                <tr role="row"><th scope="row" role="rowheader"><span data-host>AZC-CLO-001</span><small data-user>Laura Méndez · Administradora local</small><small data-site>Cali · Jurídica</small></th><td role="cell"><span class="h-chip" data-severity="warning">Sin endurecer</span><small data-next>Revisa el usuario activo y confirma el endurecimiento.</small></td><td role="cell"><div class="v-rowactions"><button type="button" class="h-danger" data-h-command="harden">Endurecer</button><button type="button" data-h-command="revert" disabled>Revertir</button></div></td></tr>
+                <tr role="row"><th scope="row" role="rowheader"><span data-host>AZC-CLO-002</span><small data-user>Andrés Molina · Administrador local</small><small data-site>Cali · Jurídica</small></th><td role="cell"><span class="h-chip" data-severity="info">En progreso</span><small data-next>Orden recibida. Falta confirmar el próximo inicio de sesión.</small></td><td role="cell"><div class="v-rowactions"><button type="button" class="h-danger" data-h-command="harden" disabled>Endurecer</button><button type="button" data-h-command="revert" disabled>Revertir</button></div></td></tr>
+                <tr role="row"><th scope="row" role="rowheader"><span data-host>AZC-CLO-003</span><small data-user>Diana Rojas · Cuenta estándar</small><small data-site>Cali · Administración</small></th><td role="cell"><span class="h-chip" data-severity="success">Endurecido</span><small data-next>Usuario estándar y admin gestionado confirmados.</small></td><td role="cell"><div class="v-rowactions"><button type="button" class="h-danger" data-h-command="harden" disabled>Endurecer</button><button type="button" data-h-command="revert">Revertir</button></div></td></tr>
+                <tr role="row"><th scope="row" role="rowheader"><span data-host>AZC-BOG-004</span><small data-user>Camilo Vélez · Cuenta estándar</small><small data-site>Bogotá · Jurídica</small></th><td role="cell"><span class="h-chip" data-severity="danger">Requiere recuperación</span><small data-next>El admin gestionado no quedó confirmado. IT debe recuperar el acceso.</small></td><td role="cell"><div class="v-rowactions"><button type="button" class="h-danger" data-h-command="harden" disabled>Endurecer</button><button type="button" data-h-command="revert">Revertir</button></div></td></tr>
+                <tr role="row"><th scope="row" role="rowheader"><span data-host>AZC-CLO-005</span><small data-user>Natalia Castro · Administradora local</small><small data-site>Cali · Jurídica</small></th><td role="cell"><span class="h-chip" data-severity="warning">En espera de panel</span><small data-next>Modo Panel: falta la confirmación de IT. Equipo sin conexión.</small></td><td role="cell"><div class="v-rowactions"><button type="button" class="h-danger" data-h-command="harden">Endurecer</button><button type="button" data-h-command="revert" disabled>Revertir</button></div></td></tr>
+              </tbody>
+            </table>
+            <p><small>Las acciones deshabilitadas no corresponden al estado actual. En progreso: espera la respuesta del agente antes de enviar otra orden.</small></p>
+          </div>
+          <section id="h-empty" class="h-empty" hidden><h3>Aún no hay equipos para endurecer</h3><p>Registra un equipo de esta empresa y espera su primera conexión. Después podrás revisar su usuario activo y aplicar Modo B.</p><a class="button" id="h-enroll" href="equipos.html?session=super&amp;tenant=azc&amp;enroll=1">Agregar el primer equipo</a></section>
+          <section id="h-loading" class="h-empty" hidden><div role="status" aria-live="polite"><h3>Consultando el estado de los equipos</h3><p>Esperamos el estado reportado por cada agente. Mientras tanto no se pueden enviar órdenes. Puedes seguir navegando.</p></div><div aria-busy="true"><p>Lista pendiente de carga.</p></div><button type="button" data-h-state="ready">Simular carga completada</button></section>
+          <section id="h-error" class="h-empty" hidden><div role="alert"><h3>No pudimos consultar el endurecimiento</h3><p>No hay un estado actualizado para decidir. No se ha enviado ninguna orden. Reintenta; si el error continúa, informa a IT la empresa y la hora de la consulta.</p></div><button type="button" data-h-state="ready">Reintentar consulta de muestra</button></section>
+        </section>
+        <details class="h-demo-review"><summary>Revisar acceso y límites del diseño</summary><p>Super admin tiene <code>hardening.gestionar</code>. Sin ese permiso, se oculta el enlace y esta pantalla muestra acceso restringido. La autorización aquí es solo una simulación visual.</p><a id="h-no-permission" href="endurecimiento.html?session=admin&amp;tenant=azc">Abrir con Admin Empresa, sin permiso por defecto</a><p>Los ajustes, las órdenes y la auditoría de esta pantalla se reinician al recargar. La contraseña que escribas se descarta al guardar; no se almacena en el navegador.</p></details>
+        <dialog id="h-dialog" class="h-dialog" aria-labelledby="h-dialog-title" aria-describedby="h-dialog-summary">
+          <form id="h-confirm-form">
+            <h2 id="h-dialog-title">Confirmar acción</h2><p id="h-dialog-summary"></p>
+            <div id="h-harden-copy" hidden><h3>Qué va a pasar</h3><ul><li>Se preparará la cuenta local <strong data-managed-admin>azcadmin</strong> con la contraseña compartida de la empresa.</li><li>El usuario activo <strong id="h-active-user"></strong> dejará de ser administrador y pasará a estándar. Necesitará a IT para instalar software o realizar cambios de sistema.</li><li id="h-network-summary"></li></ul><p class="h-warning"><strong>Aplica en el próximo inicio de sesión.</strong> Avisa a la persona antes de continuar. La sesión actual no se cierra automáticamente.</p><label class="v-field" for="h-typed">Para confirmar, escribe <strong id="h-required-host"></strong><input id="h-typed" autocomplete="off" spellcheck="false" aria-describedby="h-typed-help"></label><small id="h-typed-help">El nombre debe coincidir exactamente, incluidas mayúsculas y guiones.</small></div>
+            <div id="h-revert-copy" hidden><h3>Recuperación de emergencia (break-glass)</h3><p>El usuario afectado volverá al grupo de administradores locales. Recuperará permisos elevados y podrá modificar controles del equipo.</p><p>IT debe revisar la causa antes de endurecerlo de nuevo. Esta acción quedará auditada.</p></div>
+            <div id="h-reveal-copy" hidden><p class="h-warning">Vas a ver la contraseña compartida de toda la flota de esta empresa.</p><p>La revelación queda auditada con quién la solicita, la empresa y la fecha y hora. La contraseña no forma parte del registro de auditoría.</p><p>Comprueba que nadie más pueda ver la pantalla. Esta demostración muestra únicamente una clave ficticia.</p></div>
+            <p id="h-queue-note"></p><p id="h-confirm-error" role="alert"></p>
+            <div class="v-actions"><button type="button" id="h-cancel" autofocus>Cancelar</button><button type="submit" id="h-confirm" class="primary">Confirmar</button></div>
+          </form>
+          <section id="h-revealed" hidden><h3>Contraseña ficticia de muestra</h3><p>Esta clave no funciona en ningún equipo.</p><output class="h-secret" id="h-secret"></output><p id="h-reveal-audit"></p><div class="v-actions"><button type="button" id="h-hide-secret">Ocultar y cerrar</button></div></section>
+        </dialog>
+      </main>
+      <footer class="v-footer"><p>Datos ficticios · Acciones simuladas · Corte 16 sep 2026</p><nav aria-label="Revisión del prototipo"><a href="states.html?session=super&amp;tenant=azc">Estados y cuentas de revisión</a><a href="README.md">Spec y validación</a></nav></footer>
+    </div>
+  </div>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const main = document.querySelector('#main');
+      const form = main.querySelector('#h-settings');
+      if (!form) return;
+      const $ = id => document.getElementById(id);
+      const demo = window.PanelDemo, context = demo.context(), db = demo.db;
+      const company = db.tenants.find(t => t.id === context.tenant);
+      const params = new URLSearchParams({session: context.actor.id, tenant: context.tenant});
+      main.querySelectorAll('[data-company]').forEach(el => el.textContent = company.name);
+      const devices = demo.model.rows(db, context, 'devices').slice(0, 5);
+      const rows = [...main.querySelectorAll('#h-device-rows tr')];
+      rows.forEach((row, index) => {
+        const device = devices[index];
+        if (!device) { row.remove(); return; }
+        row.dataset.device = device.id;
+        row.querySelector('[data-host]').textContent = device.host;
+        const person = db.users.find(u => u.id === device.user);
+        row.dataset.person = person?.name || 'Sin usuario activo';
+        row.querySelector('[data-user]').textContent = row.dataset.person + (index === 2 || index === 3 ? ' · Cuenta estándar' : ' · Administrador local');
+        row.querySelector('[data-site]').textContent = device.site + ' · ' + device.area;
+        if (index === 4) row.querySelector('[data-next]').textContent = 'Modo Panel: falta la confirmación de IT.' + (device.online ? '' : ' Equipo sin conexión.');
+        row.querySelectorAll('[data-h-command]').forEach(button => {
+          button.setAttribute('aria-label', button.textContent + ' ' + device.host);
+          if (!person) button.disabled = true;
+        });
+      });
+      $('h-register').querySelector('caption').textContent = `${devices.length} equipos ficticios de ${company.name} para revisar los estados de Modo B.`;
+      $('h-enroll').href = 'equipos.html?' + params + '&enroll=1';
+      if (!demo.model.can(db, context, 'equipos.agregar')) {
+        $('h-enroll').hidden = true;
+        $('h-empty').querySelector('p').textContent = 'No hay equipos visibles en tu alcance. Solicita a IT el registro del primer equipo y espera su primera conexión.';
+      }
+      $('h-no-permission').href = 'endurecimiento.html?session=' + (context.tenant === 'atlas' ? 'atlas' : 'admin') + '&tenant=' + encodeURIComponent(context.tenant);
+      let settings = {admin: 'azcadmin', mode: 'panel', network: true};
+      let pending = null, trigger = null;
+      const dialog = $('h-dialog');
+      function feedback(id, message) { $(id).textContent = message; }
+      function showState(state) {
+        if (state === 'ready' && !devices.length) state = 'empty';
+        $('h-scenario').value = state;
+        $('h-register').hidden = state !== 'ready';
+        for (const key of ['empty', 'loading', 'error']) $('h-' + key).hidden = state !== key;
+        feedback('h-command-feedback', '');
+      }
+      $('h-scenario').addEventListener('change', event => showState(event.target.value));
+      main.querySelectorAll('[data-h-state]').forEach(button => button.addEventListener('click', () => {
+        showState(button.dataset.hState);
+        $('h-scenario').focus();
+      }));
+      const initialState = new URLSearchParams(location.search).get('state');
+      showState(['empty', 'loading', 'error'].includes(initialState) ? initialState : 'ready');
+      $('h-network').addEventListener('change', event => {
+        $('h-network-value').textContent = event.target.checked ? 'Activado' : 'Desactivado';
+        $('h-network-off').hidden = event.target.checked;
+      });
+      function saveSettings() {
+        const changedPassword = Boolean($('h-password').value);
+        settings = {admin: $('h-admin').value, mode: form.elements.mode.value, network: $('h-network').checked};
+        $('h-password').value = '';
+        feedback('h-settings-feedback', 'Simulación: ajustes guardados para ' + company.name + '. Modo ' + (settings.mode === 'auto' ? 'Auto: el agente aplicaría el endurecimiento al recibirlos.' : 'Panel: cada equipo espera la confirmación de IT.') + (changedPassword ? ' La contraseña escrita se descartó; no se almacenó.' : ' Se conserva la contraseña de muestra.') + ' No se enviaron cambios a equipos.');
+      }
+      function openDialog(action, row, button) {
+        pending = {action, row}; trigger = button;
+        $('h-confirm-form').hidden = false; $('h-revealed').hidden = true;
+        $('h-typed').value = ''; $('h-typed').required = action === 'harden'; $('h-typed').disabled = action !== 'harden';
+        $('h-confirm-error').textContent = '';
+        for (const key of ['harden', 'revert', 'reveal']) $('h-' + key + '-copy').hidden = action !== key;
+        const device = row && devices.find(d => d.id === row.dataset.device);
+        const host = device?.host;
+        $('h-dialog-title').textContent = {harden:'Endurecer ' + host, revert:'Revertir ' + host, reveal:'Revelar contraseña', auto:'Activar modo Auto'}[action];
+        $('h-dialog-summary').textContent = company.name + (host ? ' · ' + host + ' · ' + row.dataset.person : ' · Configuración de empresa');
+        $('h-queue-note').textContent = action === 'reveal' ? '' : action === 'auto' ? 'Al recibir estos ajustes, los equipos aplicarán el endurecimiento automáticamente: el usuario activo pasará a estándar en el próximo inicio de sesión. Avisa a las personas antes de continuar. Esta confirmación solo guarda una muestra local.' : (device.online ? 'La orden quedará pendiente de la respuesta del agente.' : 'Equipo sin conexión: la orden esperará a que vuelva a conectarse.') + ' En esta demostración no se envía ninguna orden real.';
+        $('h-confirm').textContent = {harden:'Confirmar endurecimiento', revert:'Confirmar reversión', reveal:'Confirmar y revelar', auto:'Confirmar modo Auto'}[action];
+        $('h-confirm').className = action === 'harden' || action === 'auto' ? 'primary h-danger' : 'primary';
+        $('h-confirm').disabled = action === 'harden';
+        if (action === 'harden') {
+          $('h-required-host').textContent = host;
+          $('h-active-user').textContent = row.dataset.person;
+          main.querySelector('[data-managed-admin]').textContent = settings.admin;
+          $('h-network-summary').textContent = settings.network ? 'Se bloqueará el acceso por red de cuentas locales administradoras para cortar el movimiento lateral.' : 'El acceso por red de cuentas locales administradoras seguirá permitido. La contraseña compartida tendrá mayor exposición.';
+        }
+        dialog.showModal(); $('h-cancel').focus();
+      }
+      form.addEventListener('submit', event => {
+        event.preventDefault(); event.stopPropagation();
+        if (form.elements.mode.value === 'auto' && settings.mode !== 'auto') openDialog('auto', null, form.querySelector('[type=submit]'));
+        else saveSettings();
+      });
+      $('h-reveal').addEventListener('click', event => openDialog('reveal', null, event.currentTarget));
+      main.querySelectorAll('[data-h-command]').forEach(button => button.addEventListener('click', () => openDialog(button.dataset.hCommand, button.closest('tr'), button)));
+      $('h-typed').addEventListener('input', event => {
+        $('h-confirm').disabled = event.target.value !== $('h-required-host').textContent;
+      });
+      $('h-cancel').addEventListener('click', () => dialog.close());
+      $('h-hide-secret').addEventListener('click', () => dialog.close());
+      dialog.addEventListener('close', () => {
+        $('h-secret').textContent = ''; $('h-typed').value = '';
+        $('h-revealed').hidden = true; $('h-confirm-form').hidden = false;
+        pending = null; trigger?.focus();
+      });
+      $('h-confirm-form').addEventListener('submit', event => {
+        event.preventDefault(); event.stopPropagation();
+        const {action, row} = pending;
+        if (action === 'harden' && $('h-typed').value !== $('h-required-host').textContent) {
+          $('h-confirm-error').textContent = 'Escribe el nombre exacto del equipo para continuar.'; return;
+        }
+        if (action === 'reveal') {
+          $('h-confirm-form').hidden = true; $('h-revealed').hidden = false;
+          $('h-secret').textContent = 'DEMO-NoValida-2026!';
+          $('h-reveal-audit').textContent = 'Auditoría simulada: ' + context.actor.name + ' · ' + company.name + ' · ' + new Date().toLocaleString('es-CO', {timeZone:'America/Bogota'}) + ' (hora Colombia). Revelación de clave ficticia; sin registro persistente.';
+          $('h-hide-secret').focus(); return;
+        }
+        if (action === 'auto') { saveSettings(); dialog.close(); return; }
+        const host = row.querySelector('[data-host]').textContent;
+        const chip = row.querySelector('.h-chip');
+        chip.textContent = 'En progreso'; chip.dataset.severity = 'info';
+        row.querySelector('[data-next]').textContent = action === 'harden' ? 'Endurecimiento solicitado. Pendiente del agente y del próximo inicio de sesión.' : 'Reversión solicitada. Pendiente de confirmar que el usuario vuelve a ser administrador.';
+        row.querySelectorAll('button').forEach(button => button.disabled = true);
+        feedback('h-command-feedback', 'Simulación: ' + (action === 'harden' ? 'endurecimiento' : 'reversión break-glass') + ' solicitado para ' + host + '. Acción auditada en el recorrido de muestra; sin envío ni registro real.');
+        dialog.close();
+        $('h-command-feedback').tabIndex = -1; $('h-command-feedback').focus();
+      });
+    });
+  </script>
+</body>
+</html>

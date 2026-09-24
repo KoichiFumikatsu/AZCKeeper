@@ -1,0 +1,27 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="AZCKeeper v4" Manufacturer="Grupo AZC" Version="4.0.0" UpgradeCode="f65bfc29-1db0-43f4-b6eb-b873238ec4d1" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="No se permite instalar una versión anterior de AZCKeeper." />
+    <MediaTemplate EmbedCab="yes" />
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="AZCKeeper">
+        <Component Id="AgentService" Bitness="always64">
+          <File Id="AgentExe" Source="!(bindpath.publish)\Keeper.Agent.exe" KeyPath="yes" />
+          <ServiceInstall Id="KeeperService" Name="AZCKeeper v4" DisplayName="AZCKeeper v4" Type="ownProcess" Start="auto"
+                          Account="LocalSystem" ErrorControl="normal" Description="Agente de administración AZCKeeper">
+            <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="none"
+                                RestartServiceDelayInSeconds="30" ResetPeriodInDays="1" />
+          </ServiceInstall>
+          <ServiceControl Id="ControlKeeper" Name="AZCKeeper v4" Stop="both" Remove="uninstall" Wait="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <!-- El resto de la carga (DLLs, runtimeconfig, Keeper.Session.exe) lo aporta Files.g.wxs,
+         que Build-Msi.ps1 genera a partir de lo realmente publicado. No se usa <Files Include>:
+         su harvest resolvia la ruta contra el nombre del directorio de destino y dejaba el MSI
+         con un unico archivo, instalando un servicio incapaz de arrancar. -->
+    <Feature Id="Main">
+      <ComponentRef Id="AgentService" />
+      <ComponentGroupRef Id="AgentPayload" />
+    </Feature>
+  </Package>
+</Wix>

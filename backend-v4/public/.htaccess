@@ -1,0 +1,7 @@
+DirectoryIndex index.php
+RewriteEngine On
+RewriteRule ^(?:partials|app)(?:/|$) - [R=404,L]
+RewriteRule ^branding\.svg$ /assets/brand/logo-main.png [R=302,L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]

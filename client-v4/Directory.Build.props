@@ -1,0 +1,15 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <BuildInParallel>false</BuildInParallel>
+    <UseSharedCompilation>false</UseSharedCompilation>
+    <!-- The prototype builds from its locked cache without contacting the audit service. -->
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+  <ItemGroup><Using Include="Keeper.Shared.Policy" /></ItemGroup>
+</Project>

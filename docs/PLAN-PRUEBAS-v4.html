@@ -1,0 +1,194 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Auditoría K3 AZCKeeper — 2026-09-15</title><style>
+:root{--bg:#fafafa;--fg:#1f2328;--muted:#57606a;--line:#d0d7de;--code:#f0f2f5;--accent:#0b5fff;--crit:#b42318;--alto:#b54708;--nav:#fff}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.wrap{display:grid;grid-template-columns:300px 1fr;min-height:100vh}
+nav{position:sticky;top:0;height:100vh;overflow:auto;background:var(--nav);border-right:1px solid var(--line);padding:16px 12px;font-size:13px}
+nav h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 8px}
+nav ul{list-style:none;margin:0;padding:0}nav li{margin:2px 0}nav a{color:var(--fg);text-decoration:none;display:block;padding:2px 6px;border-radius:4px}
+nav a:hover{background:var(--code)}nav li.d2 a{font-weight:600}nav li.d3 a{padding-left:18px;color:var(--muted)}
+main{padding:32px 48px;max-width:1300px;min-width:0}
+h1{font-size:28px;margin:0 0 8px}h2{font-size:22px;margin:40px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}h3{font-size:17px;margin:28px 0 8px}h4{font-size:15px;margin:20px 0 6px}
+p,li{max-width:100ch}a{color:var(--accent)}
+code{font:13px/1.4 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;background:var(--code);padding:1px 5px;border-radius:4px}
+pre{background:var(--code);padding:12px 14px;border-radius:6px;overflow:auto;border:1px solid var(--line)}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13.5px;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top;text-align:left}th{background:var(--code);position:sticky;top:0}
+tr:nth-child(even) td{background:#f6f8fa}
+td strong{white-space:nowrap}
+blockquote{margin:12px 0;padding:8px 14px;border-left:4px solid var(--line);color:var(--muted);background:#fff}
+hr{border:0;border-top:1px solid var(--line);margin:32px 0}
+.sev-crit{color:var(--crit);font-weight:700}.sev-alto{color:var(--alto);font-weight:700}
+@media(max-width:900px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:20px 16px}}
+@media print{nav{display:none}.wrap{display:block}main{padding:0;max-width:none}a{color:inherit;text-decoration:none}}
+</style></head><body><div class="wrap"><nav><h2>Índice</h2><ul><li class="d1"><a href="#azckeeper-v4-plan-de-pruebas-requerimientos-piloto-controlado-0">AZCKeeper v4 — Plan de pruebas + requerimientos (piloto controlado)</a></li>
+<li class="d2"><a href="#0-dos-bloqueadores-a-resolver-antes-de-tocar-un-equipo-1">0. Dos bloqueadores a resolver ANTES de tocar un equipo</a></li>
+<li class="d2"><a href="#1-requerimientos-prerequisitos-del-piloto-2">1. Requerimientos (prerequisitos del piloto)</a></li>
+<li class="d3"><a href="#11-equipos-3">1.1 Equipos</a></li>
+<li class="d3"><a href="#12-backend-v4-alcanzable-4">1.2 Backend v4 alcanzable</a></li>
+<li class="d3"><a href="#13-artefactos-v4-a-construir-en-etapa-0-5">1.3 Artefactos v4 (a construir en Etapa 0)</a></li>
+<li class="d3"><a href="#14-canal-de-entrega-desde-k3-6">1.4 Canal de entrega desde K3</a></li>
+<li class="d3"><a href="#15-reversibilidad-obligatorio-antes-de-instalar-7">1.5 Reversibilidad (obligatorio antes de instalar)</a></li>
+<li class="d2"><a href="#2-modelo-de-entrega-cómo-quotse-trae-desde-k3quot-con-el-sí-8">2. Modelo de entrega (cómo &quot;se trae desde K3&quot; con el Sí)</a></li>
+<li class="d2"><a href="#3-plan-por-etapas-9">3. Plan por etapas</a></li>
+<li class="d3"><a href="#etapa-0-bootstrapper-e-instalación-manual-1-equipo-desechable-sin-k3-10">Etapa 0 — Bootstrapper e instalación MANUAL (1 equipo desechable, sin K3)</a></li>
+<li class="d3"><a href="#etapa-1-entrega-desde-k3-elevación-equipo-piloto-con-k3-11">Etapa 1 — Entrega desde K3 + elevación (equipo piloto con K3)</a></li>
+<li class="d3"><a href="#etapa-2-enforcement-web-hklm-12">Etapa 2 — Enforcement web (HKLM)</a></li>
+<li class="d3"><a href="#etapa-3-enforcement-usb-comandos-remotos-13">Etapa 3 — Enforcement USB + comandos remotos</a></li>
+<li class="d3"><a href="#etapa-4-resiliencia-red-y-reinicio-14">Etapa 4 — Resiliencia (red y reinicio)</a></li>
+<li class="d3"><a href="#etapa-5-separada-posterior-endurecimiento-azcadmin-degradación-15">Etapa 5 — (SEPARADA, posterior) Endurecimiento: azcadmin + degradación</a></li>
+<li class="d2"><a href="#4-criterios-de-salida-del-piloto-16">4. Criterios de salida del piloto</a></li>
+<li class="d2"><a href="#5-qué-no-cubre-este-piloto-17">5. Qué NO cubre este piloto</a></li></ul></nav><main><h1 id="azckeeper-v4-plan-de-pruebas-requerimientos-piloto-controlado-0">AZCKeeper v4 — Plan de pruebas + requerimientos (piloto controlado)</h1>
+<blockquote>
+<p>Objetivo: validar en equipos reales lo que no se puede probar en la máquina de desarrollo — enforcement
+real (HKLM), servicio SYSTEM, y la entrega <strong>desde K3</strong> con una elevación (UAC &quot;Sí&quot;) por equipo.
+Contexto: K3 queda <strong>instalado y corriendo</strong>; v4 se entrega como actualización que el usuario acepta.
+Fecha: 2026-09-22.</p>
+</blockquote>
+<hr>
+<h2 id="0-dos-bloqueadores-a-resolver-antes-de-tocar-un-equipo-1">0. Dos bloqueadores a resolver ANTES de tocar un equipo</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Hecho verificado</th>
+<th>Consecuencia</th>
+<th>Qué hay que construir</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>B1</td>
+<td>El updater de K3 corre en <strong>integridad media</strong> (asInvoker, sin <code>runas</code>) — no eleva</td>
+<td>El &quot;Sí&quot; de UAC <strong>no aparece solo</strong> al traer v4 desde K3</td>
+<td>El <strong>bootstrapper v4</strong> debe disparar su propia elevación (<code>ShellExecute verb=runas</code>). Como el usuario es admin, es un <strong>consentimiento</strong> (clic Sí), no contraseña</td>
+</tr>
+<tr>
+<td>B2</td>
+<td>El <strong>bootstrapper v4 no existe</strong> (Fase 1 = servicio+enforcers+sync, sin instalador)</td>
+<td>No hay artefacto que K3 pueda entregar ni que instale el servicio</td>
+<td>Construir <code>Keeper.Bootstrapper</code> + empaquetado self-contained + registro del servicio</td>
+</tr>
+</tbody></table>
+<p><strong>Sin B1 y B2 no arranca el piloto.</strong> El plan de abajo asume que se construyen primero (Etapa 0).</p>
+<hr>
+<h2 id="1-requerimientos-prerequisitos-del-piloto-2">1. Requerimientos (prerequisitos del piloto)</h2>
+<h3 id="11-equipos-3">1.1 Equipos</h3>
+<ul>
+<li><strong>2–3 equipos piloto</strong>, Windows 11 <strong>Pro</strong>, representativos de la flota (usuario = <strong>admin local</strong>, como el resto).</li>
+<li><strong>K3 instalado y corriendo</strong> en ellos (es el estado de partida).</li>
+<li>Uno de ellos debe ser <strong>desechable/reversible</strong> (snapshot o equipo de repuesto) para la Etapa 0.</li>
+</ul>
+<h3 id="12-backend-v4-alcanzable-4">1.2 Backend v4 alcanzable</h3>
+<ul>
+<li>Backend <code>backend-v4/</code> desplegado en un servidor de prueba con <strong>HTTPS real</strong> (dominio + certificado), porque el agente firma y usa bearer sobre TLS. [Probable] <code>devkeep.azclegal.com</code> o un subdominio nuevo sirve.</li>
+<li>BD MySQL migrada (<code>run.php</code>) + un <strong>tenant/usuario/dispositivo de prueba</strong> provisionado, con la clave pública del equipo registrada en <code>device_keys</code> durante el enrolamiento.</li>
+<li><strong>Nota</strong>: el arnés de integración probó HTTP local, <strong>no TLS</strong>. La primera vez que el agente hable por HTTPS real es en este piloto — vigilar certificados/SNI/proxy.</li>
+</ul>
+<h3 id="13-artefactos-v4-a-construir-en-etapa-0-5">1.3 Artefactos v4 (a construir en Etapa 0)</h3>
+<ul>
+<li><strong>Agente self-contained</strong> (<code>dotnet publish --self-contained</code>, win-x64) — la flota <strong>no</strong> tiene garantizado el runtime .NET; el paquete debe traerlo (igual que K3).</li>
+<li><strong>Bootstrapper</strong> que, elevado, instale el servicio (<code>sc create</code> / <code>New-Service</code>), cree <code>%ProgramData%\AZCKeeper</code>, configure autoarranque y apunte el agente al backend de prueba.</li>
+<li><strong>Firma de código</strong>: [Suposición] para un piloto interno en equipos propios <strong>no es estrictamente necesaria</strong>, pero SmartScreen mostrará advertencia al elevar un <code>.exe</code> sin firmar. Si molesta, firmar con un cert OV/EV. Registrar la decisión.</li>
+</ul>
+<h3 id="14-canal-de-entrega-desde-k3-6">1.4 Canal de entrega desde K3</h3>
+<ul>
+<li>K3 baja el ZIP de <code>keeper_client_releases.download_url</code> (GitHub Releases) y lo ejecuta. Para el piloto:<ul>
+<li>Publicar el <strong>bootstrapper v4</strong> como una release que K3 pueda jalar.</li>
+<li><strong>Rollout selectivo</strong> (patrón ya usado en K3): desactivar <code>EnableAutoUpdate</code>/<code>AutoDownload</code> para toda la flota <strong>excepto los equipos piloto</strong>, para que solo ellos lo traigan.</li>
+</ul>
+</li>
+<li>[Seguro] Recordatorio de seguridad: el updater de K3 <strong>no verifica firma del ZIP</strong> (crítico de la auditoría). Entregar por ahí ejecuta lo que pongamos como el usuario. Para el piloto controlado es aceptable; en producción, firmar el updater es prerequisito.</li>
+</ul>
+<h3 id="15-reversibilidad-obligatorio-antes-de-instalar-7">1.5 Reversibilidad (obligatorio antes de instalar)</h3>
+<ul>
+<li><strong>Snapshot</strong> o imagen del equipo piloto.</li>
+<li><strong>Desinstalador documentado</strong>: detener y <code>sc delete</code> el servicio, borrar <code>%ProgramData%\AZCKeeper</code>, limpiar las claves HKLM que escriban los enforcers, y (si se degradó al usuario) restaurar su membresía de administradores.</li>
+<li><strong>Break-glass</strong>: dejar la cuenta <code>Administrator</code> integrada operativa por si algo bloquea el acceso.</li>
+</ul>
+<hr>
+<h2 id="2-modelo-de-entrega-cómo-quotse-trae-desde-k3quot-con-el-sí-8">2. Modelo de entrega (cómo &quot;se trae desde K3&quot; con el Sí)</h2>
+<pre><code>K3 (medio) --auto-update--&gt; baja ZIP bootstrapper v4 --ejecuta--&gt; Bootstrapper (medio)
+   Bootstrapper detecta que necesita SYSTEM --&gt; ShellExecute verb=runas --&gt; UAC &quot;¿Permitir?&quot; [Sí]
+   --&gt; Bootstrapper (elevado): instala servicio SYSTEM + ProgramData + autoarranque + apunta al backend
+   --&gt; a partir de aquí el servicio corre como SYSTEM y se auto-actualiza sin más prompts
+</code></pre>
+<ul>
+<li>El <strong>único</strong> prompt en la vida del equipo es ese &quot;Sí&quot;. IT puede darlo por sesión remota si el usuario no está.</li>
+<li><strong>Piloto = SIN degradar al usuario todavía.</strong> azcadmin/LAPS/degradación a estándar es una etapa <strong>posterior y separada</strong> (Etapa 5), porque rompe flujos de usuario y no debe mezclarse con la validación del enforcement.</li>
+</ul>
+<hr>
+<h2 id="3-plan-por-etapas-9">3. Plan por etapas</h2>
+<p>Cada etapa: <strong>hacer → esperado → verificar → rollback</strong>. No avanzar de etapa si la anterior no cierra.</p>
+<h3 id="etapa-0-bootstrapper-e-instalación-manual-1-equipo-desechable-sin-k3-10">Etapa 0 — Bootstrapper e instalación MANUAL (1 equipo desechable, sin K3)</h3>
+<p>Prueba el instalador aislado del canal K3.</p>
+<ul>
+<li><strong>Hacer</strong>: copiar el paquete v4 al equipo, correr el bootstrapper a mano (aceptar UAC).</li>
+<li><strong>Esperado</strong>: servicio <code>KeeperAgent</code> en estado <em>Running</em> como <em>LocalSystem</em>; <code>%ProgramData%\AZCKeeper</code> creado; agente conecta al backend.</li>
+<li><strong>Verificar</strong>:<ul>
+<li><code>Get-Service KeeperAgent</code> → Running; <code>sc qc KeeperAgent</code> → <code>SERVICE_START_NAME: LocalSystem</code>.</li>
+<li>Log del agente + tabla <code>device_sessions</code>/<code>device_sync_state</code> en el backend muestran el device.</li>
+<li>Un <code>/client/sync</code> exitoso (política entregada) en los logs del backend.</li>
+</ul>
+</li>
+<li><strong>Rollback</strong>: desinstalador (§1.5).</li>
+</ul>
+<h3 id="etapa-1-entrega-desde-k3-elevación-equipo-piloto-con-k3-11">Etapa 1 — Entrega desde K3 + elevación (equipo piloto con K3)</h3>
+<ul>
+<li><strong>Hacer</strong>: registrar la release v4 en el panel K3; activar auto-update <strong>solo</strong> para este equipo; esperar/forzar el ciclo de update de K3.</li>
+<li><strong>Esperado</strong>: K3 baja y ejecuta el bootstrapper; aparece <strong>un</strong> prompt UAC; al dar Sí, queda el servicio instalado como en Etapa 0. <strong>K3 sigue corriendo</strong> (no se desinstala en el piloto; conviven).</li>
+<li><strong>Verificar</strong>: mismo checklist de Etapa 0 + confirmar que el disparo vino del updater de K3 (log de K3).</li>
+<li><strong>Riesgo a observar</strong>: que K3 en integridad media logre lanzar el bootstrapper y que el UAC aparezca. Si <strong>no</strong> aparece el prompt, B1 no está bien resuelto.</li>
+<li><strong>Rollback</strong>: desinstalador; K3 permanece.</li>
+</ul>
+<h3 id="etapa-2-enforcement-web-hklm-12">Etapa 2 — Enforcement web (HKLM)</h3>
+<ul>
+<li><strong>Hacer</strong>: en el panel, activar bloqueo de dominios (p. ej. <code>facebook.com</code>) para ese device; esperar el sync.</li>
+<li><strong>Esperado</strong>: el servicio escribe <code>HKLM\SOFTWARE\Policies\{Google\Chrome,Microsoft\Edge,BraveSoftware\Brave}\URLBlocklist</code>.</li>
+<li><strong>Verificar</strong>:<ul>
+<li><code>reg query &quot;HKLM\SOFTWARE\Policies\Google\Chrome\URLBlocklist&quot;</code> muestra el dominio.</li>
+<li><code>chrome://policy</code> / <code>edge://policy</code> → URLBlocklist con el dominio; navegar al dominio → <strong>bloqueado</strong>; otro sitio → navega.</li>
+<li>Firefox (si aplica): <code>policies.json</code>.</li>
+</ul>
+</li>
+<li><strong>Rollback</strong>: desactivar en panel → sync → verificar que la clave se limpia y el dominio vuelve a cargar.</li>
+</ul>
+<h3 id="etapa-3-enforcement-usb-comandos-remotos-13">Etapa 3 — Enforcement USB + comandos remotos</h3>
+<ul>
+<li><strong>Hacer</strong>: activar bloqueo/solo-lectura de USB; luego encolar un comando remoto (bloquear equipo) desde el panel.</li>
+<li><strong>Esperado</strong>: <code>HKLM\...\RemovableStorageDevices</code> aplicado; el comando llega y se ejecuta; resultado vuelve a <code>device_command_results</code>.</li>
+<li><strong>Verificar</strong>: insertar un USB → denegado/solo-lectura; el comando de bloqueo surte efecto y queda auditado en <code>audit_log</code>.</li>
+<li><strong>Rollback</strong>: desactivar; verificar reversión.</li>
+</ul>
+<h3 id="etapa-4-resiliencia-red-y-reinicio-14">Etapa 4 — Resiliencia (red y reinicio)</h3>
+<ul>
+<li><strong>Hacer</strong>: reiniciar el equipo; desconectar de la red de oficina (simular remoto); dejarlo un rato.</li>
+<li><strong>Esperado</strong>: el servicio arranca solo tras reboot; la política cacheada <strong>sigue aplicada sin red</strong>; al reconectar, retoma sync sin tormenta (medir req/min).</li>
+<li><strong>Verificar</strong>: servicio Running tras reboot; bloqueo web sigue activo offline; contar requests al backend por minuto (objetivo ~0,5/equipo).</li>
+</ul>
+<h3 id="etapa-5-separada-posterior-endurecimiento-azcadmin-degradación-15">Etapa 5 — (SEPARADA, posterior) Endurecimiento: azcadmin + degradación</h3>
+<p>No hacer hasta que 0–4 estén verdes en los 2–3 equipos.</p>
+<ul>
+<li><strong>Hacer</strong>: correr el paso de endurecimiento: crear <code>azcadmin</code> (contraseña <strong>única por equipo</strong>, reportada a Keeper tipo LAPS), verificar que funciona, degradar al usuario a estándar, ocultar azcadmin.</li>
+<li><strong>Esperado</strong>: el usuario pasa a estándar en el próximo login; azcadmin oculto y gestionado; el enforcement ahora es <strong>irreversible por el usuario</strong>.</li>
+<li><strong>Verificar</strong>: <code>Get-LocalGroupMember Administradores</code> ya no lista al usuario; azcadmin existe y su clave está en Keeper; el usuario no puede parar el servicio.</li>
+<li><strong>Rollback</strong>: restaurar membresía admin del usuario desde azcadmin/break-glass.</li>
+<li><strong>Barandas</strong> (§ ya definidas): crear/verificar azcadmin <strong>antes</strong> de degradar; nunca degradar el último admin.</li>
+</ul>
+<hr>
+<h2 id="4-criterios-de-salida-del-piloto-16">4. Criterios de salida del piloto</h2>
+<ul>
+<li>Etapas 0–4 verdes en los 2–3 equipos.</li>
+<li>Bloqueo web/USB aplican y revierten desde el panel.</li>
+<li>El servicio sobrevive reboot y aplica política offline.</li>
+<li>Tráfico medido ≈ objetivo (~0,5 req/min/equipo), sin ban por IP.</li>
+<li>TLS real funciona (sin errores de certificado/proxy).</li>
+<li>Desinstalador probado (deja el equipo limpio).</li>
+<li><strong>Solo entonces</strong> planear Etapa 5 y el rollout a más equipos.</li>
+</ul>
+<h2 id="5-qué-no-cubre-este-piloto-17">5. Qué NO cubre este piloto</h2>
+<ul>
+<li>Firma del updater en producción (crítico auditoría) — pendiente aparte.</li>
+<li>Rollout masivo (los 1000) — se define tras el piloto.</li>
+<li>Portal cliente / API externa consumida por terceros.</li>
+</ul>
+</main></div></body></html>

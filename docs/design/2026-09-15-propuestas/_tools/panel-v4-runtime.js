@@ -1,0 +1,161 @@
+(() => {
+  const M=PanelModel,V=PanelView,E=V.escape,$=s=>document.querySelector(s),key='azc-panel-v4-demo-1';
+  const params=new URLSearchParams(location.search),page=document.body.dataset.page;
+  let db=M.fresh(),session=params.get('session')||(page==='empresas'||page==='roles'?'super':'admin'),tenant=params.get('tenant')||'azc',query=Object.fromEntries(params),lastFocus=null,logoPreview=null;
+  try{const stored=localStorage.getItem(key);if(stored)db=JSON.parse(stored);}catch{}
+  const ctx=()=>M.context(db,session,tenant),can=p=>M.can(db,ctx(),p),url=(p,q={})=>p+'.html?'+new URLSearchParams({session:ctx().actor.id,tenant:ctx().tenant,...q});
+  const submit=(label,ico='file')=>`<button type="submit" class="primary">${V.icon(ico)}${label}</button>`;
+  const controls=label=>`<div class="v-actions">${V.button('Cancelar','close')}${submit(label)}</div>`;
+  function save(){try{localStorage.setItem(key,JSON.stringify(db));return true;}catch{return false;}}
+  function notify(text){const el=$('#v-feedback');if(el){el.innerHTML=`<p>${E(text)}</p>${V.button('Cerrar aviso','dismiss')}`;el.hidden=false;el.focus();}}
+  function draw(message){document.body.innerHTML=V.render(db,page,session,tenant,query);const t=db.tenants.find(t=>t.id===ctx().tenant);document.documentElement.style.setProperty('--accent',t.accent);document.title=V.titles[page]+' · '+t.name+' · AZC Keeper';const bar=$('.v-topbar');if(bar&&window.ResizeObserver)new ResizeObserver(entries=>document.documentElement.style.setProperty('--top-height',entries[0].target.getBoundingClientRect().height+'px')).observe(bar);if(message)notify(message);}
+  function changed(message){const persisted=save();draw(message+(persisted?'':' Los cambios se mantienen en esta página; el navegador no permite guardarlos para el siguiente archivo.'));}
+  function close(){const d=$('#v-dialog');if(d?.open){d.close();}lastFocus?.focus();}
+  function modal(title,body){lastFocus=document.activeElement;const d=$('#v-dialog');$('#dialog-content').innerHTML=`<div class="v-dialog-head"><h2 id="dialog-title">${E(title)}</h2>${V.button('Cerrar','close')}</div><div id="modal-error" role="alert"></div>${body}`;d.showModal();d.addEventListener('close',()=>lastFocus?.focus(),{once:true});}
+  function checked(form,name){return [...form.querySelectorAll(`input[name="${name}"]:checked`)].map(e=>e.value);}
+  function record(table,id,permission){const row=db[table].find(r=>r.id===id);if(!row)throw Error('No se encontró el registro.');M.requirePermission(db,ctx(),permission,row);return row;}
+  const optionsPeople=(except='')=>M.rows(db,ctx(),'users').filter(u=>u.active&&u.id!==except).map(u=>[u.id,u.name]);
+  function commandDialog(id,action){
+    const d=record('devices',id,'equipos.accionar');M.requirePermission(db,ctx(),'equipos.'+action,d);
+    const copy={bloquear:['Bloquear equipo','La persona no podrá usar este equipo hasta que lo desbloquees. Los archivos se conservan.','Confirmar bloqueo'],desbloquear:['Desbloquear equipo','La persona volverá a poder usar el equipo. Los archivos se conservan.','Confirmar desbloqueo'],apagar:['Apagar equipo','El equipo se apagará. Se puede perder trabajo sin guardar; será necesario encenderlo físicamente.','Confirmar apagado'],borrar:['Borrar archivos del equipo','Se borrarán los archivos corporativos de este equipo. Esta acción es irreversible y no permite deshacer. Confirma que existe una copia de la información que debes conservar.','Confirmar borrado']}[action];
+    modal(copy[0],`<form data-form="command"><input type="hidden" name="id" value="${E(id)}"><input type="hidden" name="command" value="${action}"><p><strong>${E(d.host)} · ${E(db.tenants.find(t=>t.id===d.tenant).name)}</strong></p><h3>Qué va a pasar</h3><p>${copy[1]}</p><p>${d.online?'La solicitud quedará en cola hasta que el agente confirme.':'El equipo está sin conexión. La solicitud quedará pendiente hasta que vuelva a conectarse.'}</p>${V.field('Motivo de la acción','reason','','text','required maxlength="200"')}${V.field('Escribe '+d.host+' para confirmar','typed','','text','required autocomplete="off" spellcheck="false"')}<p>La confirmación envía una solicitud simulada. El estado final solo aparece después de la respuesta del agente.</p>${controls(copy[2])}</form>`);
+  }
+  function enrollment(step=1,host='AZC-NUEVO-025'){
+    M.requirePermission(db,ctx(),'equipos.agregar');
+    const code='DEMO-'+ctx().tenant.toUpperCase()+'-4821';
+    modal('Agregar equipo · Paso '+step+' de 3',step===1?`<p>Genera un código vinculado a <strong>${E(db.tenants.find(t=>t.id===ctx().tenant).name)}</strong>. Solo servirá para revisar este recorrido.</p><div class="v-actions">${V.button('Cancelar','close')}${V.button('Generar código de prueba','enroll-step2',true,'','plus')}</div>`:step===2?`<h3>En el equipo Windows</h3><ol><li>Abre el agente AZC Keeper instalado por IT.</li><li>En «Vincular equipo», escribe <strong>${code}</strong>.</li><li>Mantén el equipo conectado mientras confirmamos el registro.</li></ol><p>Código de demostración; no registra equipos reales. Si el agente no está instalado, solicita a IT el instalador corporativo.</p><div class="v-actions">${V.button('Volver al paso 1','enroll')}${V.button('Continuar a la confirmación','enroll-step3',true)}</div>`:`<form data-form="enroll">${V.field('Nombre que reportará el agente','host',host,'text','required pattern="[A-Za-z0-9-]{3,30}" maxlength="30"')}<p>Esperando la primera conexión. En esta demostración, el siguiente botón representa la llegada del agente.</p>${controls('Simular llegada del equipo')}</form>`);
+  }
+  function userForm(id){
+    const c=ctx(),u=id?record('users',id,can('usuarios.gestionar')?'usuarios.gestionar':'usuarios.ver'):null;
+    if(u){modal('Ficha de '+u.name,`<dl class="v-facts">${[['Documento',u.document],['Correo',u.email],['Empresa / firma',db.tenants.find(t=>t.id===u.tenant).name],['Área',u.area],['Sede',u.site],['Cargo',u.job],['Horario',u.schedule],['Estado',u.active?'Activa':'Baja'],['Acceso al panel',db.roles.find(r=>r.id===u.role)?.panel===false?'Sin login v4.0':'Según rol asignado']].map(([k,v])=>`<dt>${k}</dt><dd>${E(v)}</dd>`).join('')}</dl>${V.button('Cerrar ficha','close')}`);return;}
+    M.requirePermission(db,c,'usuarios.gestionar');M.requirePermission(db,c,'usuarios.alta');
+    modal('Agregar persona',`<form data-form="user"><p>Empresa / firma: <strong>${E(db.tenants.find(t=>t.id===c.tenant).name)}</strong>. Este campo se fija desde tu cuenta.</p><div class="v-fields">${V.field('Nombre completo','name','','text','required maxlength="80"')}${V.field('Documento','document','','text','required maxlength="30"')}${V.field('Correo corporativo','email','','email','required')}${V.select('Área','area',c.role.areas?.length?c.role.areas:['Jurídica','Administración'])}${V.select('Sede','site',c.role.sites?.length?c.role.sites:['Cali','Bogotá'])}${V.field('Cargo','job','','text','required')}${V.field('Horario','schedule','Lun a vie · 08:00 a 17:00','text','required')}</div><p>Rol inicial: Colaborador, sin acceso al panel en v4.0. La delegación de permisos se gestiona por separado.</p>${controls('Crear persona')}</form>`);
+  }
+  function roleEditor(id,clone=false,global=false){
+    const c=ctx();if(!M.rolesGate(db,c))throw Error('La gestión de roles no está habilitada para tu cuenta.');
+    const seed=id?.startsWith('seed:');if(seed||global){if(!c.actor.platform)throw Error('Solo Super admin gestiona semillas globales.');global=true;}
+    const old=id?(seed?db.seeds.find(s=>s.id===id.slice(5)):db.roles.find(r=>r.id===id)):null;
+    if(old&&!seed&&old.tenant!==c.tenant)throw Error('Ese rol está fuera de tu empresa.');
+    const r=old?M.copy(old):{name:'',permissions:[],scope:c.role.scope,areas:c.role.areas||[],sites:c.role.sites||[]};
+    if(clone&&r.permissions.some(p=>!can(p)))throw Error('No puedes clonar permisos que no posees. Crea un rol vacío.');
+    if(clone&&!c.actor.platform&&r.permissions.includes('roles.gestionar'))throw Error('Solo Super admin puede clonar el meta-permiso. Crea un rol vacío.');
+    if(clone)r.name+=' · copia';
+    const scopeOptions={empresa:['empresa','area','sede','propio'],area:['area','propio'],sede:['sede','propio'],propio:['propio']}[c.role.scope];
+    modal(clone?'Clonar rol':old?'Editar rol y matriz':'Crear rol sin permisos',`<form data-form="role"><input type="hidden" name="id" value="${clone?'':E(id||'')}"><input type="hidden" name="global" value="${global}">${V.field('Nombre del rol','name',r.name,'text','required maxlength="60"')}<div class="v-fields">${V.select('Alcance','scope',scopeOptions.map(s=>[s,{empresa:'Empresa completa',area:'Área',sede:'Sede',propio:'Propio'}[s]]),r.scope)}${V.select('Delimitar área','area',[['','Todas las áreas'],...(c.role.areas?.length?c.role.areas:['Jurídica','Administración'])],r.areas?.[0]||'')}${V.select('Delimitar sede','site',[['','Todas las sedes'],...(c.role.sites?.length?c.role.sites:['Cali','Bogotá'])],r.sites?.[0]||'')}</div><p>Área y sede se intersectan cuando ambas están delimitadas. Ningún rol amplía el alcance de quien lo crea.</p><h3>Matriz de permisos</h3><p>Un rol nuevo nace vacío. Solo se muestran permisos que puedes delegar.</p>${[...new Set(db.catalog.map(p=>p.group))].map(group=>{const list=db.catalog.filter(p=>p.group===group&&can(p.key)&&(p.key!=='roles.gestionar'||c.actor.platform));return list.length?`<fieldset class="v-permissions"><legend>${E(group)}</legend>${list.map(p=>`<label class="v-check"><input type="checkbox" name="permissions" value="${p.key}" ${r.permissions.includes(p.key)?'checked':''}><span>${E(p.label)}<small><code>${p.key}</code></small></span></label>`).join('')}</fieldset>`:'';}).join('')}<p><code>roles.gestionar</code>: solo Super admin puede concederlo; no puedes cambiar tu propio rol. Cada cambio queda auditado.</p>${controls('Guardar rol')}</form>`);
+  }
+  function run(action,el){const c=ctx(),id=el?.dataset.id;
+    if(action==='close')return close();
+    if(action==='dismiss'){$('#v-feedback').hidden=true;$('#main')?.focus();return;}
+    if(action==='command')return commandDialog(id,el.dataset.command);
+    if(action==='agent'){M.confirmAgent(db,c,id);return changed('El agente confirmó el estado de prueba. Revisa la cronología del equipo.');}
+    if(action==='feed-next'){
+      M.requirePermission(db,c,'inicio.ver');const users=M.rows(db,c,'users').filter(u=>u.active);if(!users.length)throw Error('No hay personas en tu alcance para simular un evento.');const n=db.demoFeed.filter(e=>e.tenant===c.tenant).length,u=users[n%users.length];db.demoFeed.unshift({tenant:c.tenant,user:u.id,at:'Ahora (demo)',text:'Evento simulado '+(n+1)+': conexión del agente confirmada'});changed('Se agregó un evento de prueba. Las métricas conservan el corte de las 09:42.');return;
+    }
+    if(action==='enroll')return enrollment();if(action==='enroll-step2')return enrollment(2);if(action==='enroll-step3')return enrollment(3);
+    if(action==='user-add')return userForm();if(action==='user-view')return userForm(id);
+    if(action==='assign'){
+      const u=record('users',id,'usuarios.gestionar');M.requirePermission(db,c,'usuarios.asignar',u);
+      const available=M.rows(db,c,'devices').filter(d=>!d.user||d.user===id);
+      return modal('Asignar equipo a '+u.name,available.length?`<form data-form="assign"><input type="hidden" name="id" value="${id}">${V.select('Equipo disponible','device',available.map(d=>[d.id,d.host]))}<p>Solo aparecen equipos libres o ya asignados a esta persona, dentro de tu empresa y alcance.</p>${controls('Guardar asignación')}</form>`:'<p>No hay equipos disponibles. Da de alta uno nuevo o libera el equipo durante la baja de su responsable.</p>'+V.button('Cerrar','close'));
+    }
+    if(action==='offboard'){
+      const u=record('users',id,'usuarios.gestionar');M.requirePermission(db,c,'usuarios.baja',u);const assigned=db.devices.filter(d=>d.user===id);
+      return modal('Dar de baja a '+u.name,`<form data-form="offboard"><input type="hidden" name="id" value="${id}"><h3>Qué va a pasar</h3><p>La persona quedará inactiva en ${E(db.tenants.find(t=>t.id===u.tenant).name)}. Su historial se conserva. No se borrarán archivos ni se apagará ningún equipo.</p><p>Equipos vinculados: ${assigned.map(d=>E(d.host)).join(', ')||'Ninguno'}.</p>${V.select('¿Qué hacer con su equipo?','mode',[['release','Liberar para asignarlo después'],['reassign','Reasignar a otra persona']])}${V.select('Persona que recibe el equipo','to',[['','Elige una persona'],...optionsPeople(id)],'','disabled')}${V.field('Escribe '+u.name+' para confirmar','typed','','text','required autocomplete="off"')}${controls('Confirmar baja')}</form>`);
+    }
+    if(action==='export'){
+      M.requirePermission(db,c,'reportes.ver');const period=query.period==='30'?30:7,aggregate=PanelInsights.exportRows(M.rows(db,c,'users'),period),name=db.tenants.find(t=>t.id===c.tenant).name;const rows=aggregate.map((row,i)=>[i===0?'Empresa':name,...row]);
+      const safe=x=>{let v=String(x);if(/^[=+@-]/.test(v))v="'"+v;return '"'+v.replace(/"/g,'""')+'"';};const csv='\ufeff'+rows.map(r=>r.map(safe).join(';')).join('\r\n');window.panelLastExport=csv;
+      const ref=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=ref;a.download='reporte-'+c.tenant+'-'+period+'-dias.csv';a.click();setTimeout(()=>URL.revokeObjectURL(ref),1000);return notify('Reporte de '+period+' días exportado con el alcance de tu cuenta. Los datos son ficticios.');
+    }
+    if(action==='api-add'){M.requirePermission(db,c,'empresa.ajustes');return modal('Crear clave de prueba',`<form data-form="api-add">${V.field('Nombre de la integración','name','','text','required maxlength="50"')}<p>Se genera un identificador DEMO sin acceso real a ninguna API.</p>${controls('Crear clave ficticia')}</form>`);}
+    if(action==='api-revoke'){const k=record('keys',id,'empresa.ajustes');return modal('Revocar clave de prueba',`<form data-form="api-revoke"><input type="hidden" name="id" value="${id}"><p>La integración ${E(k.name)} dejará de tener una clave activa. En producción habría que crear otra para restablecerla.</p>${V.field('Escribe REVOCAR','typed','','text','required')}${controls('Revocar clave')}</form>`);}
+    if(action==='role-new')return roleEditor(null,false,el.dataset.global==='true');
+    if(action==='role-edit'||action==='role-clone')return roleEditor(id,action==='role-clone');
+    if(action==='role-disable'){
+      if(!M.rolesGate(db,c))throw Error('No tienes permiso para gestionar roles.');const seed=id.startsWith('seed:'),r=seed?db.seeds.find(r=>r.id===id.slice(5)):db.roles.find(r=>r.id===id);if(!r||(seed&&!c.actor.platform)||(!seed&&r.tenant!==c.tenant))throw Error('El rol está fuera de tu alcance.');
+      const assigned=db.users.filter(u=>u.role===id&&u.active).length+db.actors.filter(a=>a.role===id).length;
+      if(assigned)return modal('Reasignación necesaria',`<p>${E(r.name)} tiene ${assigned} cuentas o personas asignadas. No se puede desactivar hasta reasignarlas.</p><form data-form="role-reassign"><input type="hidden" name="id" value="${id}">${V.select('Rol de reemplazo','replacement',[['','Selecciona un rol'],...db.roles.filter(other=>other.tenant===c.tenant&&other.id!==id&&other.active&&other.permissions.every(p=>can(p))&&(c.actor.platform||!other.permissions.includes('roles.gestionar'))).map(r=>[r.id,r.name])],'','required')}<p>La reasignación requiere autoridad para todos los permisos y no permite modificar tu propia cuenta.</p>${V.field('Escribe REASIGNAR','typed','','text','required')}${controls('Reasignar y desactivar')}</form>`);
+      return modal('Desactivar '+r.name,`<form data-form="role-disable"><input type="hidden" name="id" value="${id}"><p>El rol dejará de estar disponible para nuevas asignaciones. No tiene personas asignadas.</p>${V.field('Escribe DESACTIVAR','typed','','text','required')}${controls('Desactivar rol')}</form>`);
+    }
+    if(action==='permission-add'||action==='permission-edit'){
+      if(!c.actor.platform||!can('roles.gestionar'))throw Error('El catálogo maestro pertenece a Super admin.');const p=db.catalog.find(p=>p.key===id);
+      return modal(p?'Editar definición':'Agregar permiso al catálogo',`<form data-form="permission"><input type="hidden" name="old" value="${E(p?.key||'')}">${V.field('Clave estable','key',p?.key||'','','required pattern="[a-z]+[.][a-z_]+" '+(p?'readonly':''))}${V.field('Nombre legible','label',p?.label||'','text','required')}${V.field('Grupo','group',p?.group||'','text','required')}<p>Default seguro: no concedido. La clave es estable para conservar trazabilidad.</p>${controls('Guardar definición')}</form>`);
+    }
+    if(action==='tenant-add'){
+      if(!c.actor.platform||!can('tenants.gestionar'))throw Error('Solo Super admin crea empresas en este recorrido.');return modal('Agregar empresa',`<form data-form="tenant">${V.field('Nombre de la empresa','name','','text','required maxlength="60"')}${V.field('Identificador','id','','text','required pattern="[a-z][a-z0-9-]{2,24}"')}<p>Se crearán los roles desde las semillas globales activas. La autonomía de roles y las restricciones de la política nacen apagadas.</p>${controls('Crear empresa')}</form>`);
+    }
+    if(action==='reset')return modal('Restablecer demostración',`<form data-form="reset"><p>Se eliminarán las ediciones locales del prototipo y se recuperarán los datos ficticios iniciales.</p>${V.field('Escribe RESTABLECER','typed','','text','required')}${controls('Restablecer datos')}</form>`);
+  }
+  document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el)return;try{run(el.dataset.action,el);}catch(error){if($('#v-dialog')?.open)$('#modal-error').textContent=error.message;else notify(error.message);}});
+  document.addEventListener('keydown',e=>{if(e.key!=='Escape'||$('#v-dialog')?.open)return;for(const sel of ['.v-mobile-nav[open]','.v-global-search[open]']){const el=$(sel);if(el){el.open=false;el.querySelector('summary').focus();break;}}});
+  document.addEventListener('change',e=>{const el=e.target;try{
+    if(el.id==='tenant-select'){if(!ctx().actor.platform)throw Error('Tu empresa es fija.');location.href=url(page,{tenant:el.value});}
+    if(el.dataset.gate){const id=el.dataset.gate,next=el.checked;el.checked=!next;modal(next?'Habilitar autonomía de roles':'Revocar autonomía de roles',`<form data-form="gate"><input type="hidden" name="id" value="${id}"><input type="hidden" name="on" value="${next}"><p>Empresa: <strong>${E(db.tenants.find(t=>t.id===id).name)}</strong>.</p><p>${next?'La empresa podrá gestionar sus roles cuando Super admin conceda roles.gestionar. El gate no concede permisos por sí solo.':'Las cuentas de la empresa dejarán de gestionar roles. AZC conserva el control central. Los roles existentes y sus demás permisos siguen vigentes.'}</p>${controls(next?'Activar gate de empresa':'Revocar gate de empresa')}</form>`);}
+    if(el.closest('#policy-form')){const f=el.form;if(el.name==='web')f.elements.domains.disabled=!el.checked;if(el.name==='hours'){f.elements.start.disabled=!el.checked;f.elements.end.disabled=!el.checked;f.querySelector('[data-days]').disabled=!el.checked;}}
+    if(el.name==='mode'&&el.form?.dataset.form==='offboard')el.form.elements.to.disabled=el.value!=='reassign';
+    if(el.name==='logo'&&el.form?.id==='brand-form'){const file=el.files[0];if(!file)return;if(!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>500*1024){el.value='';throw Error('Selecciona PNG, JPG o WebP de hasta 500 KB.');}const reader=new FileReader();reader.onload=()=>{logoPreview=reader.result;$('#preview-logo').src=logoPreview;};reader.readAsDataURL(file);}
+  }catch(error){notify(error.message);}});
+  function brandPreview(f){const accent=f.elements.accent.value,name=f.elements.name.value;$('#preview-name').textContent=name;const minimum=Math.min(...['#E4E4E4','#F8F8F8','#D9D9D9'].map(bg=>M.contrast(accent,bg)));if(minimum>=4.5)$('#brand-preview').style.setProperty('--accent',accent);$('#contrast-result').textContent=`Contraste mínimo: ${minimum.toFixed(2)}:1. ${minimum>=4.5?'Puedes guardar.':'Elige un acento más oscuro. La vista previa conserva el último acento legible.'}`;f.elements.accent.setCustomValidity(minimum>=4.5?'':'El contraste debe alcanzar 4.5:1.');}
+  document.addEventListener('input',e=>{if(e.target.form?.id==='brand-form'&&['name','accent'].includes(e.target.name))brandPreview(e.target.form);});
+  document.addEventListener('submit',e=>{e.preventDefault();const f=e.target;if(!f.checkValidity()){f.reportValidity();return;}const data=new FormData(f),get=n=>String(data.get(n)||''),c=ctx();try{
+    if(f.id==='login-form'){const a=db.actors.find(a=>a.id===get('session')),r=db.roles.find(r=>r.id===a.role);if(r.panel===false||!r.active){$('#login-error').textContent='Esta cuenta no tiene acceso al panel en v4.0. Elige una cuenta administrativa.';return;}location.href='index.html?session='+a.id+'&tenant='+a.tenant;return;}
+    if(f.id==='device-filter'||f.id==='user-filter'){query={...query,filter:get('filter'),connection:get('connection')};draw();return;}
+    if(f.id==='global-search'){
+      const q=get('q').toLowerCase(),results=[];
+      if(can('equipos.ver'))M.rows(db,c,'devices').filter(d=>d.host.toLowerCase().includes(q)).slice(0,8).forEach(d=>results.push(`<li><a href="${url('equipo',{id:d.id})}">${E(d.host)} · Equipo</a></li>`));
+      if(can('usuarios.ver')||can('usuarios.gestionar'))M.rows(db,c,'users').filter(u=>u.name.toLowerCase().includes(q)).slice(0,8).forEach(u=>results.push(`<li><a href="${url('usuarios',{filter:u.name})}">${E(u.name)} · Persona</a></li>`));
+      db.tenants.filter(t=>(c.actor.platform||t.id===c.tenant)&&t.name.toLowerCase().includes(q)).forEach(t=>results.push(`<li><a href="${url('index',{tenant:t.id})}">${E(t.name)} · Empresa</a></li>`));
+      modal('Resultados de búsqueda',results.length?`<ul class="v-search-results">${results.join('')}</ul>`:'<p>No hay resultados en tu alcance. Prueba con parte del nombre o del equipo.</p>');return;
+    }
+    if(f.id==='policy-form'){
+      M.requirePermission(db,c,'reglas.editar');const old=db.policies[c.tenant],draft={...old,web:data.has('web'),downloads:data.has('downloads'),install:data.has('install'),hours:data.has('hours'),domains:f.elements.domains.value.trim(),start:f.elements.start.value,end:f.elements.end.value,days:checked(f,'days'),exceptions:can('reglas.excepciones')?checked(f,'exceptions'):old.exceptions};
+      if(draft.web&&(!draft.domains||draft.domains.split(/\r?\n/).some(d=>!/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i.test(d.trim()))))throw Error('Escribe dominios válidos, uno por línea, sin protocolos ni rutas.');
+      if(draft.hours&&(!draft.days.length||draft.start>=draft.end))throw Error('Selecciona días y una hora final posterior a la inicial.');
+      const devices=M.rows(db,c,'devices');if(devices.length!==db.devices.filter(d=>d.tenant===c.tenant).length)throw Error('Tu alcance no cubre toda la empresa. Solicita la aplicación a su administrador.');
+      window.panelDraft=draft;modal('Aplicar reglas a '+db.tenants.find(t=>t.id===c.tenant).name,`<form data-form="policy-confirm"><h3>Qué va a pasar</h3><p>${devices.length-draft.exceptions.length} equipos recibirán la revisión ${old.revision+1}. Excepciones: ${draft.exceptions.length}.</p><ul>${[['web','Bloqueo de páginas'],['downloads','Bloqueo de descargas'],['install','Bloqueo de instalación'],['hours','Horario laboral']].map(([k,l])=>`<li>${l}: ${draft[k]?'activado':'apagado'}</li>`).join('')}</ul><p>Los equipos conectados la recibirán en los próximos minutos; los demás, al reconectarse. La revisión quedará pendiente de confirmación.</p>${controls('Confirmar aplicación')}</form>`);return;
+    }
+    if(f.id==='brand-form'){M.requirePermission(db,c,'empresa.ajustes');brandPreview(f);if(!f.checkValidity())return f.reportValidity();const t=db.tenants.find(t=>t.id===c.tenant);t.name=get('name').trim();t.accent=get('accent');if(!t.name)throw Error('Escribe el nombre de la empresa.');if(logoPreview)t.logo=logoPreview;M.audit(db,c,'Identidad de empresa actualizada');changed('Identidad guardada solo para esta empresa.');return;}
+    const kind=f.dataset.form;
+    if(kind==='command'){M.command(db,c,get('id'),get('command'),get('typed'),get('reason'));close();changed('Solicitud en cola. Espera la confirmación del agente antes de considerar completada la acción.');return;}
+    if(kind==='enroll'){
+      M.requirePermission(db,c,'equipos.agregar');const host=get('host').toUpperCase();if(db.devices.some(d=>d.tenant===c.tenant&&d.host===host))throw Error('Ese nombre ya está registrado en tu empresa.');db.devices.push({id:c.tenant+'-'+Date.now(),tenant:c.tenant,host,area:c.role.areas?.[0]||'Administración',site:c.role.sites?.[0]||'Cali',user:null,online:true,days:0,version:'4.0.2',state:'Disponible',policy:'Pendiente',last:'Ahora · llegada simulada',minutes:0,previous:0,events:['Equipo registrado mediante código de prueba'],pending:null});M.audit(db,c,'Equipo '+host+' agregado');close();changed(host+' ya aparece en Equipos. Asigna una persona desde Usuarios.');return;
+    }
+    if(kind==='user'){
+      M.requirePermission(db,c,'usuarios.gestionar');M.requirePermission(db,c,'usuarios.alta');const user={id:c.tenant+'-u'+Date.now(),tenant:c.tenant,name:get('name').trim(),document:get('document'),email:get('email'),area:get('area'),site:get('site'),job:get('job'),schedule:get('schedule'),role:c.tenant+'-colaborador',active:true,extra:{}};if(!M.inScope(db,c,user))throw Error('La persona está fuera de tu alcance.');db.users.push(user);M.audit(db,c,'Alta de '+user.name);close();changed('Persona creada en tu empresa. Ya puedes asignarle un equipo.');return;
+    }
+    if(kind==='assign'){const u=record('users',get('id'),'usuarios.gestionar');M.requirePermission(db,c,'usuarios.asignar',u);const d=db.devices.find(d=>d.id===get('device'));if(!d||!M.inScope(db,c,d)||!u.active||(d.user&&d.user!==u.id))throw Error('El equipo ya no está disponible en tu alcance.');d.user=u.id;M.audit(db,c,d.host+' asignado a '+u.name);close();changed('Asignación guardada.');return;}
+    if(kind==='offboard'){M.offboard(db,c,get('id'),get('typed'),get('mode'),get('to'));close();changed('Baja completada. El historial se conserva y los equipos quedaron según tu elección.');return;}
+    if(kind==='policy-confirm'){M.requirePermission(db,c,'reglas.editar');const draft=window.panelDraft;if(!draft)throw Error('Vuelve a revisar los bloques antes de aplicar.');db.policies[c.tenant]={...draft,revision:db.policies[c.tenant].revision+1};M.rows(db,c,'devices').filter(d=>!draft.exceptions.includes(d.id)).forEach(d=>d.policy='Pendiente');M.audit(db,c,'Reglas: revisión '+db.policies[c.tenant].revision+' enviada');close();changed('Reglas enviadas. Revisión pendiente hasta la próxima confirmación de cada agente.');return;}
+    if(kind==='api-add'){M.requirePermission(db,c,'empresa.ajustes');const id=String(Date.now());db.keys.push({id,tenant:c.tenant,name:get('name'),value:'DEMO-SIN-ACCESO-'+id.slice(-6),active:true});M.audit(db,c,'Clave ficticia creada: '+get('name'));close();changed('Clave de prueba creada. No permite acceso a servicios reales.');return;}
+    if(kind==='api-revoke'){const k=record('keys',get('id'),'empresa.ajustes');if(get('typed')!=='REVOCAR')throw Error('Escribe REVOCAR para confirmar.');k.active=false;M.audit(db,c,'Clave revocada: '+k.name);close();changed('Clave ficticia revocada.');return;}
+    if(kind==='gate'){M.gate(db,c,get('id'),get('on')==='true');close();changed('Gate de empresa actualizado. El cambio quedó en auditoría.');return;}
+    if(kind==='role'){
+      const input={id:get('id'),name:get('name').trim(),permissions:checked(f,'permissions'),scope:get('scope'),areas:get('area')?[get('area')]:[],sites:get('site')?[get('site')]:[]};
+      if(get('global')==='true'){
+        if(!c.actor.platform||!can('roles.gestionar'))throw Error('Solo Super admin gestiona semillas.');if(!input.name)throw Error('Escribe un nombre.');if(input.scope==='area'&&!input.areas.length||input.scope==='sede'&&!input.sites.length)throw Error('Delimita el alcance.');
+        const id=get('id').replace('seed:',''),old=db.seeds.find(s=>s.id===id);const seed={...old,...input,id:id||'semilla-'+Date.now(),active:true};if(old)Object.assign(old,seed);else db.seeds.push(seed);M.audit(db,c,'Semilla global '+seed.name+' guardada');
+      }else {const old=db.roles.find(r=>r.id===input.id);if(!c.actor.platform&&old?.permissions.includes('roles.gestionar'))input.permissions.push('roles.gestionar');M.saveRole(db,c,input);}
+      close();changed('Rol guardado y cambio auditado. Las semillas solo afectan a nuevas empresas.');return;
+    }
+    if(kind==='role-disable'||kind==='role-reassign'){
+      if(!M.rolesGate(db,c))throw Error('No tienes permiso para gestionar roles.');const id=get('id'),seed=id.startsWith('seed:'),r=seed?db.seeds.find(r=>r.id===id.slice(5)):db.roles.find(r=>r.id===id);if(!r||(seed&&!c.actor.platform)||(!seed&&r.tenant!==c.tenant))throw Error('Rol fuera de alcance.');
+      const assigned=[...db.users.filter(u=>u.role===id&&u.active),...db.actors.filter(a=>a.role===id)];
+      if(kind==='role-reassign'){
+        if(get('typed')!=='REASIGNAR')throw Error('Escribe REASIGNAR.');const replacement=db.roles.find(r=>r.id===get('replacement'));if(!replacement||replacement.tenant!==c.tenant||!replacement.active||replacement.id===id||replacement.permissions.some(p=>!can(p))||(!c.actor.platform&&replacement.permissions.includes('roles.gestionar')))throw Error('El rol de reemplazo no se puede delegar.');
+        if(assigned.some(a=>a.id===c.actor.id||a.platform))throw Error('Otro administrador debe revisar esta reasignación. No puedes modificar tu propia cuenta.');
+        if(c.role.scope!=='empresa'||c.role.areas?.length||c.role.sites?.length)throw Error('La reasignación de un rol completo requiere alcance de empresa.');assigned.forEach(a=>a.role=replacement.id);
+      }else{if(get('typed')!=='DESACTIVAR')throw Error('Escribe DESACTIVAR.');if(assigned.length)throw Error('Reasigna las cuentas antes de desactivar.');}
+      r.active=false;M.audit(db,c,'Rol '+r.name+' desactivado'+(assigned.length?' con reasignación':''));close();changed('Rol desactivado. No se eliminaron personas ni registros.');return;
+    }
+    if(kind==='permission'){
+      if(!c.actor.platform||!can('roles.gestionar'))throw Error('El catálogo global pertenece a Super admin.');const old=db.catalog.find(p=>p.key===get('old'));if(!old&&db.catalog.some(p=>p.key===get('key')))throw Error('La clave ya existe.');if(old)Object.assign(old,{label:get('label'),group:get('group')});else {const p={key:get('key'),label:get('label'),group:get('group'),default:false};db.catalog.push(p);}M.audit(db,c,'Definición de permiso '+get('key')+' guardada');close();changed('Catálogo actualizado. Los roles existentes conservan sus permisos.');return;
+    }
+    if(kind==='tenant'){
+      if(!c.actor.platform||!can('tenants.gestionar'))throw Error('No puedes crear empresas.');const id=get('id');if(db.tenants.some(t=>t.id===id))throw Error('El identificador ya existe.');db.tenants.push({id,name:get('name'),autonomiaRoles:false,accent:'#245D68',logo:'../assets/logo_main.png'});db.roles.push(...db.seeds.filter(s=>s.id!=='super'&&s.active!==false).map(s=>({...M.copy(s),id:id+'-'+s.id,seed:s.id,tenant:id,active:true})));db.policies[id]={web:false,downloads:false,install:false,hours:false,domains:'',start:'08:00',end:'17:00',days:['Lun','Mar','Mié','Jue','Vie'],revision:1,exceptions:[]};c.actor.assigned.push(id);M.audit(db,c,'Empresa '+get('name')+' creada; gate OFF');close();changed('Empresa creada con autonomía apagada.');return;
+    }
+    if(kind==='reset'){if(get('typed')!=='RESTABLECER')throw Error('Escribe RESTABLECER.');db=M.fresh();close();changed('Datos ficticios restablecidos. Ambos tenants vuelven a tener autonomía apagada.');return;}
+  }catch(error){if($('#v-dialog')?.open)$('#modal-error').textContent=error.message;else notify(error.message);}});
+  draw();
+  if(query.enroll==='1'&&can('equipos.agregar'))enrollment();
+  window.PanelDemo={model:M,view:V,get db(){return db;},context:ctx,draw,run};
+})();

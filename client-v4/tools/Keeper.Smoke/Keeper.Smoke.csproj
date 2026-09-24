@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Arnes de prueba del TRANSPORTE. Ejercita el camino real que nunca se habia probado:
+    challenge -> login firmado (RFC 9421) -> sincronizacion con snapshot de actividad.
+
+    Deliberadamente FUERA de Keeper.sln: habla por red contra un entorno real, asi que no
+    debe correr con las pruebas unitarias ni en una compilacion normal.
+    Uso:  ver el encabezado de Program.cs
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Keeper.Smoke</AssemblyName>
+    <RootNamespace>Keeper.Smoke</RootNamespace>
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Keeper.Agent\Keeper.Agent.csproj" />
+    <ProjectReference Include="..\..\src\Keeper.Shared\Keeper.Shared.csproj" />
+  </ItemGroup>
+</Project>

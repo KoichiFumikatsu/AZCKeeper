@@ -1,0 +1,23 @@
+{
+  "pages": {
+    "ajustes.html": "c16d8d60b0e40ae1436e29a901b2b2c25ff11e70d1ca1388ba5e5fb79de12526",
+    "empresas.html": "3244b31e874fe6178223493bceb2ee721e3db741dbc00446defaa604255d5d40",
+    "equipo.html": "502abba101855e33decd6cfcd393988f301d62530ca0306e5b5c2f10ff0db79c",
+    "equipos.html": "04aff0f283ccb8987a78545721af11a84b415b83fabd411cf37317ac93651283",
+    "index.html": "1d8fc9b8deeda5a75ea420a76db14a439c71a6a1fe348a71225665ca4c3dff60",
+    "login.html": "ec0047b102be25ed9d5b3fb7948826ed879f5b6952ae8f2e84cd48d0004c65c6",
+    "miembro.html": "e57cabb9ba65d45d4b516503b3313dccf28f20b85906ec9ecc4b33d2ccabbb48",
+    "reglas.html": "5e166cff0512d7dff46a0fe3297a981b5f93936d9441ace502a423f802c19d16",
+    "reportes.html": "a2bdc42604ff2a9ed5ec97ce28e0520c126e8ab6a76aee65802c717a2eb15264",
+    "roles.html": "b8e83ab981693aa145699fa32c33c95e0fcf91f485d5e09f56a8e51c2ef0aa07",
+    "states.html": "51b51f7d88ccff34049285d729c696644cf51bf7563b6c08efb60328b8a9267d",
+    "usuarios.html": "0f0753113db75bb38096b2e76db3084f1b780064eaa288bd629b40e7e0352749"
+  },
+  "sources": {
+    "panel-v4-model.js": "f8933cada09f503bbf5fda916fc006d04cdd5360d873082906c5ba8f4546417c",
+    "panel-v4-runtime.js": "06f17bd65b00a80d3272681f3fde3dd41ee79a72c34a1c52d8f62409b90088e9",
+    "panel-v4-insights.js": "e6acfffc33e5dd274cf17b0d4c027249d1b52f1636705e22e7ab4a882f989d92",
+    "panel-v4.css": "b0ebd5dd961f66b833b63d93d7ba87af08035027c87493795f679e2891b40ea1",
+    "panel-v4-insights.css": "249ac018463145774fd46b9317cc64a6269760f37b16b30af4f5c71923493809"
+  }
+}

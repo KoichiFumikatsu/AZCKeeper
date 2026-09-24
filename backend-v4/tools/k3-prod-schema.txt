@@ -1,0 +1,141 @@
+### keeper_firmas
+  id bigint NOTNULL
+  nombre varchar(255) NOTNULL
+  manager varchar(255)
+  mail_manager varchar(255)
+  descripcion varchar(500)
+  historial_desde date
+  activa tinyint(1) NOTNULL
+  legacy_firm_id int
+  created_at timestamp NOTNULL
+  updated_at timestamp NOTNULL
+### keeper_sedes
+  id bigint NOTNULL
+  nombre varchar(255) NOTNULL
+  codigo varchar(50)
+  descripcion varchar(500)
+  activa tinyint(1) NOTNULL
+  legacy_sede_id int
+  created_at timestamp NOTNULL
+  updated_at timestamp NOTNULL
+### keeper_areas
+  id bigint NOTNULL
+  nombre varchar(255) NOTNULL
+  descripcion varchar(500)
+  padre_id bigint
+  activa tinyint(1) NOTNULL
+  legacy_area_id int
+  created_at timestamp NOTNULL
+  updated_at timestamp NOTNULL
+### keeper_cargos
+  id bigint NOTNULL
+  nombre varchar(255) NOTNULL
+  descripcion varchar(500)
+  nivel_jerarquico int NOTNULL
+  activo tinyint(1) NOTNULL
+  legacy_cargo_id int
+  created_at timestamp NOTNULL
+  updated_at timestamp NOTNULL
+### keeper_users
+  id bigint NOTNULL
+  legacy_employee_id int
+  cc varchar(20)
+  email varchar(190)
+  display_name varchar(190)
+  status enum('active','inactive','locked') NOTNULL
+  employment_status enum('active','retired') NOTNULL
+  password_hash varchar(255)
+  created_at timestamp
+  updated_at timestamp
+### keeper_user_assignments
+  id bigint NOTNULL
+  keeper_user_id bigint NOTNULL
+  firm_id int
+  area_id int
+  cargo_id int
+  sede_id int
+  sociedad_id int
+  manual_override tinyint(1) NOTNULL
+  assigned_by bigint
+  assigned_at timestamp NOTNULL
+  updated_at timestamp NOTNULL
+### keeper_devices
+  id bigint NOTNULL
+  user_id bigint NOTNULL
+  device_guid char(36) NOTNULL
+  device_name varchar(190)
+  client_version varchar(20)
+  serial_hint varchar(190)
+  status enum('active','revoked') NOTNULL
+  decommission_reason enum('returned','changed','replaced','other')
+  decommissioned_at timestamp
+  device_status enum('active','away','inactive') NOTNULL
+  day_summary_json json
+  last_seen_at timestamp
+  created_at timestamp
+  updated_at timestamp
+### keeper_activity_day
+  id bigint NOTNULL
+  user_id bigint NOTNULL
+  device_id bigint NOTNULL
+  day_date date NOTNULL
+  tz_offset_minutes smallint NOTNULL
+  active_seconds int NOTNULL
+  work_hours_active_seconds decimal(12,3)
+  work_hours_idle_seconds decimal(12,3)
+  lunch_active_seconds decimal(12,3)
+  lunch_idle_seconds decimal(12,3)
+  after_hours_active_seconds decimal(12,3)
+  after_hours_idle_seconds decimal(12,3)
+  is_workday tinyint(1) NOTNULL
+  idle_seconds int NOTNULL
+  call_seconds int NOTNULL
+  samples_count int NOTNULL
+  first_event_at datetime
+  last_event_at datetime
+  payload_json json
+  created_at timestamp NOTNULL
+  updated_at timestamp
+### keeper_focus_daily
+  id bigint NOTNULL
+  user_id bigint NOTNULL
+  device_id bigint NOTNULL
+  day_date date NOTNULL
+  context_switches int NOTNULL
+  deep_work_seconds int NOTNULL
+  deep_work_sessions int NOTNULL
+  distraction_seconds int NOTNULL
+  longest_focus_streak_seconds int NOTNULL
+  focus_score tinyint unsigned NOTNULL
+  productivity_pct tinyint unsigned NOTNULL
+  constancy_pct tinyint unsigned NOTNULL
+  first_activity_time time
+  scheduled_start time
+  punctuality_minutes smallint NOTNULL
+  created_at timestamp NOTNULL
+  updated_at timestamp
+### keeper_window_episode
+  id bigint NOTNULL
+  user_id bigint NOTNULL
+  device_id bigint NOTNULL
+  start_at datetime NOTNULL
+  end_at datetime NOTNULL
+  duration_seconds int NOTNULL
+  process_name varchar(190)
+  app_name varchar(190)
+  window_title varchar(512)
+  is_in_call tinyint(1) NOTNULL
+  call_app_hint varchar(190)
+  day_date date NOTNULL
+  created_at timestamp NOTNULL
+### keeper_work_schedules
+  id bigint NOTNULL
+  user_id bigint
+  work_start_time time
+  work_end_time time
+  lunch_start_time time
+  lunch_end_time time
+  applicable_days varchar(20)
+  timezone varchar(50)
+  is_active tinyint(1)
+  created_at timestamp

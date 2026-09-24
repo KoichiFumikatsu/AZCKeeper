@@ -1,0 +1,8 @@
+<?php if (!defined('KEEPER_PRESENTATION')) { http_response_code(404); exit; } ?>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title><?= htmlspecialchars($title, ENT_QUOTES, 'UTF-8') ?> · AZCKeeper</title>
+<link rel="icon" href="/assets/brand/favicon.ico">
+<link rel="stylesheet" href="/assets/styles.css">
+<script type="module" src="/assets/app.js"></script>

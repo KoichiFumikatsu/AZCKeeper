@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWindowsForms>true</UseWindowsForms></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Keeper.Shared/Keeper.Shared.csproj" />
+    <Compile Include="../Keeper.Agent/Hosting/ModuleHost.cs" Link="Ipc/ModuleHost.cs" />
+  </ItemGroup>
+</Project>

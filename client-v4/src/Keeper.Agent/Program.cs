@@ -1,0 +1,89 @@
+using Keeper.Agent.Hosting;
+using Keeper.Agent.Modules.Enforcement;
+using Keeper.Agent.Modules.Devices;
+using Keeper.Agent.Modules.Security;
+using Keeper.Agent.Modules.Update;
+using Keeper.Agent.Modules.Diagnostics;
+using Keeper.Agent.Policy;
+using Keeper.Agent.Storage;
+using Keeper.Agent.Transport;
+using Keeper.Shared.Contracts;
+using Keeper.Shared.Protocol;
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+var builder = Host.CreateApplicationBuilder(args);
+builder.Services.AddWindowsService(options => options.ServiceName = "AZCKeeper v4");
+builder.Services.AddHostedService<AgentWorker>();
+await builder.Build().RunAsync();
+
+internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var dataDirectory = Environment.GetEnvironmentVariable("KEEPER_DATA_DIR") ??
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "AZCKeeper", "v4");
+        Directory.CreateDirectory(dataDirectory);
+        await using var lease = new FileStream(Path.Combine(dataDirectory, "agent.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        using var key = await DeviceKeyStore.LoadOrCreateAsync(Path.Combine(dataDirectory, "device-key.dpapi"), stoppingToken);
+        using var signer = new HttpMessageSigner(key);
+        using var outbox = new DurableOutbox(Path.Combine(dataDirectory, "outbox.json"));
+        var context = new ModuleContext(outbox, TimeProvider.System, Log, stoppingToken);
+        var registry = new WindowsSystemPolicyStore(Environment.GetEnvironmentVariable("KEEPER_ENABLE_HKLM") == "1", Log);
+        var deviceId = Guid.TryParse(Environment.GetEnvironmentVariable("KEEPER_DEVICE_ID"), out var configuredId) ? configuredId : Guid.Empty;
+        var deviceLock = new DeviceLock(Path.Combine(dataDirectory, "device-lock.json"), PinVerifier.LoadProtected(Path.Combine(dataDirectory, "pin-verifier.dpapi")));
+        var commands = new CommandExecutor(Path.Combine(dataDirectory, "commands.json"), deviceId, deviceLock,
+            new WindowsDeviceActions(!registry.IsDryRun));
+        using var trust = InstalledTrust.Load(AppContext.BaseDirectory);
+        var updater = new UpdateManager(Path.Combine(dataDirectory, "staging"), trust.ReleaseKeys, trust.InstalledSequence, trust.Channel);
+        PolicyCoordinator? policy = null;
+        ModuleHost? hostReference = null;
+        var moduleList = new List<IModule> { new WebEnforcer(registry), new UsbEnforcer(registry), new InstallEnforcer(registry),
+            new DownloadEnforcer(registry), deviceLock, commands, new Inventory(), updater,
+            HardeningStatusModule.FromFile(Path.Combine(dataDirectory, "hardening", "state.json")),
+            new TamperGuard(trust.BinaryHashes), new AgentDiagnostics(() => hostReference?.Snapshot() ?? []) };
+        if (OperatingSystem.IsWindows()) moduleList.Add(new SessionSupervisor(new WindowsSessionLauncher(trust.BinaryHashes),
+            Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), deviceLock, () => policy));
+        await using var modules = new ModuleHost(moduleList, context);
+        hostReference = modules;
+        await modules.InitAsync();
+        policy = new PolicyCoordinator(new SignedFilePolicyStore(Path.Combine(dataDirectory, "policy-cache.json"), key), modules, deviceId);
+        await policy.RestoreAsync(stoppingToken);
+        var localPolicy = Environment.GetEnvironmentVariable("KEEPER_POLICY_FILE");
+        if (localPolicy is not null)
+        {
+            var document = JsonSerializer.Deserialize<CachedPolicy>(await File.ReadAllBytesAsync(localPolicy, stoppingToken), ProtocolJson.Options)
+                ?? throw new InvalidDataException("invalid_local_policy");
+            await policy.ApplyAsync(document.PolicyVersion, document.Policy, stoppingToken);
+        }
+        using var handler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false };
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(45) };
+        ISyncCycle? transport = null;
+        var api = Environment.GetEnvironmentVariable("KEEPER_API_BASE");
+        if (api is not null)
+        {
+            if (deviceId == Guid.Empty) throw new InvalidOperationException("KEEPER_DEVICE_ID is required; enrollment is outside this prototype");
+            if (!Uri.TryCreate(api, UriKind.Absolute, out var root) || root.Scheme != "https" || !root.AbsolutePath.EndsWith("/v1/", StringComparison.Ordinal) ||
+                root.Query.Length != 0 || root.Fragment.Length != 0 || root.UserInfo.Length != 0)
+                throw new InvalidOperationException("KEEPER_API_BASE must be an HTTPS /v1/ URL");
+            http.BaseAddress = root;
+            transport = new SyncClient(http, signer, deviceId, outbox, policy, TimeProvider.System)
+            {
+                OnResponse = async (response, tenant, ct) =>
+                {
+                    await commands.AcceptAsync(response.Commands, tenant, ct);
+                    updater.Offer(response.Release);
+                }
+            };
+        }
+        var interval = int.TryParse(Environment.GetEnvironmentVariable("KEEPER_SYNC_SECONDS"), out var value) ? value : 120;
+        using var scheduler = new Scheduler(modules, transport, new SyncSchedule(deviceId, interval), TimeProvider.System,
+            Path.Combine(dataDirectory, "next-sync.json"), Log);
+        Log($"Agent started: {(registry.IsDryRun ? "dry-run" : "HKLM enabled")}; {(transport is null ? "offline" : "sync configured")}");
+        await scheduler.RunAsync(stoppingToken);
+    }
+
+    private void Log(string message) => logger.LogInformation("{AgentEvent}", message);
+}

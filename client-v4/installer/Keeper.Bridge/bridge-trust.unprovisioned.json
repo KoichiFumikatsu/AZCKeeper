@@ -1,0 +1,4 @@
+{
+  "Trust": { "ReleasePublicKeys": {}, "BinaryHashes": {}, "InstalledSequence": 1, "Channel": "stable" },
+  "Publisher": { "CertificateSha256": "", "Subject": "CN=Grupo AZC" }
+}

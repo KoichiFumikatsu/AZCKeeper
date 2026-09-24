@@ -1,0 +1,128 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!-- GENERADO por Build-Msi.ps1. No editar a mano: se reescribe en cada compilacion. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <ComponentGroup Id="AgentPayload" Directory="INSTALLFOLDER">
+      <Component Id="f_Keeper_Agent_deps_json" Bitness="always64">
+        <File Id="f_Keeper_Agent_deps_json_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Keeper.Agent.deps.json" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Keeper_Agent_dll" Bitness="always64">
+        <File Id="f_Keeper_Agent_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Keeper.Agent.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Keeper_Agent_runtimeconfig_json" Bitness="always64">
+        <File Id="f_Keeper_Agent_runtimeconfig_json_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Keeper.Agent.runtimeconfig.json" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Keeper_Session_deps_json" Bitness="always64">
+        <File Id="f_Keeper_Session_deps_json_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Keeper.Session.deps.json" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Keeper_Session_dll" Bitness="always64">
+        <File Id="f_Keeper_Session_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Keeper.Session.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Keeper_Session_exe" Bitness="always64">
+        <File Id="f_Keeper_Session_exe_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Keeper.Session.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Keeper_Session_runtimeconfig_json" Bitness="always64">
+        <File Id="f_Keeper_Session_runtimeconfig_json_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Keeper.Session.runtimeconfig.json" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Keeper_Shared_dll" Bitness="always64">
+        <File Id="f_Keeper_Shared_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Keeper.Shared.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Configuration_Abstractions_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Configuration_Abstractions_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Configuration.Abstractions.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Configuration_Binder_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Configuration_Binder_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Configuration.Binder.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Configuration_CommandLine_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Configuration_CommandLine_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Configuration.CommandLine.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Configuration_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Configuration_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Configuration.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Configuration_EnvironmentVariables_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Configuration_EnvironmentVariables_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Configuration.EnvironmentVariables.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Configuration_FileExtensions_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Configuration_FileExtensions_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Configuration.FileExtensions.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Configuration_Json_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Configuration_Json_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Configuration.Json.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Configuration_UserSecrets_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Configuration_UserSecrets_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Configuration.UserSecrets.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_DependencyInjection_Abstractions_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_DependencyInjection_Abstractions_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.DependencyInjection.Abstractions.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_DependencyInjection_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_DependencyInjection_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.DependencyInjection.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Diagnostics_Abstractions_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Diagnostics_Abstractions_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Diagnostics.Abstractions.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Diagnostics_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Diagnostics_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Diagnostics.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_FileProviders_Abstractions_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_FileProviders_Abstractions_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.FileProviders.Abstractions.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_FileProviders_Physical_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_FileProviders_Physical_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.FileProviders.Physical.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_FileSystemGlobbing_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_FileSystemGlobbing_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.FileSystemGlobbing.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Hosting_Abstractions_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Hosting_Abstractions_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Hosting.Abstractions.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Hosting_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Hosting_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Hosting.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Hosting_WindowsServices_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Hosting_WindowsServices_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Hosting.WindowsServices.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Logging_Abstractions_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Logging_Abstractions_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Logging.Abstractions.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Logging_Configuration_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Logging_Configuration_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Logging.Configuration.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Logging_Console_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Logging_Console_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Logging.Console.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Logging_Debug_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Logging_Debug_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Logging.Debug.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Logging_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Logging_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Logging.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Logging_EventLog_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Logging_EventLog_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Logging.EventLog.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Logging_EventSource_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Logging_EventSource_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Logging.EventSource.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Options_ConfigurationExtensions_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Options_ConfigurationExtensions_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Options.ConfigurationExtensions.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Options_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Options_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Options.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_Microsoft_Extensions_Primitives_dll" Bitness="always64">
+        <File Id="f_Microsoft_Extensions_Primitives_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\Microsoft.Extensions.Primitives.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_System_Diagnostics_EventLog_dll" Bitness="always64">
+        <File Id="f_System_Diagnostics_EventLog_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\System.Diagnostics.EventLog.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_System_Diagnostics_EventLog_Messages_dll" Bitness="always64">
+        <File Id="f_System_Diagnostics_EventLog_Messages_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\System.Diagnostics.EventLog.Messages.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_System_Security_Cryptography_ProtectedData_dll" Bitness="always64">
+        <File Id="f_System_Security_Cryptography_ProtectedData_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\System.Security.Cryptography.ProtectedData.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="f_System_ServiceProcess_ServiceController_dll" Bitness="always64">
+        <File Id="f_System_ServiceProcess_ServiceController_dll_file" Source="C:\Users\FumiWork\Documents\AZCKeeper\client-v4\artifacts\publish\System.ServiceProcess.ServiceController.dll" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

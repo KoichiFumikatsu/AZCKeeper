@@ -1,0 +1,22 @@
+.v-placeholder-nav{margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--line)}
+.v-placeholder-nav h2{font-size:.8125rem;font-weight:650;line-height:1.5;margin:.35rem .6rem .65rem;color:var(--muted)}
+.v-placeholder-nav-label{min-width:0;overflow-wrap:anywhere;line-height:1.4}
+.v-placeholder-nav-label small{display:block;font-size:.75rem;font-weight:400;color:var(--muted);margin-top:.15rem}
+.v-placeholder-status{display:flex;align-items:center;flex-wrap:wrap;gap:.6rem 1rem;margin:-.5rem 0 2rem}
+.v-placeholder-status p{font-size:.9375rem;color:var(--muted);margin:0}
+.v-development-badge{display:inline-block;border:1px solid var(--control);border-radius:4px;padding:.3rem .65rem;color:var(--ink);font-size:.8125rem;font-weight:650;line-height:1.5}
+.v-placeholder-caption{font-size:.875rem;color:var(--muted);margin:0 0 .5rem}
+.v-placeholder-preview h2{margin:0 0 1.25rem}
+.v-placeholder-empty{padding:1.1rem 0 1.5rem;max-width:48rem}
+.v-placeholder-empty h3{font-size:1.2rem;font-weight:600;margin:0 0 .6rem}
+.v-placeholder-empty p{margin:0;color:var(--muted)}
+.v-placeholder-cards{display:grid;grid-template-columns:minmax(0,1fr);gap:1.25rem}
+.v-placeholder-cards>section{border:1px dashed var(--control);border-radius:8px;padding:1.25rem;min-width:0}
+.v-placeholder-cards h3{font-size:1.05rem;margin:0 0 .75rem}
+.v-placeholder-cards p{font-size:.9375rem;line-height:1.6;color:var(--muted);margin:.6rem 0 0}
+.v-placeholder-return{margin:2.5rem 0 0}
+.v-placeholder-return>p{font-size:.875rem;color:var(--muted);max-width:46rem}
+@media(min-width:700px){.v-placeholder-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(min-width:1200px){.v-placeholder-cards[data-preview-layout=tiers],.v-placeholder-cards[data-preview-layout=tareas]{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:760px){.v-placeholder-status{margin:0 0 1.5rem;gap:.65rem}.v-placeholder-cards>section{padding:1rem}.v-placeholder-empty{padding:.8rem 0 1.25rem}.v-placeholder-return{margin-top:2rem}}
+@media(forced-colors:active){.v-development-badge,.v-placeholder-cards>section,.v-placeholder-nav{border-color:CanvasText}}
