@@ -40,7 +40,8 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         var updater = new UpdateManager(Path.Combine(dataDirectory, "staging"), trust.ReleaseKeys, trust.InstalledSequence, trust.Channel);
         PolicyCoordinator? policy = null;
         ModuleHost? hostReference = null;
-        var moduleList = new List<IModule> { new WebEnforcer(registry), new UsbEnforcer(registry), new InstallEnforcer(registry),
+        var moduleList = new List<IModule> { new WebEnforcer(registry), new UsbEnforcer(registry),
+            new InstallEnforcer(registry, loadOptions: () => AppLockerOptions.FromEnvironment(Environment.GetEnvironmentVariable)),
             new DownloadEnforcer(registry), deviceLock, commands, new Inventory(), updater,
             HardeningStatusModule.FromFile(Path.Combine(dataDirectory, "hardening", "state.json")),
             new TamperGuard(trust.BinaryHashes), new AgentDiagnostics(() => hostReference?.Snapshot() ?? []) };

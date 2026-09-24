@@ -4,7 +4,7 @@ using Microsoft.Win32;
 
 namespace Keeper.Agent.Modules.Enforcement;
 
-public interface ISystemPolicyStore
+public interface ISystemPolicyStore : IAppLockerPolicyStore
 {
     bool IsDryRun { get; }
     void ReplaceStringList(string path, IReadOnlyList<string> values);
@@ -18,6 +18,9 @@ public sealed class MemorySystemPolicyStore : ISystemPolicyStore
     public bool IsDryRun { get; init; }
     public Dictionary<(string Path, string Name), object> Values { get; } = new();
     public List<RegistryWrite> Writes { get; } = [];
+    public MemoryAppLockerMachine AppLocker { get; } = new();
+    public void ApplyAppLocker(string policyXml) => new AppLockerPolicyStore(AppLocker).ApplyAppLocker(policyXml);
+    public void ClearAppLocker() => new AppLockerPolicyStore(AppLocker).ClearAppLocker();
 
     public void ReplaceStringList(string path, IReadOnlyList<string> values)
     {
@@ -42,9 +45,21 @@ public sealed class MemorySystemPolicyStore : ISystemPolicyStore
     }
 }
 
-public sealed class WindowsSystemPolicyStore(bool enableWrites, Action<string> log) : ISystemPolicyStore
+public sealed class WindowsSystemPolicyStore(bool enableWrites, Action<string> log, IAppLockerPolicyStore? appLocker = null) : ISystemPolicyStore
 {
     public bool IsDryRun => !enableWrites || !IsElevated();
+
+    public void ApplyAppLocker(string policyXml)
+    {
+        if (IsDryRun || !OperatingSystem.IsWindows()) { log("dry-run AppLocker apply + AppIDSvc automatic/start"); return; }
+        (appLocker ?? new AppLockerPolicyStore(new WindowsAppLockerMachine(log))).ApplyAppLocker(policyXml);
+    }
+
+    public void ClearAppLocker()
+    {
+        if (IsDryRun || !OperatingSystem.IsWindows()) { log("dry-run AppLocker restore + AppIDSvc startup restore"); return; }
+        (appLocker ?? new AppLockerPolicyStore(new WindowsAppLockerMachine(log))).ClearAppLocker();
+    }
 
     private static bool IsElevated()
     {

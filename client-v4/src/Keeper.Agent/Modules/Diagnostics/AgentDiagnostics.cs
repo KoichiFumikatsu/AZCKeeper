@@ -24,7 +24,7 @@ public sealed class AgentDiagnostics(Func<IReadOnlyList<ModuleSnapshot>> snapsho
                 "applied" or "ready" or "locked" or "unlocked" or "no_interactive_session" => SecurityControlState.Applied,
                 "failed" or "degraded" or "dry_run" or "pending_restart" => SecurityControlState.Failed,
                 "unsupported" => SecurityControlState.Unsupported,
-                "unknown" or "awaiting_package" or "verified_pending_install" => SecurityControlState.Unknown,
+                "unknown" or "audit" or "awaiting_package" or "verified_pending_install" => SecurityControlState.Unknown,
                 _ when m.State.StartsWith("failed_step_", StringComparison.Ordinal) || m.State == "recovery_required" => SecurityControlState.Failed,
                 _ => SecurityControlState.Unknown
             }

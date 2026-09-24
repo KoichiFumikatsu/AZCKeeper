@@ -18,6 +18,7 @@ public sealed class AgentDiagnosticsTests
     [InlineData("failed", SecurityControlState.Failed)]
     [InlineData("degraded", SecurityControlState.Failed)]
     [InlineData("unsupported", SecurityControlState.Unsupported)]
+    [InlineData("audit", SecurityControlState.Unknown)]
     [InlineData("awaiting_package", SecurityControlState.Unknown)]
     [InlineData("verified_pending_install", SecurityControlState.Unknown)]
     [InlineData("unknown", SecurityControlState.Unknown)]

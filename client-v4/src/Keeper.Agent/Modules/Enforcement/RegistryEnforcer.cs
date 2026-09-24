@@ -3,6 +3,9 @@ using Keeper.Shared.Protocol;
 
 namespace Keeper.Agent.Modules.Enforcement;
 
+internal sealed class InvalidEnforcementConfigurationException(Exception inner)
+    : NotSupportedException("invalid_configuration", inner);
+
 public abstract class RegistryEnforcer(ISystemPolicyStore store) : IModule
 {
     protected ISystemPolicyStore Store { get; } = store;
@@ -13,6 +16,7 @@ public abstract class RegistryEnforcer(ISystemPolicyStore store) : IModule
     private (string State, string? Error)? _reported;
     private ModuleSnapshot _snapshot = new("uninitialized", null, null, "unknown");
     public abstract string Name { get; }
+    protected virtual (string State, string? ErrorCode) AppliedStatus => ("applied", null);
 
     public Task InitAsync(ModuleContext ctx)
     {
@@ -40,15 +44,19 @@ public abstract class RegistryEnforcer(ISystemPolicyStore store) : IModule
             {
                 Apply(_desired);
                 var dryRun = Store.IsDryRun;
-                _snapshot = _snapshot with { AppliedVersion = dryRun ? null : _desired.Version,
-                    State = dryRun ? "dry_run" : "applied", ErrorCode = dryRun ? "dry_run" : null };
+                var status = AppliedStatus;
+                _snapshot = _snapshot with { AppliedVersion = !dryRun && status.State == "applied" ? _desired.Version : null,
+                    State = dryRun ? "dry_run" : status.State, ErrorCode = dryRun ? "dry_run" : status.ErrorCode };
             }
-            catch (NotSupportedException)
+            catch (NotSupportedException ex)
             {
                 // Also withdraw persisted restrictions left by a previous process or a partial write.
                 Clear();
+                var error = ex is InvalidEnforcementConfigurationException ? "invalid_configuration" : "unsupported_rule";
                 _snapshot = _snapshot with { AppliedVersion = null, State = "unsupported",
-                    ErrorCode = Store.IsDryRun ? "unsupported_cleanup_dry_run" : "unsupported_rule" };
+                    ErrorCode = Store.IsDryRun
+                        ? ex is InvalidEnforcementConfigurationException ? "invalid_configuration_cleanup_dry_run" : "unsupported_cleanup_dry_run"
+                        : error };
             }
             _failures = 0;
         }
@@ -63,7 +71,7 @@ public abstract class RegistryEnforcer(ISystemPolicyStore store) : IModule
         await Context.Outbox.EnqueueAsync(new LogEntry
         {
             EventId = Guid.NewGuid(), At = Context.Clock.GetUtcNow(), Component = Name,
-            Level = _snapshot.State is "failed" or "unsupported" or "dry_run" ? LogEntryLevel.Warn : LogEntryLevel.Info,
+            Level = _snapshot.State is "failed" or "unsupported" or "dry_run" or "audit" ? LogEntryLevel.Warn : LogEntryLevel.Info,
             Code = _snapshot.State
         }, ct);
         _reported = report;

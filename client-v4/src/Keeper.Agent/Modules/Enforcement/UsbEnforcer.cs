@@ -6,7 +6,8 @@ public sealed class UsbEnforcer(ISystemPolicyStore store) : RegistryEnforcer(sto
 {
     public override string Name => "UsbEnforcer";
     public const string Root = @"SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices";
-    public const string Disks = Root + @"\{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}";
+    public const string AllStorage = Root + @"\{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}";
+    public const string Disks = Root + @"\{53f56307-b6bf-11d0-94f2-00a0c91efb8b}";
 
     protected override void Apply(EffectivePolicy policy)
     {
@@ -21,12 +22,21 @@ public sealed class UsbEnforcer(ISystemPolicyStore store) : RegistryEnforcer(sto
         var selected = rules.FirstOrDefault();
         var denyAll = selected?.Effect == RuleEffect.Deny && selected.Targets[0] == "*";
         var readOnly = selected?.Effect == RuleEffect.Deny && selected.Targets[0] == "write";
+        RemoveLegacyValues();
         Store.SetDword(Disks, "Deny_Write", readOnly ? 1 : null);
-        Store.SetDword(Root, "Deny_All", denyAll ? 1 : null);
+        Store.SetDword(AllStorage, "Deny_All", denyAll ? 1 : null);
     }
     protected override void Clear()
     {
         Store.SetDword(Disks, "Deny_Write", null);
+        Store.SetDword(AllStorage, "Deny_All", null);
+        RemoveLegacyValues();
+    }
+
+    private void RemoveLegacyValues()
+    {
+        // Withdraw values written at the wrong locations by earlier agents.
+        Store.SetDword(AllStorage, "Deny_Write", null);
         Store.SetDword(Root, "Deny_All", null);
     }
 }

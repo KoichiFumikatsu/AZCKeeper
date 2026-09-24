@@ -16,13 +16,17 @@ public sealed class AdditionalEnforcerTests
         await enforcer.ApplyPolicyAsync(Samples.Policy()); Assert.Empty(store.Values);
     }
     [Fact]
-    public async Task InstallWithdrawsPartialMsiPolicyAndReportsMissingApplicationControl()
+    public async Task InstallDefaultsToExplicitAuditStatusWithoutMsiOrDownloadRestrictions()
     {
         var store = new MemorySystemPolicyStore(); var enforcer = new InstallEnforcer(store);
         await enforcer.InitAsync(Samples.Context());
         await enforcer.ApplyPolicyAsync(Samples.Policy(Samples.Rule(RuleKind.Installation, RuleEffect.Deny, "*")));
-        Assert.Empty(store.Values);
-        Assert.Equal("unsupported", enforcer.Snapshot().State);
+        Assert.Equal(0, Assert.Single(store.Values).Value);
+        Assert.Equal("audit", enforcer.Snapshot().State);
+        Assert.Equal("audit_not_blocking", enforcer.Snapshot().ErrorCode);
+        Assert.Null(enforcer.Snapshot().AppliedVersion);
+        Assert.Contains("AuditOnly", store.AppLocker.PolicyXml, StringComparison.Ordinal);
+        Assert.DoesNotContain(store.Writes, w => w.Name == "DownloadRestrictions");
     }
     [Fact]
     public async Task InvalidDownloadTargetHasNoPartialWrites()

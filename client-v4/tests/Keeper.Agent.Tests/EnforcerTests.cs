@@ -33,10 +33,26 @@ public sealed class EnforcerTests
         await module.InitAsync(Samples.Context());
         await module.ApplyPolicyAsync(Samples.Policy(Samples.Rule(RuleKind.Usb, RuleEffect.Deny, "*")));
         await module.ApplyPolicyAsync(Samples.Policy(Samples.Rule(RuleKind.Usb, RuleEffect.Deny, target)));
-        Assert.Equal(all, store.Values.ContainsKey((UsbEnforcer.Root, "Deny_All")));
-        Assert.Equal(write, store.Values.ContainsKey((UsbEnforcer.Disks, "Deny_Write")));
+        Assert.Equal(all, store.Values.ContainsKey((UsbEnforcer.Root + @"\{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}", "Deny_All")));
+        Assert.Equal(write, store.Values.ContainsKey((UsbEnforcer.Root + @"\{53f56307-b6bf-11d0-94f2-00a0c91efb8b}", "Deny_Write")));
+        Assert.DoesNotContain(store.Values.Keys, k => k == (UsbEnforcer.Root, "Deny_All"));
         Assert.All(store.Values.Values, value => Assert.Equal(1, value));
         await module.ApplyPolicyAsync(Samples.Policy(Samples.Rule(RuleKind.Usb, RuleEffect.Allow, "*")));
+        Assert.Empty(store.Values);
+    }
+
+    [Fact]
+    public async Task UsbMigratesLegacyLocationsAndClearsOnWithdrawal()
+    {
+        var store = new MemorySystemPolicyStore();
+        store.SetDword(UsbEnforcer.Root, "Deny_All", 1);
+        store.SetDword(UsbEnforcer.AllStorage, "Deny_Write", 1);
+        var module = new UsbEnforcer(store);
+        await module.InitAsync(Samples.Context());
+        await module.ApplyPolicyAsync(Samples.Policy(Samples.Rule(RuleKind.Usb, RuleEffect.Deny, "write")));
+        Assert.Equal(((UsbEnforcer.Disks, "Deny_Write"), (object)1),
+            (Assert.Single(store.Values).Key, Assert.Single(store.Values).Value));
+        await module.ApplyPolicyAsync(Samples.Policy());
         Assert.Empty(store.Values);
     }
 
