@@ -252,6 +252,10 @@ final class AdminApi
                 if (!$role) { $role=$this->db->one("SELECT id FROM roles WHERE tenant_id=? AND seed_key='collaborator' AND active=TRUE",[$this->tenant]); }
                 if ($role) { $this->db->run('INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)',[$this->tenant,$id,$role['id']]); }
                 $this->assignment($id,$next);
+                // Tier por defecto del tenant: sin suscripción el compositor descarta toda regla
+                // (el módulo no está en el tier activo), así que el enforcement sería invisible.
+                $defaultTier=$this->db->one("SELECT id FROM tier WHERE tenant_id=? AND is_default=1 AND active=TRUE",[$this->tenant]);
+                if ($defaultTier) { $this->db->run("INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at,status) VALUES (?,?,?,?,UTC_TIMESTAMP(6),'active')",[$this->tenant,Util::bin(Util::uuid()),$id,$defaultTier['id']]); }
             } else {
                 $this->update('users',$id,$values);
                 if (array_intersect(array_keys($values),['firm_id','site_id','area_id','position_id','schedule_id'])) { $this->assignment($id,$next); }
