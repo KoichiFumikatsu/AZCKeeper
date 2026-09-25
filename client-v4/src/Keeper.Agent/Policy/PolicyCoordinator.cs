@@ -19,10 +19,12 @@ public sealed class PolicyCoordinator(IPolicyStore store, ModuleHost host, Guid 
         Current = cached.Policy;
     }
 
-    public async Task<bool> ApplyAsync(long version, EffectivePolicy? policy, CancellationToken ct)
+    public async Task<bool> ApplyAsync(long version, EffectivePolicy? policy, CancellationToken ct, bool allowTenantChange = false)
     {
-        if (policy is null || version <= CurrentVersion) return false;
-        Validate(version, policy);
+        if (policy is null) return false;
+        var tenantChanged = allowTenantChange && Current is not null && Current.TenantId != policy.TenantId;
+        if (!tenantChanged && version <= CurrentVersion) return false;
+        Validate(version, policy, tenantChanged);
         await store.SaveAsync(new CachedPolicy(version, policy), ct);
         await host.ApplyPolicyAsync(policy);
         Current = policy;
@@ -30,10 +32,10 @@ public sealed class PolicyCoordinator(IPolicyStore store, ModuleHost host, Guid 
         return true;
     }
 
-    private void Validate(long version, EffectivePolicy policy)
+    private void Validate(long version, EffectivePolicy policy, bool allowTenantChange = false)
     {
         if (version < 1 || policy.DeviceId != deviceId || policy.TenantId == Guid.Empty ||
-            Current is not null && Current.TenantId != policy.TenantId ||
+            !allowTenantChange && Current is not null && Current.TenantId != policy.TenantId ||
             string.IsNullOrWhiteSpace(policy.Version) || policy.Version.Length > 100 ||
             string.IsNullOrWhiteSpace(policy.Etag) || policy.Etag.Length > 160 ||
             policy.Rules is null || policy.Rules.Count > 1000 || policy.Schedules is null || policy.Schedules.Count > 100 ||

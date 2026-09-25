@@ -14,6 +14,398 @@ namespace Keeper.Agent.Tests;
 
 public sealed class SyncClientTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData("one-use-ticket")]
+    public async Task EnrollmentOrDeviceLoginThenTokenSurvivesRefreshAndRestart(string? ticket)
+    {
+        using var directory = new TestDirectory();
+        using var outbox = new DurableOutbox(directory.File("outbox"));
+        using var signer = new HttpMessageSigner(ECDsa.Create(ECCurve.NamedCurves.nistP256));
+        var clock = new TestClock();
+        await using var host = new ModuleHost([], Samples.Context(clock));
+        var policy = new PolicyCoordinator(new MemoryPolicyStore(), host, Samples.Device);
+        var store = new MemoryTokenStore();
+        var logins = 0;
+        var challenges = 0;
+        var syncs = 0;
+        using var handler = new StubHandler(async request =>
+        {
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+            var root = body.RootElement;
+            if (request.RequestUri!.AbsolutePath == "/v1/client/sync")
+            {
+                if (syncs == 0) Assert.Equal(0, store.Saves);
+                syncs++;
+                Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
+                Assert.Equal(Token().AccessToken, request.Headers.Authorization.Parameter);
+                Assert.False(root.TryGetProperty("enrollment_ticket", out _));
+                Assert.True(request.Headers.Contains("Signature"));
+                return Json(Response(clock) with { Policy = Samples.Policy() });
+            }
+            Assert.Null(request.Headers.Authorization);
+            var expectedTicket = logins == 0 ? ticket : null;
+            if (expectedTicket is not null)
+            {
+                Assert.Equal(expectedTicket, root.GetProperty("enrollment_ticket").GetString());
+                Assert.False(root.TryGetProperty("device_id", out _));
+            }
+            else
+            {
+                Assert.Equal(Samples.Device, root.GetProperty("device_id").GetGuid());
+                Assert.False(root.TryGetProperty("enrollment_ticket", out _));
+            }
+            if (request.RequestUri.AbsolutePath == "/v1/client/auth/challenges")
+            {
+                challenges++;
+                Assert.False(request.Headers.Contains("Signature"));
+                return Json(new Challenge { Nonce = "enrollment-nonce", ExpiresAt = clock.GetUtcNow().AddMinutes(1) });
+            }
+            Assert.Equal("/v1/client/login", request.RequestUri.AbsolutePath);
+            Assert.Equal(signer.PublicKey, root.GetProperty("public_key").Deserialize<PublicKey>(ProtocolJson.Options));
+            Assert.Contains("nonce=\"enrollment-nonce\"", request.Headers.GetValues("Signature-Input").Single());
+            Assert.True(request.Headers.Contains("Signature"));
+            logins++;
+            return Json(Token());
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://keeper.test/v1/") };
+        SyncClient Client() => new(http, signer, Samples.Device, outbox, policy, clock, ticket, store);
+        var client = Client();
+        await client.ExecuteAsync(default);
+        Assert.Equal(Token(), store.Value!.Token);
+        await client.ExecuteAsync(default);
+        client = Client();
+        await client.ExecuteAsync(default);
+        Assert.Equal(1, logins);
+        clock.Advance(TimeSpan.FromHours(2));
+        client = Client();
+        await client.ExecuteAsync(default);
+        Assert.Equal(2, logins);
+        Assert.Equal(2, challenges);
+        Assert.Equal(4, syncs);
+    }
+
+    [Theory]
+    [InlineData(false, HttpStatusCode.Unauthorized)]
+    [InlineData(true, HttpStatusCode.Unauthorized)]
+    [InlineData(true, HttpStatusCode.Conflict)]
+    [InlineData(false, HttpStatusCode.UnprocessableEntity)]
+    public async Task RejectedEnrollmentStopsNetworkRetriesAndPreservesOutbox(bool rejectLogin, HttpStatusCode status)
+    {
+        using var directory = new TestDirectory();
+        using var outbox = new DurableOutbox(directory.File("outbox"));
+        await outbox.EnqueueAsync(Samples.Episode(), default);
+        using var signer = new HttpMessageSigner(ECDsa.Create(ECCurve.NamedCurves.nistP256));
+        var clock = new TestClock();
+        await using var host = new ModuleHost([], Samples.Context(clock));
+        var policy = new PolicyCoordinator(new MemoryPolicyStore(), host, Samples.Device);
+        var store = new MemoryTokenStore();
+        using var handler = new StubHandler(request => Task.FromResult(
+            rejectLogin && request.RequestUri!.AbsolutePath.EndsWith("challenges", StringComparison.Ordinal)
+                ? Json(new Challenge { Nonce = "nonce", ExpiresAt = clock.GetUtcNow().AddMinutes(1) })
+                : new HttpResponseMessage(status)));
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://keeper.test/v1/") };
+        const string ticket = "used-or-expired-secret-ticket";
+        var client = new SyncClient(http, signer, Samples.Device, outbox, policy, clock, ticket, store);
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var error = await Assert.ThrowsAsync<EnrollmentException>(() => client.ExecuteAsync(default));
+            Assert.Contains("ticket invalid, expired, already used", error.Message);
+            Assert.Contains("restart", error.Message);
+            Assert.DoesNotContain(ticket, error.Message);
+            Assert.Equal(NetworkFailureKind.Authorization, NetworkBackoffPolicy.Classify(error));
+            clock.Advance(TimeSpan.FromHours(1));
+        }
+        Assert.Equal(rejectLogin ? 2 : 1, client.RequestCount);
+        Assert.Null(store.Value);
+        Assert.Single((await outbox.InspectAsync()).Events);
+    }
+
+    [Fact]
+    public async Task TransientEnrollmentRateLimitKeepsTicketAndDoesNotRetryInline()
+    {
+        using var directory = new TestDirectory();
+        using var outbox = new DurableOutbox(directory.File("outbox"));
+        using var signer = new HttpMessageSigner(ECDsa.Create(ECCurve.NamedCurves.nistP256));
+        var clock = new TestClock();
+        await using var host = new ModuleHost([], Samples.Context(clock));
+        var policy = new PolicyCoordinator(new MemoryPolicyStore(), host, Samples.Device);
+        using var handler = new StubHandler(async request =>
+        {
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+            Assert.Equal("ticket", body.RootElement.GetProperty("enrollment_ticket").GetString());
+            var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+            response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMinutes(10));
+            return response;
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://keeper.test/v1/") };
+        var client = new SyncClient(http, signer, Samples.Device, outbox, policy, clock, "ticket");
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            var error = await Assert.ThrowsAsync<TransportException>(() => client.ExecuteAsync(default));
+            Assert.Equal(TimeSpan.FromMinutes(10), error.RetryAfter);
+            Assert.Equal(attempt, client.RequestCount);
+        }
+    }
+
+    private sealed class MemoryTokenStore : IDeviceTokenStore
+    {
+        public StoredDeviceToken? Value { get; set; }
+        public Exception? LoadFailure { get; init; }
+        public int Loads { get; private set; }
+        public int Saves { get; private set; }
+        public int Deletes { get; private set; }
+        public Task<StoredDeviceToken?> LoadAsync(CancellationToken ct)
+        {
+            Loads++;
+            return LoadFailure is null ? Task.FromResult(Value) : Task.FromException<StoredDeviceToken?>(LoadFailure);
+        }
+        public Task SaveAsync(StoredDeviceToken token, CancellationToken ct) { Value = token; Saves++; return Task.CompletedTask; }
+        public Task DeleteAsync(CancellationToken ct) { Value = null; Deletes++; return Task.CompletedTask; }
+    }
+
+    [Theory]
+    [InlineData("dpapi")]
+    [InlineData("json")]
+    [InlineData("invalid-data")]
+    [InlineData("format")]
+    [InlineData("device")]
+    [InlineData("tenant")]
+    [InlineData("type")]
+    [InlineData("expiry")]
+    [InlineData("empty")]
+    [InlineData("oversized")]
+    [InlineData("missing-token")]
+    [InlineData("overflow")]
+    public async Task CorruptStoredTokenIsDiscardedOnceAndFreshEnrollmentCanRetry(string corruption)
+    {
+        using var directory = new TestDirectory();
+        using var outbox = new DurableOutbox(directory.File("outbox"));
+        using var signer = new HttpMessageSigner(ECDsa.Create(ECCurve.NamedCurves.nistP256));
+        var clock = new TestClock();
+        await using var host = new ModuleHost([], Samples.Context(clock));
+        var policy = new PolicyCoordinator(new MemoryPolicyStore(), host, Samples.Device);
+        var storedToken = corruption switch
+        {
+            "device" => Token() with { DeviceId = Guid.NewGuid() },
+            "tenant" => Token() with { TenantId = Guid.Empty },
+            "type" => Token() with { TokenType = "Basic" },
+            "expiry" => Token() with { ExpiresIn = 0 },
+            "empty" => Token() with { AccessToken = " " },
+            "oversized" => Token() with { AccessToken = new string('a', 16385) },
+            "missing-token" => null!,
+            _ => Token()
+        };
+        var store = new MemoryTokenStore
+        {
+            Value = new StoredDeviceToken(storedToken, corruption == "overflow" ? DateTimeOffset.MaxValue : clock.GetUtcNow()),
+            LoadFailure = corruption switch
+            {
+                "dpapi" => new CryptographicException("fake DPAPI failure"),
+                "json" => new JsonException("fake malformed JSON"),
+                "invalid-data" => new InvalidDataException("fake invalid payload"),
+                "format" => new FormatException("fake invalid format"),
+                _ => null
+            }
+        };
+        var challenges = 0;
+        var logins = 0;
+        using var handler = new StubHandler(async request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/v1/client/sync")
+                return Json(Response(clock) with { Policy = Samples.Policy() });
+            Assert.Null(store.Value);
+            Assert.Equal(1, store.Deletes);
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+            Assert.Equal("fresh-ticket", body.RootElement.GetProperty("enrollment_ticket").GetString());
+            if (request.RequestUri.AbsolutePath == "/v1/client/auth/challenges")
+            {
+                if (++challenges == 1) return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+                return Json(new Challenge { Nonce = "nonce", ExpiresAt = clock.GetUtcNow().AddMinutes(1) });
+            }
+            Assert.Equal("/v1/client/login", request.RequestUri.AbsolutePath);
+            logins++;
+            return Json(Token());
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://keeper.test/v1/") };
+        var client = new SyncClient(http, signer, Samples.Device, outbox, policy, clock, "fresh-ticket", store);
+
+        var error = await Assert.ThrowsAsync<TransportException>(() => client.ExecuteAsync(default));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, error.Status);
+        Assert.Equal(0, store.Saves);
+        Assert.Equal(120, await client.ExecuteAsync(default));
+        Assert.Equal(120, await client.ExecuteAsync(default));
+        Assert.Equal(1, store.Loads);
+        Assert.Equal(1, store.Deletes);
+        Assert.Equal(1, logins);
+        Assert.Equal(Token(), store.Value!.Token);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task UnauthorizedSyncDeletesTokenAndRecoversWithFreshLogin(bool persisted, bool restart)
+    {
+        using var directory = new TestDirectory();
+        using var outbox = new DurableOutbox(directory.File("outbox"));
+        await outbox.EnqueueAsync(Samples.Episode(), default);
+        using var signer = new HttpMessageSigner(ECDsa.Create(ECCurve.NamedCurves.nistP256));
+        var clock = new TestClock();
+        await using var host = new ModuleHost([], Samples.Context(clock));
+        var policy = new PolicyCoordinator(new MemoryPolicyStore(), host, Samples.Device);
+        var rejected = Token() with { AccessToken = "rejected" };
+        var store = new MemoryTokenStore { Value = persisted ? new StoredDeviceToken(rejected, clock.GetUtcNow()) : null };
+        var syncs = 0;
+        var logins = 0;
+        using var handler = new StubHandler(request =>
+        {
+            switch (request.RequestUri!.AbsolutePath)
+            {
+                case "/v1/client/auth/challenges":
+                    Assert.Null(store.Value);
+                    return Task.FromResult(Json(new Challenge { Nonce = "nonce", ExpiresAt = clock.GetUtcNow().AddMinutes(1) }));
+                case "/v1/client/login":
+                    logins++;
+                    return Task.FromResult(Json(syncs == 0 ? rejected : Token()));
+                case "/v1/client/sync":
+                    Assert.Equal(0, store.Saves);
+                    Assert.Equal(syncs == 0 ? rejected.AccessToken : Token().AccessToken, request.Headers.Authorization!.Parameter);
+                    return Task.FromResult(++syncs == 1 ? new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                        : Json(Response(clock) with { Policy = Samples.Policy() }));
+                default: throw new InvalidOperationException("Unexpected HTTP request");
+            }
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://keeper.test/v1/") };
+        SyncClient Client() => new(http, signer, Samples.Device, outbox, policy, clock, tokenStore: store);
+        var client = Client();
+
+        var error = await Assert.ThrowsAsync<TransportException>(() => client.ExecuteAsync(default));
+        Assert.Equal(HttpStatusCode.Unauthorized, error.Status);
+        Assert.Null(store.Value);
+        Assert.Equal(1, store.Deletes);
+        Assert.Single((await outbox.InspectAsync()).Events);
+        if (restart) client = Client();
+        Assert.Equal(120, await client.ExecuteAsync(default));
+        Assert.Equal(restart ? 2 : 1, store.Loads);
+        Assert.Equal(persisted ? 1 : 2, logins);
+        Assert.Equal(Token(), store.Value!.Token);
+    }
+
+    [Fact]
+    public async Task LoginAndFailedSyncsNeverPersistTokenButAcceptedRotationSurvivesRestart()
+    {
+        using var directory = new TestDirectory();
+        using var outbox = new DurableOutbox(directory.File("outbox"));
+        using var signer = new HttpMessageSigner(ECDsa.Create(ECCurve.NamedCurves.nistP256));
+        var clock = new TestClock();
+        await using var host = new ModuleHost([], Samples.Context(clock));
+        var policy = new PolicyCoordinator(new MemoryPolicyStore(), host, Samples.Device);
+        var store = new MemoryTokenStore();
+        var rotated = Token() with { AccessToken = "rotated" };
+        var syncs = 0;
+        var logins = 0;
+        using var handler = new StubHandler(request =>
+        {
+            switch (request.RequestUri!.AbsolutePath)
+            {
+                case "/v1/client/auth/challenges":
+                    return Task.FromResult(Json(new Challenge { Nonce = "nonce", ExpiresAt = clock.GetUtcNow().AddMinutes(1) }));
+                case "/v1/client/login":
+                    logins++;
+                    return Task.FromResult(Json(Token()));
+                case "/v1/client/sync":
+                    Assert.Equal(syncs < 3 ? Token().AccessToken : rotated.AccessToken, request.Headers.Authorization!.Parameter);
+                    if (++syncs <= 3) Assert.Equal(0, store.Saves);
+                    return Task.FromResult(syncs switch
+                    {
+                        1 => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
+                        2 => Json(Response(clock) with { ProtocolVersion = 2 }),
+                        _ => Json(Response(clock) with { Token = rotated, Policy = Samples.Policy() })
+                    });
+                default: throw new InvalidOperationException("Unexpected HTTP request");
+            }
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://keeper.test/v1/") };
+        SyncClient Client() => new(http, signer, Samples.Device, outbox, policy, clock, tokenStore: store);
+        var client = Client();
+
+        await Assert.ThrowsAsync<TransportException>(() => client.ExecuteAsync(default));
+        Assert.Null(store.Value);
+        await Assert.ThrowsAsync<InvalidDataException>(() => client.ExecuteAsync(default));
+        Assert.Null(store.Value);
+        Assert.Equal(120, await client.ExecuteAsync(default));
+        Assert.Equal(1, store.Saves);
+        Assert.Equal(rotated, store.Value!.Token);
+        Assert.Equal(clock.GetUtcNow(), store.Value.IssuedAt);
+        Assert.Equal(120, await Client().ExecuteAsync(default));
+        Assert.Equal(1, logins);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task NewTenantReplacesStoredTokenAndCachedPolicy(bool rotateInSync, bool fetchPolicy)
+    {
+        using var directory = new TestDirectory();
+        using var outbox = new DurableOutbox(directory.File("outbox"));
+        using var signer = new HttpMessageSigner(ECDsa.Create(ECCurve.NamedCurves.nistP256));
+        var clock = new TestClock();
+        var module = new TestModule();
+        await using var host = new ModuleHost([module], Samples.Context(clock));
+        var policy = new PolicyCoordinator(new MemoryPolicyStore(), host, Samples.Device);
+        await policy.ApplyAsync(5, Samples.Policy(), default);
+        var old = new StoredDeviceToken(Token(), clock.GetUtcNow().AddHours(rotateInSync ? 0 : -2));
+        var store = new MemoryTokenStore { Value = old };
+        var replacement = Token() with { TenantId = Guid.NewGuid(), AccessToken = "new-tenant-token" };
+        var replacementPolicy = Samples.Policy() with { TenantId = replacement.TenantId };
+        var syncs = 0;
+        var logins = 0;
+        using var handler = new StubHandler(request =>
+        {
+            switch (request.RequestUri!.AbsolutePath)
+            {
+                case "/v1/client/auth/challenges":
+                    return Task.FromResult(Json(new Challenge { Nonce = "nonce", ExpiresAt = clock.GetUtcNow().AddMinutes(1) }));
+                case "/v1/client/login":
+                    logins++;
+                    return Task.FromResult(Json(replacement));
+                case "/v1/client/sync":
+                    Assert.Equal(rotateInSync && syncs == 0 ? Token().AccessToken : replacement.AccessToken,
+                        request.Headers.Authorization!.Parameter);
+                    if (++syncs == 1) Assert.Equal(old, store.Value);
+                    return Task.FromResult(Json(Response(clock) with
+                    {
+                        Token = rotateInSync ? replacement : null,
+                        Policy = fetchPolicy ? null : replacementPolicy
+                    }));
+                case "/v1/client/policy":
+                    Assert.False(request.Headers.Contains("If-None-Match"));
+                    Assert.Equal(replacement.AccessToken, request.Headers.Authorization!.Parameter);
+                    return Task.FromResult(Json(replacementPolicy));
+                default: throw new InvalidOperationException("Unexpected HTTP request");
+            }
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://keeper.test/v1/") };
+        Guid? observedTenant = null;
+        SyncClient Client() => new(http, signer, Samples.Device, outbox, policy, clock, tokenStore: store)
+        {
+            OnResponse = (_, tenant, _) => { observedTenant = tenant; return Task.CompletedTask; }
+        };
+
+        Assert.Equal(120, await Client().ExecuteAsync(default));
+        Assert.Equal(replacement, store.Value!.Token);
+        Assert.Equal(replacement.TenantId, policy.Current!.TenantId);
+        Assert.Equal(1L, policy.CurrentVersion);
+        Assert.Equal(replacement.TenantId, observedTenant);
+        Assert.Equal(2, module.Applications);
+        Assert.Equal(120, await Client().ExecuteAsync(default));
+        Assert.Equal(rotateInSync ? 0 : 1, logins);
+    }
+
     [Fact]
     public async Task InvalidCommandDoesNotAbortSyncOrPreventUpdateOffer()
     {

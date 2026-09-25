@@ -17,7 +17,23 @@ Genera `artifacts/AZCKeeper_v4_bootstrap_4.0.0.zip`: `Keeper.Bootstrapper.exe`, 
 
 El script verifica `includedFrameworks=Microsoft.NETCore.App` en runtimeconfig (sin dependencia `framework`), bundle mayor de 10 MB y presencia de `System.Private.CoreLib.dll`, `System.Runtime.dll` y runtimeconfig en el manifiesto embebido. Compila secuencialmente con `-maxcpucount:1 -nodeReuse:false`, deshabilita compiladores compartidos, cierra los build servers y elimina su staging en `finally`. No ejecuta el agente ni instala nada. El ZIP es un artefacto, no un temporal.
 
-Extraer el ZIP. `installation.json` tiene datos de ejemplo no secretos y un dominio `.invalid`; permite probar `--dry-run`, pero rechaza una instalacion real hasta configurar el backend. Sustituir `api_base` por HTTPS terminado en `/v1/`, `tenant_id` y `device_id` por los UUID provisionados para el equipo piloto. `enable_hklm=true` habilita los enforcers cuando el servicio reciba politicas; usar `false` si se desea probar primero solo conectividad. No agregar tickets, bearer, passwords ni claves privadas a este archivo. El parser rechaza campos desconocidos.
+Extraer el ZIP. `installation.json` tiene datos de ejemplo no secretos y un dominio `.invalid`; permite probar `--dry-run`, pero rechaza una instalacion real hasta configurar el backend. Sustituir `api_base` por HTTPS terminado en `/v1/`, `tenant_id` y `device_id` por los UUID provisionados para el equipo piloto. `enable_hklm=true` habilita los enforcers cuando el servicio reciba politicas; usar `false` si se desea probar primero solo conectividad. Se permite el campo opcional `enrollment_ticket` en una copia local de aprovisionamiento; no agregar bearer, passwords ni claves privadas. El parser rechaza campos desconocidos.
+
+## Enrolamiento por ticket
+
+Desde una consola PowerShell **SYSTEM** en el equipo piloto con `device-key.dpapi` ya existente:
+
+```powershell
+& "$env:ProgramData\AZCKeeper\bin\Keeper.Agent.exe" --print-enrollment
+```
+
+Imprime JSON con `public_key_thumbprint`, `public_key` (JWK publico, incluidos `x`/`y`), `device_id` y `hostname`. El thumbprint es SHA-256 del JWK canonico en **base64url sin padding**, 43 caracteres que representan 32 bytes; es el formato que acepta `AdminApi` mediante `Util::unb64`, no hexadecimal ni base64 con `=`. No inicia el host, modulos ni red, no crea archivos/directorios y no genera una clave si falta. La clave DPAPI pertenece a SYSTEM. Lee `KEEPER_DATA_DIR` y `KEEPER_DEVICE_ID` del entorno de la consola o, si faltan, del bloque `Environment` del servicio `KeeperAgent`, en lectura. Para otra instalacion, definir esas dos variables en la consola antes de ejecutar el comando.
+
+IT crea el enrolamiento con ese thumbprint y el `device_id` configurado en el agente. En la copia local de `installation.json`, agregar `"enrollment_ticket": "<ticket devuelto por el backend>"`. El bootstrapper escribe `KEEPER_ENROLLMENT_TICKET` en el `Environment` REG_MULTI_SZ del servicio, junto con las variables existentes; si se omite el campo, no escribe esa variable. Tambien se puede provisionar directamente `KEEPER_ENROLLMENT_TICKET` en ese bloque del servicio y reiniciarlo. Una variable del usuario interactivo no configura un servicio ya instalado.
+
+El ticket es secreto, **de un solo uso y expira en 10 minutos**. **NO se debe versionar**, incluir en el ZIP distribuido ni conservar en ejemplos; retirarlo de la copia local tras usarlo. El log del bootstrapper y `--dry-run` muestran `[REDACTED]` en su lugar.
+
+Sin token guardado y con ticket, el agente pide challenge por ticket y firma el login con `enrollment_ticket` y `public_key`. Guarda el token recibido en `device-token.dpapi` (DPAPI de SYSTEM, ligado a la API y clave), y deja de usar el ticket, incluso tras reiniciar o expirar el token. El valor del entorno del servicio no se borra automaticamente, pero el token persistido lo hace inactivo; retirarlo de la configuracion despues del enrolamiento. Sin ticket ni token, conserva el login por `device_id`. Un ticket rechazado produce `enrollment_rejected` sin exponer su valor y suspende nuevos intentos de enrolamiento durante ese proceso: corregir el ticket/configuracion y reiniciar el servicio. Errores transitorios y 429 conservan el backoff normal y `Retry-After`.
 
 ## Simulacion segura, incluso sin elevacion
 

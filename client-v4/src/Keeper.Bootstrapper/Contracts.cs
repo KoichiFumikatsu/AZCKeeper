@@ -53,6 +53,8 @@ public sealed record ServiceDefinition(string Name, string Executable)
 
 public sealed record InstallationConfig(string ApiBase, Guid TenantId, Guid DeviceId, bool EnableHklm = true)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EnrollmentTicket { get; init; }
     public HardeningConfig Hardening { get; init; } = new();
     public static JsonSerializerOptions Json { get; } = new()
     {
@@ -66,6 +68,8 @@ public sealed record InstallationConfig(string ApiBase, Guid TenantId, Guid Devi
     public void Validate(bool dryRun)
     {
         Hardening.Validate();
+        if (EnrollmentTicket is not null && (string.IsNullOrWhiteSpace(EnrollmentTicket) || EnrollmentTicket.Any(char.IsControl)))
+            throw new ArgumentException("enrollment_ticket debe ser no vacio y no contener caracteres de control.");
         if (!Uri.TryCreate(ApiBase, UriKind.Absolute, out var uri) || uri.Scheme != "https" ||
             !uri.AbsolutePath.EndsWith("/v1/", StringComparison.Ordinal) ||
             uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0)

@@ -1,6 +1,4 @@
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Keeper.Agent.Transport;
 using Keeper.Shared.Protocol;
@@ -9,11 +7,18 @@ namespace Keeper.Agent.Migration;
 
 public static class MigrationEnrollment
 {
-    public static string Thumbprint(HttpMessageSigner signer)
+    public static string Thumbprint(HttpMessageSigner signer) => signer.KeyId;
+
+    public static ChallengeRequest CreateChallenge(Guid device, string? ticket) => new()
     {
-        var key = signer.PublicKey;
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"{key.X}\",\"y\":\"{key.Y}\"}}"))).ToLowerInvariant();
-    }
+        DeviceId = ticket is null ? device : null, EnrollmentTicket = ticket
+    };
+
+    public static DeviceLogin CreateLogin(HttpMessageSigner signer, Guid device, string? ticket) => new()
+    {
+        DeviceId = ticket is null ? device : null, EnrollmentTicket = ticket, PublicKey = signer.PublicKey,
+        AgentVersion = "4.0.0", Hostname = Environment.MachineName
+    };
 
     public static async Task<DeviceToken> LoginAsync(HttpClient http, HttpMessageSigner signer, Guid tenant, Guid device,
         string? ticket, CancellationToken ct)
@@ -22,14 +27,9 @@ public static class MigrationEnrollment
             root.UserInfo.Length != 0 || root.Query.Length != 0 || root.Fragment.Length != 0 || http.DefaultRequestHeaders.Authorization is not null ||
             http.DefaultRequestHeaders.Contains("Cookie") || tenant == Guid.Empty || device == Guid.Empty)
             throw new InvalidDataException("invalid_migration_api");
-        var challenge = await Send<Challenge>("client/auth/challenges", new ChallengeRequest
-            { DeviceId = ticket is null ? device : null, EnrollmentTicket = ticket }, null);
+        var challenge = await Send<Challenge>("client/auth/challenges", CreateChallenge(device, ticket), null);
         if (challenge.ExpiresAt <= DateTimeOffset.UtcNow) throw new InvalidDataException("migration_challenge_expired");
-        var token = await Send<DeviceToken>("client/login", new DeviceLogin
-        {
-            DeviceId = ticket is null ? device : null, EnrollmentTicket = ticket, PublicKey = signer.PublicKey,
-            AgentVersion = "4.0.0", Hostname = Environment.MachineName
-        }, challenge.Nonce);
+        var token = await Send<DeviceToken>("client/login", CreateLogin(signer, device, ticket), challenge.Nonce);
         if (token.DeviceId != device || token.TenantId != tenant || token.TokenType != "Bearer" ||
             token.ExpiresIn <= 0 || string.IsNullOrWhiteSpace(token.AccessToken)) throw new InvalidDataException("migration_identity_mismatch");
         return token;

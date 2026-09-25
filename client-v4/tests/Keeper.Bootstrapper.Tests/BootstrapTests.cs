@@ -13,6 +13,31 @@ public sealed class BootstrapTests
     private static BootstrapOptions Options => new(false, false, false, Path.GetFullPath("fake-payload"), "fake-config.json");
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OptionalEnrollmentTicketIsPassedOnlyWhenPresentAndNeverLogged(bool dryRun)
+    {
+        machine.Config = machine.Config with { EnrollmentTicket = "short-lived-secret" };
+        Assert.Equal(0, App.Run(Options with { DryRun = dryRun }, []));
+        Assert.DoesNotContain(output, line => line.Contains("short-lived-secret", StringComparison.Ordinal));
+        Assert.Contains(output, line => line.Contains("KEEPER_ENROLLMENT_TICKET=[REDACTED]", StringComparison.Ordinal));
+        if (dryRun) Assert.Empty(machine.Mutations);
+        else Assert.Contains("KEEPER_ENROLLMENT_TICKET=short-lived-secret", machine.EnvironmentValues);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("ticket\0KEEPER_ENABLE_HKLM=1")]
+    [InlineData("ticket\r\n")]
+    public void InvalidEnrollmentTicketIsRejectedBeforeChanges(string ticket)
+    {
+        machine.Config = machine.Config with { EnrollmentTicket = ticket };
+        Assert.Throws<ArgumentException>(() => App.Run(Options, []));
+        Assert.Empty(machine.Mutations);
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
     [InlineData(true, false)]
@@ -117,6 +142,7 @@ public sealed class BootstrapTests
         Assert.Contains("KEEPER_API_BASE=https://keeper.test/v1/", machine.EnvironmentValues);
         Assert.Contains("KEEPER_ENABLE_HKLM=1", machine.EnvironmentValues);
         Assert.Contains($"KEEPER_DEVICE_ID={machine.Config.DeviceId}", machine.EnvironmentValues);
+        Assert.DoesNotContain(machine.EnvironmentValues, value => value.StartsWith("KEEPER_ENROLLMENT_TICKET=", StringComparison.Ordinal));
         Assert.True(machine.Running);
         Assert.Empty(elevation.Requests);
         Assert.Equal(new[] { "mkdir-acl", "mkdir", "mkdir", "copy", "copy", "copy", "create", "environment", "start" }, machine.Mutations);

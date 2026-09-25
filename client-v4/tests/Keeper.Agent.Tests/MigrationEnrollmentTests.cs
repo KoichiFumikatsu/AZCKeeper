@@ -28,8 +28,8 @@ public sealed class MigrationEnrollmentTests
         else Assert.Equal(device, login.RootElement.GetProperty("device_id").GetGuid());
         Assert.False(handler.Requests[0].Signed);
         Assert.True(handler.Requests[1].Signed);
-        Assert.Matches("^[a-f0-9]{64}$", MigrationEnrollment.Thumbprint(signer));
-        Assert.Equal(signer.KeyId, Convert.ToBase64String(Convert.FromHexString(MigrationEnrollment.Thumbprint(signer))).TrimEnd('=').Replace('+', '-').Replace('/', '_'));
+        Assert.Matches("^[A-Za-z0-9_-]{43}$", MigrationEnrollment.Thumbprint(signer));
+        Assert.Equal(signer.KeyId, MigrationEnrollment.Thumbprint(signer));
     }
 
     [Fact]

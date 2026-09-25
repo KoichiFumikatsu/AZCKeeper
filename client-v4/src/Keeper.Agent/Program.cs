@@ -14,6 +14,17 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
+if (args.Contains("--print-enrollment", StringComparer.Ordinal))
+{
+    try { await EnrollmentIdentityCommand.PrintAsync(Console.Out, CancellationToken.None); }
+    catch (Exception ex) when (ex is IOException or System.Security.Cryptography.CryptographicException or InvalidOperationException or UnauthorizedAccessException)
+    {
+        Console.Error.WriteLine($"Enrollment identity: {ex.Message} Run as SYSTEM with an existing device-key.dpapi; no key was created.");
+        Environment.ExitCode = 1;
+    }
+    return;
+}
+
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddWindowsService(options => options.ServiceName = "AZCKeeper v4");
 builder.Services.AddHostedService<AgentWorker>();
@@ -65,12 +76,14 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         var api = Environment.GetEnvironmentVariable("KEEPER_API_BASE");
         if (api is not null)
         {
-            if (deviceId == Guid.Empty) throw new InvalidOperationException("KEEPER_DEVICE_ID is required; enrollment is outside this prototype");
+            if (deviceId == Guid.Empty) throw new InvalidOperationException("KEEPER_DEVICE_ID is required");
             if (!Uri.TryCreate(api, UriKind.Absolute, out var root) || root.Scheme != "https" || !root.AbsolutePath.EndsWith("/v1/", StringComparison.Ordinal) ||
                 root.Query.Length != 0 || root.Fragment.Length != 0 || root.UserInfo.Length != 0)
                 throw new InvalidOperationException("KEEPER_API_BASE must be an HTTPS /v1/ URL");
             http.BaseAddress = root;
-            transport = new SyncClient(http, signer, deviceId, outbox, policy, TimeProvider.System)
+            transport = new SyncClient(http, signer, deviceId, outbox, policy, TimeProvider.System,
+                Environment.GetEnvironmentVariable("KEEPER_ENROLLMENT_TICKET"),
+                new DeviceTokenStore(Path.Combine(dataDirectory, "device-token.dpapi"), root.AbsoluteUri + signer.KeyId))
             {
                 OnResponse = async (response, tenant, ct) =>
                 {

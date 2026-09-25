@@ -105,7 +105,10 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
             Step(definition.Describe(exists), () => services.Configure(definition, exists));
             string[] environment = [$"KEEPER_DATA_DIR={data}", $"KEEPER_API_BASE={config!.ApiBase}",
                 $"KEEPER_DEVICE_ID={config.DeviceId}", $"KEEPER_ENABLE_HKLM={(config.EnableHklm ? "1" : "0")}"];
-            Step($"REG SET HKLM64\\{WindowsConstants.ServiceKey(ServiceName)} Environment REG_MULTI_SZ\n  {string.Join("\n  ", environment)}",
+            if (config.EnrollmentTicket is not null) environment = [.. environment, $"KEEPER_ENROLLMENT_TICKET={config.EnrollmentTicket}"];
+            var loggedEnvironment = environment.Select(value => value.StartsWith("KEEPER_ENROLLMENT_TICKET=", StringComparison.Ordinal)
+                ? "KEEPER_ENROLLMENT_TICKET=[REDACTED]" : value);
+            Step($"REG SET HKLM64\\{WindowsConstants.ServiceKey(ServiceName)} Environment REG_MULTI_SZ\n  {string.Join("\n  ", loggedEnvironment)}",
                 () => registry.SetEnvironment(ServiceName, environment));
             Step($"START {ServiceName}; esperar Running (60 s)", () => services.Start(ServiceName));
             if (hardening is not null)

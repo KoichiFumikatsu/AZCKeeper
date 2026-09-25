@@ -4,6 +4,20 @@ namespace Keeper.Agent.Storage;
 
 public static class DeviceKeyStore
 {
+    public static async Task<ECDsa> LoadAsync(string path, CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows DPAPI required");
+        var plain = ProtectedData.Unprotect(await File.ReadAllBytesAsync(path, ct), null, DataProtectionScope.CurrentUser);
+        var key = ECDsa.Create();
+        try
+        {
+            key.ImportPkcs8PrivateKey(plain, out _);
+            return key;
+        }
+        catch { key.Dispose(); throw; }
+        finally { CryptographicOperations.ZeroMemory(plain); }
+    }
+
     public static async Task<ECDsa> LoadOrCreateAsync(string path, CancellationToken ct)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows DPAPI required");

@@ -8,6 +8,7 @@ public static class NetworkBackoffPolicy
 {
     public static NetworkFailureKind Classify(Exception exception)
     {
+        if (exception is EnrollmentException) return NetworkFailureKind.Authorization;
         if (exception is TransportException transport)
         {
             if (transport.Status == HttpStatusCode.TooManyRequests) return NetworkFailureKind.Throttled;
