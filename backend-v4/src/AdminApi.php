@@ -363,7 +363,22 @@ final class AdminApi
     {
         $u=$this->access->user(Util::bin($b->user_id)); if ($u['status']!=='active') { throw new ApiError(409,'invalid_transition'); }
         $device=isset($b->device_id)?Util::bin($b->device_id):null;
-        if ($device) { $this->reauth(); $d=$this->row('devices',$device); $this->access->user($d['user_id']); if ($d['user_id']!==$u['id'] || $d['status']!=='active') { throw new ApiError(409,'invalid_transition'); } }
+        if ($device) {
+            $this->reauth();
+            $d=$this->db->one('SELECT * FROM devices WHERE tenant_id=? AND id=? FOR UPDATE',[$this->tenant,$device]);
+            if ($d===null) {
+                // Modelo B: el aprovisionamiento fija el device_id. Si el device aún no existe se crea
+                // aquí (para poder pre-asignarle reglas antes de que el equipo enrole); queda 'active'
+                // por defecto y el login por ticket lo toma como device del propio user.
+                $this->db->run("INSERT INTO devices (tenant_id,id,user_id,hostname,agent_version,os_edition,cpu,ram_bytes,capabilities) VALUES (?,?,?,'pending','0.0.0','unknown','unknown',0,'[]')",[$this->tenant,$device,$u['id']]);
+                $this->db->run("INSERT INTO device_assignments (tenant_id,id,device_id,user_id,starts_at,reason) VALUES (?,?,?,?,UTC_TIMESTAMP(6),'enrollment')",[$this->tenant,Util::bin(Util::uuid()),$device,$u['id']]);
+                $this->db->run("INSERT INTO principals (tenant_id,id,kind,device_id) VALUES (?,?,'device',?)",[$this->tenant,Util::bin(Util::uuid()),$device]);
+                (new Audit($this->db))->record($this->c,$this->r,'device.created','device',$device,['user_id']);
+            } else {
+                $this->access->user($d['user_id']);
+                if ($d['user_id']!==$u['id'] || $d['status']!=='active') { throw new ApiError(409,'invalid_transition'); }
+            }
+        }
         try { $thumb=Util::unb64($b->public_key_thumbprint); } catch (ApiError) { throw new ApiError(422,'validation_failed'); }
         if (strlen($thumb)!==32) { throw new ApiError(422,'validation_failed'); }
         $ticket=Util::b64(random_bytes(32)); $id=Util::bin(Util::uuid());

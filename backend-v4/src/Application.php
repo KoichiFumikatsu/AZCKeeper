@@ -43,6 +43,12 @@ final class Application
                 // Commit proof consumption before business handling, including failed requests and replays.
                 $c = $db->transaction(fn () => $auth->authenticate($r));
                 $this->limiter->device($c);
+                // Un device recién enrolado aún no tiene política compilada; el primer sync la
+                // provisiona on-demand (recompile abre su propia transacción) en vez de responder 503.
+                if ($r->route === '/client/sync' &&
+                    !$db->one('SELECT 1 present FROM effective_policies WHERE tenant_id=? AND device_id=? LIMIT 1', [$c['tenant_id'], $c['device_id']])) {
+                    (new PolicyCompiler($db))->recompile(Util::id($c['device_id']), Util::id($c['tenant_id']));
+                }
                 $response = $db->transaction(function () use ($db, $auth, $r): array {
                     $c = $auth->authenticate($r, false);
                     $handler = fn () => $this->dispatch($db, $auth, $c, $r);
