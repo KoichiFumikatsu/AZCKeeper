@@ -110,6 +110,10 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
                 ? "KEEPER_ENROLLMENT_TICKET=[REDACTED]" : value);
             Step($"REG SET HKLM64\\{WindowsConstants.ServiceKey(ServiceName)} Environment REG_MULTI_SZ\n  {string.Join("\n  ", loggedEnvironment)}",
                 () => registry.SetEnvironment(ServiceName, environment));
+            // Una reinstalación/actualización no debe heredar el "due" de backoff de la instancia
+            // anterior: si quedó lejano, el agente esperaría en vez de sincronizar. Se descarta.
+            Step($"DEL \"{Path.Combine(data, "next-sync.json")}\" (descartar backoff heredado)",
+                () => { var stale = Path.Combine(data, "next-sync.json"); if (File.Exists(stale)) File.Delete(stale); });
             Step($"START {ServiceName}; esperar Running (60 s)", () => services.Start(ServiceName));
             if (hardening is not null)
             {
