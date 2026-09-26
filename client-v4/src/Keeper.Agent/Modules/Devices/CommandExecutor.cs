@@ -10,14 +10,20 @@ using Keeper.Shared.Protocol;
 
 namespace Keeper.Agent.Modules.Devices;
 
-public enum DeviceAction { Shutdown, Restart, Logoff }
+public enum DeviceAction { Shutdown, Restart, Logoff, Wipe }
 public interface IDeviceActions { Task ExecuteAsync(DeviceAction action, CancellationToken ct); }
 public sealed class WindowsDeviceActions(bool enabled) : IDeviceActions
 {
+    // Perfiles que NUNCA se borran en un wipe: cuentas del sistema y las de administración de IT
+    // (Administrator break-glass y azcadmin del Modo B), para no perder el acceso al equipo.
+    private static readonly HashSet<string> PreservedProfiles = new(StringComparer.OrdinalIgnoreCase)
+    { "default", "public", "default user", "all users", "administrator", "azcadmin" };
+
     public async Task ExecuteAsync(DeviceAction action, CancellationToken ct)
     {
         if (!enabled || !OperatingSystem.IsWindows()) throw new NotSupportedException("device_actions_dry_run");
         if (action == DeviceAction.Logoff) throw new NotSupportedException("logoff_requires_target_session");
+        if (action == DeviceAction.Wipe) { WipeUserData(ct); return; }
         var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "shutdown.exe")) { UseShellExecute = false, CreateNoWindow = true };
         start.ArgumentList.Add(action == DeviceAction.Restart ? "/r" : "/s");
         start.ArgumentList.Add("/f");
@@ -25,6 +31,50 @@ public sealed class WindowsDeviceActions(bool enabled) : IDeviceActions
         using var process = Process.Start(start) ?? throw new IOException("shutdown_not_started");
         await process.WaitForExitAsync(ct);
         if (process.ExitCode != 0) throw new IOException("shutdown_failed");
+    }
+
+    // Borra los datos de los perfiles de usuario (no cifra: decisión de negocio con flota Home/Pro
+    // mixta) y luego sobrescribe el espacio libre para que lo borrado no se recupere. Best-effort por
+    // archivo: los bloqueados por una sesión activa se saltan y quedan cubiertos por cipher /w.
+    private void WipeUserData(CancellationToken ct)
+    {
+        var systemDrive = Environment.GetEnvironmentVariable("SystemDrive") ?? "C:";
+        WipeProfiles(Path.Combine(systemDrive + Path.DirectorySeparatorChar, "Users"), ct);
+        // Sobrescribe el espacio libre (irrecuperable). Es lento: se dispara en segundo plano para no
+        // bloquear el reporte del resultado del comando (el equipo robado puede no reconectar).
+        try
+        {
+            var cipher = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cipher.exe")) { UseShellExecute = false, CreateNoWindow = true };
+            cipher.ArgumentList.Add("/w:" + systemDrive + Path.DirectorySeparatorChar);
+            Process.Start(cipher);
+        }
+        catch { /* best-effort: el borrado de datos ya ocurrió */ }
+    }
+
+    // Borra todo perfil de usuario bajo usersRoot salvo los preservados. Separado para poder probarlo
+    // sobre un directorio temporal sin tocar C:\Users real.
+    public static void WipeProfiles(string usersRoot, CancellationToken ct)
+    {
+        if (!Directory.Exists(usersRoot)) throw new DirectoryNotFoundException("users_root_missing");
+        foreach (var directory in Directory.EnumerateDirectories(usersRoot))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (PreservedProfiles.Contains(Path.GetFileName(directory))) continue;
+            DeleteTreeBestEffort(directory);
+        }
+    }
+
+    private static void DeleteTreeBestEffort(string root)
+    {
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+            {
+                try { File.SetAttributes(file, FileAttributes.Normal); File.Delete(file); } catch { }
+            }
+        }
+        catch { /* enumeración parcial: seguimos con el borrado del árbol */ }
+        try { Directory.Delete(root, recursive: true); } catch { }
     }
     public void LogoffSession(int sessionId)
     {
@@ -104,6 +154,7 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
                         case CommandType.Unlock: await deviceLock.SetLockedAsync(false, ct); break;
                         case CommandType.Restart: await actions.ExecuteAsync(DeviceAction.Restart, ct); break;
                         case CommandType.Shutdown: await actions.ExecuteAsync(DeviceAction.Shutdown, ct); break;
+                        case CommandType.Wipe: await actions.ExecuteAsync(DeviceAction.Wipe, ct); break;
                         default: throw new NotSupportedException("unsupported_command");
                     }
                 }
