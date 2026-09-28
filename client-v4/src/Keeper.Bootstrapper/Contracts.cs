@@ -15,6 +15,7 @@ public interface IServiceControl
     bool Exists(string name);
     void Stop(string name);
     void Configure(ServiceDefinition definition, bool exists);
+    void ConfigureRecovery(string name);
     void Start(string name);
     void Delete(string name);
 }
@@ -84,6 +85,7 @@ public sealed record InstallationConfig(string ApiBase, Guid TenantId, Guid Devi
 public sealed record BootstrapOptions(bool DryRun, bool Uninstall, bool ElevatedChild, string PayloadDirectory, string ConfigPath)
 {
     public bool SystemMode { get; init; }
+    public bool SystemUpdate { get; init; }
     public bool Harden { get; init; }
     public bool Unharden { get; init; }
     public string? HardeningConfigPath { get; init; }
@@ -95,6 +97,7 @@ public sealed record BootstrapOptions(bool DryRun, bool Uninstall, bool Elevated
         var elevatedChild = false;
         var systemInstall = false;
         var systemUninstall = false;
+        var systemUpdate = false;
         var harden = false;
         var unharden = false;
         string? hardeningConfig = null;
@@ -111,6 +114,7 @@ public sealed record BootstrapOptions(bool DryRun, bool Uninstall, bool Elevated
                 case "--uninstall": uninstall = true; break;
                 case "--system-install": systemInstall = true; break;
                 case "--system-uninstall": systemUninstall = true; uninstall = true; break;
+                case "--system-update": systemUpdate = true; break;
                 case "--elevated-child": elevatedChild = true; break;
                 case "--payload": payload = ReadPath(ref i); break;
                 case "--config": config = ReadPath(ref i); break;
@@ -119,14 +123,16 @@ public sealed record BootstrapOptions(bool DryRun, bool Uninstall, bool Elevated
         }
         if (systemInstall && uninstall)
             throw new ArgumentException("--system-install no se puede combinar con --uninstall ni --system-uninstall.");
+        if (systemUpdate && (systemInstall || uninstall || harden || unharden))
+            throw new ArgumentException("--system-update es excluyente con install/uninstall/harden.");
         if ((harden || unharden) && (systemInstall || uninstall) || harden && unharden)
             throw new ArgumentException("Los modos harden/unharden/install/uninstall son excluyentes.");
         if (hardeningConfig is not null && !harden && !unharden)
             throw new ArgumentException("--hardening-config requiere --harden o --unharden; instalacion usa hardening en installation.json.");
         return new(dryRun, uninstall, elevatedChild, payload, config)
         {
-            SystemMode = systemInstall || systemUninstall, Harden = harden, Unharden = unharden,
-            HardeningConfigPath = hardeningConfig
+            SystemMode = systemInstall || systemUninstall || systemUpdate, Harden = harden, Unharden = unharden,
+            SystemUpdate = systemUpdate, HardeningConfigPath = hardeningConfig
         };
 
         string ReadPath(ref int index)

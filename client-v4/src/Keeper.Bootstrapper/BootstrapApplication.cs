@@ -33,10 +33,11 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
         }
         if (options.SystemMode && !elevation.IsElevated)
         {
-            var mode = options.Uninstall ? "--system-uninstall" : "--system-install";
+            var mode = options.SystemUpdate ? "--system-update" : options.Uninstall ? "--system-uninstall" : "--system-install";
             log($"{mode} requiere ejecutarse ya elevado, p.ej. shell SYSTEM de DWService. No se solicitara UAC ni se realizaran cambios.");
             return ElevationRequired;
         }
+        if (options.SystemUpdate) return RunUpdate(options);
 
         InstallationConfig? config = null;
         IReadOnlyList<string> files = [];
@@ -114,6 +115,7 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
             // anterior: si quedó lejano, el agente esperaría en vez de sincronizar. Se descarta.
             Step($"DEL \"{Path.Combine(data, "next-sync.json")}\" (descartar backoff heredado)",
                 () => { var stale = Path.Combine(data, "next-sync.json"); if (File.Exists(stale)) File.Delete(stale); });
+            Step($"SC FAILURE {ServiceName} (recovery: reinicio automatico ante caida)", () => services.ConfigureRecovery(ServiceName));
             Step($"START {ServiceName}; esperar Running (60 s)", () => services.Start(ServiceName));
             if (hardening is not null)
             {
@@ -131,5 +133,40 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
         }
         void DeleteTree(string key) => Step($"REG DELETE TREE HKLM64\\{key} (si existe)", () => registry.DeleteTree(key));
         void DeleteValue(string key, string name) => Step($"REG DELETE VALUE HKLM64\\{key} {name} (si existe)", () => registry.DeleteValue(key, name));
+    }
+
+    // Actualización en sitio: reemplaza los binarios y reinicia, PRESERVANDO el entorno del servicio
+    // (device_id, api_base, enable_hklm) y los datos (device-key, outbox). No escribe env ni config, así
+    // que reusa lo ya instalado sin riesgo de duplicar o perder ajustes. La usa el auto-update del agente.
+    private int RunUpdate(BootstrapOptions options)
+    {
+        void Step(string description, Action execute) { log(description); if (!options.DryRun) execute(); }
+        if (!services.Exists(ServiceName))
+            throw new ArgumentException("Servicio ausente; use --system-install para la instalacion inicial.");
+        var files = paths.PayloadFiles(options.PayloadDirectory);
+        if (!files.Contains("Keeper.Agent.exe", StringComparer.OrdinalIgnoreCase))
+            throw new ArgumentException("El payload no contiene Keeper.Agent.exe.");
+        var source = Path.GetFullPath(options.PayloadDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var target = Path.GetFullPath(paths.InstallDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (source.StartsWith(target, StringComparison.OrdinalIgnoreCase) || target.StartsWith(source, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("El payload debe estar fuera del directorio de instalacion.");
+        paths.ValidateInstallTree(false);
+        var bin = Path.Combine(paths.InstallDirectory, "bin");
+        var data = Path.Combine(paths.InstallDirectory, "v4");
+        if (options.DryRun) log("DRY-RUN: actualizacion en sitio; preserva entorno y datos. Operaciones:");
+        Step($"STOP {ServiceName}; esperar Stopped (60 s)", () => services.Stop(ServiceName));
+        foreach (var relative in files.Order(StringComparer.OrdinalIgnoreCase))
+        {
+            var src = Path.Combine(options.PayloadDirectory, relative);
+            var dst = Path.Combine(bin, relative);
+            Step($"COPY \"{src}\" -> \"{dst}\" (sobrescribir)", () => paths.CopyFile(src, dst));
+        }
+        Step($"SC FAILURE {ServiceName} (recovery: reinicio automatico ante caida)", () => services.ConfigureRecovery(ServiceName));
+        Step($"DEL \"{Path.Combine(data, "next-sync.json")}\" (descartar backoff heredado)",
+            () => { var stale = Path.Combine(data, "next-sync.json"); if (File.Exists(stale)) File.Delete(stale); });
+        Step($"START {ServiceName}; esperar Running (60 s)", () => services.Start(ServiceName));
+        log(options.DryRun ? "DRY-RUN finalizado: 0 mutaciones."
+            : "Actualizacion completada; entorno y datos preservados. Servicio Running.");
+        return 0;
     }
 }

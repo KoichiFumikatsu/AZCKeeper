@@ -30,6 +30,11 @@ public sealed class WindowsServiceControl : IServiceControl
 
     public void Configure(ServiceDefinition definition, bool exists) => RunSc(definition.ScArguments(exists));
 
+    // Windows reinicia el servicio si el proceso muere: red extra para una actualización fallida.
+    // Reinicios a 60 s, ventana de conteo de fallos de 24 h.
+    public void ConfigureRecovery(string name) =>
+        RunSc(["failure", name, "reset=", "86400", "actions=", "restart/60000/restart/60000/restart/60000"]);
+
     public void Start(string name)
     {
         using var service = new ServiceController(name);

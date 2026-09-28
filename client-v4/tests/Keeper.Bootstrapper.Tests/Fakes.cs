@@ -45,6 +45,11 @@ internal sealed class FakeMachine : IServiceControl, ISystemPaths, IRegistryStor
         Assert.False(Running);
         Mutations.Add(exists ? "configure" : "create"); Service = definition;
     }
+    public void ConfigureRecovery(string name)
+    {
+        Assert.Equal(Service!.Name, name);
+        Mutations.Add("recovery");
+    }
     public void Start(string name)
     {
         Assert.Equal(Service!.Name, name);

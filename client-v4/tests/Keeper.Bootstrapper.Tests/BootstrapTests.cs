@@ -145,7 +145,7 @@ public sealed class BootstrapTests
         Assert.DoesNotContain(machine.EnvironmentValues, value => value.StartsWith("KEEPER_ENROLLMENT_TICKET=", StringComparison.Ordinal));
         Assert.True(machine.Running);
         Assert.Empty(elevation.Requests);
-        Assert.Equal(new[] { "mkdir-acl", "mkdir", "mkdir", "copy", "copy", "copy", "create", "environment", "start" }, machine.Mutations);
+        Assert.Equal(new[] { "mkdir-acl", "mkdir", "mkdir", "copy", "copy", "copy", "create", "environment", "recovery", "start" }, machine.Mutations);
     }
 
     [Fact]
@@ -165,6 +165,45 @@ public sealed class BootstrapTests
         Assert.Single(machine.Mutations, mutation => mutation == "mkdir-acl");
         Assert.DoesNotContain(Path.Combine(machine.InstallDirectory, "config.json"), machine.Files.Keys);
         Assert.True(machine.Running);
+    }
+
+    [Fact]
+    public void SystemUpdateReemplazaBinariosPreservandoEntornoYDatos()
+    {
+        elevation.Elevated = true;
+        App.Run(Options with { SystemMode = true }, []);          // instalacion inicial
+        var identity = Path.Combine(machine.InstallDirectory, "v4", "device-key.dpapi");
+        machine.Files[identity] = "existing identity";
+        var environment = machine.EnvironmentValues;
+        machine.Mutations.Clear();
+        Assert.Equal(0, App.Run(Options with { SystemMode = true, SystemUpdate = true }, []));
+        Assert.Equal("stop", machine.Mutations[0]);
+        Assert.Equal("start", machine.Mutations[^1]);
+        Assert.Contains("copy", machine.Mutations);
+        Assert.Contains("recovery", machine.Mutations);
+        Assert.DoesNotContain("environment", machine.Mutations);   // env preservado, no reescrito
+        Assert.DoesNotContain("create", machine.Mutations);
+        Assert.DoesNotContain("configure", machine.Mutations);
+        Assert.Equal(environment, machine.EnvironmentValues);
+        Assert.Equal("existing identity", machine.Files[identity]); // device-key preservada
+        Assert.True(machine.Running);
+    }
+
+    [Fact]
+    public void SystemUpdateSinServicioInstaladoFalla()
+    {
+        elevation.Elevated = true;
+        Assert.Throws<ArgumentException>(() => App.Run(Options with { SystemMode = true, SystemUpdate = true }, []));
+    }
+
+    [Fact]
+    public void SystemUpdateDryRunNoMuta()
+    {
+        elevation.Elevated = true;
+        App.Run(Options with { SystemMode = true }, []);
+        machine.Mutations.Clear();
+        Assert.Equal(0, App.Run(Options with { SystemMode = true, SystemUpdate = true, DryRun = true }, []));
+        Assert.Empty(machine.Mutations);
     }
 
     [Fact]
