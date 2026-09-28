@@ -106,7 +106,22 @@ Todo commiteado en `feature/keeper-v4` (commits: `abf6859`, `e27831e`, `cb818ae`
 
 ## 6. FALTA (pendientes priorizados)
 
-### Inmediato — auto-update prueba real (bloque para la sesión nueva)
+### ACTUALIZACIÓN 2026-09-28 (noche) — cadena de firma y logs HECHOS; falta solo la ejecución real
+Commits `5ab0ca8` (logs + fix staging), `e71de31` (firma + Session en paquete + precheck), `69e1119` (backend:
+oferta a equipos v4 + sync no cae por release no verificable). Tests: Agent 294, Bootstrapper 121, smoke backend 1261.
+Paquetes 4.0.0 (seq 1, con trust) y 4.0.1 (seq 2, firmado) construidos y verificados en local contra el verificador
+C# del agente Y el PHP del backend. **Siguiente paso: `docs/RUNBOOK-auto-update-piloto.md`** (servidor + equipo).
+Bugs encontrados y corregidos al preparar la prueba (los 4 la habrían hecho fallar):
+1. `--system-update` rechazaba el payload que el propio agente extrae en `v4\staging` (dentro de ProgramData\AZCKeeper).
+2. `Keeper.Session.exe` no se empaquetaba y el lanzador exigía un `.dll` que en single-file no existe → Session
+   (tracking de actividad/ventanas/presencia) NUNCA arrancó en el equipo real.
+3. El backend solo ofrece releases si `devices.specs.architecture` existe, y nada en v4 escribe `specs` → nunca ofrecía.
+4. Un agente ya actualizado re-descargaba el paquete entero para rechazarlo, en cada reinicio.
+Además: `UpdateManager` usaba versión fija 4.0.0 (ahora la del ensamblado); la salida del bootstrapper en modo
+update se perdía (ahora `logs\bootstrapper-*.log`). El paquete pasó de ~60 MB a ~126 MB por Session (WinForms
+self-contained arrastra el runtime de escritorio completo): relevante para el reparto a la flota.
+
+### (Histórico) Inmediato — auto-update prueba real
 La cadena de FIRMA de releases NO existe (hay que construirla). El agente instalado tiene trust vacío
 (`installation-trust.json` ausente → `ReleaseKeys` vacío → rechaza todo update). Falta:
 1. **Firmador de release** (reusar `SignedRelease` de `tests/Keeper.Agent.Tests/SecurityModuleTests.cs`, que
@@ -162,7 +177,17 @@ bloqueo web sin tormenta de peticiones, panel rebrandeable, API documentada para
 
 ---
 
-## 9. Sistema de logs / observabilidad — ESTADO Y GAP (lo que pediste)
+## 9. Sistema de logs / observabilidad
+
+**ACTUALIZACIÓN 2026-09-28: opción (1) implementada** (`5ab0ca8`). Log de texto por día UTC en
+`C:\ProgramData\AZCKeeper\v4\logs\agent-yyyyMMdd.log` (Information+, 14 días, tope 20 MB/día) y
+`bootstrapper-yyyyMMdd.log` en modo `--system-update`. Registra arranque (versión + estado del trust),
+`sync_ok`/`sync_retry`/`sync_failed`, cada reporte de módulo (copia local del LogEntry que sube al servidor) y los
+pasos del update. El EventLog se dejó en Warning+ a propósito: ahora `sync_failed`, excepciones de módulo y reportes
+warn/error SÍ salen como Warning (antes todo era Information y se filtraba). Pendiente: opción (3), vista en panel.
+Leer en el equipo: `Get-Content C:\ProgramData\AZCKeeper\v4\logs\agent-*.log -Tail 50`.
+
+### Estado anterior (histórico)
 
 **Hoy NO hay un log legible del agente.** [Seguro] Esta es una carencia real para ver qué pasa en las pruebas.
 Lo que hay para observar:
