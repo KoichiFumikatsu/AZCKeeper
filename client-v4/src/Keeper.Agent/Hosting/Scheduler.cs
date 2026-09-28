@@ -67,7 +67,11 @@ public sealed class Scheduler(ModuleHost host, ISyncCycle? sync, SyncSchedule sc
                 failureKind = NetworkBackoffPolicy.Classify(ex);
                 log($"sync_failed: {(ex is EnrollmentException ? ex.Message : ex.GetType().Name)}");
             }
-            await SetNextAsync(schedule.AfterAttempt(success, checked((int)(sync.RequestCount - before)), serverSeconds, retryAfter, failureKind), ct);
+            var requests = checked((int)(sync.RequestCount - before));
+            var next = schedule.AfterAttempt(success, requests, serverSeconds, retryAfter, failureKind);
+            if (success) log($"sync_ok: {requests} peticion(es); proximo en {(int)next.TotalSeconds}s");
+            else log($"sync_retry: {failureKind}; proximo en {(int)next.TotalSeconds}s");
+            await SetNextAsync(next, ct);
         }
         finally { _gate.Release(); }
     }

@@ -98,6 +98,7 @@ public sealed class UpdateManager(string stagingDirectory, IReadOnlyDictionary<s
             _applied = true;
             await ReportAsync("update_applying", ct);
             State = "applying";
+            Context.Log($"{Name}: lanzando --system-update para {release.Version}; el servicio se detendra");
             installer.Install(PackagePath(release));  // lanza el bootstrapper; puede detener este servicio
             return;
         }
@@ -117,6 +118,7 @@ public sealed class UpdateManager(string stagingDirectory, IReadOnlyDictionary<s
             _downloadingRelease = release;
             _downloading = downloader.DownloadAsync(release.ArtifactUrl, path + ".part", release.SizeBytes, Context.StoppingToken);
             State = "downloading";
+            Context.Log($"{Name}: descargando release {release.Version} (sequence {release.Sequence}, {release.SizeBytes} bytes)");
             return;
         }
         try

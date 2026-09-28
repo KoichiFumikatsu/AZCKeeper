@@ -190,6 +190,32 @@ public sealed class BootstrapTests
     }
 
     [Fact]
+    public void SystemUpdateAceptaElPayloadExtraidoEnElStagingDelAgente()
+    {
+        // Ruta real: UpdateManager extrae en {ProgramData}/AZCKeeper/v4/staging/<id>.zip.d/agent.
+        elevation.Elevated = true;
+        App.Run(Options with { SystemMode = true }, []);
+        machine.Mutations.Clear();
+        var staged = Path.Combine(machine.InstallDirectory, "v4", "staging", "0123456789abcdef.zip.d", "agent");
+        Assert.Equal(0, App.Run(Options with { SystemMode = true, SystemUpdate = true, PayloadDirectory = staged }, []));
+        Assert.Contains("copy", machine.Mutations);
+        Assert.True(machine.Running);
+    }
+
+    [Theory]
+    [InlineData("bin")]
+    [InlineData("")]
+    public void SystemUpdateRechazaPayloadQueSolapaBinarios(string relative)
+    {
+        elevation.Elevated = true;
+        App.Run(Options with { SystemMode = true }, []);
+        machine.Mutations.Clear();
+        var overlapping = Path.Combine(machine.InstallDirectory, relative);
+        Assert.Throws<ArgumentException>(() => App.Run(Options with { SystemMode = true, SystemUpdate = true, PayloadDirectory = overlapping }, []));
+        Assert.Empty(machine.Mutations);
+    }
+
+    [Fact]
     public void SystemUpdateSinServicioInstaladoFalla()
     {
         elevation.Elevated = true;

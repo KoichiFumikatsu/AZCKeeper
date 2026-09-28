@@ -146,12 +146,14 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
         var files = paths.PayloadFiles(options.PayloadDirectory);
         if (!files.Contains("Keeper.Agent.exe", StringComparer.OrdinalIgnoreCase))
             throw new ArgumentException("El payload no contiene Keeper.Agent.exe.");
-        var source = Path.GetFullPath(options.PayloadDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        var target = Path.GetFullPath(paths.InstallDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (source.StartsWith(target, StringComparison.OrdinalIgnoreCase) || target.StartsWith(source, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("El payload debe estar fuera del directorio de instalacion.");
-        paths.ValidateInstallTree(false);
+        // El agente extrae el paquete verificado en v4\staging (dentro de la instalacion, con su ACL), asi que
+        // lo prohibido es solapar los BINARIOS que se van a sobrescribir, no toda la instalacion.
         var bin = Path.Combine(paths.InstallDirectory, "bin");
+        var source = Path.GetFullPath(options.PayloadDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var target = Path.GetFullPath(bin).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (source.StartsWith(target, StringComparison.OrdinalIgnoreCase) || target.StartsWith(source, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("El payload no puede solapar el directorio de binarios.");
+        paths.ValidateInstallTree(false);
         var data = Path.Combine(paths.InstallDirectory, "v4");
         if (options.DryRun) log("DRY-RUN: actualizacion en sitio; preserva entorno y datos. Operaciones:");
         Step($"STOP {ServiceName}; esperar Stopped (60 s)", () => services.Stop(ServiceName));
