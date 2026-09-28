@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Cadena de firma de releases del agente v4 (manifest JWS ES256, NO Authenticode).
+    Fuera de Keeper.sln: maneja la clave privada de release; no debe correr con los tests.
+    Reutiliza InstalledTrust y ReleaseVerifier del agente para autoverificar lo que produce.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Keeper.ReleaseTool</AssemblyName>
+    <RootNamespace>Keeper.ReleaseTool</RootNamespace>
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Keeper.Agent\Keeper.Agent.csproj" />
+    <ProjectReference Include="..\..\src\Keeper.Shared\Keeper.Shared.csproj" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+</Project>

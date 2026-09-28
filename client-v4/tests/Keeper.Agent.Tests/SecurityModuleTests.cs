@@ -272,6 +272,28 @@ public sealed class SecurityModuleTests
         Assert.Equal(1, installer.Calls);
     }
 
+    [Theory]
+    [InlineData(2, "stable")]   // agente ya actualizado a la release ofrecida (sequence 2)
+    [InlineData(5, "stable")]   // agente por delante (rollback ofrecido)
+    [InlineData(0, "beta")]     // canal distinto
+    public async Task ReleaseNoAplicableNoSeDescarga(long installedSequence, string channel)
+    {
+        using var directory = new TestDirectory();
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var release = SignedRelease(key, Encoding.UTF8.GetBytes("pkg"));   // sequence 2, stable
+        var downloader = new FakeDownloader([]);
+        var updater = new UpdateManager(directory.Root, new Dictionary<string, ECDsa> { [release.KeyId] = key },
+            installedSequence, channel, downloader, new FakeInstaller(), new Version(4, 0, 0));
+        var context = Samples.Context(new TestClock());
+        await updater.InitAsync(context);
+        updater.Offer(release);
+        await updater.TickAsync(default);
+        Assert.Equal(0, downloader.Calls);
+        Assert.Equal("current", updater.Snapshot().State);
+        Assert.Null(updater.Snapshot().ErrorCode);
+        Assert.Empty(((MemoryEvents)context.Outbox).Logs);
+    }
+
     [Fact]
     public async Task DescargaFallidaSeReportaYNoAplica()
     {

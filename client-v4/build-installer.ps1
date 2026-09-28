@@ -1,7 +1,19 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$')]
-    [string]$Version = '4.0.0'
+    [string]$Version = '4.0.0',
+    # Secuencia monotona de la release. Va al trust del paquete (InstalledSequence): el agente solo acepta
+    # updates con secuencia MAYOR, asi que la instalacion inicial usa 1 y cada release sube.
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$Sequence = 1,
+    [string]$Channel = 'stable',
+    # Clave publica de release (Keeper.ReleaseTool keygen). Sin ella el paquete no lleva trust: el agente
+    # instalado rechaza todo auto-update y no lanza Keeper.Session.
+    [string]$ReleaseKeyPublic = '',
+    # Opcional: con la privada y la URL HTTPS donde se alojara el ZIP, tambien firma la release.
+    [string]$ReleaseKeyPrivate = '',
+    [string]$ArtifactUrl = '',
+    [string]$MinAgentVersion = '4.0.0'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,13 +30,16 @@ try {
     $agent = Join-Path $package 'agent'
     & dotnet publish (Join-Path $PSScriptRoot 'src/Keeper.Agent/Keeper.Agent.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false "-p:Version=$Version" -o $agent @buildFlags
     if ($LASTEXITCODE -ne 0) { throw "Agent publish fallo: $LASTEXITCODE" }
+    # Keeper.Session va junto al agente: SessionSupervisor lo lanza desde el directorio del agente.
+    & dotnet publish (Join-Path $PSScriptRoot 'src/Keeper.Session/Keeper.Session.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false "-p:Version=$Version" -o $agent @buildFlags
+    if ($LASTEXITCODE -ne 0) { throw "Session publish fallo: $LASTEXITCODE" }
     & dotnet publish (Join-Path $PSScriptRoot 'src/Keeper.Bootstrapper/Keeper.Bootstrapper.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false "-p:Version=$Version" -o $package @buildFlags
     if ($LASTEXITCODE -ne 0) { throw "Bootstrapper publish fallo: $LASTEXITCODE" }
 
-    foreach ($entry in @(@{ Name = 'Keeper.Agent'; Directory = $agent }, @{ Name = 'Keeper.Bootstrapper'; Directory = $package })) {
+    foreach ($entry in @(@{ Name = 'Keeper.Agent'; Directory = $agent; Tfm = 'net8.0' }, @{ Name = 'Keeper.Session'; Directory = $agent; Tfm = 'net8.0-windows' }, @{ Name = 'Keeper.Bootstrapper'; Directory = $package; Tfm = 'net8.0' })) {
         $executable = Join-Path $entry.Directory ($entry.Name + '.exe')
         if ((Get-Item -LiteralPath $executable).Length -lt 10MB) { throw "Bundle incompleto: $executable" }
-        $runtimeConfigPath = Join-Path $PSScriptRoot ("src/{0}/bin/Release/net8.0/win-x64/{0}.runtimeconfig.json" -f $entry.Name)
+        $runtimeConfigPath = Join-Path $PSScriptRoot ("src/{0}/bin/Release/{1}/win-x64/{0}.runtimeconfig.json" -f $entry.Name, $entry.Tfm)
         $runtimeConfig = Get-Content -LiteralPath $runtimeConfigPath -Raw | ConvertFrom-Json
         if ($runtimeConfig.runtimeOptions.framework -or -not ($runtimeConfig.runtimeOptions.includedFrameworks | Where-Object name -EQ 'Microsoft.NETCore.App')) {
             throw "El publish depende de un runtime externo: $executable"
@@ -48,6 +63,16 @@ try {
         finally { $stream.Dispose() }
         Write-Output ("Self-contained verificado: {0}, Microsoft.NETCore.App {1}, CoreLib incluida" -f $entry.Name, $runtimeConfig.runtimeOptions.includedFrameworks[0].version)
     }
+    $releaseTool = Join-Path $PSScriptRoot 'tools/Keeper.ReleaseTool/Keeper.ReleaseTool.csproj'
+    if ($ReleaseKeyPublic) {
+        & dotnet build $releaseTool -c Release @buildFlags | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "ReleaseTool build fallo: $LASTEXITCODE" }
+        & dotnet run --project $releaseTool -c Release --no-build -- trust --public $ReleaseKeyPublic --payload $agent --sequence $Sequence --channel $Channel
+        if ($LASTEXITCODE -ne 0) { throw "Trust fallo: $LASTEXITCODE" }
+    }
+    else {
+        Write-Warning 'Sin -ReleaseKeyPublic: el paquete NO lleva installation-trust.json. El agente rechazara todo auto-update y no lanzara Keeper.Session.'
+    }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'src/Keeper.Bootstrapper/installation.example.json') -Destination (Join-Path $package 'installation.json')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'src/Keeper.Bootstrapper/README.md') -Destination (Join-Path $package 'README.md')
     $launcher = "@echo off`r`n`"%~dp0Keeper.Bootstrapper.exe`" %*`r`nexit /b %errorlevel%`r`n"
@@ -60,6 +85,12 @@ try {
     Write-Output "ZIP: $destination"
     Write-Output "Bytes: $((Get-Item -LiteralPath $destination).Length)"
     Write-Output "SHA256: $((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash)"
+    if ($ReleaseKeyPrivate -or $ArtifactUrl) {
+        if (-not ($ReleaseKeyPublic -and $ReleaseKeyPrivate -and $ArtifactUrl)) { throw 'Firmar requiere -ReleaseKeyPublic, -ReleaseKeyPrivate y -ArtifactUrl.' }
+        $releaseJson = Join-Path $artifacts "release-$Version.json"
+        & dotnet run --project $releaseTool -c Release --no-build -- sign --key $ReleaseKeyPrivate --public $ReleaseKeyPublic --package $destination --version $Version --sequence $Sequence --url $ArtifactUrl --channel $Channel --min-agent $MinAgentVersion --out $releaseJson
+        if ($LASTEXITCODE -ne 0) { throw "Firma fallo: $LASTEXITCODE" }
+    }
 }
 finally {
     & dotnet build-server shutdown

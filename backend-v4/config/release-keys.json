@@ -1,1 +1,8 @@
-{}
+{
+  "MwoB43FowqNILNi2mdH0Cg8cOxRPMdGqTevRDPbatUg": {
+    "kty": "EC",
+    "crv": "P-256",
+    "x": "1rt8dcLw_WlD1A12tzLrsXYyEqJ6IahMYgijcqS5OKg",
+    "y": "lIqQ2j4_KtmyUrWmpX23us5LI7Vqg8Mz9Nwdj7eybh8"
+  }
+}

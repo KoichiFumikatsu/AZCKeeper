@@ -103,6 +103,10 @@ public sealed class UpdateManager(string stagingDirectory, IReadOnlyDictionary<s
             return;
         }
         if (_failed.Contains(release.Id)) { State = "failed"; _error = "release_verification_failed"; return; }
+        // Precheck barato ANTES de descargar: si el servidor ofrece una release que este agente ya tiene (o una
+        // anterior, u otro canal), la verificacion completa la rechazaria igual, pero despues de bajar el paquete
+        // entero, y _failed no sobrevive a un reinicio del servicio. La firma se sigue exigiendo al aplicar.
+        if (release.Sequence <= installedSequence || release.Channel != channel) { State = "current"; _error = null; return; }
         if (!trustedKeys.ContainsKey(release.KeyId))
         {
             if (State != "unsupported" || _error != "release_key_untrusted")

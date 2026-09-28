@@ -36,16 +36,29 @@ public sealed class WindowsSessionLauncher(IReadOnlyDictionary<string, string> b
         finally { WTSFreeMemory(buffer); }
     }
 
-    public Process Launch(InteractiveSession session, string executable, string pipeName)
+    // El .exe siempre debe estar en el trust. El .dll homonimo solo existe en publicaciones framework-
+    // dependent; en single-file (el paquete real) no hay .dll. Si existe, debe estar en el trust y coincidir:
+    // un .dll suelto no confiable junto al .exe se rechaza.
+    public static void VerifyTrustedBinaries(string executable, IReadOnlyDictionary<string, string> binaryHashes)
     {
-        if (!Path.IsPathFullyQualified(executable) || !File.Exists(executable) || executable.Contains('"')) throw new InvalidDataException("invalid_session_executable");
-        foreach (var path in new[] { executable, Path.ChangeExtension(executable, ".dll") })
+        var sidecar = Path.ChangeExtension(executable, ".dll");
+        foreach (var path in new[] { executable, sidecar })
         {
-            if (!binaryHashes.TryGetValue(path, out var expected)) throw new InvalidDataException("session_trust_not_provisioned");
+            if (!binaryHashes.TryGetValue(path, out var expected))
+            {
+                if (path == sidecar && !File.Exists(sidecar)) continue;
+                throw new InvalidDataException("session_trust_not_provisioned");
+            }
             using var stream = File.OpenRead(path);
             if (!Convert.ToHexString(SHA256.HashData(stream)).Equals(expected, StringComparison.OrdinalIgnoreCase))
                 throw new CryptographicException("session_binary_modified");
         }
+    }
+
+    public Process Launch(InteractiveSession session, string executable, string pipeName)
+    {
+        if (!Path.IsPathFullyQualified(executable) || !File.Exists(executable) || executable.Contains('"')) throw new InvalidDataException("invalid_session_executable");
+        VerifyTrustedBinaries(executable, binaryHashes);
         if (!WTSQueryUserToken((uint)session.Id, out var token)) throw new Win32Exception(Marshal.GetLastWin32Error());
         using (token)
         {
