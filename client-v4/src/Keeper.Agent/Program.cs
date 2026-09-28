@@ -4,6 +4,7 @@ using Keeper.Agent.Modules.Devices;
 using Keeper.Agent.Modules.Security;
 using Keeper.Agent.Modules.Update;
 using Keeper.Agent.Modules.Diagnostics;
+using Keeper.Agent.Modules.Maintenance;
 using Keeper.Agent.Policy;
 using Keeper.Agent.Storage;
 using Keeper.Agent.Transport;
@@ -51,10 +52,14 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         var updater = new UpdateManager(Path.Combine(dataDirectory, "staging"), trust.ReleaseKeys, trust.InstalledSequence, trust.Channel);
         PolicyCoordinator? policy = null;
         ModuleHost? hostReference = null;
+        var restorePointHours = int.TryParse(Environment.GetEnvironmentVariable("KEEPER_RESTORE_POINT_HOURS"), out var hours)
+            ? Math.Clamp(hours, 6, 720) : 24;
         var moduleList = new List<IModule> { new WebEnforcer(registry), new UsbEnforcer(registry),
             new InstallEnforcer(registry, loadOptions: () => AppLockerOptions.FromEnvironment(Environment.GetEnvironmentVariable)),
             new DownloadEnforcer(registry), deviceLock, commands, new Inventory(), updater,
             HardeningStatusModule.FromFile(Path.Combine(dataDirectory, "hardening", "state.json")),
+            new RestorePointModule(new WindowsRestorePointService(!registry.IsDryRun), Path.Combine(dataDirectory, "restore-point.json"),
+                TimeSpan.FromHours(restorePointHours), TimeSpan.FromHours(6)),
             new TamperGuard(trust.BinaryHashes), new AgentDiagnostics(() => hostReference?.Snapshot() ?? []) };
         if (OperatingSystem.IsWindows()) moduleList.Add(new SessionSupervisor(new WindowsSessionLauncher(trust.BinaryHashes),
             Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), deviceLock, () => policy));
