@@ -38,7 +38,11 @@ Destinos: sesiones WTS **activas** (consola/RDP), deduplicadas por SID; solo cue
 
 ## Contraseña sin exposición
 
-El aprovisionador de IT debe entregar el archivo binario DPAPI generado **en el equipo destino**, scope `LocalMachine`, sin entropía adicional y plaintext UTF-8 sin BOM ni salto de línea añadido. Su contenido es la misma contraseña compartida elegida por IT; el blob cifrado es específico del equipo. El módulo solo consume el archivo; no genera ni distribuye contraseñas.
+El archivo binario DPAPI se genera **en el equipo destino**, scope `LocalMachine`, sin entropía adicional y plaintext UTF-8 sin BOM ni salto de línea añadido. Su contenido es la misma contraseña compartida elegida por IT; el blob cifrado es específico del equipo. El bootstrapper solo consume el archivo.
+
+`Keeper.Agent` aprovisiona `hardening/password.dpapi` bajo su directorio de datos (por defecto `C:\ProgramData\AZCKeeper\v4`) después de cada sync aceptado: consulta `GET /client/hardening` con el bearer vigente y firma RFC 9421 del mismo `SyncClient`. Un 409 significa que el tenant no tiene clave configurada y no toca el filesystem. Con una clave, valida directorios privados y ausencia de reparse points; compara el plaintext descifrado y conserva el blob si no cambió. Para crear o rotar usa un temporal con ACL exacta `O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)` desde su creación, `Flush(true)` y move con reemplazo. Los buffers del JSON, de la clave UTF-8 y de la comparación se limpian en `finally`; la clave no se convierte a `string`. Los errores de transporte siguen el backoff del sync.
+
+La instalación no espera ese primer sync: antes de ejecutar hardening, IT debe comprobar que el archivo ya está aprovisionado, o entregarlo manualmente en el formato indicado. Un `password_file` personalizado debe aprovisionarse por separado.
 
 El lector valida ausencia de reparse points, propietario SYSTEM/Administradores y DACL que solo permite esos dos SIDs. Una DACL nula o permisos para otros principales abortan. ACL recomendada: `O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)`. DPAPI LocalMachine por sí solo **no** restringe qué usuario del equipo puede descifrar; por eso se exige además ACL privada. El directorio debe estar protegido por IT. No guardar texto claro en `installation.json`.
 

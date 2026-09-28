@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Keeper.Agent.Migration;
+using Keeper.Agent.Modules.Security;
 using Keeper.Agent.Policy;
 using Keeper.Agent.Storage;
 using Keeper.Shared.Protocol;
@@ -34,6 +35,7 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
     private EnrollmentException? _enrollmentError;
     private bool _tokenLoaded;
     public Func<SyncResponse, Guid, CancellationToken, Task>? OnResponse { get; init; }
+    public HardeningPasswordModule? HardeningPassword { get; init; }
     public long RequestCount { get; private set; }
 
     public async Task<int> ExecuteAsync(CancellationToken ct)
@@ -85,6 +87,7 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
             throw new InvalidDataException("policy_device_mismatch");
         await policy.ApplyAsync(response.PolicyVersion, effective, ct, allowTenantChange: tenantChanged);
         if (OnResponse is not null) await OnResponse(response, _token!.Token.TenantId, ct);
+        if (HardeningPassword is not null) await GetHardeningAsync(ct);
         return checked((int)response.NextSyncAfterSeconds);
     }
 
@@ -141,6 +144,43 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
             request.Headers.TryAddWithoutValidation("If-None-Match", policy.Current.Etag);
         signer.Sign(request, [], clock.GetUtcNow(), HttpMessageSigner.CreateNonce());
         return await SendAsync<EffectivePolicy>(request, 1024 * 1024, ct, allowNotModified: true);
+    }
+
+    private async Task GetHardeningAsync(CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(http.BaseAddress!, "client/hardening"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token!.Token.AccessToken);
+        signer.Sign(request, [], clock.GetUtcNow(), HttpMessageSigner.CreateNonce());
+        RequestCount++;
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (response.StatusCode == HttpStatusCode.Conflict) return;
+        if (!response.IsSuccessStatusCode)
+        {
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _token = null;
+                if (tokenStore is not null) await tokenStore.DeleteAsync(ct);
+            }
+            var retry = response.Headers.RetryAfter;
+            throw new TransportException(response.StatusCode, retry?.Delta ?? (retry?.Date - clock.GetUtcNow()));
+        }
+        const int limit = 16384;
+        if (response.Content.Headers.ContentLength > limit) throw new InvalidDataException("response_too_large");
+        // A fixed buffer avoids retained plaintext copies from deserialization or MemoryStream growth.
+        var buffer = new byte[limit + 1];
+        try
+        {
+            await using var stream = await response.Content.ReadAsStreamAsync(ct);
+            var length = 0;
+            int count;
+            while ((count = await stream.ReadAsync(buffer.AsMemory(length), ct)) > 0)
+            {
+                length += count;
+                if (length > limit) throw new InvalidDataException("response_too_large");
+            }
+            HardeningPassword!.ApplyResponse(buffer.AsSpan(0, length), ct);
+        }
+        finally { CryptographicOperations.ZeroMemory(buffer); }
     }
 
     private async Task<T?> SendAsync<T>(HttpRequestMessage request, int limit, CancellationToken ct, bool allowNotModified = false) where T : class

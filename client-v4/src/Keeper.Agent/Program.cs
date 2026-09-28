@@ -90,6 +90,9 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
                 Environment.GetEnvironmentVariable("KEEPER_ENROLLMENT_TICKET"),
                 new DeviceTokenStore(Path.Combine(dataDirectory, "device-token.dpapi"), root.AbsoluteUri + signer.KeyId))
             {
+                HardeningPassword = OperatingSystem.IsWindows()
+                    ? new HardeningPasswordModule(dataDirectory, new WindowsHardeningPasswordFileSystem(), new DpapiHardeningPasswordProtector())
+                    : null,
                 OnResponse = async (response, tenant, ct) =>
                 {
                     await commands.AcceptAsync(response.Commands, tenant, ct);

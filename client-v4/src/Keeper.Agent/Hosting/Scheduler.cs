@@ -48,8 +48,8 @@ public sealed class Scheduler(ModuleHost host, ISyncCycle? sync, SyncSchedule sc
                 await SetNextAsync(delay, ct);
             }
             if (clock.GetTimestamp() < _dueTimestamp) return;
-            // Reserve challenge, login, sync and optional policy GET across a process restart.
-            await SetNextAsync(TimeSpan.FromSeconds(schedule.IntervalSeconds * 4), ct);
+            // Reserve challenge, login, sync, policy and hardening GETs across a process restart.
+            await SetNextAsync(TimeSpan.FromSeconds(schedule.IntervalSeconds * 5), ct);
             var before = sync.RequestCount;
             var success = false;
             var serverSeconds = 120;
