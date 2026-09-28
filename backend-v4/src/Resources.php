@@ -58,9 +58,8 @@ final class Resources
     }
     public function release(?string $id = null): ?array
     {
-        $specs = json_decode($this->c['specs'] ?? '{}');
-        $architecture = $specs->architecture ?? null;
-        if (!in_array($architecture, ['x64', 'arm64'], true)) { return null; }
+        $architecture = self::releaseArchitecture($this->c['specs'] ?? null);
+        if ($architecture === null) { return null; }
         $args = [$this->c['tenant_id'], $this->c['release_ring'], $architecture];
         $where = '';
         if ($id !== null) { $where = ' AND r.id=?'; $args[] = Util::bin($id); }
@@ -75,6 +74,18 @@ final class Resources
             return $result;
         }
         return null;
+    }
+    // devices.specs solo lo llena el importador de K3: el agente v4 no reporta specs (SyncRequest no las
+    // admite), asi que un equipo enrolado por v4 tiene specs NULL y nunca recibiria una release. Sin
+    // arquitectura reportada se asume x64 (la flota Windows actual). Es seguro: el agente vuelve a verificar
+    // la arquitectura del manifest firmado y rechaza la release si no coincide con la suya.
+    // Una arquitectura reportada pero desconocida sigue sin recibir release.
+    public static function releaseArchitecture(?string $specs): ?string
+    {
+        $decoded = $specs === null || $specs === '' ? null : json_decode($specs);
+        $architecture = is_object($decoded) ? ($decoded->architecture ?? null) : null;
+        if ($architecture === null) { return 'x64'; }
+        return in_array($architecture, ['x64', 'arm64'], true) ? $architecture : null;
     }
     public function verifyRelease(array $release): void
     {

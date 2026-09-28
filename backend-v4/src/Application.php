@@ -121,7 +121,11 @@ final class Application
                 if (isset($b->activity)) { $response['activity_ack'] = $i->partial($b->activity, fn () => $i->activity($b->activity), 'snapshot_id'); }
                 foreach ($b->command_results ?? [] as $entry) { $response['command_acks'][] = $i->partial($entry->result, fn () => $i->command($entry->command_id, $entry->result)); }
                 $response['commands'] = $resources->commands()['data'];
-                $release = $resources->release();
+                // Una release no verificable (p. ej. release-keys.json desalineado) se RETIENE, no tumba el sync:
+                // si lanzara aqui, toda la flota del tenant perderia politica, comandos e ingesta hasta corregirla.
+                // GET /client/releases/{id} sigue respondiendo 503 para diagnostico.
+                try { $release = $resources->release(); }
+                catch (ApiError) { $release = null; error_log('keeper: release_withheld (manifest no verificable) tenant=' . Util::id($c['tenant_id'])); }
                 $response['release'] = $release !== null && $release['id'] !== $b->release_id ? $release : null;
                 if ($c['session_remaining'] < 600) {
                     $response['token'] = $auth->issue($c);
