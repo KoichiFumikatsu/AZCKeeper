@@ -49,28 +49,58 @@ public static class ReleaseVerifier
     private static byte[] Decode(string value) => Convert.FromBase64String(value.Replace('-', '+').Replace('_', '/') + new string('=', (4 - value.Length % 4) % 4));
 }
 
+// Baja el paquete de la release (artifact_url, HTTPS) a un archivo, con tope de tamaño.
+public interface IReleaseDownloader { Task DownloadAsync(string url, string destination, long maxBytes, CancellationToken ct); }
+
+// Extrae el ZIP verificado y lanza el bootstrapper como proceso independiente. Puede no retornar de
+// forma observable: el bootstrapper detiene este servicio para reemplazar los binarios.
+public interface IReleaseInstaller { void Install(string packagePath); }
+
 public sealed class UpdateManager(string stagingDirectory, IReadOnlyDictionary<string, ECDsa> trustedKeys,
-    long installedSequence = 0, string channel = "stable") : ModuleBase
+    long installedSequence = 0, string channel = "stable", IReleaseDownloader? downloader = null,
+    IReleaseInstaller? installer = null, Version? agentVersion = null) : ModuleBase
 {
     public override string Name => "UpdateManager";
+    private readonly Version _agentVersion = agentVersion ?? new Version(4, 0, 0);
     private Release? _pending;
     private Guid? _verified;
+    private bool _applied;
     private readonly HashSet<Guid> _failed = [];
     private DateTimeOffset _next;
     private string? _error;
+    private Task? _downloading;
+    private Release? _downloadingRelease;
+
     public void Offer(Release? release)
     {
         if (release is null || release.Id == _pending?.Id) return;
         _pending = release;
         _next = DateTimeOffset.MinValue;
+        _verified = null;
+        _applied = false;
     }
+
     public override ModuleSnapshot Snapshot() => base.Snapshot() with { ErrorCode = _error };
+
+    private string PackagePath(Release release) => Path.Combine(stagingDirectory, release.Id.ToString("N") + ".zip");
+
     public override async Task TickAsync(CancellationToken ct)
     {
+        if (_downloading is not null) { await PollDownloadAsync(ct); return; }
         var release = _pending;
         if (release is null || Context.Clock.GetUtcNow() < _next) return;
         _next = Context.Clock.GetUtcNow().AddMinutes(5);
-        if (release.Id == _verified) { State = "verified_pending_install"; _error = null; return; }
+
+        if (release.Id == _verified)
+        {
+            if (installer is null) { State = "verified_pending_install"; _error = null; return; }
+            if (_applied) { State = "applying"; return; }
+            _applied = true;
+            await ReportAsync("update_applying", ct);
+            State = "applying";
+            installer.Install(PackagePath(release));  // lanza el bootstrapper; puede detener este servicio
+            return;
+        }
         if (_failed.Contains(release.Id)) { State = "failed"; _error = "release_verification_failed"; return; }
         if (!trustedKeys.ContainsKey(release.KeyId))
         {
@@ -79,20 +109,29 @@ public sealed class UpdateManager(string stagingDirectory, IReadOnlyDictionary<s
             State = "unsupported"; _error = "release_key_untrusted"; return;
         }
         _error = null;
-        var path = Path.Combine(stagingDirectory, release.Id.ToString("N") + ".msi");
-        if (!File.Exists(path)) { State = "awaiting_package"; return; }
+        var path = PackagePath(release);
+        if (!File.Exists(path))
+        {
+            if (downloader is null) { State = "awaiting_package"; return; }
+            Directory.CreateDirectory(stagingDirectory);
+            _downloadingRelease = release;
+            _downloading = downloader.DownloadAsync(release.ArtifactUrl, path + ".part", release.SizeBytes, Context.StoppingToken);
+            State = "downloading";
+            return;
+        }
         try
         {
             await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             await ReleaseVerifier.VerifyAsync(release, stream, trustedKeys, installedSequence, channel,
                 System.Runtime.InteropServices.RuntimeInformation.OSArchitecture == System.Runtime.InteropServices.Architecture.Arm64 ? ReleaseArchitecture.Arm64 : ReleaseArchitecture.X64,
-                new Version(4, 0, 0), ct);
+                _agentVersion, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             State = "failed";
             _error = "release_verification_failed";
             _failed.Add(release.Id);
+            TryDelete(path);
             await ReportAsync(_error, ct, LogEntryLevel.Error);
             return;
         }
@@ -100,4 +139,29 @@ public sealed class UpdateManager(string stagingDirectory, IReadOnlyDictionary<s
         State = "verified_pending_install";
         await ReportAsync("package_verified", ct);
     }
+
+    private async Task PollDownloadAsync(CancellationToken ct)
+    {
+        if (!_downloading!.IsCompleted) return;
+        var finished = _downloading;
+        var release = _downloadingRelease!;
+        _downloading = null;
+        _downloadingRelease = null;
+        var part = PackagePath(release) + ".part";
+        if (finished.IsCompletedSuccessfully)
+        {
+            try { File.Move(part, PackagePath(release), overwrite: true); }
+            catch (IOException) { TryDelete(part); }
+            State = "downloaded";  // el próximo tick verifica
+        }
+        else
+        {
+            TryDelete(part);
+            State = "download_failed";
+            _error = "download_failed";
+            await ReportAsync(_error, ct, LogEntryLevel.Error);
+        }
+    }
+
+    private static void TryDelete(string path) { try { if (File.Exists(path)) File.Delete(path); } catch (IOException) { } }
 }

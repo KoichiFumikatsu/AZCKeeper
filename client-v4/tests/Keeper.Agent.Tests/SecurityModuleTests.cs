@@ -148,7 +148,7 @@ public sealed class SecurityModuleTests
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var bytes = Encoding.UTF8.GetBytes("signed test package");
         var release = SignedRelease(key, bytes);
-        var path = directory.File(release.Id.ToString("N") + ".msi");
+        var path = directory.File(release.Id.ToString("N") + ".zip");
         var clock = new TestClock();
         var context = Samples.Context(clock);
         var updater = new UpdateManager(directory.Root, new Dictionary<string, ECDsa> { [release.KeyId] = key });
@@ -177,7 +177,7 @@ public sealed class SecurityModuleTests
         Assert.Equal("failed", updater.Snapshot().State);
         Assert.Single(((MemoryEvents)context.Outbox).Logs);
         var next = SignedRelease(key, bytes);
-        await File.WriteAllBytesAsync(directory.File(next.Id.ToString("N") + ".msi"), bytes);
+        await File.WriteAllBytesAsync(directory.File(next.Id.ToString("N") + ".zip"), bytes);
         updater.Offer(next);
         await updater.TickAsync(default);
         Assert.Equal("verified_pending_install", updater.Snapshot().State);
@@ -217,5 +217,77 @@ public sealed class SecurityModuleTests
     {
         public int Executions { get; private set; }
         public Task ExecuteAsync(DeviceAction action, CancellationToken ct) { Executions++; return Task.CompletedTask; }
+    }
+
+    private sealed class FakeDownloader(byte[] package) : IReleaseDownloader
+    {
+        public int Calls;
+        public bool Fail;
+        public Task DownloadAsync(string url, string destination, long maxBytes, CancellationToken ct)
+        {
+            Calls++;
+            if (Fail) return Task.FromException(new IOException("download boom"));
+            File.WriteAllBytes(destination, package);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeInstaller : IReleaseInstaller
+    {
+        public int Calls;
+        public string? Package;
+        public void Install(string packagePath) { Calls++; Package = packagePath; }
+    }
+
+    [Fact]
+    public async Task DescargaVerificaYAplicaLaReleaseUnaSolaVez()
+    {
+        using var directory = new TestDirectory();
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var bytes = Encoding.UTF8.GetBytes("signed test package");
+        var release = SignedRelease(key, bytes);
+        var clock = new TestClock();
+        var downloader = new FakeDownloader(bytes);
+        var installer = new FakeInstaller();
+        var updater = new UpdateManager(directory.Root, new Dictionary<string, ECDsa> { [release.KeyId] = key },
+            0, "stable", downloader, installer, new Version(4, 0, 0));
+        await updater.InitAsync(Samples.Context(clock));
+        updater.Offer(release);
+        await updater.TickAsync(default);
+        Assert.Equal("downloading", updater.Snapshot().State);
+        Assert.Equal(1, downloader.Calls);
+        await updater.TickAsync(default);                       // sondea la descarga -> downloaded
+        Assert.Equal("downloaded", updater.Snapshot().State);
+        Assert.True(File.Exists(directory.File(release.Id.ToString("N") + ".zip")));
+        clock.Advance(TimeSpan.FromMinutes(6));
+        await updater.TickAsync(default);                       // verifica firma+hash
+        Assert.Equal("verified_pending_install", updater.Snapshot().State);
+        clock.Advance(TimeSpan.FromMinutes(6));
+        await updater.TickAsync(default);                       // aplica (lanza bootstrapper)
+        Assert.Equal("applying", updater.Snapshot().State);
+        Assert.Equal(1, installer.Calls);
+        Assert.Equal(directory.File(release.Id.ToString("N") + ".zip"), installer.Package);
+        clock.Advance(TimeSpan.FromMinutes(6));
+        await updater.TickAsync(default);                       // no relanza
+        Assert.Equal(1, installer.Calls);
+    }
+
+    [Fact]
+    public async Task DescargaFallidaSeReportaYNoAplica()
+    {
+        using var directory = new TestDirectory();
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var release = SignedRelease(key, Encoding.UTF8.GetBytes("pkg"));
+        var downloader = new FakeDownloader([]) { Fail = true };
+        var installer = new FakeInstaller();
+        var updater = new UpdateManager(directory.Root, new Dictionary<string, ECDsa> { [release.KeyId] = key },
+            0, "stable", downloader, installer, new Version(4, 0, 0));
+        await updater.InitAsync(Samples.Context(new TestClock()));
+        updater.Offer(release);
+        await updater.TickAsync(default);   // dispara
+        await updater.TickAsync(default);   // sondea -> falla
+        Assert.Equal("download_failed", updater.Snapshot().State);
+        Assert.Equal(0, installer.Calls);
+        Assert.False(File.Exists(directory.File(release.Id.ToString("N") + ".zip")));
     }
 }

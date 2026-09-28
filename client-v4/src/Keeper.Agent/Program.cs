@@ -49,7 +49,10 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         var commands = new CommandExecutor(Path.Combine(dataDirectory, "commands.json"), deviceId, deviceLock,
             new WindowsDeviceActions(!registry.IsDryRun));
         using var trust = InstalledTrust.Load(AppContext.BaseDirectory);
-        var updater = new UpdateManager(Path.Combine(dataDirectory, "staging"), trust.ReleaseKeys, trust.InstalledSequence, trust.Channel);
+        using var updateHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        var updater = new UpdateManager(Path.Combine(dataDirectory, "staging"), trust.ReleaseKeys, trust.InstalledSequence, trust.Channel,
+            registry.IsDryRun ? null : new WindowsReleaseDownloader(updateHttp),
+            !registry.IsDryRun && OperatingSystem.IsWindows() ? new WindowsReleaseInstaller() : null);
         PolicyCoordinator? policy = null;
         ModuleHost? hostReference = null;
         var restorePointHours = int.TryParse(Environment.GetEnvironmentVariable("KEEPER_RESTORE_POINT_HOURS"), out var hours)
