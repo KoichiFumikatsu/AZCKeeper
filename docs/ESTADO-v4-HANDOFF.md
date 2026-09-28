@@ -117,6 +117,8 @@ Bugs encontrados y corregidos al preparar la prueba (los 4 la habrían hecho fal
    (tracking de actividad/ventanas/presencia) NUNCA arrancó en el equipo real.
 3. El backend solo ofrece releases si `devices.specs.architecture` existe, y nada en v4 escribe `specs` → nunca ofrecía.
 4. Un agente ya actualizado re-descargaba el paquete entero para rechazarlo, en cada reinicio.
+Hecho también: `GET /client/hardening` ya NO va en cada sync (primer sync del proceso, luego cada 6 h; cada 15 min
+mientras el tenant no tenga clave cargada; tras error, siguiente sync). Tests: Agent 297, Bootstrapper 121.
 Además: `UpdateManager` usaba versión fija 4.0.0 (ahora la del ensamblado); la salida del bootstrapper en modo
 update se perdía (ahora `logs\bootstrapper-*.log`). El paquete pasó de ~60 MB a ~126 MB por Session (WinForms
 self-contained arrastra el runtime de escritorio completo): relevante para el reparto a la flota.

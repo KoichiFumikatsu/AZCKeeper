@@ -1,15 +1,15 @@
 # Runbook — prueba real del auto-update 4.0.0 → 4.0.1 (piloto, DESKTOP-949SGVE)
 
-Preparado el 2026-09-28. Todo lo local está hecho y verificado (commits `5ab0ca8`, `e71de31`, `69e1119`).
+Preparado el 2026-09-28. Todo lo local está hecho y verificado (commits `5ab0ca8`, `e71de31`, `69e1119` y el throttle de hardening).
 Lo que sigue requiere el servidor devkeep (`ssh azc-root`) y el equipo de prueba (shell SYSTEM de DWService).
 
 ## Artefactos listos (en `client-v4/artifacts/`, fuera de git)
 
 | Archivo | Uso | SHA-256 |
 |---|---|---|
-| `AZCKeeper_v4_bootstrap_4.0.0.zip` | Reinstalar el equipo con trust (sequence 1) | `7f2ec27415eeeb7bb60c2323d6f5230e888bc5d5f86778ec441ced1076ae5890` |
-| `AZCKeeper_v4_bootstrap_4.0.1.zip` | Paquete del update (sequence 2), 125.791.828 bytes | `439468eba3d7016dfd2fba1f8e0ca4d44545900afca7c883095fd73cf2293304` |
-| `release-4.0.1.json` | Body de `POST /v1/releases` (manifest JWS firmado) | id `f8fbdcb2-9659-4d54-94b9-c3a3fd6e785d` |
+| `AZCKeeper_v4_bootstrap_4.0.0.zip` | Reinstalar el equipo con trust (sequence 1) | `7e3aadbfb685aef31a241ff9fa39b23dc5d35079cda6d9cc493d1385473f69f6` |
+| `AZCKeeper_v4_bootstrap_4.0.1.zip` | Paquete del update (sequence 2), 125.792.159 bytes | `db21e5bb26c3598aa4aa6c6239656ee99e051939ac20c5423f383f4605a60676` |
+| `release-4.0.1.json` | Body de `POST /v1/releases` (manifest JWS firmado) | id `a3165c99-173b-4da4-8cf6-dae548dc1cce` |
 
 Clave de release: `C:\Users\FumiWork\Documents\AZCKeeper-release-keys\` (privada DPAPI del usuario FumiWork en
 ESTA máquina; key_id `MwoB43FowqNILNi2mdH0Cg8cOxRPMdGqTevRDPbatUg`). **Respaldarla** por un canal seguro: si se
@@ -35,7 +35,7 @@ Docroot: `/home/keeper/web/devkeep.azclegal.com/public_html/`.
    ssh azc-root "mkdir -p $DR/public/releases"
    scp client-v4/artifacts/AZCKeeper_v4_bootstrap_4.0.1.zip azc-root:$DR/public/releases/
    ssh azc-root "chown -R keeper:keeper $DR/public/releases"
-   curl -sI https://devkeep.azclegal.com/releases/AZCKeeper_v4_bootstrap_4.0.1.zip   # esperar 200 y Content-Length: 125791828
+   curl -sI https://devkeep.azclegal.com/releases/AZCKeeper_v4_bootstrap_4.0.1.zip   # esperar 200 y Content-Length: 125792159
    ```
    Si da 404, probar `public_html/releases/` (nginx de Hestia sirve .zip desde el docroot) y repetir el curl.
 
@@ -64,7 +64,7 @@ Flujo de sesión: `GET /v1/auth/csrf` → `POST /v1/auth/login` con `X-CSRF-Toke
    Esperado 201. Un 422 aquí casi siempre es la clave pública ausente del `release-keys.json` del servidor.
 2. Desplegar al tenant del equipo (Grupo AZC):
    `POST /v1/release-deployments` con `X-Tenant-ID: 00000000-0000-4000-8000-000000000002` y body
-   `{"release_id":"f8fbdcb2-9659-4d54-94b9-c3a3fd6e785d","ring":"stable","percentage":100,"enabled":true}`.
+   `{"release_id":"a3165c99-173b-4da4-8cf6-dae548dc1cce","ring":"stable","percentage":100,"enabled":true}`.
    Si el tenant no ve la release, repetir primero el mismo deployment con el tenant plataforma (así lo hace `tests/admin.php`).
 
 ## 4. Observar el update en el equipo
@@ -72,7 +72,7 @@ Flujo de sesión: `GET /v1/auth/csrf` → `POST /v1/auth/login` con `X-CSRF-Toke
 En menos de 2 syncs el agente debe registrar, en `agent-YYYYMMDD.log`:
 
 ```
-UpdateManager: descargando release 4.0.1 (sequence 2, 125791828 bytes)
+UpdateManager: descargando release 4.0.1 (sequence 2, 125792159 bytes)
 UpdateManager info: package_verified
 UpdateManager info: update_applying
 UpdateManager: lanzando --system-update para 4.0.1; el servicio se detendra

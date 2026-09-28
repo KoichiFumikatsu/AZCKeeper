@@ -149,7 +149,7 @@ public sealed class HardeningPasswordTests
         Assert.Equal(120, await fixture.Client.ExecuteAsync(default));
         Assert.Equal(4, fixture.Client.RequestCount);
         Assert.Equal(120, await fixture.Client.ExecuteAsync(default));
-        Assert.Equal(6, fixture.Client.RequestCount);
+        Assert.Equal(5, fixture.Client.RequestCount);   // el segundo sync ya no repite GET /client/hardening
         Assert.Equal(1, fixture.Files.Writes);
         Assert.Equal(Encoding.UTF8.GetBytes("日本á"), FakeProtector.Decode(fixture.Files.Blobs[PasswordPath]));
         Assert.All(fixture.ResponseStreams, stream => AssertZero(stream.AgentBuffer));
@@ -164,6 +164,51 @@ public sealed class HardeningPasswordTests
         Assert.Equal(120, await fixture.Client.ExecuteAsync(default));
         Assert.Empty(fixture.Files.Operations);
         Assert.Empty(fixture.Protector.PlaintextBuffers);
+    }
+
+    [Fact]
+    public async Task HardeningSeRefrescaCadaSeisHorasTrasExito()
+    {
+        await using var fixture = new SyncFixture();
+        var calls = 0;
+        fixture.HardeningResponse = _ => { calls++; return fixture.SecretResponse("{\"shared_password\":\"secret\"}"); };
+        await fixture.Client.ExecuteAsync(default);
+        await fixture.Client.ExecuteAsync(default);
+        Assert.Equal(1, calls);
+        fixture.Clock.Advance(TimeSpan.FromHours(6) - TimeSpan.FromSeconds(1));
+        await fixture.Client.ExecuteAsync(default);
+        Assert.Equal(1, calls);
+        fixture.Clock.Advance(TimeSpan.FromSeconds(1));
+        await fixture.Client.ExecuteAsync(default);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task SinClaveCargadaReintentaCadaQuinceMinutos()
+    {
+        // IT carga la clave y enseguida corre --harden: no puede esperar 6 horas.
+        await using var fixture = new SyncFixture();
+        var calls = 0;
+        fixture.HardeningResponse = _ => { calls++; return new HttpResponseMessage(HttpStatusCode.Conflict); };
+        await fixture.Client.ExecuteAsync(default);
+        fixture.Clock.Advance(TimeSpan.FromMinutes(14));
+        await fixture.Client.ExecuteAsync(default);
+        Assert.Equal(1, calls);
+        fixture.Clock.Advance(TimeSpan.FromMinutes(1));
+        await fixture.Client.ExecuteAsync(default);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task TrasUnErrorReintentaEnElSiguienteSync()
+    {
+        await using var fixture = new SyncFixture();
+        var calls = 0;
+        fixture.HardeningResponse = _ => { calls++; return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable); };
+        await Assert.ThrowsAsync<TransportException>(() => fixture.Client.ExecuteAsync(default));
+        fixture.HardeningResponse = _ => { calls++; return new HttpResponseMessage(HttpStatusCode.Conflict); };
+        await fixture.Client.ExecuteAsync(default);
+        Assert.Equal(2, calls);
     }
 
     [Fact]
@@ -312,12 +357,13 @@ public sealed class HardeningPasswordTests
         public SyncClient Client { get; }
         public int Logins { get; private set; }
         public Func<HttpRequestMessage, HttpResponseMessage> HardeningResponse { get; set; } = _ => throw new InvalidOperationException();
+        public TestClock Clock { get; } = new();
 
         public SyncFixture()
         {
             outbox = new DurableOutbox(directory.File("outbox.json"));
             signer = new HttpMessageSigner(Key);
-            var clock = new TestClock();
+            var clock = Clock;
             host = new ModuleHost([], Samples.Context(clock));
             var token = new DeviceToken { DeviceId = Samples.Device, TenantId = Samples.Tenant, AccessToken = "initial-token", TokenType = "Bearer", ExpiresIn = 3600 };
             http = new HttpClient(new Handler(request =>

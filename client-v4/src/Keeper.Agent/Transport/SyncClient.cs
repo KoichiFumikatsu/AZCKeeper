@@ -36,6 +36,12 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
     private bool _tokenLoaded;
     public Func<SyncResponse, Guid, CancellationToken, Task>? OnResponse { get; init; }
     public HardeningPasswordModule? HardeningPassword { get; init; }
+    // La clave de azcadmin cambia rara vez: se pide en el primer sync del proceso y luego cada 6 h (una rotacion
+    // llega en ese plazo o al reiniciar el servicio). Sin clave cargada (409) se reintenta cada 15 min para que
+    // IT pueda cargarla y correr --harden sin esperar. Un error reintenta en el siguiente sync.
+    public TimeSpan HardeningRefresh { get; init; } = TimeSpan.FromHours(6);
+    public TimeSpan HardeningUnconfiguredRetry { get; init; } = TimeSpan.FromMinutes(15);
+    private DateTimeOffset? _nextHardeningAt;
     public long RequestCount { get; private set; }
 
     public async Task<int> ExecuteAsync(CancellationToken ct)
@@ -87,7 +93,11 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
             throw new InvalidDataException("policy_device_mismatch");
         await policy.ApplyAsync(response.PolicyVersion, effective, ct, allowTenantChange: tenantChanged);
         if (OnResponse is not null) await OnResponse(response, _token!.Token.TenantId, ct);
-        if (HardeningPassword is not null) await GetHardeningAsync(ct);
+        if (HardeningPassword is not null && (_nextHardeningAt is null || clock.GetUtcNow() >= _nextHardeningAt))
+        {
+            var configured = await GetHardeningAsync(ct);
+            _nextHardeningAt = clock.GetUtcNow() + (configured ? HardeningRefresh : HardeningUnconfiguredRetry);
+        }
         return checked((int)response.NextSyncAfterSeconds);
     }
 
@@ -146,14 +156,15 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
         return await SendAsync<EffectivePolicy>(request, 1024 * 1024, ct, allowNotModified: true);
     }
 
-    private async Task GetHardeningAsync(CancellationToken ct)
+    // true = clave recibida y aplicada; false = el tenant aun no tiene clave (409).
+    private async Task<bool> GetHardeningAsync(CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(http.BaseAddress!, "client/hardening"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token!.Token.AccessToken);
         signer.Sign(request, [], clock.GetUtcNow(), HttpMessageSigner.CreateNonce());
         RequestCount++;
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (response.StatusCode == HttpStatusCode.Conflict) return;
+        if (response.StatusCode == HttpStatusCode.Conflict) return false;
         if (!response.IsSuccessStatusCode)
         {
             if (response.StatusCode == HttpStatusCode.Unauthorized)
@@ -181,6 +192,7 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
             HardeningPassword!.ApplyResponse(buffer.AsSpan(0, length), ct);
         }
         finally { CryptographicOperations.ZeroMemory(buffer); }
+        return true;
     }
 
     private async Task<T?> SendAsync<T>(HttpRequestMessage request, int limit, CancellationToken ct, bool allowNotModified = false) where T : class
