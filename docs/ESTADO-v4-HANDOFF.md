@@ -122,7 +122,11 @@ Hallazgos del piloto:
   el usuario no estaba frente al equipo). `time_category` llega NULL: revisar si lo calcula el cron o si falta en ingesta.
 - CORREGIDO en `cca5278` (desplegado Ingest.php en devkeep; backup deploy-backups/20260929-101627): time_category ahora
   lo envia el cliente y lo guarda la ingesta; el login reportaba "4.0.0" FIJO y el agente fuerza login al cambiar de
-  version. Release 4.0.3 (seq 4, id 04d630a9-d837-4693-a25b-7cc9755f15c0) firmada y subida; FALTA registrarla.
+  version. Release 4.0.3 (seq 4) REGISTRADA y APLICADA sola 15:34:58Z (tercer ciclo): login forzado 15:36:33,
+  `devices.agent_version = 4.0.3`, episodios desde 15:35:20 llegan con `time_category = work_hours`. VALIDADO.
+- Tras un reinicio el primer sync gasta 4 peticiones y el planificador espera ~8 min (484 s) al siguiente: el equipo
+  no recibe comandos (ni bloqueo remoto) en ese lapso. Es el presupuesto de peticiones; DECIDIR antes de la flota.
+- Cambios rapidos de ventana generan episodios de 1-2 s: vigilar volumen de filas con 1000 equipos.
 
 ### ACTUALIZACIÓN 2026-09-28 (noche) — cadena de firma y logs HECHOS; falta solo la ejecución real
 Commits `5ab0ca8` (logs + fix staging), `e71de31` (firma + Session en paquete + precheck), `69e1119` (backend:
