@@ -243,6 +243,25 @@ public sealed class BootstrapTests
     }
 
     [Fact]
+    public void FormatoCompartidoUsaSuPropiaCarpetaComoPayloadYElConfigDelPadre()
+    {
+        var package = Path.Combine(Path.GetTempPath(), "keeper-layout-" + Guid.NewGuid().ToString("N"));
+        var agent = Path.Combine(package, "agent");
+        Directory.CreateDirectory(agent);
+        try
+        {
+            File.WriteAllText(Path.Combine(agent, "Keeper.Agent.exe"), "x");
+            var shared = BootstrapOptions.Parse(["--system-update"], agent + Path.DirectorySeparatorChar);
+            Assert.Equal(Path.TrimEndingDirectorySeparator(agent), Path.TrimEndingDirectorySeparator(shared.PayloadDirectory));
+            Assert.Equal(Path.Combine(package, "installation.json"), shared.ConfigPath);
+            var legacy = BootstrapOptions.Parse(["--system-update"], package);
+            Assert.Equal(agent, legacy.PayloadDirectory);
+            Assert.Equal(Path.Combine(package, "installation.json"), legacy.ConfigPath);
+        }
+        finally { Directory.Delete(package, recursive: true); }
+    }
+
+    [Fact]
     public void SystemUpdateSinServicioInstaladoFalla()
     {
         elevation.Elevated = true;

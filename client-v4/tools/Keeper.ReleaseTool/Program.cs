@@ -294,8 +294,11 @@ public static class Program
     {
         using var zip = ZipFile.OpenRead(package);
         ZipArchiveEntry? Find(string name) => zip.GetEntry(name) ?? zip.GetEntry(name.Replace('/', '\\'));
-        foreach (var name in new[] { "Keeper.Bootstrapper.exe", "agent/Keeper.Agent.exe", "agent/Keeper.Session.exe", "agent/installation-trust.json" })
+        foreach (var name in new[] { "agent/Keeper.Agent.exe", "agent/Keeper.Session.exe", "agent/installation-trust.json" })
             if (Find(name) is null) throw new InvalidDataException($"paquete incompleto: falta {name}");
+        // Formato compartido: bootstrapper dentro de agent/; formato anterior: en la raiz.
+        if (Find("agent/Keeper.Bootstrapper.exe") is null && Find("Keeper.Bootstrapper.exe") is null)
+            throw new InvalidDataException("paquete incompleto: falta Keeper.Bootstrapper.exe");
         using var reader = Find("agent/installation-trust.json")!.Open();
         var trust = JsonSerializer.Deserialize<InstallationTrustDocument>(reader) ?? throw new InvalidDataException("trust ilegible");
         if (!trust.ReleasePublicKeys.TryGetValue(pub.KeyId, out var spki) || spki != pub.Spki)

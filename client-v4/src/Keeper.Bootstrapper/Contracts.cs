@@ -102,8 +102,13 @@ public sealed record BootstrapOptions(bool DryRun, bool Uninstall, bool Elevated
         var harden = false;
         var unharden = false;
         string? hardeningConfig = null;
-        var payload = Path.Combine(baseDirectory, "agent");
-        var config = Path.Combine(baseDirectory, "installation.json");
+        // Formato compartido: el bootstrapper vive DENTRO de agent\ junto al runtime y los demas binarios, asi que
+        // el payload es su propia carpeta y installation.json esta en la carpeta padre. Formato anterior: el
+        // bootstrapper en la raiz del paquete y el payload en agent\.
+        var shared = File.Exists(Path.Combine(baseDirectory, "Keeper.Agent.exe"));
+        var payload = shared ? baseDirectory : Path.Combine(baseDirectory, "agent");
+        var config = Path.Combine(shared ? Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(baseDirectory)) ?? baseDirectory : baseDirectory,
+            "installation.json");
         for (var i = 0; i < args.Length; i++)
         {
             switch (args[i])

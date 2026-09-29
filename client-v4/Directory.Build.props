@@ -10,6 +10,8 @@
     <UseSharedCompilation>false</UseSharedCompilation>
     <!-- The prototype builds from its locked cache without contacting the audit service. -->
     <NuGetAudit>false</NuGetAudit>
+    <!-- La flota es hispanohablante: solo recursos satelite en espanol (ahorra ~14 MB de 13 idiomas de WinForms/WPF). -->
+    <SatelliteResourceLanguages>es</SatelliteResourceLanguages>
   </PropertyGroup>
   <ItemGroup><Using Include="Keeper.Shared.Policy" /></ItemGroup>
 </Project>

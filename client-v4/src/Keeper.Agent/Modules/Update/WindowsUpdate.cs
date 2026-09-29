@@ -36,10 +36,7 @@ public sealed class WindowsReleaseInstaller : IReleaseInstaller
         var extract = packagePath + ".d";
         if (Directory.Exists(extract)) Directory.Delete(extract, recursive: true);
         ZipFile.ExtractToDirectory(packagePath, extract);
-        var bootstrapper = Path.Combine(extract, "Keeper.Bootstrapper.exe");
-        var payload = Path.Combine(extract, "agent");
-        if (!File.Exists(bootstrapper) || !Directory.Exists(payload) || !File.Exists(Path.Combine(payload, "Keeper.Agent.exe")))
-            throw new FileNotFoundException("update_package_incomplete");
+        var (bootstrapper, payload) = ReleasePackageLayout.Resolve(extract);
         var start = new ProcessStartInfo(bootstrapper)
         {
             UseShellExecute = false,
@@ -48,5 +45,21 @@ public sealed class WindowsReleaseInstaller : IReleaseInstaller
         };
         foreach (var argument in new[] { "--system-update", "--payload", payload }) start.ArgumentList.Add(argument);
         if (Process.Start(start) is null) throw new IOException("update_launch_failed");
+    }
+}
+
+// Dos formatos de paquete. Compartido (4.0.5+): agent\ trae runtime + Agent + Session + Bootstrapper, una sola
+// copia del runtime. Anterior: Keeper.Bootstrapper.exe single-file en la raiz y agent\ con Agent/Session.
+public static class ReleasePackageLayout
+{
+    public static (string Bootstrapper, string Payload) Resolve(string extract)
+    {
+        var payload = Path.Combine(extract, "agent");
+        if (!File.Exists(Path.Combine(payload, "Keeper.Agent.exe"))) throw new FileNotFoundException("update_package_incomplete");
+        var shared = Path.Combine(payload, "Keeper.Bootstrapper.exe");
+        if (File.Exists(shared)) return (shared, payload);
+        var legacy = Path.Combine(extract, "Keeper.Bootstrapper.exe");
+        if (File.Exists(legacy)) return (legacy, payload);
+        throw new FileNotFoundException("update_package_incomplete");
     }
 }

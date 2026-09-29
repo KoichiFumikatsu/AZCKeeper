@@ -13,7 +13,12 @@ param(
     # Opcional: con la privada y la URL HTTPS donde se alojara el ZIP, tambien firma la release.
     [string]$ReleaseKeyPrivate = '',
     [string]$ArtifactUrl = '',
-    [string]$MinAgentVersion = '4.0.0'
+    [string]$MinAgentVersion = '4.0.0',
+    # Shared (defecto): agent\ con UNA copia del runtime y Agent+Session+Bootstrapper (~mitad de tamano).
+    # Legacy: ejecutables single-file y bootstrapper en la raiz. Solo para la release de transicion a equipos
+    # cuyo agente (<= 4.0.3) aun busca el bootstrapper en la raiz del paquete.
+    [ValidateSet('Shared', 'Legacy')]
+    [string]$Layout = 'Shared'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,40 +33,44 @@ $buildFlags = @('-maxcpucount:1', '-nodeReuse:false', '-p:UseSharedCompilation=f
 try {
     New-Item -ItemType Directory -Path $package -Force | Out-Null
     $agent = Join-Path $package 'agent'
-    & dotnet publish (Join-Path $PSScriptRoot 'src/Keeper.Agent/Keeper.Agent.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false "-p:Version=$Version" -o $agent @buildFlags
-    if ($LASTEXITCODE -ne 0) { throw "Agent publish fallo: $LASTEXITCODE" }
-    # Keeper.Session va junto al agente: SessionSupervisor lo lanza desde el directorio del agente.
-    & dotnet publish (Join-Path $PSScriptRoot 'src/Keeper.Session/Keeper.Session.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false "-p:Version=$Version" -o $agent @buildFlags
-    if ($LASTEXITCODE -ne 0) { throw "Session publish fallo: $LASTEXITCODE" }
-    & dotnet publish (Join-Path $PSScriptRoot 'src/Keeper.Bootstrapper/Keeper.Bootstrapper.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false "-p:Version=$Version" -o $package @buildFlags
-    if ($LASTEXITCODE -ne 0) { throw "Bootstrapper publish fallo: $LASTEXITCODE" }
-
-    foreach ($entry in @(@{ Name = 'Keeper.Agent'; Directory = $agent; Tfm = 'net8.0' }, @{ Name = 'Keeper.Session'; Directory = $agent; Tfm = 'net8.0-windows' }, @{ Name = 'Keeper.Bootstrapper'; Directory = $package; Tfm = 'net8.0' })) {
-        $executable = Join-Path $entry.Directory ($entry.Name + '.exe')
-        if ((Get-Item -LiteralPath $executable).Length -lt 10MB) { throw "Bundle incompleto: $executable" }
-        $runtimeConfigPath = Join-Path $PSScriptRoot ("src/{0}/bin/Release/{1}/win-x64/{0}.runtimeconfig.json" -f $entry.Name, $entry.Tfm)
-        $runtimeConfig = Get-Content -LiteralPath $runtimeConfigPath -Raw | ConvertFrom-Json
-        if ($runtimeConfig.runtimeOptions.framework -or -not ($runtimeConfig.runtimeOptions.includedFrameworks | Where-Object name -EQ 'Microsoft.NETCore.App')) {
-            throw "El publish depende de un runtime externo: $executable"
+    $apps = @('Keeper.Agent', 'Keeper.Session', 'Keeper.Bootstrapper')
+    if ($Layout -eq 'Shared') {
+        # Los tres declaran el mismo conjunto de runtime (NETCore + WindowsDesktop), asi que publicar en la misma
+        # carpeta deja una sola copia sin conflictos de version.
+        foreach ($app in $apps) {
+            & dotnet publish (Join-Path $PSScriptRoot "src/$app/$app.csproj") -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false "-p:Version=$Version" -o $agent @buildFlags
+            if ($LASTEXITCODE -ne 0) { throw "$app publish fallo: $LASTEXITCODE" }
         }
-        $stream = [IO.File]::OpenRead($executable)
-        try {
-            $tailLength = [int][Math]::Min(1MB, $stream.Length)
-            [void]$stream.Seek(-$tailLength, [IO.SeekOrigin]::End)
-            $buffer = New-Object byte[] $tailLength
-            $offset = 0
-            while ($offset -lt $tailLength) {
-                $read = $stream.Read($buffer, $offset, $tailLength - $offset)
-                if ($read -eq 0) { throw "Bundle truncado: $executable" }
-                $offset += $read
-            }
-            $manifest = [Text.Encoding]::UTF8.GetString($buffer)
-            foreach ($assembly in @('System.Private.CoreLib.dll', 'System.Runtime.dll', ($entry.Name + '.runtimeconfig.json'))) {
-                if (-not $manifest.Contains($assembly)) { throw "Runtime/manifest ausente del bundle: $assembly" }
-            }
+        foreach ($required in @('hostfxr.dll', 'coreclr.dll', 'System.Private.CoreLib.dll', 'System.Windows.Forms.dll')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $agent $required))) { throw "Runtime incompleto en agent\: falta $required" }
         }
-        finally { $stream.Dispose() }
-        Write-Output ("Self-contained verificado: {0}, Microsoft.NETCore.App {1}, CoreLib incluida" -f $entry.Name, $runtimeConfig.runtimeOptions.includedFrameworks[0].version)
+        foreach ($app in $apps) {
+            if (-not (Test-Path -LiteralPath (Join-Path $agent "$app.exe"))) { throw "Falta $app.exe" }
+            $runtimeConfig = Get-Content -LiteralPath (Join-Path $agent "$app.runtimeconfig.json") -Raw | ConvertFrom-Json
+            $frameworks = @($runtimeConfig.runtimeOptions.includedFrameworks | ForEach-Object name)
+            if ($runtimeConfig.runtimeOptions.framework -or -not ($frameworks -contains 'Microsoft.NETCore.App') -or -not ($frameworks -contains 'Microsoft.WindowsDesktop.App')) {
+                throw "$app no es self-contained con NETCore+WindowsDesktop"
+            }
+            Write-Output ("Self-contained (runtime compartido) verificado: {0}, {1}" -f $app, ($frameworks -join ' + '))
+        }
+    }
+    else {
+        foreach ($app in @('Keeper.Agent', 'Keeper.Session')) {
+            & dotnet publish (Join-Path $PSScriptRoot "src/$app/$app.csproj") -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false "-p:Version=$Version" -o $agent @buildFlags
+            if ($LASTEXITCODE -ne 0) { throw "$app publish fallo: $LASTEXITCODE" }
+        }
+        & dotnet publish (Join-Path $PSScriptRoot 'src/Keeper.Bootstrapper/Keeper.Bootstrapper.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false "-p:Version=$Version" -o $package @buildFlags
+        if ($LASTEXITCODE -ne 0) { throw "Bootstrapper publish fallo: $LASTEXITCODE" }
+        foreach ($entry in @(@{ Name = 'Keeper.Agent'; Directory = $agent }, @{ Name = 'Keeper.Session'; Directory = $agent }, @{ Name = 'Keeper.Bootstrapper'; Directory = $package })) {
+            $executable = Join-Path $entry.Directory ($entry.Name + '.exe')
+            if ((Get-Item -LiteralPath $executable).Length -lt 10MB) { throw "Bundle incompleto: $executable" }
+            $runtimeConfigPath = Join-Path $PSScriptRoot ("src/{0}/bin/Release/net8.0-windows/win-x64/{0}.runtimeconfig.json" -f $entry.Name)
+            $runtimeConfig = Get-Content -LiteralPath $runtimeConfigPath -Raw | ConvertFrom-Json
+            if ($runtimeConfig.runtimeOptions.framework -or -not ($runtimeConfig.runtimeOptions.includedFrameworks | Where-Object name -EQ 'Microsoft.NETCore.App')) {
+                throw "El publish depende de un runtime externo: $executable"
+            }
+            Write-Output ("Self-contained single-file verificado: {0}" -f $entry.Name)
+        }
     }
     $releaseTool = Join-Path $PSScriptRoot 'tools/Keeper.ReleaseTool/Keeper.ReleaseTool.csproj'
     if ($ReleaseKeyPublic) {
@@ -75,7 +84,8 @@ try {
     }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'src/Keeper.Bootstrapper/installation.example.json') -Destination (Join-Path $package 'installation.json')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'src/Keeper.Bootstrapper/README.md') -Destination (Join-Path $package 'README.md')
-    $launcher = "@echo off`r`n`"%~dp0Keeper.Bootstrapper.exe`" %*`r`nexit /b %errorlevel%`r`n"
+    $bootstrapperPath = if ($Layout -eq 'Shared') { 'agent\Keeper.Bootstrapper.exe' } else { 'Keeper.Bootstrapper.exe' }
+    $launcher = "@echo off`r`n`"%~dp0$bootstrapperPath`" %*`r`nexit /b %errorlevel%`r`n"
     [IO.File]::WriteAllText((Join-Path $package 'install.cmd'), $launcher, [Text.Encoding]::ASCII)
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
