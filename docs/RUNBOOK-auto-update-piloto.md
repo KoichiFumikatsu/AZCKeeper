@@ -56,6 +56,12 @@ empaquetaba, así que el tracking de actividad/ventanas/presencia NO estaba func
 
 ## 3. Registrar y desplegar la release (API admin, platform admin)
 
+Atajo: `bash client-v4/tools/register-release.sh client-v4/artifacts/release-4.0.1.json` (Git Bash). Pide email y
+contrasena del admin de plataforma, registra y despliega a plataforma + Grupo AZC. Lo de abajo es el detalle manual.
+
+**Estado 2026-09-29:** pasos 1.1 a 1.3 HECHOS en devkeep (backup en `/home/keeper/deploy-backups/20260929-090728`;
+ZIP servido 200 con 125.792.159 bytes). Confirmado en BD: el equipo tenia `specs` NULL (el bug 3 era real).
+
 Flujo de sesión: `GET /v1/auth/csrf` → `POST /v1/auth/login` con `X-CSRF-Token` y `Origin: https://devkeep.azclegal.com`
 → usar el csrf_token NUEVO de la respuesta. Todos los POST llevan además `Idempotency-Key: <uuid>`.
 
