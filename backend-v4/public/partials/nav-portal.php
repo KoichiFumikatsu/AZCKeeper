@@ -2,6 +2,7 @@
 <nav class="surface-nav" aria-label="Portal de empresa">
   <a href="/" data-nav="home">Inicio</a>
   <a href="/equipos.php" data-nav="devices" hidden>Equipos</a>
+  <a href="/alta.php" data-nav="intake" hidden>Alta de equipos</a>
   <a href="/usuarios.php" data-nav="users" hidden>Usuarios</a>
   <a href="/reglas.php" data-nav="policies" hidden>Reglas</a>
   <a href="/reportes.php" data-nav="reports" hidden>Reportes</a>

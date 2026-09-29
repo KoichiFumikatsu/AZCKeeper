@@ -29,6 +29,11 @@ CREATE TABLE IF NOT EXISTS expected_devices (
   CHECK (asset_code IS NOT NULL OR serial_number IS NOT NULL)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- Scope de la API externa para que un inventario/ERP cargue equipos esperados.
+INSERT INTO scopes (code, description)
+SELECT 'expected-devices:write', 'Carga de equipos esperados'
+WHERE NOT EXISTS (SELECT 1 FROM scopes WHERE code = 'expected-devices:write');
+
 -- Clave de alta de la empresa: va en installation.json del paquete generico. Solo se guarda el hash.
 CREATE TABLE IF NOT EXISTS enrollment_keys (
   tenant_id BINARY(16) NOT NULL,

@@ -131,5 +131,16 @@ function intakeTests(Database $db): void
     // Revocar la clave corta las solicitudes nuevas.
     expect(adminRequest($admin, 'DELETE', '/enrollments/keys/' . $key['id']), 200, 'revoke enrollment key');
     expect(intakeAsk($key['key'], keypair(), 'SN-NEW'), 401, 'revoked key rejected');
+    // API externa: un inventario carga esperados con su scope; sin el scope, 403; lecturas no pueden escribir.
+    $writer = externalCredential($db, $u, 'api_key', ['expected-devices:write']);
+    $reader = externalCredential($db, $u, 'api_key', ['devices:read', 'members:read']);
+    $rows = Util::json(['rows' => [['person' => '1020304050', 'asset_code' => 'ACT_0500', 'serial_number' => 'SN-EXT-1'], ['person' => '000', 'asset_code' => 'ACT_0501', 'serial_number' => null]]]);
+    $denied = externalRequest('/ext/v1/expected-devices:import', $reader['headers'] + ['Content-Type' => 'application/json'], 'POST', $rows);
+    check($denied[0] === 403, 'external import requires write scope');
+    $ext = externalRequest('/ext/v1/expected-devices:import', $writer['headers'] + ['Content-Type' => 'application/json'], 'POST', $rows);
+    check($ext[0] === 200 && $ext[1]['created'] === 1 && $ext[1]['errors'] === [['row' => 2, 'code' => 'person_not_found']], 'external import creates and reports rows');
+    check($db->one("SELECT source FROM expected_devices WHERE tenant_id=? AND asset_code='ACT_0500'", [$tenant])['source'] === 'api', 'external rows tagged as api');
+    $again = externalRequest('/ext/v1/expected-devices:import', $writer['headers'] + ['Content-Type' => 'application/json'], 'POST', $rows);
+    check($again[1]['created'] === 0 && $again[1]['errors'][0]['code'] === 'duplicate_asset', 'external re-send never overwrites');
     echo 'PASS device intake (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

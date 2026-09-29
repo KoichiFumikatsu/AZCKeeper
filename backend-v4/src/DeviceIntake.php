@@ -203,13 +203,9 @@ final class DeviceIntake
                 $audit('expected_device', $created, ['user_id', 'asset_code', 'serial_number']);
                 return AdminApi::response($this->expectedDto($this->expected($tenant, $created)), 201);
             case 'importExpectedDevices':
-                $created = 0; $errors = [];
-                foreach ($b->rows as $n => $rowInput) {
-                    [, $error] = $this->createExpected($tenant, $access, $rowInput, 'csv');
-                    if ($error !== null) { $errors[] = ['row' => $n + 1, 'code' => $error]; } else { $created++; }
-                }
-                $audit('expected_device', $tenant, ['rows', 'created:' . $created]);
-                return AdminApi::response(['created' => $created, 'errors' => $errors]);
+                $result = $this->importRows($tenant, $access, $b->rows, 'csv');
+                $audit('expected_device', $tenant, ['rows', 'created:' . $result['created']]);
+                return AdminApi::response($result);
             case 'cancelExpectedDevice':
                 $e = $this->expected($tenant, $id, true);
                 $access->user($e['user_id']);
@@ -275,8 +271,19 @@ final class DeviceIntake
         throw new ApiError(404, 'resource_not_found');
     }
 
-    // [id binario, null] o [null, codigo de error de fila].
-    private function person(string $tenant, AdminAccess $access, string $person): array
+    // Carga por lotes (CSV del panel o API externa): cada fila se valida por separado.
+    public function importRows(string $tenant, ?AdminAccess $access, array $rows, string $source): array
+    {
+        $created = 0; $errors = [];
+        foreach ($rows as $n => $rowInput) {
+            [, $error] = $this->createExpected($tenant, $access, $rowInput, $source);
+            if ($error !== null) { $errors[] = ['row' => $n + 1, 'code' => $error]; } else { $created++; }
+        }
+        return ['created' => $created, 'errors' => $errors];
+    }
+
+    // [id binario, null] o [null, codigo de error de fila]. Sin $access (integracion) el alcance es la empresa.
+    private function person(string $tenant, ?AdminAccess $access, string $person): array
     {
         $person = trim($person);
         if (str_contains($person, '@')) {
@@ -286,12 +293,12 @@ final class DeviceIntake
         }
         if (count($ids) > 1) { return [null, 'person_ambiguous']; }
         if (!$ids) { return [null, 'person_not_found']; }
-        try { $access->user($ids[0]); } catch (ApiError) { return [null, 'person_not_found']; }
+        if ($access !== null) { try { $access->user($ids[0]); } catch (ApiError) { return [null, 'person_not_found']; } }
         return [$ids[0], null];
     }
 
     // [id binario creado, null] o [null, codigo de error de fila].
-    private function createExpected(string $tenant, AdminAccess $access, object $b, string $source): array
+    private function createExpected(string $tenant, ?AdminAccess $access, object $b, string $source): array
     {
         $asset = self::asset($b->asset_code ?? null); $serial = self::serial($b->serial_number ?? null);
         if ($asset === null && $serial === null) { return [null, 'missing_identifier']; }

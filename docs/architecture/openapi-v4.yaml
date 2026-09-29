@@ -8993,6 +8993,76 @@ paths:
       - $ref: '#/components/parameters/Tenant'
       x-permission: equipos.enrolar
       x-max-body-bytes: 65536
+  /ext/v1/expected-devices:import:
+    servers:
+    - url: /
+      description: 'Override: path contiene /ext/v1; no concatenar /v1/ext/v1.'
+    post:
+      tags:
+      - external
+      operationId: externalImportExpectedDevices
+      summary: Cargar equipos esperados
+      description: 'Para inventarios/ERP de la empresa: persona por documento o correo, placa y/o serie. Hasta 2000 filas; cada
+        fila se valida por separado (duplicados informados, nunca sobrescritos). Keeper cruza la serie cuando el equipo pide
+        alta.'
+      security:
+      - apiKey: []
+      - oauth2:
+        - expected-devices:write
+      x-required-scopes:
+      - expected-devices:write
+      x-tenant-boundary: Tenant derivado solo de credencial.
+      x-resources:
+      - ExpectedDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExpectedDeviceImport'
+      responses:
+        '200':
+          description: Resultado por fila
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+            Cache-Control:
+              schema:
+                const: no-store
+              description: Escritura; no almacenar.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExpectedDeviceImportResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      x-max-body-bytes: 524288
 components:
   schemas:
     EnrollmentRequestInput:
@@ -12266,6 +12336,7 @@ components:
             - tiers:read
             - organization:read
             - notifications:read
+            - expected-devices:write
           maxItems: 30
         expires_at:
           type: string
@@ -12313,6 +12384,7 @@ components:
             - tiers:read
             - organization:read
             - notifications:read
+            - expected-devices:write
           maxItems: 30
         expires_at:
           type: string
@@ -13967,6 +14039,7 @@ components:
             tiers:read: Tiers y suscripción.
             organization:read: Sedes, firmas, áreas y cargos.
             notifications:read: Feed saneado.
+            expected-devices:write: Cargar equipos esperados (persona, placa, serie) para el alta automática.
       description: Cliente de un tenant, token 15 min, aud=keeper-external-v1. Solo servidor-servidor.
     oauthClient:
       type: http

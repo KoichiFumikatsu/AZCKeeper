@@ -19,6 +19,8 @@ final class Application
             elseif (str_starts_with($r->route, '/ext/v1/')) {
                 $c = $auth->external()->context($r);
                 $response = $this->limiter->externalQueries($c, function () use ($db,$c,$r): array {
+                    // Unica escritura externa: carga de equipos esperados (scope expected-devices:write).
+                    if ($r->method === 'POST') { return $db->transaction(fn () => $this->ok((new ExternalApi($db, $c, $r, $this->validator))->dispatch(), 200, ['Cache-Control'=>'no-store'])); }
                     $db->run('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
                     return $db->transaction(fn () => $this->ok((new ExternalApi($db, $c, $r, $this->validator))->dispatch(), 200, ['Cache-Control'=>'private, max-age=30', 'Vary'=>'Authorization, X-API-Key']));
                 });

@@ -1,6 +1,7 @@
 import { api, ApiError, PLATFORM_TENANT, isUuid, setTenant, saveSession, readSession, refreshCsrf, goToLogin, errorMessage } from './api.js';
 import { coordinator } from './coordinator.js';
 import { operations, operationPaths } from './operations.js';
+import { intake, intakeProbe } from './intake.js';
 
 const page = document.body.dataset.page;
 const surface = document.body.dataset.surface;
@@ -171,7 +172,7 @@ async function navigation() {
     if (key === page || (page === 'member' && key === 'users') || (page === 'device' && key === 'devices')) link.setAttribute('aria-current', 'page');
     if (key === 'home') return;
     try {
-      await (operationPaths[key] ? get(operationPaths[key]) : key === 'reports' ? get(reportPath()) : getPage(resources[key].path()));
+      await (operationPaths[key] ? get(operationPaths[key]) : key === 'intake' ? get(intakeProbe) : key === 'reports' ? get(reportPath()) : getPage(resources[key].path()));
       permissions.set(key, true);
       link.hidden = false;
     } catch (error) {
@@ -445,7 +446,8 @@ async function load() {
       if ([401, 403].includes(allowed.status)) $('workspace').hidden = true;
       throw allowed;
     }
-    if (operationPaths[page]) await operations({ page, tenant, today, shiftDay });
+    if (page === 'intake') await intake({ tenant, content: $('content') });
+    else if (operationPaths[page]) await operations({ page, tenant, today, shiftDay });
     else if (surface === 'portal' && ['home', 'users', 'member', 'reports', 'policies'].includes(page)) {
       await coordinator({ page, tenant, timezone, get, allPages, today, shiftDay, query, permissions });
     }

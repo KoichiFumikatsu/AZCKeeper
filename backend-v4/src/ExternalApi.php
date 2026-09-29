@@ -18,6 +18,11 @@ final class ExternalApi
     }
     public function dispatch(): mixed
     {
+        if ($this->r->operation['operationId']==='externalImportExpectedDevices') {
+            $result=(new DeviceIntake($this->db))->importRows($this->tenant,null,$this->r->body->rows,'api');
+            (new Audit($this->db))->record($this->c,$this->r,'externalImportExpectedDevices','expected_device',$this->tenant,['rows','created:'.$result['created']]);
+            return $result;
+        }
         if ($this->r->method!=='GET') { throw new ApiError(404,'resource_not_found'); }
         foreach (['area_id','site_id','user_id'] as $field) {
             if (!isset($_GET[$field])) { continue; }

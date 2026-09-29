@@ -4,7 +4,7 @@ namespace Keeper;
 
 final class ExternalAuth
 {
-    public const SCOPES = ['dashboard:read','team:read','members:read','devices:read','activity:read','activity-titles:read','productivity:read','presence:read','location:read','tiers:read','organization:read','notifications:read'];
+    public const SCOPES = ['dashboard:read','team:read','members:read','devices:read','activity:read','activity-titles:read','productivity:read','presence:read','location:read','tiers:read','organization:read','notifications:read','expected-devices:write'];
     public function __construct(private Database $db, private RateLimiter $limiter) {}
 
     private function integration(array $credential): array
