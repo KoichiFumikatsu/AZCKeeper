@@ -39,6 +39,7 @@ final class Application
             }
             elseif ($r->route === '/client/auth/challenges') { $response = $this->ok($auth->challenge($r)); }
             elseif ($r->route === '/client/login') { $response = $this->ok($auth->login($r)); }
+            elseif ($r->route === '/client/enrollment-requests') { $response = $this->ok((new DeviceIntake($db))->client($r, new Signature(), $this->limiter), 200, ['Cache-Control' => 'no-store']); }
             else {
                 // Commit proof consumption before business handling, including failed requests and replays.
                 $c = $db->transaction(fn () => $auth->authenticate($r));

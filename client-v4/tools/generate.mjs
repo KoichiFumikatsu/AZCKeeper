@@ -32,7 +32,7 @@ function add(name, schema) {
   });
   names.set(name, `public sealed record ${name}\n{\n${props.join('\n\n')}\n}`);
 }
-for (const name of ['EffectivePolicy','ChallengeRequest','Challenge','DeviceLogin','DeviceToken','SyncRequest','SyncResponse','BatchRequest','BatchAck']) add(name, schemas[name]);
+for (const name of ['EffectivePolicy','ChallengeRequest','Challenge','DeviceLogin','DeviceToken','EnrollmentRequestInput','EnrollmentRequestStatus','SyncRequest','SyncResponse','BatchRequest','BatchAck']) add(name, schemas[name]);
 const policyNames = new Set(['EffectivePolicy','Rule','Schedule','EffectivePolicyCompositionItem']);
 for (const group of ['Policy','Protocol']) {
   const isPolicy = n => policyNames.has(n) || /^(Rule|EffectivePolicy)/.test(n);

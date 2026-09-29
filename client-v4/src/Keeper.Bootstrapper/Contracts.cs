@@ -75,10 +75,14 @@ public sealed record ServiceDefinition(string Name, string Executable)
         $"sc.exe {(exists ? "config" : "create")} {Name} binPath= '\"{Executable}\"' type= {ServiceType} start= {StartType} obj= {Account} DisplayName= 'AZCKeeper v4'";
 }
 
-public sealed record InstallationConfig(string ApiBase, Guid TenantId, Guid DeviceId, bool EnableHklm = true)
+// Dos formas de alta: paquete por equipo (tenant_id + device_id + enrollment_ticket) o paquete generico de la empresa
+// (enrollment_key, sin device_id): el equipo pide alta y el servidor le asigna su device_id al aprobarla.
+public sealed record InstallationConfig(string ApiBase, Guid TenantId = default, Guid DeviceId = default, bool EnableHklm = true)
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? EnrollmentTicket { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EnrollmentKey { get; init; }
     public HardeningConfig Hardening { get; init; } = new();
     public static JsonSerializerOptions Json { get; } = new()
     {
@@ -98,8 +102,15 @@ public sealed record InstallationConfig(string ApiBase, Guid TenantId, Guid Devi
             !uri.AbsolutePath.EndsWith("/v1/", StringComparison.Ordinal) ||
             uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0)
             throw new ArgumentException("api_base debe ser HTTPS, terminar en /v1/ y no contener credenciales, query ni fragmento.");
-        if (TenantId == Guid.Empty || DeviceId == Guid.Empty)
-            throw new ArgumentException("tenant_id y device_id deben ser UUID no vacios del equipo de prueba.");
+        if (EnrollmentKey is not null)
+        {
+            if (EnrollmentKey.Length is < 20 or > 128 || EnrollmentKey.Any(c => char.IsControl(c) || char.IsWhiteSpace(c)))
+                throw new ArgumentException("enrollment_key invalida: copiela completa desde el panel (Alta de equipos > Claves).");
+            if (DeviceId != Guid.Empty || EnrollmentTicket is not null)
+                throw new ArgumentException("enrollment_key es para el paquete generico: no se combina con device_id ni enrollment_ticket.");
+        }
+        else if (TenantId == Guid.Empty || DeviceId == Guid.Empty)
+            throw new ArgumentException("tenant_id y device_id deben ser UUID no vacios del equipo (o use enrollment_key para el paquete generico).");
         if (!dryRun && uri.Host.EndsWith(".invalid", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Configure un backend real en installation.json antes de instalar; .invalid es solo para --dry-run.");
     }

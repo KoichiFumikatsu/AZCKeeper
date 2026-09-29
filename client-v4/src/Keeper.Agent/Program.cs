@@ -54,7 +54,23 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         using var outbox = new DurableOutbox(Path.Combine(dataDirectory, "outbox.json"));
         var context = new ModuleContext(outbox, TimeProvider.System, Log, stoppingToken);
         var registry = new WindowsSystemPolicyStore(Environment.GetEnvironmentVariable("KEEPER_ENABLE_HKLM") == "1", Log);
-        var deviceId = Guid.TryParse(Environment.GetEnvironmentVariable("KEEPER_DEVICE_ID"), out var configuredId) ? configuredId : Guid.Empty;
+        // device_id: el del paquete (KEEPER_DEVICE_ID) o, en el alta por clave de la empresa, el que asigno el servidor.
+        var deviceIdPath = Path.Combine(dataDirectory, "device-id.txt");
+        var deviceId = Guid.TryParse(Environment.GetEnvironmentVariable("KEEPER_DEVICE_ID"), out var configuredId) ? configuredId : IntakeEnrollment.ReadDeviceId(deviceIdPath);
+        var api = Environment.GetEnvironmentVariable("KEEPER_API_BASE");
+        var apiRoot = api is null ? null : ApiBase(api);
+        var enrollmentKey = Environment.GetEnvironmentVariable("KEEPER_ENROLLMENT_KEY");
+        if (deviceId == Guid.Empty && apiRoot is not null && !string.IsNullOrWhiteSpace(enrollmentKey))
+        {
+            // Hasta que IT apruebe (o cargue el equipo como esperado) el agente solo pide alta: sin device_id no hay
+            // politica que aplicar ni a quien reportar.
+            using var intakeHandler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false };
+            using var intakeHttp = new HttpClient(intakeHandler) { Timeout = TimeSpan.FromSeconds(45), BaseAddress = apiRoot };
+            Log("sin device_id: alta por solicitud con la clave de la empresa");
+            deviceId = await new IntakeEnrollment(intakeHttp, signer, enrollmentKey, TimeProvider.System, Log,
+                    () => OperatingSystem.IsWindows() ? Smbios.ReadSystemSerial() : null)
+                .RunAsync(new DeviceTokenStore(tokenPath, apiRoot.AbsoluteUri + signer.KeyId), deviceIdPath, stoppingToken);
+        }
         var deviceLock = new DeviceLock(Path.Combine(dataDirectory, "device-lock.json"), PinVerifier.LoadProtected(Path.Combine(dataDirectory, "pin-verifier.dpapi")));
         var commands = new CommandExecutor(Path.Combine(dataDirectory, "commands.json"), deviceId, deviceLock,
             new WindowsDeviceActions(!registry.IsDryRun),
@@ -93,13 +109,9 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         using var handler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false };
         using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(45) };
         ISyncCycle? transport = null;
-        var api = Environment.GetEnvironmentVariable("KEEPER_API_BASE");
-        if (api is not null)
+        if (apiRoot is { } root)
         {
-            if (deviceId == Guid.Empty) throw new InvalidOperationException("KEEPER_DEVICE_ID is required");
-            if (!Uri.TryCreate(api, UriKind.Absolute, out var root) || root.Scheme != "https" || !root.AbsolutePath.EndsWith("/v1/", StringComparison.Ordinal) ||
-                root.Query.Length != 0 || root.Fragment.Length != 0 || root.UserInfo.Length != 0)
-                throw new InvalidOperationException("KEEPER_API_BASE must be an HTTPS /v1/ URL");
+            if (deviceId == Guid.Empty) throw new InvalidOperationException("KEEPER_DEVICE_ID or KEEPER_ENROLLMENT_KEY is required");
             http.BaseAddress = root;
             transport = new SyncClient(http, signer, deviceId, outbox, policy, TimeProvider.System,
                 Environment.GetEnvironmentVariable("KEEPER_ENROLLMENT_TICKET"),
@@ -121,6 +133,11 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         Log($"Agent {AgentVersion} started: trust {(trust.ReleaseKeys.Count == 0 ? "sin claves de release (auto-update deshabilitado)" : $"{trust.ReleaseKeys.Count} clave(s), sequence {trust.InstalledSequence}, canal {trust.Channel}")}; {(registry.IsDryRun ? "dry-run" : "HKLM enabled")}; {(transport is null ? "offline" : "sync configured")}");
         await scheduler.RunAsync(stoppingToken);
     }
+
+    private static Uri ApiBase(string api) =>
+        Uri.TryCreate(api, UriKind.Absolute, out var root) && root.Scheme == "https" && root.AbsolutePath.EndsWith("/v1/", StringComparison.Ordinal) &&
+        root.Query.Length == 0 && root.Fragment.Length == 0 && root.UserInfo.Length == 0
+            ? root : throw new InvalidOperationException("KEEPER_API_BASE must be an HTTPS /v1/ URL");
 
     internal static string DataDirectory() => Environment.GetEnvironmentVariable("KEEPER_DATA_DIR") ??
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "AZCKeeper", "v4");

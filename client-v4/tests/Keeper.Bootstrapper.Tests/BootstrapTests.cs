@@ -26,6 +26,39 @@ public sealed class BootstrapTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void GenericPackageWithEnrollmentKeyOmitsDeviceIdAndNeverLogsKey(bool dryRun)
+    {
+        machine.Config = machine.Config with { TenantId = Guid.Empty, DeviceId = Guid.Empty, EnrollmentKey = "kek_company-secret-0123456789" };
+        Assert.Equal(0, App.Run(Options with { DryRun = dryRun }, []));
+        Assert.DoesNotContain(output, line => line.Contains("company-secret", StringComparison.Ordinal));
+        Assert.Contains(output, line => line.Contains("KEEPER_ENROLLMENT_KEY=[REDACTED]", StringComparison.Ordinal));
+        if (dryRun) return;
+        Assert.Contains("KEEPER_ENROLLMENT_KEY=kek_company-secret-0123456789", machine.EnvironmentValues);
+        Assert.DoesNotContain(machine.EnvironmentValues, value => value.StartsWith("KEEPER_DEVICE_ID=", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("short")]
+    [InlineData("kek_with space 0123456789")]
+    [InlineData("kek_0123456789012345678\n")]
+    public void InvalidEnrollmentKeyIsRejectedBeforeChanges(string key)
+    {
+        machine.Config = machine.Config with { TenantId = Guid.Empty, DeviceId = Guid.Empty, EnrollmentKey = key };
+        Assert.Throws<ArgumentException>(() => App.Run(Options, []));
+        Assert.Empty(machine.Mutations);
+    }
+
+    [Fact]
+    public void EnrollmentKeyCannotBeCombinedWithDeviceIdentity()
+    {
+        machine.Config = machine.Config with { EnrollmentKey = "kek_company-secret-0123456789" };
+        Assert.Throws<ArgumentException>(() => App.Run(Options, []));
+        Assert.Empty(machine.Mutations);
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData(" ")]
     [InlineData("ticket\0KEEPER_ENABLE_HKLM=1")]

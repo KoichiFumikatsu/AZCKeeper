@@ -108,11 +108,13 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
             if (rescue is not null) Step("RESCATE: instalar recovery\\Keeper-Recovery.ps1 + tarea horaria SYSTEM", () => rescue.Install(options.PayloadDirectory));
             var definition = new ServiceDefinition(ServiceName, Path.Combine(bin, "Keeper.Agent.exe"));
             Step(definition.Describe(exists), () => services.Configure(definition, exists));
-            string[] environment = [$"KEEPER_DATA_DIR={data}", $"KEEPER_API_BASE={config!.ApiBase}",
-                $"KEEPER_DEVICE_ID={config.DeviceId}", $"KEEPER_ENABLE_HKLM={(config.EnableHklm ? "1" : "0")}"];
+            string[] environment = [$"KEEPER_DATA_DIR={data}", $"KEEPER_API_BASE={config!.ApiBase}", $"KEEPER_ENABLE_HKLM={(config.EnableHklm ? "1" : "0")}"];
+            if (config.DeviceId != Guid.Empty) environment = [.. environment, $"KEEPER_DEVICE_ID={config.DeviceId}"];
             if (config.EnrollmentTicket is not null) environment = [.. environment, $"KEEPER_ENROLLMENT_TICKET={config.EnrollmentTicket}"];
-            var loggedEnvironment = environment.Select(value => value.StartsWith("KEEPER_ENROLLMENT_TICKET=", StringComparison.Ordinal)
-                ? "KEEPER_ENROLLMENT_TICKET=[REDACTED]" : value);
+            if (config.EnrollmentKey is not null) environment = [.. environment, $"KEEPER_ENROLLMENT_KEY={config.EnrollmentKey}"];
+            var loggedEnvironment = environment.Select(value =>
+                value.StartsWith("KEEPER_ENROLLMENT_TICKET=", StringComparison.Ordinal) ? "KEEPER_ENROLLMENT_TICKET=[REDACTED]"
+                : value.StartsWith("KEEPER_ENROLLMENT_KEY=", StringComparison.Ordinal) ? "KEEPER_ENROLLMENT_KEY=[REDACTED]" : value);
             Step($"REG SET HKLM64\\{WindowsConstants.ServiceKey(ServiceName)} Environment REG_MULTI_SZ\n  {string.Join("\n  ", loggedEnvironment)}",
                 () => registry.SetEnvironment(ServiceName, environment));
             // Una reinstalación/actualización no debe heredar el "due" de backoff de la instancia

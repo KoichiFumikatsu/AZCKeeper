@@ -76,6 +76,11 @@ final class Auth
             $token = $this->issue($c);
             $action = $ticket ? ($i['device_id'] === null ? 'device.enrolled' : 'device.key_recovered') : 'device.login';
             (new Audit($this->db))->record($c, $r, $action, 'device', $device, ['session']);
+            // Alta por solicitud (clave de alta de la empresa): marca la solicitud y el esperado, guarda la placa y
+            // encola el renombre del equipo. Un ticket emitido desde el panel no tiene solicitud y no hace nada.
+            if ($ticket && ($request = DeviceIntake::onEnrolled($this->db, $tenant, $i['id'], $device)) !== null) {
+                (new Audit($this->db))->record($c, $r, 'enrollment_request.enrolled', 'enrollment_request', $request, ['device_id', 'asset_code']);
+            }
             return $token;
         });
     }

@@ -134,6 +134,8 @@ final class AdminApi
             'listTiers','getTier','createTier','patchTier'=>$this->tiers($op,$id,$b),
             'getSubscription','setSubscription'=>$this->subscription($op,$id,$b),
             'listReleases','registerRelease','deployRelease'=>$this->releases($op,$b),
+            'listExpectedDevices','createExpectedDevice','importExpectedDevices','cancelExpectedDevice','listEnrollmentRequests','approveEnrollmentRequest','rejectEnrollmentRequest',
+            'getEnrollmentSettings','putEnrollmentSettings','listEnrollmentKeys','createEnrollmentKey','revokeEnrollmentKey'=>(new DeviceIntake($this->db))->admin($op,$id,$b,$this->access,$this->c,$this->r),
             'getProductivity'=>$this->report(), 'listAudit'=>$this->auditPage(),
             default=>throw new ApiError(404,'resource_not_found')
         };
@@ -340,7 +342,7 @@ final class AdminApi
     private function deviceDto(array $r): array
     {
         $out=[]; foreach (['id','tenant_id','user_id'] as $k) { $out[$k]=Util::id($r[$k]); }
-        foreach (['hostname','status','agent_version','os_edition','cpu','encryption_state'] as $k) { $out[$k]=$r[$k]; }
+        foreach (['hostname','asset_code','status','agent_version','os_edition','cpu','encryption_state'] as $k) { $out[$k]=$r[$k]; }
         $out+=['last_seen_at'=>$r['last_seen_at']===null?null:Util::time($r['last_seen_at']),'ram_bytes'=>(int)$r['ram_bytes'],'capabilities'=>json_decode($r['capabilities']),'policy_version'=>$r['policy_version']===null?null:(int)$r['policy_version'],'version'=>(int)$r['version']]; return $out;
     }
     private function revokeDevice(string $id): void
@@ -382,10 +384,7 @@ final class AdminApi
                 if (version_compare($d['agent_version'],'4.0.8','<')) { throw new ApiError(409,'agent_too_old'); }
                 $parameters=Util::json(['computer_name'=>$name,'restart_now'=>(bool)($b->parameters->restart_now??false)]);
             } elseif (isset($b->parameters)) { throw new ApiError(422,'validation_failed'); }
-            $seq=(int)$this->db->one('SELECT COALESCE(MAX(sequence),0)+1 n FROM device_command WHERE tenant_id=? AND device_id=?',[$this->tenant,$id])['n']; $cid=Util::bin(Util::uuid());
-            $seq=max($seq,(int)$d['command_sequence']+1);
-            $this->db->run('UPDATE devices SET command_sequence=? WHERE tenant_id=? AND id=?',[$seq,$this->tenant,$id]);
-            $this->db->run('INSERT INTO device_command (tenant_id,id,device_id,sequence,type,reason,parameters,created_at,expires_at) VALUES (?,?,?,?,?,?,?,UTC_TIMESTAMP(6),?)',[$this->tenant,$cid,$id,$seq,$b->type,$b->reason,$parameters,$expires]);
+            $cid=DeviceIntake::enqueueCommand($this->db,$this->tenant,$d,$b->type,$b->reason,$parameters,$expires);
             $this->audit('device_command',$cid,['type','device_id','expires_at']); return self::response($this->commandDto($this->row('device_command',$cid)),202);
         }
         $this->match($d);
