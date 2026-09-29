@@ -106,6 +106,15 @@ Todo commiteado en `feature/keeper-v4` (commits: `abf6859`, `e27831e`, `cb818ae`
 
 ## 6. FALTA (pendientes priorizados)
 
+### 2026-09-29 (noche, 2) — renombrar equipo + serie del fabricante (4.0.8, seq 9, firmada y subida; FALTA registrar)
+- 4.0.7 aplicada en el piloto (20:33Z) y sigue sincronizando. `recovery.json` PUBLICADO = release 4.0.7.
+- `e97fc53`: comando `rename_computer` (panel: ficha > "Cambiar nombre del equipo"; ACT_0015 -> ACT-0015 porque el
+  guion bajo no es valido en DNS; permiso equipos.editar; solo agentes >= 4.0.8). Migracion 0022 APLICADA en devkeep.
+  Serie del fabricante por SMBIOS en el inventario (llave para cruzar con la placa `code` del Portal AZC; el portal
+  tiene `inventory` con `code` y `serial` pero NO expone API de inventario todavia).
+- FIX: comandos creados en el mismo segundo que el sync se entregaban un sync tarde.
+- Pendiente: endpoint de inventario en el Portal AZC + cruce por serie en Keeper (nombre sugerido = placa).
+
 ### 2026-09-29 (noche) — resiliencia del auto-update (4.0.7, seq 8, firmada y subida; FALTA registrar)
 - 4.0.6 VALIDADA: inventario real en la ficha (piloto = Windows 11 **Pro**, i5-8350U, 8 GB; FumiWork = Home).
 - `b5d240a`: (1) AppLocker nunca bloquea a Keeper (excepcion Exe+Script para ProgramData\AZCKeeper; se rechaza
