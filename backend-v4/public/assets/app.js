@@ -63,8 +63,20 @@ let timezone = 'UTC';
 let busy = false;
 let cache = new Map();
 let permissions = new Map();
+// Nombres de las personas para las listas que solo traen user_id. Sin permiso para ver personas se muestra el ID.
+let userNames = new Map();
+async function loadUserNames() {
+  userNames = new Map();
+  try { (await allPages('/users')).forEach(u => userNames.set(u.id, u.display_name)); }
+  catch (error) { if (![401, 403].includes(error.status)) throw error; }
+}
+function personLink(id) {
+  const name = userNames.get(id);
+  if (!name) return id;
+  const a = node('a', name); a.href = `/miembro.php?id=${encodeURIComponent(id)}`; return a;
+}
 const resources = {
-  devices: { title: 'Equipos', path: () => `/tenants/${tenant}/devices`, columns: [['Equipo', r => { const a = node('a', r.hostname); a.href = `/equipo.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Estado', r => label(r.status)], ['Usuario', 'user_id'], ['Sistema operativo', 'os_edition'], ['Agente', 'agent_version'], ['Última conexión', r => dateTime(r.last_seen_at)]], empty: 'Aún no hay equipos enrolados en tu alcance.' },
+  devices: { title: 'Equipos', path: () => `/tenants/${tenant}/devices`, prepare: loadUserNames, columns: [['Equipo', r => { const a = node('a', r.hostname); a.href = `/equipo.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Estado', r => label(r.status)], ['Persona', r => personLink(r.user_id)], ['Sistema operativo', 'os_edition'], ['Agente', 'agent_version'], ['Última conexión', r => dateTime(r.last_seen_at)]], empty: 'Aún no hay equipos enrolados en tu alcance.' },
   users: { title: 'Usuarios', path: () => '/users', columns: [['Nombre', r => { const a = node('a', r.display_name); a.href = `/miembro.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Correo', 'email'], ['Estado', r => label(r.status)], ['Acceso al portal', r => r.panel_login_enabled ? 'Habilitado' : 'Sin acceso'], ['Roles asignados', r => r.role_ids.length]], empty: 'Aún no hay usuarios en tu alcance.' },
   policies: { title: 'Reglas', path: () => '/policies', columns: [['Política', 'name'], ['Destino', r => label(r.target_type)], ['ID del destino', 'target_id'], ['Estado', r => r.enabled ? 'Habilitada' : 'Inactiva'], ['Reglas', r => r.rules.length], ['Versión', 'version']], empty: 'Aún no hay políticas configuradas en esta empresa.' },
   tenants: { title: 'Tenants', path: () => '/tenants', columns: [['Empresa', 'name'], ['ID', 'id'], ['Estado', r => label(r.status)], ['Zona horaria', 'timezone'], ['Autogestión de roles', r => r.rbac_self_management ? 'Habilitada' : 'Inactiva']], empty: 'No hay tenants accesibles.' },
@@ -213,6 +225,7 @@ async function listing(key) {
   panel.append(more);
   let cursor = null; let count = 0; const seen = new Set();
   const path = resource.path(); const context = tenant;
+  if (resource.prepare) await resource.prepare();
   async function loadMore() {
     more.disabled = true;
     showError(problem, null);

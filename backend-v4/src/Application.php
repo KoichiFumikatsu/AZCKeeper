@@ -134,7 +134,10 @@ final class Application
                 $json = Util::json($response);
                 if (strlen($json) > 262144 && $response['policy'] !== null) { $response['policy'] = null; $json = Util::json($response); }
                 $db->run('UPDATE device_sync_state SET last_sequence=GREATEST(last_sequence,?),updated_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND device_id=? AND enrollment_id=?', [$b->sequence, $c['tenant_id'], $c['device_id'], $c['enrollment_id']]);
-                $db->run('UPDATE devices SET last_seen_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?', [$c['tenant_id'], $c['device_id']]);
+                // policy_version del request = la que el agente tiene APLICADA. Se guarda solo si existe en el servidor
+                // (1..version compilada) y sin tocar devices.version, que es el ETag de edicion del panel.
+                $applied = isset($b->policy_version) && $b->policy_version > 0 && $b->policy_version <= $version ? (int) $b->policy_version : null;
+                $db->run('UPDATE devices SET last_seen_at=UTC_TIMESTAMP(6),policy_version=COALESCE(?,policy_version) WHERE tenant_id=? AND id=?', [$applied, $c['tenant_id'], $c['device_id']]);
                 return ['status' => 200, 'json' => $json, 'headers' => []];
         }
         throw new ApiError(404, 'resource_not_found');

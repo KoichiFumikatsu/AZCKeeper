@@ -140,8 +140,11 @@ try {
     $sync['sequence'] = 2; $sync['policy_version'] = 1;
     expect(request('POST', '/client/sync', $sync, $key, $bearer, $idem), 409, 'idempotency body conflict');
     $s = expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'unchanged policy sync'); check($s['policy'] === null, 'policy omitted');
+    $appliedVersion = fn () => $db->one('SELECT policy_version FROM devices WHERE tenant_id=? AND id=?', [$tenant, $device])['policy_version'];
+    check((int) $appliedVersion() === 1, 'applied policy version recorded on the device');
     $sync['policy_version'] = 2;
     $s = expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'client ahead'); check($s['policy'] === null, 'no policy downgrade');
+    check((int) $appliedVersion() === 1, 'version beyond the compiled one is not recorded');
     $sync['policy_version'] = 1;
     expect(request('POST', '/client/sync', $sync, $key, $bearer), 422, 'idempotency mandatory');
     expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid(), null, [], false), 401, 'bearer alone rejected');
