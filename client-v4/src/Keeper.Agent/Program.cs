@@ -57,7 +57,8 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         var deviceId = Guid.TryParse(Environment.GetEnvironmentVariable("KEEPER_DEVICE_ID"), out var configuredId) ? configuredId : Guid.Empty;
         var deviceLock = new DeviceLock(Path.Combine(dataDirectory, "device-lock.json"), PinVerifier.LoadProtected(Path.Combine(dataDirectory, "pin-verifier.dpapi")));
         var commands = new CommandExecutor(Path.Combine(dataDirectory, "commands.json"), deviceId, deviceLock,
-            new WindowsDeviceActions(!registry.IsDryRun));
+            new WindowsDeviceActions(!registry.IsDryRun),
+            OperatingSystem.IsWindows() ? new WindowsComputerNamer(!registry.IsDryRun) : null);
         using var trust = InstalledTrust.Load(AppContext.BaseDirectory);
         using var updateHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         var updater = new UpdateManager(Path.Combine(dataDirectory, "staging"), trust.ReleaseKeys, trust.InstalledSequence, trust.Channel,

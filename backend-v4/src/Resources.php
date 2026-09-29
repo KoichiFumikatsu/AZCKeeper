@@ -42,7 +42,9 @@ final class Resources
     }
     public function commands(int $limit = 20, ?string $cursor = null): array
     {
-        $page = $cursor !== null ? $this->decodeCursor($cursor) : ['at' => '', 'id' => null, 'snapshot' => Util::sqlTime(Util::now()), 'exp' => time() + 900];
+        // Corte con microsegundos de la BD: con Util::now() (segundos) un comando creado en el mismo segundo que el sync
+        // quedaba fuera (created_at tiene microsegundos) y se entregaba un sync despues (~2 min).
+        $page = $cursor !== null ? $this->decodeCursor($cursor) : ['at' => '', 'id' => null, 'snapshot' => $this->db->one('SELECT UTC_TIMESTAMP(6) t')['t'], 'exp' => time() + 900];
         if (isset($page['limit']) && $page['limit'] !== $limit) { throw new ApiError(422, 'validation_failed'); }
         $args = [$this->c['tenant_id'], $this->c['device_id'], $page['snapshot']];
         $condition = '';
@@ -53,7 +55,9 @@ final class Resources
         if ($more) { array_pop($rows); }
         $next = null;
         if ($more) { $last = end($rows); $next = $this->encodeCursor(['at' => $last['created_at'], 'id' => Util::id($last['id']), 'snapshot' => $page['snapshot'], 'exp' => $page['exp'], 'limit' => $limit]); }
-        $data = array_map(static fn (array $row): array => ['id' => Util::id($row['id']), 'tenant_id' => Util::id($row['tenant_id']), 'device_id' => Util::id($row['device_id']), 'type' => $row['type'], 'status' => $row['status'], 'created_at' => Util::time($row['created_at']), 'expires_at' => Util::time($row['expires_at']), 'result' => null], $rows);
+        // 'parameters' solo cuando existe: un agente < 4.0.8 no conoce el campo y rechazaria el sync entero.
+        $data = array_map(static fn (array $row): array => ['id' => Util::id($row['id']), 'tenant_id' => Util::id($row['tenant_id']), 'device_id' => Util::id($row['device_id']), 'type' => $row['type'], 'status' => $row['status'], 'created_at' => Util::time($row['created_at']), 'expires_at' => Util::time($row['expires_at']), 'result' => null]
+            + (($row['parameters'] ?? null) !== null ? ['parameters' => json_decode($row['parameters'])] : []), $rows);
         return ['data' => $data, 'next_cursor' => $next, 'generated_at' => Util::now(), 'data_through' => Util::time($page['snapshot'])];
     }
     public function release(?string $id = null): ?array

@@ -71,7 +71,7 @@ public sealed class Inventory(Func<DeviceInventory, CancellationToken, Task>? pu
         {
             OsEdition = InventoryFormat.Edition(version), OsBuild = InventoryFormat.Build(version),
             Cpu = InventoryFormat.Cpu(cpu?.GetValue("ProcessorNameString") as string, Environment.ProcessorCount),
-            RamBytes = checked((long)memoryBytes), DiskBytes = disk,
+            RamBytes = checked((long)memoryBytes), DiskBytes = disk, SerialNumber = Smbios.ReadSystemSerial(),
             Architecture = RuntimeInformation.OSArchitecture == Architecture.Arm64 ? DeviceInventoryArchitecture.Arm64 : DeviceInventoryArchitecture.X64
         };
     }

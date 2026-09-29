@@ -10129,6 +10129,10 @@ components:
           type: integer
           format: int64
           minimum: 0
+        serial_number:
+          type: string
+          maxLength: 120
+          description: Serie del fabricante (SMBIOS tipo 1); cruza el equipo con la placa de activo del Portal AZC.
         architecture:
           type: string
           enum:
@@ -10137,6 +10141,22 @@ components:
       description: >-
         Inventario declarado por el agente. Se envia en el primer sync de cada arranque y cuando cambia; el
         servidor actualiza el equipo sin tocar su version de edicion.
+    CommandParameters:
+      type: object
+      additionalProperties: false
+      properties:
+        computer_name:
+          type: string
+          pattern: ^(?![0-9]+$)[A-Za-z0-9-]{1,15}$
+          description: >-
+            rename_computer. Nombre NetBIOS/DNS valido (1-15, letras, numeros y guion, no solo numeros). Una placa
+            de activo como ACT_0015 se convierte a ACT-0015 (el guion bajo no es valido en DNS).
+        restart_now:
+          type: boolean
+          description: rename_computer. Si es false, el nombre se aplica en el proximo reinicio del equipo.
+      description: >-
+        Parametros de comandos que los necesitan. El servidor solo lo incluye cuando existen (los agentes
+        anteriores a 4.0.8 rechazan campos desconocidos).
     CommandInput:
       type: object
       additionalProperties: false
@@ -10154,6 +10174,9 @@ components:
           - shutdown
           - wipe
           - refresh_policy
+          - rename_computer
+        parameters:
+          $ref: '#/components/schemas/CommandParameters'
         reason:
           type: string
           maxLength: 500
@@ -10196,6 +10219,7 @@ components:
           - refresh_policy
           - harden
           - unharden
+          - rename_computer
         status:
           type: string
           enum:
@@ -10212,6 +10236,8 @@ components:
         expires_at:
           type: string
           format: date-time
+        parameters:
+          $ref: '#/components/schemas/CommandParameters'
         result:
           anyOf:
           - type: object

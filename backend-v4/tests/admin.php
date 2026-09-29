@@ -219,6 +219,21 @@ function adminTests(Database $db): void
     $sec=expect(adminRequest($admin,'GET',$secPath),200,'device security report');
     check($sec['event_id']===$newer['event_id'] && $sec['device_id']===$releaseAgent['device_id'] && count($sec['controls'])===2 && $sec['controls'][1]['state']==='failed' && $sec['controls'][1]['error_code']==='dry_run','latest security report by observed_at');
     expect(adminRequest($other,'GET',$secPath),404,'foreign device security hidden');
+    // Renombre del equipo: solo agentes >= 4.0.8, nombre DNS valido, parametros solo en rename_computer.
+    $cmdPath='/devices/'.$releaseAgent['device_id'].'/commands';
+    $renameBody=['type'=>'rename_computer','reason'=>'Placa de activo','expires_at'=>gmdate('Y-m-d\TH:i:s\Z',time()+3600),'parameters'=>['computer_name'=>'ACT-0015','restart_now'=>false]];
+    expect(adminRequest($admin,'POST',$cmdPath,$renameBody,['idempotency-key'=>Util::uuid()]),409,'rename refused for agents older than 4.0.8');
+    $db->run("UPDATE devices SET agent_version='4.0.8' WHERE tenant_id=? AND id=?",[$tenant,Util::bin($releaseAgent['device_id'])]);
+    expect(adminRequest($admin,'POST',$cmdPath,array_replace($renameBody,['parameters'=>['computer_name'=>'ACT_0015']]),['idempotency-key'=>Util::uuid()]),422,'underscore is not a valid DNS computer name');
+    expect(adminRequest($admin,'POST',$cmdPath,array_replace($renameBody,['parameters'=>['computer_name'=>'12345']]),['idempotency-key'=>Util::uuid()]),422,'all-digit computer name rejected');
+    expect(adminRequest($admin,'POST',$cmdPath,array_diff_key($renameBody,['parameters'=>1]),['idempotency-key'=>Util::uuid()]),422,'rename requires a computer name');
+    expect(adminRequest($admin,'POST',$cmdPath,array_replace($renameBody,['type'=>'lock']),['idempotency-key'=>Util::uuid()]),422,'parameters only allowed on rename');
+    $renamed=expect(adminRequest($admin,'POST',$cmdPath,$renameBody,['idempotency-key'=>Util::uuid()]),202,'rename queued');
+    expect(adminRequest($admin,'POST',$cmdPath,array_diff_key(array_replace($renameBody,['type'=>'lock']),['parameters'=>1]),['idempotency-key'=>Util::uuid()]),202,'lock queued');
+    $delivered=expect(request('POST','/client/sync',['protocol_version'=>1,'sequence'=>2,'policy_version'=>null,'release_id'=>null],$releaseAgentKey,$releaseAgent['access_token'],Util::uuid()),200,'commands delivered');
+    $byType=[]; foreach ($delivered['commands'] as $cmd) { $byType[$cmd['type']]=$cmd; }
+    check(($byType['rename_computer']['parameters']['computer_name']??null)==='ACT-0015' && ($byType['rename_computer']['parameters']['restart_now']??null)===false,'rename delivered with its parameters');
+    check(isset($byType['lock']) && !array_key_exists('parameters',$byType['lock']),'commands without parameters omit the key (older agents)');
     // Recompilacion acotada: un cambio de persona recompila SUS equipos (no el tenant entero) y, si habia
     // trabajo pendiente anterior, hace la compilacion total para no perderlo. Se usa $member (no vinculada al
     // admin de prueba: editar esa persona invalidaria la sesion del admin).

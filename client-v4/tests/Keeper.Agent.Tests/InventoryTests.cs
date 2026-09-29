@@ -37,7 +37,35 @@ public sealed class InventoryTests
         Assert.Matches(@"^\d{5}(\.\d+)?$", published.OsBuild ?? "");
         Assert.EndsWith("hilos)", published.Cpu);
         Assert.True(published.RamBytes > 1L << 30 && published.DiskBytes > 1L << 30);
-        Console.WriteLine($"INVENTARIO: {published.OsEdition} | {published.OsBuild} | {published.Cpu} | {published.RamBytes >> 20} MB | {published.DiskBytes >> 30} GB | {published.Architecture}");
+        Console.WriteLine($"INVENTARIO: {published.OsEdition} | {published.OsBuild} | {published.Cpu} | {published.RamBytes >> 20} MB | {published.DiskBytes >> 30} GB | {published.Architecture} | serie {published.SerialNumber ?? "(sin serie)"}");
+    }
+
+    // Tabla SMBIOS sintetica: tipo 0 (BIOS) y tipo 1 (System) con la serie en su cadena 4, y fin (127).
+    private static byte[] SmbiosTable(string serial)
+    {
+        var body = new List<byte>();
+        body.AddRange(new byte[] { 0, 4, 0, 0 }); body.AddRange(System.Text.Encoding.ASCII.GetBytes("Vendor\0\0"));
+        body.AddRange(new byte[] { 1, 8, 1, 0, 1, 2, 3, 4 });
+        body.AddRange(System.Text.Encoding.ASCII.GetBytes("LENOVO\0ThinkPad\0v1\0" + serial + "\0\0"));
+        body.AddRange(new byte[] { 127, 4, 2, 0, 0, 0 });
+        var raw = new List<byte> { 0, 3, 4, 0 }; raw.AddRange(BitConverter.GetBytes(body.Count)); raw.AddRange(body);
+        return raw.ToArray();
+    }
+
+    [Theory]
+    [InlineData("PF3ABC12", "PF3ABC12")]
+    [InlineData("  5CD1234XYZ ", "5CD1234XYZ")]
+    [InlineData("To be filled by O.E.M.", null)]
+    [InlineData("Default string", null)]
+    [InlineData("0000000", null)]
+    public void SerieDelFabricanteDesdeSmbios(string raw, string? expected) =>
+        Assert.Equal(expected, Smbios.SystemSerial(SmbiosTable(raw)));
+
+    [Fact]
+    public void TablaSmbiosCortaOCorruptaNoRevienta()
+    {
+        Assert.Null(Smbios.SystemSerial([]));
+        Assert.Null(Smbios.SystemSerial(new byte[] { 0, 3, 4, 0, 50, 0, 0, 0, 1, 2 }));
     }
 
     private static DeviceInventory Sample(string edition) => new()

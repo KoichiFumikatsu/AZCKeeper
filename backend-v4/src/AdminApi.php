@@ -14,7 +14,7 @@ final class AdminApi
         if (($r->operation['x-platform-only'] ?? false) && !$c['platform']) { throw new ApiError(403,'permission_denied'); }
         $permission=$r->operation['x-permission'];
         if ($r->operation['operationId']==='createDeviceCommand') {
-            $permission=match($r->body->type) { 'lock'=>'equipos.bloquear','unlock'=>'equipos.desbloquear','restart'=>'equipos.reiniciar','shutdown'=>'equipos.apagar','wipe'=>'equipos.borrar','refresh_policy'=>'reglas.aplicar',default=>throw new ApiError(422,'validation_failed') };
+            $permission=match($r->body->type) { 'lock'=>'equipos.bloquear','unlock'=>'equipos.desbloquear','restart'=>'equipos.reiniciar','shutdown'=>'equipos.apagar','wipe'=>'equipos.borrar','refresh_policy'=>'reglas.aplicar','rename_computer'=>'equipos.editar',default=>throw new ApiError(422,'validation_failed') };
         }
         $this->access=new AdminAccess($db,$c,$permission);
         if ($permission==='roles.gestionar') { $this->access->rolesGate(); }
@@ -373,10 +373,19 @@ final class AdminApi
             $expires=Util::sqlTime($b->expires_at); $delta=strtotime($b->expires_at)-time();
             if ($delta<=0 || $delta>86400 || trim($b->reason)==='') { throw new ApiError(422,'validation_failed'); }
             if ($b->type==='wipe') { $this->reauth(); if (($b->confirmation??'')!==$d['hostname']) { throw new ApiError(422,'validation_failed'); } }
+            // Parametros solo en rename_computer. Los agentes < 4.0.8 rechazan campos desconocidos en TODO el sync,
+            // asi que el renombre se niega a esos agentes en vez de dejarlos sin poder sincronizar.
+            $parameters=null;
+            if ($b->type==='rename_computer') {
+                $name=$b->parameters->computer_name??null;
+                if (!is_string($name) || !preg_match('/^(?![0-9]+$)[A-Za-z0-9-]{1,15}$/',$name)) { throw new ApiError(422,'validation_failed'); }
+                if (version_compare($d['agent_version'],'4.0.8','<')) { throw new ApiError(409,'agent_too_old'); }
+                $parameters=Util::json(['computer_name'=>$name,'restart_now'=>(bool)($b->parameters->restart_now??false)]);
+            } elseif (isset($b->parameters)) { throw new ApiError(422,'validation_failed'); }
             $seq=(int)$this->db->one('SELECT COALESCE(MAX(sequence),0)+1 n FROM device_command WHERE tenant_id=? AND device_id=?',[$this->tenant,$id])['n']; $cid=Util::bin(Util::uuid());
             $seq=max($seq,(int)$d['command_sequence']+1);
             $this->db->run('UPDATE devices SET command_sequence=? WHERE tenant_id=? AND id=?',[$seq,$this->tenant,$id]);
-            $this->db->run('INSERT INTO device_command (tenant_id,id,device_id,sequence,type,reason,created_at,expires_at) VALUES (?,?,?,?,?,?,UTC_TIMESTAMP(6),?)',[$this->tenant,$cid,$id,$seq,$b->type,$b->reason,$expires]);
+            $this->db->run('INSERT INTO device_command (tenant_id,id,device_id,sequence,type,reason,parameters,created_at,expires_at) VALUES (?,?,?,?,?,?,?,UTC_TIMESTAMP(6),?)',[$this->tenant,$cid,$id,$seq,$b->type,$b->reason,$parameters,$expires]);
             $this->audit('device_command',$cid,['type','device_id','expires_at']); return self::response($this->commandDto($this->row('device_command',$cid)),202);
         }
         $this->match($d);

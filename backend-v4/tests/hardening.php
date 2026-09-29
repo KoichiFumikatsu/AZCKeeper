@@ -144,7 +144,12 @@ function hardeningTests(Database $db): void
     expect(adminRequest($admin, 'PUT', $path, array_replace($input, ['shared_password' => $rotated])), 200, 'rotate shared password');
     check(expect(adminRequest($admin, 'POST', $path . '/reveal'), 200, 'reveal rotated password')['shared_password'] === $rotated, 'rotation applied');
     require_once dirname(__DIR__) . '/migrations/run.php';
-    foreach (statements(file_get_contents(dirname(__DIR__) . '/migrations/0020_hardening.sql')) as $sql) { $db->run($sql); }
+    // La redefinicion del ENUM de device_command en 0020 quedo superada por 0022 (rename_computer): repetirla ahora
+    // reduciria el ENUM con filas rename_computer ya existentes. El ejecutor real nunca repite una migracion aplicada.
+    foreach (statements(file_get_contents(dirname(__DIR__) . '/migrations/0020_hardening.sql')) as $sql) {
+        if (stripos($sql, 'ALTER TABLE device_command MODIFY') !== false) { continue; }
+        $db->run($sql);
+    }
     check(expect(adminRequest($admin, 'POST', $path . '/reveal'), 200, 'reveal after migration replay')['shared_password'] === $rotated, 'migration replay preserves settings');
     try {
         $db->run('INSERT INTO device_hardening_status (tenant_id,device_id) VALUES (?,?)', [$b['tenant_id'], $device]);

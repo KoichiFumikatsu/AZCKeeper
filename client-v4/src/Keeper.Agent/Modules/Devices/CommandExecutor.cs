@@ -11,6 +11,29 @@ using Keeper.Shared.Protocol;
 namespace Keeper.Agent.Modules.Devices;
 
 public enum DeviceAction { Shutdown, Restart, Logoff, Wipe }
+
+// Cambio del nombre de Windows (comando rename_computer). Nombre NetBIOS/DNS: 1-15, letras, numeros y guion, no solo
+// numeros. El guion bajo de las placas (ACT_0015) no es valido en DNS: el panel lo convierte a ACT-0015.
+public interface IComputerNamer { void Rename(string name); }
+public static class ComputerName
+{
+    private static readonly System.Text.RegularExpressions.Regex Valid = new("^(?![0-9]+$)[A-Za-z0-9-]{1,15}$");
+    public static bool IsValid(string? name) => name is not null && Valid.IsMatch(name);
+}
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
+public sealed class WindowsComputerNamer(bool enabled) : IComputerNamer
+{
+    // Se aplica en el proximo arranque (Windows guarda el nombre pendiente). Requiere SYSTEM/administrador.
+    public void Rename(string name)
+    {
+        if (!enabled) throw new NotSupportedException("device_actions_dry_run");
+        if (!SetComputerNameExW(5 /* ComputerNamePhysicalDnsHostname */, name)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetComputerNameExW(int nameType, string lpBuffer);
+}
+
+public sealed class CommandRejectedException(string code) : Exception(code) { public string Code { get; } = code; }
 public interface IDeviceActions { Task ExecuteAsync(DeviceAction action, CancellationToken ct); }
 public sealed class WindowsDeviceActions(bool enabled) : IDeviceActions
 {
@@ -86,7 +109,8 @@ public sealed class WindowsDeviceActions(bool enabled) : IDeviceActions
 }
 
 public sealed record InboxEntry(Command Command, CommandResult? Result, bool Started, bool Published = false);
-public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock deviceLock, IDeviceActions actions) : ModuleBase
+public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock deviceLock, IDeviceActions actions,
+    IComputerNamer? namer = null) : ModuleBase
 {
     public override string Name => "CommandExecutor";
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -155,10 +179,12 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
                         case CommandType.Restart: await actions.ExecuteAsync(DeviceAction.Restart, ct); break;
                         case CommandType.Shutdown: await actions.ExecuteAsync(DeviceAction.Shutdown, ct); break;
                         case CommandType.Wipe: await actions.ExecuteAsync(DeviceAction.Wipe, ct); break;
+                        case CommandType.RenameComputer: code = await RenameAsync(command, ct); break;
                         default: throw new NotSupportedException("unsupported_command");
                     }
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (CommandRejectedException ex) { status = CommandResultStatus.Failed; code = ex.Code; }
                 catch (Exception ex) { status = CommandResultStatus.Failed; code = ex.GetType().Name; }
                 var result = new CommandResult { EventId = Guid.NewGuid(), At = Context.Clock.GetUtcNow(), Status = status, Code = code };
                 _entries[index] = _entries[index] with { Result = result };
@@ -173,6 +199,18 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
             await SaveAsync(ct);
         }
         finally { _gate.Release(); }
+    }
+    private async Task<string> RenameAsync(Command command, CancellationToken ct)
+    {
+        var name = command.Parameters?.ComputerName;
+        // El servidor ya valida; se revalida aqui porque el comando termina en una llamada al SO como SYSTEM.
+        if (!ComputerName.IsValid(name)) throw new CommandRejectedException("invalid_computer_name");
+        if (namer is null) throw new CommandRejectedException("device_actions_dry_run");
+        try { namer.Rename(name!); }
+        catch (NotSupportedException ex) { throw new CommandRejectedException(ex.Message); }
+        if (command.Parameters?.RestartNow != true) return "pending_restart";
+        await actions.ExecuteAsync(DeviceAction.Restart, ct);
+        return "completed";
     }
     private void PurgeCompleted() => _entries.RemoveAll(e => e.Published && e.Result is not null && e.Command.ExpiresAt <= Context.Clock.GetUtcNow());
     private SyncRequestCommandResultsItem Reject(Command command, string code) => new()

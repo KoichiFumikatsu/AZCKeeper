@@ -318,6 +318,7 @@ async function device() {
     ['Cifrado de disco', d.encryption_state], ['Versión de política aplicada', d.policy_version]]);
   const owner = node('p'); const ownerLink = node('a', 'Ver la persona asignada'); ownerLink.href = `/miembro.php?id=${encodeURIComponent(d.user_id)}`; owner.append(ownerLink); summary.append(owner);
   $('content').append(summary);
+  $('content').append(renameSection(d));
 
   // Estado declarado por el agente en su último reporte; no es una verificación independiente.
   const controls = node('section', undefined, 'work-surface'); controls.append(node('h2', 'Controles del equipo'));
@@ -348,6 +349,41 @@ async function device() {
     else appendError(logs, error);
   }
   $('content').append(logs);
+}
+// Cambio del nombre de Windows del equipo (comando rename_computer). La placa de activo ACT_0015 se convierte a
+// ACT-0015: el guion bajo no es valido en nombres DNS. El agente lo aplica en el proximo reinicio o al reiniciar ahora.
+const computerNamePattern = /^(?![0-9]+$)[A-Za-z0-9-]{1,15}$/;
+function renameSection(d) {
+  const section = node('section', undefined, 'work-surface'); section.append(node('h2', 'Cambiar nombre del equipo'));
+  section.append(node('p', `Nombre actual en Windows: ${d.hostname}. Usa la placa de activo (por ejemplo ACT-0015). Máximo 15 caracteres: letras, números y guion.`, 'help'));
+  const form = node('form'); form.className = 'toolbar'; form.noValidate = true;
+  const label = node('label', 'Nombre nuevo'); const input = node('input'); input.name = 'computer_name'; input.maxLength = 15; input.autocomplete = 'off'; input.placeholder = 'ACT-0015'; label.append(input);
+  const restartLabel = node('label'); const restart = node('input'); restart.type = 'checkbox'; restart.name = 'restart_now'; restartLabel.append(restart, ' Reiniciar el equipo ahora (si no, se aplica en el próximo reinicio)');
+  const submit = node('button', 'Cambiar nombre'); submit.type = 'submit'; submit.className = 'primary';
+  const status = node('p', undefined, 'help'); status.setAttribute('role', 'status');
+  const problem = node('p', undefined, 'error-message'); problem.hidden = true; problem.setAttribute('role', 'alert');
+  input.addEventListener('input', () => { input.value = input.value.toUpperCase().replace(/_/g, '-').replace(/\s+/g, ''); });
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); showError(problem, null); status.textContent = '';
+    const name = input.value.trim();
+    if (!computerNamePattern.test(name)) { showError(problem, new Error('Nombre no válido: de 1 a 15 caracteres, solo letras, números y guion, y no solo números.')); return; }
+    if (restart.checked && !confirm(`El equipo ${d.hostname} se reiniciará de inmediato y pasará a llamarse ${name}. ¿Continuar?`)) return;
+    submit.disabled = true;
+    try {
+      await api('POST', `/devices/${d.id}/commands`, {
+        body: { type: 'rename_computer', reason: 'Cambio de nombre desde el panel', expires_at: new Date(Date.now() + 23 * 3600 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'), parameters: { computer_name: name, restart_now: restart.checked } },
+        idempotencyKey: crypto.randomUUID(),
+      });
+      status.textContent = restart.checked
+        ? `Orden enviada. El equipo la recibe en su próxima sincronización (unos 2 minutos), se renombra a ${name} y se reinicia.`
+        : `Orden enviada. El equipo la recibe en su próxima sincronización y pasará a llamarse ${name} en su próximo reinicio.`;
+      input.value = '';
+    } catch (error) {
+      showError(problem, error.code === 'agent_too_old' ? new Error('El agente de este equipo es anterior a 4.0.8: actualízalo antes de cambiarle el nombre.') : error);
+    } finally { submit.disabled = false; }
+  });
+  form.append(label, restartLabel, submit); section.append(form, status, problem);
+  return section;
 }
 async function reports() {
   const data = await get(reportPath());
