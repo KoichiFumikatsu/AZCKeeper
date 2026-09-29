@@ -106,6 +106,18 @@ Todo commiteado en `feature/keeper-v4` (commits: `abf6859`, `e27831e`, `cb818ae`
 
 ## 6. FALTA (pendientes priorizados)
 
+### 2026-09-29 (noche, 3) — alta de equipos a escala (backend desplegado; agente sin release)
+Diseño y uso: `docs/architecture/v4-alta-equipos.md`. Commits `b2a84cb`, `fbe5193`, `230c841` (+ reorden de la 0023).
+- Backend: migración `0023_device_intake.sql` (equipos esperados, claves de alta, solicitudes, configuración,
+  `devices.asset_code`, scope `expected-devices:write`); `src/DeviceIntake.php`; rutas `/enrollments/*`,
+  `POST /client/enrollment-requests` y `POST /ext/v1/expected-devices:import`. Suite MySQL: 1412 aserciones.
+- Panel: `alta.php` (Alta de equipos): cola de solicitudes, esperados manual/CSV, clave de alta y reglas.
+- Agente: `KEEPER_ENROLLMENT_KEY` sin `device_id` → pide alta, reintenta, login por ticket, `device-id.txt`.
+  Autoidentificación: `ask_document` → Keeper.Session en modo identificación pide la cédula.
+- Bootstrapper: `installation.json` acepta `enrollment_key` (paquete genérico), redactado en logs.
+- FALTA: release del agente con esto (4.0.9) y prueba real: equipo nuevo con paquete genérico, cruce por serie,
+  cola, aprobación, placa + renombre. Hasta entonces los agentes desplegados no usan estas rutas.
+
 ### 2026-09-29 (noche, 2) — renombrar equipo + serie del fabricante (4.0.8, seq 9, firmada y subida; FALTA registrar)
 - 4.0.7 aplicada en el piloto (20:33Z) y sigue sincronizando. `recovery.json` PUBLICADO = release 4.0.7.
 - `e97fc53`: comando `rename_computer` (panel: ficha > "Cambiar nombre del equipo"; ACT_0015 -> ACT-0015 porque el

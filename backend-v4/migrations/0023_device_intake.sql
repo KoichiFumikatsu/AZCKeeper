@@ -1,8 +1,6 @@
 -- Alta de equipos a escala (docs/architecture/v4-alta-equipos.md).
 -- Registro PROPIO de equipos esperados: el cruce automatico nunca depende de un sistema externo.
 
-ALTER TABLE devices ADD COLUMN asset_code VARCHAR(40) NULL AFTER hostname;
-
 CREATE TABLE IF NOT EXISTS expected_devices (
   tenant_id BINARY(16) NOT NULL,
   id BINARY(16) NOT NULL,
@@ -90,3 +88,6 @@ CREATE TABLE IF NOT EXISTS enrollment_requests (
   FOREIGN KEY (tenant_id, suggested_user_id) REFERENCES users (tenant_id, id),
   CHECK (status NOT IN ('approved','enrolled') OR user_id IS NOT NULL)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Al final: es la unica sentencia no idempotente; si algo anterior falla, reintentar el archivo es seguro.
+ALTER TABLE devices ADD COLUMN asset_code VARCHAR(40) NULL AFTER hostname;

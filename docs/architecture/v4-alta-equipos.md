@@ -9,11 +9,11 @@ llenarlo.
 
 | # | Pieza | Estado |
 |---|---|---|
-| 1 | Registro de **equipos esperados** (persona + placa + serie) con alta manual y carga masiva CSV | a construir |
-| 2 | **Alta genérica**: paquete igual para todos con clave de alta de la empresa; el equipo pide alta con su serie; si coincide con un esperado se aprueba solo; si no, queda **pendiente para IT** | a construir |
-| 3 | Panel: equipos esperados, carga CSV, cola de solicitudes (aprobar eligiendo persona / rechazar), clave de alta | a construir |
-| 4 | API de escritura para sistemas externos (`/ext/v1`) sobre equipos esperados | a construir |
-| 5 | **Autoidentificación** opcional por empresa: Keeper.Session pide la cédula al primer usuario; queda como sugerencia o se confirma sola según la empresa | a construir |
+| 1 | Registro de **equipos esperados** (persona + placa + serie) con alta manual y carga masiva CSV | hecho (`expected_devices`, panel `alta.php`) |
+| 2 | **Alta genérica**: paquete igual para todos con clave de alta de la empresa; el equipo pide alta con su serie; si coincide con un esperado se aprueba solo; si no, queda **pendiente para IT** | hecho (`POST /client/enrollment-requests`, agente `IntakeEnrollment`) |
+| 3 | Panel: equipos esperados, carga CSV, cola de solicitudes (aprobar eligiendo persona / rechazar), clave de alta | hecho (`public/alta.php` + `assets/intake.js`) |
+| 4 | API de escritura para sistemas externos (`/ext/v1`) sobre equipos esperados | hecho (`POST /ext/v1/expected-devices:import`, scope `expected-devices:write`) |
+| 5 | **Autoidentificación** opcional por empresa: Keeper.Session pide la cédula al primer usuario; queda como sugerencia o se confirma sola según la empresa | hecho (`ask_document` + Keeper.Session modo identificación) |
 | 6 | Conectores que Keeper consulta (p. ej. Portal AZC) | opcional, después (requiere API de inventario en el portal) |
 
 ## Flujo
@@ -51,3 +51,25 @@ Un equipo siempre pertenece a una persona (`devices.user_id` es obligatorio); po
 ## Identidad de la persona
 
 Documento de identidad en `user_external_refs` con origen `document`. En AZC se acepta también `k3:cc` (importado de K3).
+
+## Uso (operación)
+
+1. Panel → **Alta de equipos** → *Clave de alta y reglas* → crear clave (pide la contraseña). Se muestra una vez.
+2. Paquete genérico: `installation.json` con solo `api_base` y `enrollment_key` (sin `tenant_id`, `device_id` ni
+   `enrollment_ticket`; el bootstrapper rechaza mezclarlos). La clave queda en el entorno del servicio
+   (`KEEPER_ENROLLMENT_KEY`) y el log del bootstrapper la muestra como `[REDACTED]`.
+3. Cargar los equipos esperados (manual, CSV `cedula;placa;serie`, o la API externa). Puede hacerse antes o
+   después de instalar: el agente reintenta cada 5 min y cada reintento vuelve a cruzar.
+4. El agente sin `device_id` solo pide alta (no aplica reglas ni captura) hasta que queda aprobado; al aprobarse
+   hace login por ticket, guarda `device-id.txt` en su carpeta de datos y arranca normal.
+5. Si la solicitud trae placa, al enrolar se guarda en `devices.asset_code` y se encola `rename_computer`
+   (ACT_0015 → ACT-0015) sin reinicio inmediato; se aplica en el próximo reinicio. Agentes < 4.0.8: solo placa.
+
+## Decisiones de implementación (2026-09-29)
+
+- Aprobación manual por cédula/correo de la persona (mismo formato que el CSV), no por selector de usuarios.
+- Un equipo con la misma serie que un equipo ya enrolado nunca se aprueba solo (`serial_already_enrolled`):
+  cubre reinstalación y suplantación. Si IT aprueba la reinstalación para la misma persona, el ticket recupera el
+  equipo existente (misma serie + misma persona) en vez de crear uno nuevo.
+- La solicitud va firmada con la clave del equipo; limitadores por equipo y por empresa, nunca por IP.
+- `ENROLLMENT_PENDING_MAX` (5000 por defecto) acota la cola; `ENROLLMENT_RETRY_SECONDS` (300) el reintento.
