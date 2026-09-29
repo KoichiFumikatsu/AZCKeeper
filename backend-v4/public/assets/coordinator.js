@@ -86,6 +86,8 @@ export async function coordinator(ctx) {
   const reportsDenied = [401, 403].includes(ctx.permissions.get('reports')?.status);
   const report = (kind, range, filters = {}) => get(query(`/reports/${kind}`, { ...range, ...filters }));
   const activity = (id, range) => get(query(`/users/${id}/activity`, range));
+  // Totales de todas las personas en UNA consulta: antes era una por persona (~240) y agotaba el limite de la API.
+  const people = async range => new Map(rows(await report('people', range)).map(r => [r.user_id, r]));
   async function optional(path, paginated = true) {
     try { return { data: await (paginated ? allPages(path) : get(path)) }; }
     catch (e) { return { error: e }; }
@@ -159,13 +161,11 @@ export async function coordinator(ctx) {
         if (!users.length) { empty(p, 'No hay personas en tu alcance.'); return; }
         const status = el('p', 'Preparando ranking…', 'help'); status.setAttribute('role', 'status'); p.append(status);
         p.hidden = false;
-        const ranked = []; let failures = 0, denied = 0;
-        await pool(users, async u => {
-          try { const a = await activity(u.id, week); rows(a); if (!a.totals) throw invalid(); ranked.push({ ...u, ...a.totals }); }
-          catch (e) { if (e.status === 403) denied++; else { failures++; if (failures === 1) error(p, e); } }
-          status.textContent = `${ranked.length + failures + denied} de ${users.length} personas consultadas…`;
-        }, alive);
-        if (denied === users.length) { p.remove(); return; }
+        let totals;
+        try { totals = await people(week); }
+        catch (e) { if (e.status === 403) { p.remove(); return; } throw e; }
+        const ranked = users.filter(u => totals.has(u.id)).map(u => ({ ...u, ...totals.get(u.id).totals }));
+        const failures = 0, denied = 0;
         const measured = ranked.filter(r => numeric(r.productivity_percent)).sort((a, b) => b.productivity_percent - a.productivity_percent || a.display_name.localeCompare(b.display_name));
         status.textContent = `${measured.length} con medición · ${ranked.length - measured.length} sin medición · ${failures} consultas fallidas${denied ? ` · ${denied} fuera de alcance` : ''}. ${failures || denied ? 'Ranking parcial.' : 'Últimos 7 días; totales ponderados por persona.'}`;
         pagedTable(p, 'Personas por productividad', [['Persona', memberLink], ['Productividad', r => percent(r.productivity_percent)], ['Focus /100', r => numeric(r.focus_score) ? fmt.format(r.focus_score) : 'Sin dato'], ['Activo', r => hours(r.active_seconds)]], measured, 10);
@@ -193,12 +193,14 @@ export async function coordinator(ctx) {
         const cols = [['Persona', memberLink]];
         if (![401, 403].includes(org.error?.status)) cols.push(['Área', u => orgName(org, u.area_id)], ['Sede', u => orgName(org, u.site_id)]);
         if (devices.data) cols.push(['Equipos', u => devices.data.filter(d => d.user_id === u.id && d.status === 'active').map(d => d.hostname).join(', ') || 'Sin equipo activo']);
-        if (visible) cols.push(['Productividad', u => u.pending ? 'Consultando…' : u.failure ? (u.failure.status === 403 ? 'No disponible' : `Error: ${errorMessage(u.failure)}`) : percent(u.metric?.totals.productivity_percent)], ['Focus /100', u => u.pending ? 'Consultando…' : numeric(u.metric?.totals.focus_score) ? fmt.format(u.metric.totals.focus_score) : 'Sin dato'], ['Última actividad (7 días)', u => u.metric ? time(u.metric.data.map(d => d.last_activity).filter(Boolean).sort().at(-1)) : 'No disponible']);
+        if (visible) cols.push(['Productividad', u => u.pending ? 'Consultando…' : u.failure ? (u.failure.status === 403 ? 'No disponible' : `Error: ${errorMessage(u.failure)}`) : percent(u.metric?.totals.productivity_percent)], ['Focus /100', u => u.pending ? 'Consultando…' : numeric(u.metric?.totals.focus_score) ? fmt.format(u.metric.totals.focus_score) : 'Sin dato'], ['Última actividad (7 días)', u => u.metric ? time(u.metric.last_activity) : 'No disponible']);
         pagedTable(grid, 'Directorio de personas', cols, enriched);
       }; draw();
       if (reportsDenied) return;
-      await pool(enriched, async u => { try { u.metric = await activity(u.id, week); rows(u.metric); if (!u.metric.totals) throw invalid(); } catch (e) { u.failure = e; u.metric = null; } u.pending = false; }, () => alive() && current === version);
-      if (current === version) draw();
+      let totals = null, failure = null;
+      try { totals = await people(week); } catch (e) { failure = e; }
+      for (const u of enriched) { u.pending = false; if (failure) u.failure = failure; else u.metric = totals.get(u.id) || { totals: {}, last_activity: null }; }
+      if (current === version && alive()) draw();
     }
     Object.values(controls).forEach(c => c.onchange = () => { offset = 0; render(); }); let timer; search.oninput = () => { clearTimeout(timer); timer = setTimeout(() => { offset = 0; render(); }, 250); }; await render();
   } else if (page === 'reports') {

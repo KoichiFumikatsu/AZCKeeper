@@ -6,7 +6,14 @@ header('Content-Type: text/html; charset=utf-8');
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: same-origin');
-header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+// Los modulos JS se piden con ?v=<fecha de modificacion>: sin esto el navegador reutilizaba una copia vieja de
+// api.js (sin la cabecera Idempotency-Key) y la API respondia 422. El import map va inline, autorizado por su hash.
+$assetDir = dirname(__DIR__) . '/assets';
+$imports = [];
+foreach (glob($assetDir . '/*.js') as $file) { $imports['/assets/' . basename($file)] = '/assets/' . basename($file) . '?v=' . filemtime($file); }
+$importMap = json_encode(['imports' => $imports], JSON_UNESCAPED_SLASHES);
+$importHash = base64_encode(hash('sha256', $importMap, true));
+header("Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-$importHash'; style-src 'self'; img-src 'self' https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
 ?>
 <!doctype html>
 <html lang="es">

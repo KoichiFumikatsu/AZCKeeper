@@ -162,15 +162,32 @@ function applyBranding(company) {
   }
 }
 
+// Cada pagina sondeaba ~10 rutas para decidir el menu: con varias paginas seguidas agotaba el limite de la API.
+// Se recuerda que secciones estan permitidas (no los datos) 5 minutos por empresa; la API sigue autorizando todo.
+const NAV_CACHE = 'keeper.presentation.nav';
+function cachedNav() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(NAV_CACHE));
+    return saved && saved.tenant === tenant && saved.expires > Date.now() ? saved.allowed : null;
+  } catch { return null; }
+}
 async function navigation() {
   permissions = new Map();
   const links = [...document.querySelectorAll('[data-nav]')];
   const failures = [];
+  const cached = cachedNav();
   const results = await Promise.allSettled(links.map(async link => {
     const key = link.dataset.nav;
     link.hidden = key !== 'home';
     if (key === page || (page === 'member' && key === 'users') || (page === 'device' && key === 'devices')) link.setAttribute('aria-current', 'page');
     if (key === 'home') return;
+    // La seccion actual siempre se consulta: sus datos se necesitan igual y el error real se muestra.
+    const current = key === page || (page === 'member' && key === 'users') || (page === 'device' && key === 'devices');
+    if (cached && !current && key in cached) {
+      if (cached[key]) { permissions.set(key, true); link.hidden = false; }
+      else permissions.set(key, new ApiError(403, { code: 'permission_denied' }));
+      return;
+    }
     try {
       await (operationPaths[key] ? get(operationPaths[key]) : key === 'intake' ? get(intakeProbe) : key === 'reports' ? get(reportPath()) : getPage(resources[key].path()));
       permissions.set(key, true);
@@ -181,6 +198,10 @@ async function navigation() {
     }
   }));
   results.forEach(result => { if (result.status === 'rejected') failures.push(errorMessage(result.reason)); });
+  if (!failures.length) {
+    const allowed = {}; permissions.forEach((value, key) => { if (value === true) allowed[key] = true; else if ([401, 403].includes(value?.status)) allowed[key] = false; });
+    try { sessionStorage.setItem(NAV_CACHE, JSON.stringify({ tenant, expires: Date.now() + 300000, allowed })); } catch { /* sin cache */ }
+  }
   if (failures.length) showError($('page-error'), new Error(failures.join(' ')));
   if ($('platform-link')) $('platform-link').hidden = !session.is_platform_admin;
   $('navigation').hidden = false;

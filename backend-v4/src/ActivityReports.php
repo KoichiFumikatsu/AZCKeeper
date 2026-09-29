@@ -75,6 +75,18 @@ final class ActivityReports
                 FROM activity_report_data GROUP BY day,user_id,display_name ORDER BY day,display_name,user_id')->fetchAll();
             $data=array_map(fn($row)=>$this->day($row,$op==='getPresenceReport'),$rows);
             if ($op==='getPresenceReport') { return AdminApi::response(['from'=>$from,'to'=>$to,'data'=>$data]); }
+            if ($op==='getPeopleReport') {
+                // Mismas filas (dia, persona) que /users/{id}/activity, sumadas por persona en una sola consulta.
+                $people=[];
+                foreach ($rows as $row) {
+                    $key=$row['user_id'];
+                    $people[$key]??=['user_id'=>Util::id($key),'display_name'=>$row['display_name'],'last'=>null,'sums'=>[]];
+                    foreach (['active_seconds','idle_seconds','call_seconds','productive_seconds','focus_seconds','context_switches','deep_work_seconds','distraction_seconds'] as $field) { $people[$key]['sums'][$field]=($people[$key]['sums'][$field]??0)+(int)$row[$field]; }
+                    if ($row['last_activity']!==null && ($people[$key]['last']===null || $row['last_activity']>$people[$key]['last'])) { $people[$key]['last']=$row['last_activity']; }
+                }
+                usort($people,static fn($a,$b)=>strcmp($a['display_name'],$b['display_name']) ?: strcmp($a['user_id'],$b['user_id']));
+                return AdminApi::response(['from'=>$from,'to'=>$to,'data'=>array_map(fn($p)=>['user_id'=>$p['user_id'],'display_name'=>$p['display_name'],'last_activity'=>$p['last']===null?null:Util::time($p['last']),'totals'=>$this->metrics($p['sums'])],array_values($people))]);
+            }
             $sums=[];
             foreach (['active_seconds','idle_seconds','call_seconds','productive_seconds','focus_seconds','context_switches','deep_work_seconds','distraction_seconds'] as $field) { $sums[$field]=array_sum(array_column($rows,$field)); }
             return AdminApi::response(['user_id'=>Util::id($user),'from'=>$from,'to'=>$to,'data'=>$data,'totals'=>$this->metrics($sums)]);

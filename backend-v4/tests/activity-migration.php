@@ -69,6 +69,10 @@ function activityMigrationTests(Database $db): void
     check(count($absent['data'])===238 && count(array_filter($absent['data'],static fn($r)=>$r['status']==='sin_actividad'))===238,'no activity is not omitted');
     $series=expect(adminRequest($admin,'GET','/users/'.Util::id($u['id']).'/activity'.$range),200,'user series');
     check(count($series['data'])===20 && $series['totals']['call_seconds']>0,'daily metrics and calls');
+    $people=expect(adminRequest($admin,'GET','/reports/people'.$range),200,'people report');
+    $mine=array_values(array_filter($people['data'],static fn($r)=>$r['user_id']===Util::id($u['id'])));
+    check(count($people['data'])===238 && count($mine)===1 && $mine[0]['totals']===$series['totals'],'people report equals per-person totals in one query');
+    check($mine[0]['last_activity']===max(array_filter(array_column($series['data'],'last_activity'))),'people report last activity');
     expect(adminRequest($admin,'GET','/users/'.Util::id($u['id']).'/policies'),200,'effective policies compiled');
     foreach (['/reports/apps'.$range,'/reports/presence?day='.$day,'/users/'.Util::id($u['id']).'/activity'.$range,'/users/'.Util::id($u['id']).'/policies'] as $path) {
         expect(adminRequest($reader,'GET',$path),403,'report missing permission');

@@ -9063,8 +9063,173 @@ paths:
         '503':
           $ref: '#/components/responses/Unavailable'
       x-max-body-bytes: 524288
+  /reports/people:
+    get:
+      tags:
+      - admin
+      operationId: getPeopleReport
+      summary: Totales por persona
+      description: Totales del período por persona del alcance, en una sola consulta (mismo cálculo que /users/{id}/activity).
+        Máximo 31 días. Evita una consulta por persona en ranking y directorio.
+      security:
+      - adminSession: []
+      x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
+      x-resources:
+      - ActivityReport
+      responses:
+        '200':
+          description: Totales por persona
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeopleReport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - name: from
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+      - name: area_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: site_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      x-permission: reportes.ver
 components:
   schemas:
+    PeopleReport:
+      type: object
+      additionalProperties: false
+      required:
+      - from
+      - to
+      - data
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PeopleReportRow'
+    PeopleReportRow:
+      type: object
+      additionalProperties: false
+      required:
+      - user_id
+      - display_name
+      - last_activity
+      - totals
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+          maxLength: 160
+        last_activity:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        totals:
+          type: object
+          additionalProperties: false
+          required:
+          - active_seconds
+          - idle_seconds
+          - call_seconds
+          - productive_seconds
+          - productivity_percent
+          - focus_seconds
+          - focus_score
+          - context_switches
+          - deep_work_seconds
+          - distraction_seconds
+          properties:
+            active_seconds:
+              type: integer
+              minimum: 0
+            idle_seconds:
+              type: integer
+              minimum: 0
+            call_seconds:
+              type: integer
+              minimum: 0
+            productive_seconds:
+              type: integer
+              minimum: 0
+            productivity_percent:
+              anyOf:
+              - type: number
+                minimum: 0
+                maximum: 100
+              - type: 'null'
+            focus_seconds:
+              type: integer
+              minimum: 0
+            focus_score:
+              anyOf:
+              - type: number
+                minimum: 0
+                maximum: 100
+              - type: 'null'
+            context_switches:
+              type: integer
+              minimum: 0
+            deep_work_seconds:
+              type: integer
+              minimum: 0
+            distraction_seconds:
+              type: integer
+              minimum: 0
     EnrollmentRequestInput:
       type: object
       additionalProperties: false

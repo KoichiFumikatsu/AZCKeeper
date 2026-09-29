@@ -121,7 +121,7 @@ final class AdminApi
             'listHolidays','createHoliday','getHoliday','putHoliday','deleteHoliday','listHolidaySocieties','createHolidaySociety','getHolidaySociety','putHolidaySociety','deleteHolidaySociety',
             'listSuspiciousApps','createSuspiciousApp','getSuspiciousApp','putSuspiciousApp','deleteSuspiciousApp','listDualJobAlerts','listSuspiciousDetections','listComplianceSignals',
             'listInstallCoverage','putInstallCoverage','listClientLogs','getServerHealth','getPanelSettings','putPanelSettings'=>(new OperationsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
-            'getAppsReport','getPresenceReport','getUserActivity','getUserPolicies'=>(new ActivityReports($this->db,$this->c,$this->access))->dispatch($op,$id),
+            'getAppsReport','getPresenceReport','getUserActivity','getUserPolicies','getPeopleReport'=>(new ActivityReports($this->db,$this->c,$this->access))->dispatch($op,$id),
             'issueMigrationAuthorization','validateMigrationAuthorization','getEscrowKey','persistDeviceEscrow','verifyDeviceEscrow','recoverDeviceEscrow','getDeviceMigration','setDeviceMigration'=>(new MigrationApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listTenants','createTenant','getTenant','patchTenant','setRbacGate'=>$this->tenants($op,$b),
             'listOrganization','createOrgUnit','getOrgUnit','patchOrgUnit'=>$this->organization($op,$id,$b),
