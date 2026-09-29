@@ -1,0 +1,183 @@
+# Validación estática
+
+169 comprobaciones aprobadas; 0 fallos.
+
+1850 referencias locales comprobadas en 39 páginas. Logos y favicon idénticos a v4 por SHA-256.
+
+Sin navegador, sin red, sin validación visual. La revisión de diseño, reflow y teclado nativo queda pendiente.
+
+## Resultados
+
+- PASS · Inventario completo: 39 HTML
+- PASS · index: español y contenido inicial
+- PASS · index: enlaces y recursos locales
+- PASS · index: una acción principal
+- PASS · index: identificación de módulos futuros
+- PASS · sedes: español y contenido inicial
+- PASS · sedes: enlaces y recursos locales
+- PASS · sedes: una acción principal
+- PASS · sedes: identificación de módulos futuros
+- PASS · usuarios: español y contenido inicial
+- PASS · usuarios: enlaces y recursos locales
+- PASS · usuarios: una acción principal
+- PASS · usuarios: identificación de módulos futuros
+- PASS · pendientes: español y contenido inicial
+- PASS · pendientes: enlaces y recursos locales
+- PASS · pendientes: una acción principal
+- PASS · pendientes: identificación de módulos futuros
+- PASS · equipos: español y contenido inicial
+- PASS · equipos: enlaces y recursos locales
+- PASS · equipos: una acción principal
+- PASS · equipos: identificación de módulos futuros
+- PASS · reportes: español y contenido inicial
+- PASS · reportes: enlaces y recursos locales
+- PASS · reportes: una acción principal
+- PASS · reportes: identificación de módulos futuros
+- PASS · presencia: español y contenido inicial
+- PASS · presencia: enlaces y recursos locales
+- PASS · presencia: una acción principal
+- PASS · presencia: identificación de módulos futuros
+- PASS · rankings: español y contenido inicial
+- PASS · rankings: enlaces y recursos locales
+- PASS · rankings: una acción principal
+- PASS · rankings: identificación de módulos futuros
+- PASS · capturas: español y contenido inicial
+- PASS · capturas: enlaces y recursos locales
+- PASS · capturas: una acción principal
+- PASS · capturas: identificación de módulos futuros
+- PASS · puertas: español y contenido inicial
+- PASS · puertas: enlaces y recursos locales
+- PASS · puertas: una acción principal
+- PASS · puertas: identificación de módulos futuros
+- PASS · turnos: español y contenido inicial
+- PASS · turnos: enlaces y recursos locales
+- PASS · turnos: una acción principal
+- PASS · turnos: identificación de módulos futuros
+- PASS · festivos: español y contenido inicial
+- PASS · festivos: enlaces y recursos locales
+- PASS · festivos: una acción principal
+- PASS · festivos: identificación de módulos futuros
+- PASS · reglas: español y contenido inicial
+- PASS · reglas: enlaces y recursos locales
+- PASS · reglas: una acción principal
+- PASS · reglas: identificación de módulos futuros
+- PASS · releases: español y contenido inicial
+- PASS · releases: enlaces y recursos locales
+- PASS · releases: una acción principal
+- PASS · releases: identificación de módulos futuros
+- PASS · cobertura: español y contenido inicial
+- PASS · cobertura: enlaces y recursos locales
+- PASS · cobertura: una acción principal
+- PASS · cobertura: identificación de módulos futuros
+- PASS · administradores: español y contenido inicial
+- PASS · administradores: enlaces y recursos locales
+- PASS · administradores: una acción principal
+- PASS · administradores: identificación de módulos futuros
+- PASS · asignaciones: español y contenido inicial
+- PASS · asignaciones: enlaces y recursos locales
+- PASS · asignaciones: una acción principal
+- PASS · asignaciones: identificación de módulos futuros
+- PASS · organizacion: español y contenido inicial
+- PASS · organizacion: enlaces y recursos locales
+- PASS · organizacion: una acción principal
+- PASS · organizacion: identificación de módulos futuros
+- PASS · roles: español y contenido inicial
+- PASS · roles: enlaces y recursos locales
+- PASS · roles: una acción principal
+- PASS · roles: identificación de módulos futuros
+- PASS · ajustes: español y contenido inicial
+- PASS · ajustes: enlaces y recursos locales
+- PASS · ajustes: una acción principal
+- PASS · ajustes: identificación de módulos futuros
+- PASS · salud: español y contenido inicial
+- PASS · salud: enlaces y recursos locales
+- PASS · salud: una acción principal
+- PASS · salud: identificación de módulos futuros
+- PASS · doble-empleo: español y contenido inicial
+- PASS · doble-empleo: enlaces y recursos locales
+- PASS · doble-empleo: una acción principal
+- PASS · doble-empleo: identificación de módulos futuros
+- PASS · logs: español y contenido inicial
+- PASS · logs: enlaces y recursos locales
+- PASS · logs: una acción principal
+- PASS · logs: identificación de módulos futuros
+- PASS · apps-sospechosas: español y contenido inicial
+- PASS · apps-sospechosas: enlaces y recursos locales
+- PASS · apps-sospechosas: una acción principal
+- PASS · apps-sospechosas: identificación de módulos futuros
+- PASS · endurecimiento: español y contenido inicial
+- PASS · endurecimiento: enlaces y recursos locales
+- PASS · endurecimiento: una acción principal
+- PASS · endurecimiento: identificación de módulos futuros
+- PASS · pin: español y contenido inicial
+- PASS · pin: enlaces y recursos locales
+- PASS · pin: una acción principal
+- PASS · pin: identificación de módulos futuros
+- PASS · empresas: español y contenido inicial
+- PASS · empresas: enlaces y recursos locales
+- PASS · empresas: una acción principal
+- PASS · empresas: identificación de módulos futuros
+- PASS · tiers: español y contenido inicial
+- PASS · tiers: enlaces y recursos locales
+- PASS · tiers: una acción principal
+- PASS · tiers: identificación de módulos futuros
+- PASS · auditoria: español y contenido inicial
+- PASS · auditoria: enlaces y recursos locales
+- PASS · auditoria: una acción principal
+- PASS · auditoria: identificación de módulos futuros
+- PASS · suscripciones: español y contenido inicial
+- PASS · suscripciones: enlaces y recursos locales
+- PASS · suscripciones: una acción principal
+- PASS · suscripciones: identificación de módulos futuros
+- PASS · mensajes: español y contenido inicial
+- PASS · mensajes: enlaces y recursos locales
+- PASS · mensajes: una acción principal
+- PASS · mensajes: identificación de módulos futuros
+- PASS · soporte: español y contenido inicial
+- PASS · soporte: enlaces y recursos locales
+- PASS · soporte: una acción principal
+- PASS · soporte: identificación de módulos futuros
+- PASS · integraciones: español y contenido inicial
+- PASS · integraciones: enlaces y recursos locales
+- PASS · integraciones: una acción principal
+- PASS · integraciones: identificación de módulos futuros
+- PASS · tareas: español y contenido inicial
+- PASS · tareas: enlaces y recursos locales
+- PASS · tareas: una acción principal
+- PASS · tareas: identificación de módulos futuros
+- PASS · casos: español y contenido inicial
+- PASS · casos: enlaces y recursos locales
+- PASS · casos: una acción principal
+- PASS · casos: identificación de módulos futuros
+- PASS · recepcion: español y contenido inicial
+- PASS · recepcion: enlaces y recursos locales
+- PASS · recepcion: una acción principal
+- PASS · recepcion: identificación de módulos futuros
+- PASS · contratar: español y contenido inicial
+- PASS · contratar: enlaces y recursos locales
+- PASS · contratar: una acción principal
+- PASS · contratar: identificación de módulos futuros
+- PASS · equipo: español y contenido inicial
+- PASS · equipo: enlaces y recursos locales
+- PASS · equipo: una acción principal
+- PASS · equipo: identificación de módulos futuros
+- PASS · miembro: español y contenido inicial
+- PASS · miembro: enlaces y recursos locales
+- PASS · miembro: una acción principal
+- PASS · miembro: identificación de módulos futuros
+- PASS · data.js: sintaxis JavaScript
+- PASS · app.js: sintaxis JavaScript
+- PASS · Sin red ni importaciones externas
+- PASS · logo-main.png: copia idéntica a v4
+- PASS · logo-mark.png: copia idéntica a v4
+- PASS · favicon.ico: copia idéntica a v4
+- PASS · 300 equipos y 288 personas ficticias
+- PASS · Los 12 controles requeridos
+- PASS · Filtros combinados de equipos
+- PASS · Alcance de coordinación por sede
+- PASS · Confirmación escrita exacta y motivo obligatorio
+- PASS · Contraste principal heredado
+
+## Fallos
+
+Ninguno.

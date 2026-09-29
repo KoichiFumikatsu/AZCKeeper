@@ -1,0 +1,228 @@
+# Validación de interacciones sin navegador
+
+216 comprobaciones aprobadas; 0 fallos.
+
+Node + JSDOM local ya instalado. No se ejecutó Chromium ni ningún navegador. Diálogos y descargas usan adaptadores DOM: esto no valida layout, teclado nativo, zoom o apariencia.
+
+## Comprobaciones
+
+- PASS · index: render y semántica
+- PASS · index: enlaces después de JavaScript
+- PASS · index: acción principal conectada
+- PASS · index: estado empty y recuperación
+- PASS · index: estado error y recuperación
+- PASS · sedes: render y semántica
+- PASS · sedes: enlaces después de JavaScript
+- PASS · sedes: acción principal conectada
+- PASS · sedes: estado empty y recuperación
+- PASS · sedes: estado error y recuperación
+- PASS · usuarios: render y semántica
+- PASS · usuarios: enlaces después de JavaScript
+- PASS · usuarios: acción principal conectada
+- PASS · usuarios: estado empty y recuperación
+- PASS · usuarios: estado error y recuperación
+- PASS · pendientes: render y semántica
+- PASS · pendientes: enlaces después de JavaScript
+- PASS · pendientes: acción principal conectada
+- PASS · pendientes: estado empty y recuperación
+- PASS · pendientes: estado error y recuperación
+- PASS · equipos: render y semántica
+- PASS · equipos: enlaces después de JavaScript
+- PASS · equipos: acción principal conectada
+- PASS · equipos: estado empty y recuperación
+- PASS · equipos: estado error y recuperación
+- PASS · reportes: render y semántica
+- PASS · reportes: enlaces después de JavaScript
+- PASS · reportes: acción principal conectada
+- PASS · reportes: estado empty y recuperación
+- PASS · reportes: estado error y recuperación
+- PASS · presencia: render y semántica
+- PASS · presencia: enlaces después de JavaScript
+- PASS · presencia: acción principal conectada
+- PASS · presencia: estado empty y recuperación
+- PASS · presencia: estado error y recuperación
+- PASS · rankings: render y semántica
+- PASS · rankings: enlaces después de JavaScript
+- PASS · rankings: acción principal conectada
+- PASS · rankings: estado empty y recuperación
+- PASS · rankings: estado error y recuperación
+- PASS · capturas: render y semántica
+- PASS · capturas: enlaces después de JavaScript
+- PASS · capturas: acción principal conectada
+- PASS · capturas: estado empty y recuperación
+- PASS · capturas: estado error y recuperación
+- PASS · puertas: render y semántica
+- PASS · puertas: enlaces después de JavaScript
+- PASS · puertas: acción principal conectada
+- PASS · puertas: estado empty y recuperación
+- PASS · puertas: estado error y recuperación
+- PASS · turnos: render y semántica
+- PASS · turnos: enlaces después de JavaScript
+- PASS · turnos: acción principal conectada
+- PASS · turnos: estado empty y recuperación
+- PASS · turnos: estado error y recuperación
+- PASS · festivos: render y semántica
+- PASS · festivos: enlaces después de JavaScript
+- PASS · festivos: acción principal conectada
+- PASS · festivos: estado empty y recuperación
+- PASS · festivos: estado error y recuperación
+- PASS · reglas: render y semántica
+- PASS · reglas: enlaces después de JavaScript
+- PASS · reglas: acción principal conectada
+- PASS · reglas: estado empty y recuperación
+- PASS · reglas: estado error y recuperación
+- PASS · releases: render y semántica
+- PASS · releases: enlaces después de JavaScript
+- PASS · releases: acción principal conectada
+- PASS · releases: estado empty y recuperación
+- PASS · releases: estado error y recuperación
+- PASS · cobertura: render y semántica
+- PASS · cobertura: enlaces después de JavaScript
+- PASS · cobertura: acción principal conectada
+- PASS · cobertura: estado empty y recuperación
+- PASS · cobertura: estado error y recuperación
+- PASS · administradores: render y semántica
+- PASS · administradores: enlaces después de JavaScript
+- PASS · administradores: acción principal conectada
+- PASS · administradores: estado empty y recuperación
+- PASS · administradores: estado error y recuperación
+- PASS · asignaciones: render y semántica
+- PASS · asignaciones: enlaces después de JavaScript
+- PASS · asignaciones: acción principal conectada
+- PASS · asignaciones: estado empty y recuperación
+- PASS · asignaciones: estado error y recuperación
+- PASS · organizacion: render y semántica
+- PASS · organizacion: enlaces después de JavaScript
+- PASS · organizacion: acción principal conectada
+- PASS · organizacion: estado empty y recuperación
+- PASS · organizacion: estado error y recuperación
+- PASS · roles: render y semántica
+- PASS · roles: enlaces después de JavaScript
+- PASS · roles: acción principal conectada
+- PASS · roles: estado empty y recuperación
+- PASS · roles: estado error y recuperación
+- PASS · ajustes: render y semántica
+- PASS · ajustes: enlaces después de JavaScript
+- PASS · ajustes: acción principal conectada
+- PASS · ajustes: estado empty y recuperación
+- PASS · ajustes: estado error y recuperación
+- PASS · salud: render y semántica
+- PASS · salud: enlaces después de JavaScript
+- PASS · salud: acción principal conectada
+- PASS · salud: estado empty y recuperación
+- PASS · salud: estado error y recuperación
+- PASS · doble-empleo: render y semántica
+- PASS · doble-empleo: enlaces después de JavaScript
+- PASS · doble-empleo: acción principal conectada
+- PASS · doble-empleo: estado empty y recuperación
+- PASS · doble-empleo: estado error y recuperación
+- PASS · logs: render y semántica
+- PASS · logs: enlaces después de JavaScript
+- PASS · logs: acción principal conectada
+- PASS · logs: estado empty y recuperación
+- PASS · logs: estado error y recuperación
+- PASS · apps-sospechosas: render y semántica
+- PASS · apps-sospechosas: enlaces después de JavaScript
+- PASS · apps-sospechosas: acción principal conectada
+- PASS · apps-sospechosas: estado empty y recuperación
+- PASS · apps-sospechosas: estado error y recuperación
+- PASS · endurecimiento: render y semántica
+- PASS · endurecimiento: enlaces después de JavaScript
+- PASS · endurecimiento: acción principal conectada
+- PASS · endurecimiento: estado empty y recuperación
+- PASS · endurecimiento: estado error y recuperación
+- PASS · pin: render y semántica
+- PASS · pin: enlaces después de JavaScript
+- PASS · pin: acción principal conectada
+- PASS · pin: estado empty y recuperación
+- PASS · pin: estado error y recuperación
+- PASS · empresas: render y semántica
+- PASS · empresas: enlaces después de JavaScript
+- PASS · empresas: acción principal conectada
+- PASS · empresas: estado empty y recuperación
+- PASS · empresas: estado error y recuperación
+- PASS · tiers: render y semántica
+- PASS · tiers: enlaces después de JavaScript
+- PASS · tiers: acción principal conectada
+- PASS · tiers: estado empty y recuperación
+- PASS · tiers: estado error y recuperación
+- PASS · auditoria: render y semántica
+- PASS · auditoria: enlaces después de JavaScript
+- PASS · auditoria: acción principal conectada
+- PASS · auditoria: estado empty y recuperación
+- PASS · auditoria: estado error y recuperación
+- PASS · suscripciones: render y semántica
+- PASS · suscripciones: enlaces después de JavaScript
+- PASS · suscripciones: acción principal conectada
+- PASS · suscripciones: estado empty y recuperación
+- PASS · suscripciones: estado error y recuperación
+- PASS · mensajes: render y semántica
+- PASS · mensajes: enlaces después de JavaScript
+- PASS · mensajes: acción principal conectada
+- PASS · mensajes: estado empty y recuperación
+- PASS · mensajes: estado error y recuperación
+- PASS · soporte: render y semántica
+- PASS · soporte: enlaces después de JavaScript
+- PASS · soporte: acción principal conectada
+- PASS · soporte: estado empty y recuperación
+- PASS · soporte: estado error y recuperación
+- PASS · integraciones: render y semántica
+- PASS · integraciones: enlaces después de JavaScript
+- PASS · integraciones: acción principal conectada
+- PASS · integraciones: estado empty y recuperación
+- PASS · integraciones: estado error y recuperación
+- PASS · tareas: render y semántica
+- PASS · tareas: enlaces después de JavaScript
+- PASS · tareas: acción principal conectada
+- PASS · tareas: estado empty y recuperación
+- PASS · tareas: estado error y recuperación
+- PASS · casos: render y semántica
+- PASS · casos: enlaces después de JavaScript
+- PASS · casos: acción principal conectada
+- PASS · casos: estado empty y recuperación
+- PASS · casos: estado error y recuperación
+- PASS · recepcion: render y semántica
+- PASS · recepcion: enlaces después de JavaScript
+- PASS · recepcion: acción principal conectada
+- PASS · recepcion: estado empty y recuperación
+- PASS · recepcion: estado error y recuperación
+- PASS · contratar: render y semántica
+- PASS · contratar: enlaces después de JavaScript
+- PASS · contratar: acción principal conectada
+- PASS · contratar: estado empty y recuperación
+- PASS · contratar: estado error y recuperación
+- PASS · equipo: render y semántica
+- PASS · equipo: enlaces después de JavaScript
+- PASS · equipo: acción principal conectada
+- PASS · equipo: estado empty y recuperación
+- PASS · equipo: estado error y recuperación
+- PASS · miembro: render y semántica
+- PASS · miembro: enlaces después de JavaScript
+- PASS · miembro: acción principal conectada
+- PASS · miembro: estado empty y recuperación
+- PASS · miembro: estado error y recuperación
+- PASS · Filtros por estado/sede/versión; paginación; búsqueda vacía
+- PASS · Enlace profundo a equipos sin conexión
+- PASS · Perfil lectura oculta órdenes y secciones; acceso directo bloqueado
+- PASS · Coordinación se limita a Cali incluso por URL de ficha
+- PASS · Identificadores desconocidos no caen en otra ficha
+- PASS · Los cinco comandos exigen texto y motivo; no ejecutan el agente
+- PASS · Cancelar borrado no crea orden
+- PASS · Aprobar pendiente cambia estado y contador; conserva entre páginas
+- PASS · Rechazar pendiente exige confirmación escrita
+- PASS · Revocación de clave exige texto; actualiza registro
+- PASS · Dos autorizaciones de roles; sin autoasignación de metapermiso
+- PASS · Nuevo registro de persona aparece; datos escapados
+- PASS · Borrador de módulo futuro conserva campos completos
+- PASS · Modo B bloqueado si falla el punto de restauración
+- PASS · Marca: vista previa, rechazo de bajo contraste y guardado
+- PASS · Sin almacenamiento disponible mantiene funcionamiento en file://
+- PASS · Menú móvil abre y cierra con Escape
+- PASS · Detalles de todas las tablas abren una ficha legible
+- PASS · Menú móvil cerrado queda fuera del recorrido de teclado
+- PASS · Guardar formulario devuelve el foco a la acción inicial
+- PASS · Equipo nuevo muestra controles desconocidos; ficha inexistente sin acción
+
+## Fallos
+
+Ninguno.

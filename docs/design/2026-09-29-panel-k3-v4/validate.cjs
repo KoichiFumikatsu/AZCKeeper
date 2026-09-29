@@ -1,0 +1,26 @@
+﻿'use strict';
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),crypto=require('node:crypto'),vm=require('node:vm');
+const {pathToFileURL,fileURLToPath}=require('node:url');
+const App=require('./app.js'),D=App.data,dir=__dirname;
+const results=[],failures=[];
+function check(name,fn){try{fn();results.push(name);}catch(e){failures.push(name+': '+e.message);}}
+const expected=['index','sedes','usuarios','pendientes','equipos','reportes','presencia','rankings','capturas','puertas','turnos','festivos','reglas','releases','cobertura','administradores','asignaciones','organizacion','roles','ajustes','salud','doble-empleo','logs','apps-sospechosas','endurecimiento','pin','empresas','tiers','auditoria','suscripciones','mensajes','soporte','integraciones','tareas','casos','recepcion','contratar','equipo','miembro'];
+check('Inventario completo: 39 HTML',()=>assert.deepEqual(fs.readdirSync(dir).filter(f=>f.endsWith('.html')).sort(),expected.map(p=>p+'.html').sort()));
+let references=0;
+for(const page of expected){const file=path.join(dir,page+'.html'),html=fs.readFileSync(file,'utf8');
+ check(page+': español y contenido inicial',()=>{assert(html.includes('<html lang="es">'));assert.equal((html.match(/<h1>/g)||[]).length,1);assert(html.includes('<main id="main"'));assert(html.includes('Datos ficticios'));assert(!html.includes('undefined'));assert(!html.includes('[object Object]'));assert(!html.includes('NaN'));});
+ check(page+': enlaces y recursos locales',()=>{for(const match of html.matchAll(/(?:href|src)="([^"]+)"/g)){const ref=match[1].replace(/&amp;/g,'&');assert(!/^(?:[a-z]+:|\/)/i.test(ref),'Referencia externa '+ref);const url=new URL(ref,pathToFileURL(file));assert(fs.existsSync(fileURLToPath(url)),'No existe '+ref);assert(fileURLToPath(url).startsWith(dir),'Sale de la carpeta: '+ref);if(url.hash){const target=fs.readFileSync(fileURLToPath(url),'utf8');assert(target.includes('id="'+url.hash.slice(1)+'"'),'Fragmento roto: '+ref);}references++;}});
+ check(page+': una acción principal',()=>assert.equal((html.match(/class="primary"/g)||[]).length,1));
+ check(page+': identificación de módulos futuros',()=>{const p=D.pages.find(p=>p.id===page);assert.equal(html.includes('<div class="notice future">'),p.future);});
+}
+for(const f of ['data.js','app.js'])check(f+': sintaxis JavaScript',()=>new vm.Script(fs.readFileSync(path.join(dir,f),'utf8')));
+check('Sin red ni importaciones externas',()=>{const code=fs.readFileSync(path.join(dir,'app.js'),'utf8')+fs.readFileSync(path.join(dir,'data.js'),'utf8');assert(!/\bfetch\s*\(|XMLHttpRequest|WebSocket|import\s*\(/.test(code));const css=fs.readFileSync(path.join(dir,'styles.css'),'utf8');assert(!/@import|url\(/.test(css));});
+for(const f of ['logo-main.png','logo-mark.png','favicon.ico'])check(f+': copia idéntica a v4',()=>{const hash=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');assert.equal(hash(path.join(dir,f)),hash(path.resolve(dir,'../../../backend-v4/public/assets/brand',f)));});
+check('300 equipos y 288 personas ficticias',()=>{assert.equal(D.devices.length,300);assert.equal(D.people.length,288);assert.equal(new Set(D.devices.map(d=>d.id)).size,300);assert.equal(new Set(D.people.map(p=>p.name)).size,288);assert(D.people.every(p=>p.email.endsWith('.example')));assert.equal(D.devices.filter(d=>d.status==='En línea').length,276);});
+check('Los 12 controles requeridos',()=>assert.deepEqual(D.controls.map(r=>r[0]),['WebEnforcer','UsbEnforcer','InstallEnforcer','DownloadEnforcer','DeviceLock','CommandExecutor','Inventory','UpdateManager','LocalAccountHardening','RestorePoint','TamperGuard','SessionSupervisor']));
+check('Filtros combinados de equipos',()=>{const ctx={role:'admin',filters:{2:D.sites[0],3:'En línea',4:'4.0.3'},page:1};const rows=App.filtered(App.model('equipos',ctx),ctx);assert.equal(rows.length,80);assert(rows.every(r=>r.cells[2]===D.sites[0]&&r.cells[3]==='En línea'&&r.cells[4]==='4.0.3'));});
+check('Alcance de coordinación por sede',()=>{const m=App.model('equipos',{role:'coordinacion'});assert.equal(m.rows.length,100);assert(m.rows.every(r=>r[2]===D.sites[0]));});
+check('Confirmación escrita exacta y motivo obligatorio',()=>{assert(!App.validConfirmation('DESKTOP-TEST','desktop-test','Motivo válido'));assert(!App.validConfirmation('DESKTOP-TEST','DESKTOP-TEST',''));assert(App.validConfirmation('DESKTOP-TEST','DESKTOP-TEST','Motivo válido'));});
+check('Contraste principal heredado',()=>{assert(App.contrast('#003A5D','#E4E4E4')>=4.5);assert(App.contrast('#003A5D','#F8F8F8')>=4.5);});
+const report='# Validación estática\n\n'+results.length+' comprobaciones aprobadas; '+failures.length+' fallos.\n\n'+references+' referencias locales comprobadas en 39 páginas. Logos y favicon idénticos a v4 por SHA-256.\n\nSin navegador, sin red, sin validación visual. La revisión de diseño, reflow y teclado nativo queda pendiente.\n\n## Resultados\n\n'+results.map(r=>'- PASS · '+r).join('\n')+'\n\n## Fallos\n\n'+(failures.length?failures.map(f=>'- '+f).join('\n'):'Ninguno.')+'\n';
+fs.writeFileSync(path.join(dir,'VALIDACION.md'),report);console.log(results.length+' PASS; '+failures.length+' FAIL; '+references+' referencias verificadas.');if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}
