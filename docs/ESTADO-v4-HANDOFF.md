@@ -106,6 +106,13 @@ Todo commiteado en `feature/keeper-v4` (commits: `abf6859`, `e27831e`, `cb818ae`
 
 ## 6. FALTA (pendientes priorizados)
 
+### 2026-09-29 (noche, 4) — endurecer/revertir desde el panel (4.0.10, seq 11, firmada y subida; FALTA registrar y probar)
+- Ficha del equipo: seccion Modo B con Endurecer/Revertir (confirmacion escribiendo el hostname). Orden exige agente >= 4.0.10.
+- Agente lanza el bootstrapper verificado contra el trust; si degrada, aviso WTS en la sesion y cierre a los 2 min.
+- Modo B degrada TODAS las administradoras locales (salvo azcadmin y RID-500); journal y --unharden las restauran.
+- Hallazgo 2026-09-29: en DESKTOP-949SGVE el state.json confirma que AZC fue degradada y restaurada por --unharden;
+  el token de la sesion abierta conserva Administradores hasta cerrar sesion (por eso "no cambio nada").
+
 ### 2026-09-29 (noche, 3) — alta de equipos a escala (backend DESPLEGADO en devkeep 2026-09-29 17:36, backup deploy-backups/20260929-173614; agente sin release). 4.0.8 instalada por auto-update en DESKTOP-949SGVE
 Diseño y uso: `docs/architecture/v4-alta-equipos.md`. Commits `b2a84cb`, `fbe5193`, `230c841` (+ reorden de la 0023).
 - Backend: migración `0023_device_intake.sql` (equipos esperados, claves de alta, solicitudes, configuración,
