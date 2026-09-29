@@ -25,17 +25,17 @@ final class Application
             }
             elseif (str_starts_with($r->route, '/auth/')) { $response = $auth->admin()->handle($r); }
             elseif (!str_starts_with($r->route, '/client/')) {
-                $context = null;
-                $response = $db->transaction(function () use ($db, $auth, $r, &$context): array {
+                $context = null; $admin = null;
+                $response = $db->transaction(function () use ($db, $auth, $r, &$context, &$admin): array {
                     $context = $auth->admin()->context($r);
                     $admin = new AdminApi($db, $context, $r, $this->validator);
                     $handler = fn () => $admin->dispatch();
                     $idempotent=in_array('#/components/parameters/Idempotency',array_column($r->operation['parameters']??[],'$ref'),true);
                     $result=$idempotent ? (new Idempotency($db))->execute($context, $r, $handler) : $handler();
-                    if ($r->method!=='GET') { AdminApi::validatePending($db,$context['tenant_id']); }
+                    if ($r->method!=='GET') { AdminApi::validatePending($db,$context['tenant_id'],$admin->recompileScope()); }
                     return $result;
                 });
-                AdminApi::compilePending($db, $context['tenant_id']);
+                AdminApi::compilePending($db, $context['tenant_id'], $admin?->recompileScope());
             }
             elseif ($r->route === '/client/auth/challenges') { $response = $this->ok($auth->challenge($r)); }
             elseif ($r->route === '/client/login') { $response = $this->ok($auth->login($r)); }

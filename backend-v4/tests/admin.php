@@ -219,6 +219,23 @@ function adminTests(Database $db): void
     $sec=expect(adminRequest($admin,'GET',$secPath),200,'device security report');
     check($sec['event_id']===$newer['event_id'] && $sec['device_id']===$releaseAgent['device_id'] && count($sec['controls'])===2 && $sec['controls'][1]['state']==='failed' && $sec['controls'][1]['error_code']==='dry_run','latest security report by observed_at');
     expect(adminRequest($other,'GET',$secPath),404,'foreign device security hidden');
+    // Recompilacion acotada: un cambio de persona recompila SUS equipos (no el tenant entero) y, si habia
+    // trabajo pendiente anterior, hace la compilacion total para no perderlo. Se usa $member (no vinculada al
+    // admin de prueba: editar esa persona invalidaria la sesion del admin).
+    $memberRow=$db->one('SELECT * FROM users WHERE tenant_id=? AND id=?',[$tenant,Util::bin($member['id'])]);
+    $memberKey=keypair(); $memberAgent=enroll($db,$memberRow,$memberKey); policy($db,$memberAgent);
+    $memberDevice=Util::bin($memberAgent['device_id']);
+    $policyVersion=fn()=>(int)$db->one('SELECT MAX(policy_version) v FROM effective_policies WHERE tenant_id=? AND device_id=?',[$tenant,$memberDevice])['v'];
+    $originalSchedule=Util::id($memberRow['schedule_id']);
+    $otherSchedule=$originalSchedule===$schedule['id'] ? Util::id($aUser['schedule_id']) : $schedule['id'];
+    check($otherSchedule!==$originalSchedule,'fixture has two schedules');
+    $before=$policyVersion();
+    $member=expect(adminRequest($admin,'PATCH','/users/'.$member['id'],['schedule_id'=>$otherSchedule],['if-match'=>'"'.$member['version'].'"']),200,'scoped user schedule change');
+    check($policyVersion()>$before,'scoped change recompiles the user device');
+    check($db->one('SELECT tenant_id FROM admin_policy_recompiles WHERE tenant_id=?',[$tenant])===null,'scoped change clears its compilation work');
+    $db->run('INSERT INTO admin_policy_recompiles (tenant_id) VALUES (?)',[$tenant]);
+    $member=expect(adminRequest($admin,'PATCH','/users/'.$member['id'],['schedule_id'=>$originalSchedule],['if-match'=>'"'.$member['version'].'"']),200,'scoped change with prior pending work');
+    check($db->one('SELECT tenant_id FROM admin_policy_recompiles WHERE tenant_id=?',[$tenant])===null,'prior pending work compiled in full, not dropped');
     $system=$db->one("SELECT id FROM principals WHERE tenant_id=? AND kind='system'",[$bUser['tenant_id']]);
     $db->run('DELETE FROM principals WHERE tenant_id=? AND id=?',[$bUser['tenant_id'],$system['id']]);
     $foreignSchedule=expect(adminRequest($other,'GET','/schedules/'.Util::id($bUser['schedule_id'])),200,'foreign tenant own schedule');

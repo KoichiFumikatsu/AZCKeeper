@@ -18,10 +18,10 @@ public sealed class AgentDiagnostics(Func<IReadOnlyList<ModuleSnapshot>> snapsho
         var controls = Health.Select(m => new SecurityControl
         {
             ControlId = m.Name, ObservedAt = Context.Clock.GetUtcNow(), ErrorCode = m.ErrorCode ??
-                (m.State is "applied" or "ready" or "locked" or "unlocked" or "no_interactive_session" ? null : m.State),
+                (m.State is "applied" or "ready" or "locked" or "unlocked" or "no_interactive_session" or "current" ? null : m.State),
             State = m.State switch
             {
-                "applied" or "ready" or "locked" or "unlocked" or "no_interactive_session" => SecurityControlState.Applied,
+                "applied" or "ready" or "locked" or "unlocked" or "no_interactive_session" or "current" => SecurityControlState.Applied,
                 "failed" or "degraded" or "dry_run" or "pending_restart" => SecurityControlState.Failed,
                 "unsupported" => SecurityControlState.Unsupported,
                 "unknown" or "audit" or "awaiting_package" or "verified_pending_install" => SecurityControlState.Unknown,

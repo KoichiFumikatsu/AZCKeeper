@@ -17,6 +17,17 @@ final class PolicyCompiler
         }
     }
 
+    public function validateDevices(string $tenantId, array $devices): void
+    {
+        $tenant=self::uuid($tenantId);
+        $at=$this->db->one('SELECT UTC_TIMESTAMP(6) instant')['instant'];
+        foreach ($devices as $device) {
+            if ($this->db->one("SELECT id FROM devices WHERE tenant_id=? AND id=? AND status='active'",[$tenant,$device])) {
+                PolicyComposer::compose($this->snapshot($tenant,$device,$at));
+            }
+        }
+    }
+
     public function recompile(string $deviceId, ?string $tenantId = null, ?\DateTimeImmutable $at = null): array
     {
         $device = self::uuid($deviceId);

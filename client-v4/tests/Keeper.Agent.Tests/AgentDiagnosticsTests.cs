@@ -13,6 +13,7 @@ public sealed class AgentDiagnosticsTests
     [InlineData("locked", SecurityControlState.Applied)]
     [InlineData("unlocked", SecurityControlState.Applied)]
     [InlineData("no_interactive_session", SecurityControlState.Applied)]
+    [InlineData("current", SecurityControlState.Applied)]   // UpdateManager al dia: no debe degradar la salud
     [InlineData("dry_run", SecurityControlState.Failed)]
     [InlineData("pending_restart", SecurityControlState.Failed)]
     [InlineData("failed", SecurityControlState.Failed)]

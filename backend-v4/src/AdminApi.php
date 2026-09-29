@@ -22,21 +22,48 @@ final class AdminApi
         if ($r->operation['operationId']==='deployRelease') { $this->access->requireFull(); }
     }
     public static function response(mixed $body, int $status=200, array $headers=[]): array { return ['status'=>$status,'json'=>Util::json($body),'headers'=>$headers]; }
-    public static function compilePending(Database $db, string $tenant): void
+    // $devices: null = todo el tenant; lista (ids binarios) = solo esos equipos (ver recompileScope()).
+    public static function compilePending(Database $db, string $tenant, ?array $devices=null): void
     {
         $q=$db->one('SELECT revision FROM admin_policy_recompiles WHERE tenant_id=?',[$tenant]);
         if (!$q) { return; }
-        try { (new PolicyCompiler($db))->recompileForTenant(Util::id($tenant)); }
+        try {
+            $compiler=new PolicyCompiler($db);
+            if ($devices===null) { $compiler->recompileForTenant(Util::id($tenant)); }
+            else { foreach ($devices as $device) { $compiler->recompile(Util::id($device), Util::id($tenant)); } }
+        }
         catch (\Throwable) { throw new ApiError(503,'temporarily_unavailable',['Retry-After'=>'5']); }
         $db->run('DELETE FROM admin_policy_recompiles WHERE tenant_id=? AND revision=?',[$tenant,$q['revision']]);
     }
-    public static function validatePending(Database $db,string $tenant): void
+    public static function validatePending(Database $db,string $tenant,?array $devices=null): void
     {
         if (!$db->one('SELECT tenant_id FROM admin_policy_recompiles WHERE tenant_id=?',[$tenant])) { return; }
-        try { (new PolicyCompiler($db))->validateForTenant(Util::id($tenant)); }
+        try {
+            $compiler=new PolicyCompiler($db);
+            if ($devices===null) { $compiler->validateForTenant(Util::id($tenant)); } else { $compiler->validateDevices(Util::id($tenant),$devices); }
+        }
         catch (PolicyConflict) { throw new ApiError(409,'invalid_transition'); }
     }
-    private function dirty(): void { $this->db->run('INSERT INTO admin_policy_recompiles (tenant_id) VALUES (?) ON DUPLICATE KEY UPDATE revision=revision+1,requested_at=UTC_TIMESTAMP(6)',[$this->tenant]); }
+    // Recompilar el tenant entero costaba ~20 ms por equipo (medido: 10,6 s con 296 equipos) en CADA cambio de
+    // admin, incluido crear una persona. Los cambios de una persona, su suscripcion o la asignacion de un equipo
+    // solo afectan a sus equipos; el resto (tenant, organizacion, politicas, tiers, horarios) sigue siendo total.
+    // Si al marcar ya habia trabajo pendiente de otra peticion (p. ej. una compilacion fallida) se hace total,
+    // para no borrar ese pendiente tras compilar solo una parte.
+    private bool $dirtied=false; private bool $recompileAll=false; private array $recompileDevices=[];
+    private function dirty(?array $devices=null): void
+    {
+        if (!$this->dirtied && $this->db->one('SELECT revision FROM admin_policy_recompiles WHERE tenant_id=? FOR UPDATE',[$this->tenant])) { $this->recompileAll=true; }
+        $this->db->run('INSERT INTO admin_policy_recompiles (tenant_id) VALUES (?) ON DUPLICATE KEY UPDATE revision=revision+1,requested_at=UTC_TIMESTAMP(6)',[$this->tenant]);
+        $this->dirtied=true;
+        if ($devices===null) { $this->recompileAll=true; } else { foreach ($devices as $device) { $this->recompileDevices[bin2hex($device)]=$device; } }
+    }
+    private function userDevices(string $user): array
+    {
+        return array_column($this->db->run("SELECT id FROM devices WHERE tenant_id=? AND user_id=? AND status='active'",[$this->tenant,$user])->fetchAll(),'id');
+    }
+    // null = todo el tenant. Sin cambios marcados en esta peticion tambien es null: asi cualquier peticion
+    // completa un pendiente que haya quedado de una compilacion fallida (autocorreccion existente).
+    public function recompileScope(): ?array { return !$this->dirtied || $this->recompileAll ? null : array_values($this->recompileDevices); }
     private function row(string $table, string $id, string $key='id'): array
     {
         $row=$this->db->one("SELECT * FROM $table WHERE tenant_id=? AND $key=? FOR UPDATE",[$this->tenant,$id]);
@@ -267,7 +294,7 @@ final class AdminApi
                 }
             }
         }
-        $this->audit('user',$id,array_keys(get_object_vars($b))); $this->dirty();
+        $this->audit('user',$id,array_keys(get_object_vars($b))); $this->dirty($this->userDevices($id));
         return $this->result($this->userDto($this->row('users',$id)),$op==='createUser'?201:200);
     }
     private function roleDto(array $r): array
@@ -358,7 +385,7 @@ final class AdminApi
             $at=$this->db->one('SELECT UTC_TIMESTAMP(6) at')['at'];
             $this->db->run('UPDATE device_assignments SET ends_at=? WHERE tenant_id=? AND device_id=? AND ends_at IS NULL',[$at,$this->tenant,$id]);
             $this->db->run('INSERT INTO device_assignments (tenant_id,id,device_id,user_id,starts_at,reason) VALUES (?,?,?,?,?,?)',[$this->tenant,Util::bin(Util::uuid()),$id,$u['id'],$at,$b->reason]);
-            $this->update('devices',$id,['user_id'=>$u['id']]); $this->revokeDevice($id); $this->dirty();
+            $this->update('devices',$id,['user_id'=>$u['id']]); $this->revokeDevice($id); $this->dirty([$id]);
         } else {
             if (isset($b->status) && $b->status==='active' && $d['status']!=='active') { throw new ApiError(409,'invalid_transition'); }
             $this->update('devices',$id,get_object_vars($b)); if (isset($b->status) && $b->status!=='active') { $this->revokeDevice($id); }
@@ -492,7 +519,7 @@ final class AdminApi
         $id=Util::bin(Util::uuid());
         $status=strtotime($b->starts_at)>time()?'scheduled':'active';
         $this->db->run('INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at,ends_at,status,version) VALUES (?,?,?,?,?,?,?,?)',[$this->tenant,$id,$user,$tier['id'],$start,$end,$status,(int)($current['version']??0)+1]);
-        $this->audit('subscription',$id,['tier_id','starts_at','ends_at']); $this->dirty();
+        $this->audit('subscription',$id,['tier_id','starts_at','ends_at']); $this->dirty($this->userDevices($user));
         return $this->result($this->subscriptionDto($this->row('subscriptions',$id)));
     }
     private function releaseDto(array $r): array
