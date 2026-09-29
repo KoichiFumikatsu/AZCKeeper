@@ -85,7 +85,7 @@ const $=id=>document.getElementById(id);
 function save(){try{localStorage.setItem(storageKey,JSON.stringify({version:1,data:Object.fromEntries(['people','devices','pending','tables','brand','company','gateCompany','gatePermission'].map(k=>[k,D[k]])),drafts,commands}));}catch{storageAvailable=false;}}
 function notify(message){$('feedback').innerHTML=E(message)+(!storageAvailable?' Los cambios se conservan solo en esta página.':'')+' <button data-action="dismiss">Cerrar</button>';$('feedback').hidden=false;}
 function renderDrafts(){const list=drafts.filter(d=>d.page===pageId);const device=ctx.id||'d1';const queued=commands.filter(c=>pageId==='equipo'?c.device===device:pageId==='endurecimiento');const box=$('local-drafts');box.hidden=!list.length&&!queued.length;box.innerHTML=(list.length?panel('Borradores de esta sesión',list.map(d=>`<article class="alert-item"><strong>${E(d.title)}</strong><p>${E(d.fields.map(([k,v])=>k+': '+v).join(' · '))}</p>${badge('Borrador')}</article>`).join('')):'')+(queued.length?panel('Órdenes simuladas',queued.map(c=>`<article class="alert-item"><strong>${E(c.action)} · ${E(c.hostname)}</strong><p>${E(c.reason)}</p>${badge('En cola')}<p class="help">Simulación local: sin confirmación de un agente.</p></article>`).join('')):'');}
-function draw(){const oldFocus=document.activeElement,focusId=oldFocus?.id,focusAction=oldFocus?.dataset.action;document.body.innerHTML=render(pageId,ctx);renderDrafts();document.documentElement.style.setProperty('--accent',D.brand.primary);document.documentElement.style.setProperty('--brand-red',D.brand.accent);const active=document.querySelector('.nav-link[aria-current]');if(active){const navEl=active.closest('nav');navEl.scrollTop=Math.max(0,active.offsetTop-navEl.offsetTop-170);} $('sidebar').inert=window.innerWidth<=820;const target=focusId?$(focusId):focusAction?document.querySelector('[data-action="'+focusAction+'"]'):null;if(target)target.focus();}
+function draw(){const oldFocus=document.activeElement,focusId=oldFocus?.id,focusAction=oldFocus?.dataset.action;document.body.innerHTML=render(pageId,ctx);renderDrafts();document.documentElement.style.setProperty('--accent',D.brand.primary);document.documentElement.style.setProperty('--brand-red',D.brand.accent);if(window.keeperPaletteMount)window.keeperPaletteMount();const active=document.querySelector('.nav-link[aria-current]');if(active){const navEl=active.closest('nav');navEl.scrollTop=Math.max(0,active.offsetTop-navEl.offsetTop-170);} $('sidebar').inert=window.innerWidth<=820;const target=focusId?$(focusId):focusAction?document.querySelector('[data-action="'+focusAction+'"]'):null;if(target)target.focus();}
 function refreshTable(){const m=model(pageId,ctx);if(m&&$('table-results'))$('table-results').innerHTML=tableRows(m,ctx);}
 function openModal(title,body){modalFocus=document.activeElement;$('modal-title').textContent=title;$('modal-body').innerHTML=body;$('modal').showModal();}
 function closeModal(){const m=$('modal');m.close();modalCallback=null;if(modalFocus?.isConnected)modalFocus.focus();}
@@ -121,3 +121,30 @@ document.addEventListener('keydown',event=>{const side=$('sidebar');if(!side?.cl
 window.addEventListener('resize',()=>{if(window.innerWidth>820&&$('sidebar')?.classList.contains('open'))toggleMenu(false);$('sidebar').inert=window.innerWidth<=820&&!$('sidebar').classList.contains('open');});
 draw();
 })(typeof window!=='undefined'?window:globalThis);
+
+// Prototipo: selector de escala de color (una sola tonalidad por escala). Se recuerda en este navegador.
+// draw() rehace el body en cada render, asi que el selector se vuelve a montar despues de cada uno.
+(function () {
+  var names = { indigo: 'Indigo', pizarra: 'Azul pizarra', violeta: 'Violeta' };
+  var current = 'indigo';
+  try { var saved = localStorage.getItem('keeper.palette'); if (saved && names[saved]) current = saved; } catch (e) { }
+  function apply() {
+    if (current === 'indigo') document.documentElement.removeAttribute('data-palette');
+    else document.documentElement.setAttribute('data-palette', current);
+  }
+  apply();
+  window.keeperPaletteMount = function () {
+    var host = document.querySelector('.top-meta') || document.querySelector('.topbar');
+    if (!host || host.querySelector('.palette-pick')) return;
+    var label = document.createElement('label'); label.className = 'palette-pick'; label.textContent = 'Paleta ';
+    var select = document.createElement('select'); select.setAttribute('aria-label', 'Escala de color del prototipo');
+    Object.keys(names).forEach(function (key) { var o = document.createElement('option'); o.value = key; o.textContent = names[key]; select.appendChild(o); });
+    select.value = current;
+    select.addEventListener('change', function () {
+      current = select.value; apply();
+      try { localStorage.setItem('keeper.palette', current); } catch (e) { }
+    });
+    label.appendChild(select); host.insertBefore(label, host.firstChild);
+  };
+  document.addEventListener('DOMContentLoaded', window.keeperPaletteMount);
+})();
