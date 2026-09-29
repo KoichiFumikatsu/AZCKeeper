@@ -5104,6 +5104,59 @@ paths:
               $ref: '#/components/schemas/DevicePatch'
       x-permission: equipos.editar
       x-max-body-bytes: 65536
+  /devices/{id}/security:
+    get:
+      tags:
+      - admin
+      operationId: getDeviceSecurity
+      summary: Ultimo reporte de controles del equipo
+      description: >-
+        Estado de cada control (web, USB, instalacion, descargas, update, sesion, etc.) segun el ultimo
+        SecurityReport que envio el agente. Es estado declarado por el agente, no attestation. 404 si el equipo
+        aun no ha enviado ningun reporte.
+      security:
+      - adminSession: []
+      x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
+      x-resources:
+      - Device
+      responses:
+        '200':
+          description: Ultimo reporte de controles del equipo
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceSecurityReport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/Tenant'
+      x-permission: equipos.ver
   /devices/{id}/assignment:
     post:
       tags:
@@ -10025,6 +10078,30 @@ components:
             $ref: '#/components/schemas/SecurityControl'
           maxItems: 100
       description: Estado declarado; no attestation.
+    DeviceSecurityReport:
+      type: object
+      additionalProperties: false
+      required:
+      - device_id
+      - event_id
+      - observed_at
+      - controls
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        event_id:
+          type: string
+          format: uuid
+        observed_at:
+          type: string
+          format: date-time
+        controls:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecurityControl'
+          maxItems: 100
+      description: Ultimo SecurityReport del equipo, para la ficha del panel.
     CommandInput:
       type: object
       additionalProperties: false

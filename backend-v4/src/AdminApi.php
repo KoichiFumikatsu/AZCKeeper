@@ -100,7 +100,7 @@ final class AdminApi
             'listOrganization','createOrgUnit','getOrgUnit','patchOrgUnit'=>$this->organization($op,$id,$b),
             'listSchedules','createSchedule','getSchedule','putSchedule'=>$this->schedules($op,$id,$b),
             'listUsers','createUser','getUser','patchUser','setUserRoles'=>$this->users($op,$id,$b),
-            'listTenantDevices','getDevice','patchDevice','assignDevice','createDeviceCommand','listAdminCommands','createEnrollment'=>$this->devices($op,$id,$b),
+            'listTenantDevices','getDevice','getDeviceSecurity','patchDevice','assignDevice','createDeviceCommand','listAdminCommands','createEnrollment'=>$this->devices($op,$id,$b),
             'listRoles','getRole','createRole','patchRole'=>$this->roles($op,$id,$b),
             'listPermissions','getPermission','patchPermission'=>$this->permissions($op,$b),
             'listPolicies','getPolicy','createPolicy','patchPolicy'=>$this->policies($op,$id,$b),
@@ -334,6 +334,12 @@ final class AdminApi
         $d=$this->authorizedDevice??$this->row('devices',$id);
         if ($this->deviceUser===null) { $this->deviceUser=$this->access->user($d['user_id']); }
         if ($op==='getDevice') { return $this->result($this->deviceDto($d)); }
+        if ($op==='getDeviceSecurity') {
+            // Ultimo reporte declarado por el agente; el alcance ya se valido arriba con access->user().
+            $r=$this->db->one('SELECT event_id,observed_at,controls FROM security_reports WHERE tenant_id=? AND device_id=? ORDER BY observed_at DESC,event_id DESC LIMIT 1',[$this->tenant,$d['id']]);
+            if (!$r) { throw new ApiError(404,'resource_not_found'); }
+            return $this->result(['device_id'=>Util::id($d['id']),'event_id'=>Util::id($r['event_id']),'observed_at'=>Util::time($r['observed_at']),'controls'=>json_decode($r['controls'])]);
+        }
         if ($op==='listAdminCommands') { return $this->page('SELECT * FROM device_command WHERE tenant_id=? AND device_id=?',[$this->tenant,$id],fn($x)=>$this->commandDto($x)); }
         if ($op==='createDeviceCommand') {
             if ($d['status']!=='active') { throw new ApiError(409,'invalid_transition'); }

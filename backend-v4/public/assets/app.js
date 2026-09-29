@@ -64,7 +64,7 @@ let busy = false;
 let cache = new Map();
 let permissions = new Map();
 const resources = {
-  devices: { title: 'Equipos', path: () => `/tenants/${tenant}/devices`, columns: [['Equipo', 'hostname'], ['Estado', r => label(r.status)], ['Usuario', 'user_id'], ['Sistema operativo', 'os_edition'], ['Agente', 'agent_version'], ['Última conexión', r => dateTime(r.last_seen_at)]], empty: 'Aún no hay equipos enrolados en tu alcance.' },
+  devices: { title: 'Equipos', path: () => `/tenants/${tenant}/devices`, columns: [['Equipo', r => { const a = node('a', r.hostname); a.href = `/equipo.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Estado', r => label(r.status)], ['Usuario', 'user_id'], ['Sistema operativo', 'os_edition'], ['Agente', 'agent_version'], ['Última conexión', r => dateTime(r.last_seen_at)]], empty: 'Aún no hay equipos enrolados en tu alcance.' },
   users: { title: 'Usuarios', path: () => '/users', columns: [['Nombre', r => { const a = node('a', r.display_name); a.href = `/miembro.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Correo', 'email'], ['Estado', r => label(r.status)], ['Acceso al portal', r => r.panel_login_enabled ? 'Habilitado' : 'Sin acceso'], ['Roles asignados', r => r.role_ids.length]], empty: 'Aún no hay usuarios en tu alcance.' },
   policies: { title: 'Reglas', path: () => '/policies', columns: [['Política', 'name'], ['Destino', r => label(r.target_type)], ['ID del destino', 'target_id'], ['Estado', r => r.enabled ? 'Habilitada' : 'Inactiva'], ['Reglas', r => r.rules.length], ['Versión', 'version']], empty: 'Aún no hay políticas configuradas en esta empresa.' },
   tenants: { title: 'Tenants', path: () => '/tenants', columns: [['Empresa', 'name'], ['ID', 'id'], ['Estado', r => label(r.status)], ['Zona horaria', 'timezone'], ['Autogestión de roles', r => r.rbac_self_management ? 'Habilitada' : 'Inactiva']], empty: 'No hay tenants accesibles.' },
@@ -156,7 +156,7 @@ async function navigation() {
   const results = await Promise.allSettled(links.map(async link => {
     const key = link.dataset.nav;
     link.hidden = key !== 'home';
-    if (key === page || (page === 'member' && key === 'users')) link.setAttribute('aria-current', 'page');
+    if (key === page || (page === 'member' && key === 'users') || (page === 'device' && key === 'devices')) link.setAttribute('aria-current', 'page');
     if (key === 'home') return;
     try {
       await (operationPaths[key] ? get(operationPaths[key]) : key === 'reports' ? get(reportPath()) : getPage(resources[key].path()));
@@ -293,6 +293,49 @@ async function member() {
   }
   $('content').append(subscription);
 }
+const controlStates = { applied: 'Aplicado', failed: 'Fallido', unsupported: 'No soportado', unknown: 'Desconocido' };
+async function device() {
+  const id = new URLSearchParams(location.search).get('id');
+  if (!isUuid(id)) throw new Error('Selecciona un equipo desde Equipos.');
+  const d = await get(`/devices/${id}`);
+  const summary = node('section', undefined, 'work-surface');
+  summary.append(node('h2', d.hostname));
+  details(summary, [['Estado', label(d.status)], ['Versión del agente', d.agent_version], ['Última conexión', dateTime(d.last_seen_at)],
+    ['Sistema operativo', d.os_edition], ['CPU', d.cpu], ['RAM', d.ram_bytes ? `${number.format(d.ram_bytes / 1073741824)} GB` : null],
+    ['Cifrado de disco', d.encryption_state], ['Versión de política aplicada', d.policy_version]]);
+  const owner = node('p'); const ownerLink = node('a', 'Ver la persona asignada'); ownerLink.href = `/miembro.php?id=${encodeURIComponent(d.user_id)}`; owner.append(ownerLink); summary.append(owner);
+  $('content').append(summary);
+
+  // Estado declarado por el agente en su último reporte; no es una verificación independiente.
+  const controls = node('section', undefined, 'work-surface'); controls.append(node('h2', 'Controles del equipo'));
+  try {
+    const report = await get(`/devices/${id}/security`);
+    controls.append(node('p', `Último reporte del agente: ${dateTime(report.observed_at)}. Es el estado que declara el agente.`));
+    const columns = [['Control', 'control_id'], ['Estado', r => controlStates[r.state] || r.state], ['Detalle', r => r.error_code || '—'], ['Observado', r => dateTime(r.observed_at)]];
+    const failing = report.controls.filter(c => c.state !== 'applied').length;
+    if (failing) controls.append(node('p', `${failing} control(es) no están aplicados.`, 'error-message'));
+    appendRows(table(controls, 'Estado por control', columns).body, report.controls, columns);
+  } catch (error) {
+    if (error.status === 403) controls.append(node('p', 'Tu cuenta no tiene acceso al estado de los controles.', 'empty-state'));
+    else if (error.status === 404) controls.append(node('p', 'El equipo aún no ha enviado un reporte de controles.', 'empty-state'));
+    else appendError(controls, error);
+  }
+  $('content').append(controls);
+
+  const logs = node('section', undefined, 'work-surface'); logs.append(node('h2', 'Registro reciente del agente'));
+  try {
+    const result = await get(query('/audit/client-logs', { device_id: id, limit: 50 }));
+    if (!result.data.length) logs.append(node('p', 'No hay registros del agente en el período de retención.', 'empty-state'));
+    else {
+      const columns = [['Fecha', r => dateTime(r.at)], ['Nivel', 'level'], ['Componente', 'component'], ['Código', 'code'], ['Error', r => r.error_code || '—']];
+      appendRows(table(logs, 'Últimos 50 registros', columns).body, result.data, columns);
+    }
+  } catch (error) {
+    if (error.status === 403) logs.append(node('p', 'Tu cuenta no tiene acceso al registro del agente.', 'empty-state'));
+    else appendError(logs, error);
+  }
+  $('content').append(logs);
+}
 async function reports() {
   const data = await get(reportPath());
   if (!Array.isArray(data.series)) throw new ApiError(200, { code: 'invalid_response' });
@@ -348,7 +391,7 @@ async function load() {
     if (!await context()) return;
     await navigation();
     $('workspace').hidden = false;
-    const allowed = permissions.get(page === 'member' ? 'users' : page);
+    const allowed = permissions.get(page === 'member' ? 'users' : page === 'device' ? 'devices' : page);
     if (allowed instanceof Error) {
       if ([401, 403].includes(allowed.status)) $('workspace').hidden = true;
       throw allowed;
@@ -359,6 +402,7 @@ async function load() {
     }
     else if (page === 'home') await dashboard();
     else if (page === 'member') await member();
+    else if (page === 'device') await device();
     else if (page === 'reports') await reports();
     else await listing(page);
     $('page-status').textContent = `Consulta finalizada a las ${new Intl.DateTimeFormat('es-CO', { timeStyle: 'medium' }).format(new Date())}. Fechas de eventos en la zona horaria del navegador.`;

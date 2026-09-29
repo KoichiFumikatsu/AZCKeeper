@@ -208,6 +208,17 @@ function adminTests(Database $db): void
     check($delivered['id']===$release['id'],'delivery verifies canonical signed release');
     $synced=expect(request('POST','/client/sync',['protocol_version'=>1,'sequence'=>1,'policy_version'=>null,'release_id'=>null],$releaseAgentKey,$releaseAgent['access_token'],Util::uuid()),200,'normalized release delivered by sync');
     check($synced['release']['id']===$release['id'],'sync verifies canonical signed release');
+    // Ficha del equipo: ultimo SecurityReport por observed_at (no por orden de llegada), alcance por empresa.
+    $secPath='/devices/'.$releaseAgent['device_id'].'/security';
+    expect(adminRequest($admin,'GET',$secPath),404,'no security report yet');
+    $ago=gmdate('Y-m-d\TH:i:s\Z',time()-60);
+    $newer=['event_id'=>Util::uuid(),'observed_at'=>Util::now(),'report_hash'=>hash('sha256','newer'),'controls'=>[['control_id'=>'web','state'=>'applied','observed_at'=>Util::now()],['control_id'=>'usb','state'=>'failed','observed_at'=>Util::now(),'error_code'=>'dry_run']]];
+    $older=['event_id'=>Util::uuid(),'observed_at'=>$ago,'report_hash'=>hash('sha256','older'),'controls'=>[['control_id'=>'web','state'=>'unknown','observed_at'=>$ago]]];
+    expect(request('POST','/client/security/report',$newer,$releaseAgentKey,$releaseAgent['access_token'],Util::uuid()),200,'newer security report');
+    expect(request('POST','/client/security/report',$older,$releaseAgentKey,$releaseAgent['access_token'],Util::uuid()),200,'late older security report');
+    $sec=expect(adminRequest($admin,'GET',$secPath),200,'device security report');
+    check($sec['event_id']===$newer['event_id'] && $sec['device_id']===$releaseAgent['device_id'] && count($sec['controls'])===2 && $sec['controls'][1]['state']==='failed' && $sec['controls'][1]['error_code']==='dry_run','latest security report by observed_at');
+    expect(adminRequest($other,'GET',$secPath),404,'foreign device security hidden');
     $system=$db->one("SELECT id FROM principals WHERE tenant_id=? AND kind='system'",[$bUser['tenant_id']]);
     $db->run('DELETE FROM principals WHERE tenant_id=? AND id=?',[$bUser['tenant_id'],$system['id']]);
     $foreignSchedule=expect(adminRequest($other,'GET','/schedules/'.Util::id($bUser['schedule_id'])),200,'foreign tenant own schedule');
