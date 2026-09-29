@@ -106,6 +106,19 @@ Todo commiteado en `feature/keeper-v4` (commits: `abf6859`, `e27831e`, `cb818ae`
 
 ## 6. FALTA (pendientes priorizados)
 
+### 2026-09-29 (tarde) — paquete, ficha de equipo y recompilacion
+- **Paquete con runtime compartido** (`c3eb424`): 120 MB -> 62,5 MB. Transicion: 4.0.4 (seq 5, formato Legacy,
+  171 MB, instalador que entiende ambos formatos) y luego 4.0.5 (seq 6, formato Shared). Ambas firmadas y subidas
+  a devkeep; REGISTRAR EN ORDEN: primero 4.0.4, esperar a que el equipo este en 4.0.4, luego 4.0.5. Si se registra
+  4.0.5 antes, un agente <= 4.0.3 no encuentra el bootstrapper y el update queda atascado en `applying`.
+- **Ficha del equipo** en el panel (`0390032`): /equipo.php (desde Equipos) con resumen, estado por control
+  (nuevo GET /devices/{id}/security) y ultimos 50 logs del agente. Desplegada.
+- **Recompilacion acotada** (este commit): de 10,6 s a 0,45 s en cambios de persona/suscripcion/asignacion.
+  Los cambios de alcance tenant siguen costando ~10 s con 300 equipos (~35 s con 1000): antes de la flota,
+  pasar esos a segundo plano (cron `config/compile-pending.php`) o abaratar `snapshot()` por equipo.
+- Pendientes menores: `LocalAccountHardening=unhardened` marca `degraded` a todo equipo sin Modo B (decision de
+  producto); `client-v4/tools/generate.mjs --check` ya fallaba antes de estos cambios.
+
 ### RESULTADO 2026-09-29 — AUTO-UPDATE VALIDADO EN EQUIPO REAL (DESKTOP-949SGVE)
 4.0.0 (trust seq 1) -> 4.0.1 (seq 2) solo, sin intervencion: descarga 14:19:37Z (UN solo GET de 126 MB), verificacion
 14:24:37, `update_applying` 14:29:38, bootstrapper lanzado por el agente 14:29:46 (SOBREVIVE al stop del servicio),
