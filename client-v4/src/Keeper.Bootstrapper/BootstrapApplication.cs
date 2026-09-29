@@ -4,7 +4,8 @@ using Keeper.Bootstrapper.Hardening;
 namespace Keeper.Bootstrapper;
 
 public sealed class BootstrapApplication(IElevation elevation, IServiceControl services, ISystemPaths paths,
-    IRegistryStore registry, Action<string> log, IHardeningRunner? hardening = null, IUpdateGuard? guard = null)
+    IRegistryStore registry, Action<string> log, IHardeningRunner? hardening = null, IUpdateGuard? guard = null,
+    IRescueInstaller? rescue = null)
 {
     public const string ServiceName = "KeeperAgent";
     public const int ElevationCancelled = 1223;
@@ -86,6 +87,7 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
             DeleteTree(UsbKey);
             DeleteValue(InstallerKey, "DisableMSI");
             DeleteValue(InstallerKey, "AlwaysInstallElevated");
+            if (rescue is not null) Step("RESCATE: borrar tarea programada 'AZCKeeper Recovery'", rescue.Remove);
             Step($"DELETE DIRECTORY \"{paths.InstallDirectory}\" (recursivo, si existe)", paths.DeleteInstallDirectory);
         }
         else
@@ -103,6 +105,7 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
                 Step($"COPY \"{source}\" -> \"{destination}\" (sobrescribir)", () => paths.CopyFile(source, destination));
             }
             Step($"ACL \"{bin}\" {WindowsConstants.BinDirectorySddl} (Usuarios: lectura+ejecucion para Keeper.Session)", () => paths.ApplyBinaryAcl(bin));
+            if (rescue is not null) Step("RESCATE: instalar recovery\\Keeper-Recovery.ps1 + tarea horaria SYSTEM", () => rescue.Install(options.PayloadDirectory));
             var definition = new ServiceDefinition(ServiceName, Path.Combine(bin, "Keeper.Agent.exe"));
             Step(definition.Describe(exists), () => services.Configure(definition, exists));
             string[] environment = [$"KEEPER_DATA_DIR={data}", $"KEEPER_API_BASE={config!.ApiBase}",
@@ -167,6 +170,8 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
             Step($"COPY \"{src}\" -> \"{dst}\" (sobrescribir)", () => paths.CopyFile(src, dst));
         }
         Step($"ACL \"{bin}\" {WindowsConstants.BinDirectorySddl} (Usuarios: lectura+ejecucion para Keeper.Session)", () => paths.ApplyBinaryAcl(bin));
+        // El update nunca reemplaza un rescate existente: solo lo instala si falta.
+        if (rescue is not null && !rescue.IsInstalled) Step("RESCATE: instalar (faltaba) recovery\\Keeper-Recovery.ps1 + tarea horaria SYSTEM", () => rescue.Install(options.PayloadDirectory));
         Step($"SC FAILURE {ServiceName} (recovery: reinicio automatico ante caida)", () => services.ConfigureRecovery(ServiceName));
         Step($"DEL \"{Path.Combine(data, "next-sync.json")}\" (descartar backoff heredado)",
             () => { var stale = Path.Combine(data, "next-sync.json"); if (File.Exists(stale)) File.Delete(stale); });

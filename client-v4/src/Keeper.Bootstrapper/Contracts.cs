@@ -46,6 +46,15 @@ public interface IUpdateGuard
     void BlockRelease(long sequence);
 }
 
+// Rescate independiente del agente (recovery\Keeper-Recovery.ps1 + tarea horaria SYSTEM). Se instala una vez:
+// un --system-update solo lo instala si falta, para que un update roto no pueda romper el rescate.
+public interface IRescueInstaller
+{
+    bool IsInstalled { get; }
+    void Install(string payload);
+    void Remove();
+}
+
 public interface IRegistryStore
 {
     void SetEnvironment(string serviceName, string[] values);

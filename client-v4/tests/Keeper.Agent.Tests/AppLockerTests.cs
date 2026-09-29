@@ -64,7 +64,7 @@ public sealed class AppLockerTests
                 continue;
             }
             // Keeper nunca se bloquea a si mismo: Session y el bootstrapper corren desde ProgramData\AZCKeeper.
-            Assert.Equal((string?)collection.Attribute("Type") == "Exe"
+            Assert.Equal((string?)collection.Attribute("Type") is "Exe" or "Script"
                 ? new[] { @"%PROGRAMFILES%\*", @"%WINDIR%\*", @"C:\ProgramData\AZCKeeper\*" }
                 : new[] { @"%PROGRAMFILES%\*", @"%WINDIR%\*" }, Paths(collection, "Allow"));
             Assert.Equal(new[] { @"%OSDRIVE%\Users\*\Downloads\*", @"%OSDRIVE%\Users\*\AppData\*", @"%WINDIR%\Temp\*", @"%OSDRIVE%\Temp\*" }, Paths(collection, "Deny"));

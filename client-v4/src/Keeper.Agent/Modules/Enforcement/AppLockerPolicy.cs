@@ -85,7 +85,8 @@ public static class AppLockerPolicy
         {
             var collection = new XElement("RuleCollection", new XAttribute("Type", type), new XAttribute("EnforcementMode", mode));
             foreach (var path in allowedPaths) collection.Add(PathRule(type, "Allow", path));
-            if (type == "Exe") collection.Add(PathRule(type, "Allow", keeperRule));
+            // Exe: Session y bootstrapper. Script: el rescate independiente (recovery\Keeper-Recovery.ps1).
+            if (type is "Exe" or "Script") collection.Add(PathRule(type, "Allow", keeperRule));
             foreach (var publisher in options.TrustedPublishers.Distinct(StringComparer.OrdinalIgnoreCase))
                 collection.Add(PublisherRule(type, publisher));
             // A collection-wide path deny also covers renamed PE files (.scr), MSI and supported scripts.

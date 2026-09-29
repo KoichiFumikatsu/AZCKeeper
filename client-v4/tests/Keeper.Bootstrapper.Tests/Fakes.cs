@@ -13,6 +13,13 @@ internal sealed class FakeElevation : IElevation
     public int Relaunch(string[] arguments) { Requests.Add(arguments); return Result; }
 }
 
+internal sealed class FakeRescue(FakeMachine machine) : IRescueInstaller
+{
+    public bool IsInstalled { get; set; }
+    public void Install(string payload) { machine.Mutations.Add("rescue-install"); IsInstalled = true; }
+    public void Remove() { machine.Mutations.Add("rescue-remove"); IsInstalled = false; }
+}
+
 internal sealed class FakeGuard(FakeMachine machine) : IUpdateGuard
 {
     public UpdateHealth Result { get; set; } = UpdateHealth.Healthy;

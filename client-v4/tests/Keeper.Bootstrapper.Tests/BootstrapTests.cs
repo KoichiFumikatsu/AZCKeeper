@@ -290,6 +290,26 @@ public sealed class BootstrapTests
     }
 
     [Fact]
+    public void RescateSeInstalaAlInstalarSoloSiFaltaAlActualizarYSeBorraAlDesinstalar()
+    {
+        elevation.Elevated = true;
+        var rescue = new FakeRescue(machine);
+        var app = new BootstrapApplication(elevation, machine, machine, machine, output.Add, rescue: rescue);
+        app.Run(Options with { SystemMode = true }, []);
+        Assert.Single(machine.Mutations, m => m == "rescue-install");
+        machine.Mutations.Clear();
+        app.Run(Options with { SystemMode = true, SystemUpdate = true }, []);
+        Assert.DoesNotContain("rescue-install", machine.Mutations);   // ya estaba: un update no lo reemplaza
+        rescue.IsInstalled = false;
+        machine.Mutations.Clear();
+        app.Run(Options with { SystemMode = true, SystemUpdate = true }, []);
+        Assert.Single(machine.Mutations, m => m == "rescue-install");  // faltaba: se instala
+        machine.Mutations.Clear();
+        app.Run(Options with { SystemMode = true, Uninstall = true }, []);
+        Assert.True(machine.Mutations.IndexOf("rescue-remove") >= 0);
+    }
+
+    [Fact]
     public void UpdateDryRunConGuardiaNoRespaldaNiEspera()
     {
         elevation.Elevated = true;
