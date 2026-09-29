@@ -8,6 +8,13 @@
 //   backend-keys --public <release-key.public.json>
 //   verify       --public <release-key.public.json> --release <release.json> --package <zip>
 //                [--installed-sequence N] [--agent-version X.Y.Z]
+//   export       --key <release-signing-key.dpapi> --public <release-key.public.json> --out <respaldo.p8>
+//   import       --in <respaldo.p8> --public <release-key.public.json> --out <dir>
+//
+// export/import: respaldo PORTABLE de la clave privada (PKCS#8 cifrado, PEM "ENCRYPTED PRIVATE KEY",
+// AES-256-CBC + PBKDF2-SHA256 600.000 iteraciones; legible tambien con openssl). El .dpapi NO sirve como
+// respaldo: solo lo descifra el perfil de Windows que lo creo. La contrasena se pide en consola sin eco;
+// nunca por argumentos. Con stdin redirigido se lee de stdin (solo para pruebas automatizadas).
 //
 // La clave privada queda protegida con DPAPI (usuario actual de ESTA maquina). Si se pierde, la flota
 // instalada con el trust actual no acepta updates: respaldarla por un canal seguro fuera del repo.
@@ -40,6 +47,8 @@ public static class Program
                 case "trust": Trust(o); break;
                 case "sign": await SignAsync(o); break;
                 case "backend-keys": Console.WriteLine(BackendKeys(PublicKey.Load(Required(o, "public")))); break;
+                case "export": Export(o); break;
+                case "import": Import(o); break;
                 case "verify":
                 {
                     // Verifica una release TAL COMO LLEGA (p. ej. copiada de la respuesta de /client/sync),
@@ -82,6 +91,113 @@ public static class Program
         Console.WriteLine($"publica: {publicPath}");
     }
 
+    private const int MinPasswordLength = 12;
+    private static readonly PbeParameters BackupPbe = new(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, 600_000);
+
+    private static ECDsa LoadPrivate(string dpapiPath)
+    {
+        var pkcs8 = ProtectedData.Unprotect(File.ReadAllBytes(dpapiPath), Entropy, DataProtectionScope.CurrentUser);
+        try
+        {
+            var key = ECDsa.Create();
+            key.ImportPkcs8PrivateKey(pkcs8, out _);
+            return key;
+        }
+        finally { CryptographicOperations.ZeroMemory(pkcs8); }
+    }
+
+    private static void Export(Dictionary<string, string> o)
+    {
+        var pub = PublicKey.Load(Required(o, "public"));
+        var output = Path.GetFullPath(Required(o, "out"));
+        if (File.Exists(output)) throw new IOException("el archivo de respaldo ya existe; no se sobrescribe");
+        using var key = LoadPrivate(Required(o, "key"));
+        if (PublicKey.From(key).KeyId != pub.KeyId) throw new CryptographicException("la clave privada no corresponde a la publica indicada");
+        var password = ReadPassword("Contrasena del respaldo (min. 12): ", confirm: true);
+        try
+        {
+            var pem = PemEncoding.Write("ENCRYPTED PRIVATE KEY", key.ExportEncryptedPkcs8PrivateKey(password, BackupPbe));
+            // Comprobacion antes de escribir: el respaldo debe abrirse con la misma contrasena y dar la misma clave.
+            using (var check = ECDsa.Create())
+            {
+                check.ImportFromEncryptedPem(pem, password);
+                if (PublicKey.From(check).KeyId != pub.KeyId) throw new CryptographicException("el respaldo no reproduce la clave");
+            }
+            using var stream = new FileStream(output, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            stream.Write(Encoding.ASCII.GetBytes(new string(pem) + "\n"));
+        }
+        finally { Array.Clear(password); }
+        Console.WriteLine($"respaldo: {output} (key_id {pub.KeyId})");
+        Console.WriteLine("Guardalo FUERA de esta maquina y la contrasena por separado.");
+    }
+
+    private static void Import(Dictionary<string, string> o)
+    {
+        var pub = PublicKey.Load(Required(o, "public"));
+        var directory = Path.GetFullPath(Required(o, "out"));
+        var privatePath = Path.Combine(directory, "release-signing-key.dpapi");
+        if (File.Exists(privatePath)) throw new IOException("ya existe release-signing-key.dpapi en el destino; no se sobrescribe");
+        var pem = File.ReadAllText(Required(o, "in"));
+        var password = ReadPassword("Contrasena del respaldo: ", confirm: false);
+        using var key = ECDsa.Create();
+        try { key.ImportFromEncryptedPem(pem, password); }
+        catch (CryptographicException) { throw new CryptographicException("contrasena incorrecta o respaldo danado"); }
+        finally { Array.Clear(password); }
+        if (PublicKey.From(key).KeyId != pub.KeyId) throw new CryptographicException("el respaldo no corresponde a la clave publica indicada");
+        Directory.CreateDirectory(directory);
+        var pkcs8 = key.ExportPkcs8PrivateKey();
+        try
+        {
+            using var stream = new FileStream(privatePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            stream.Write(ProtectedData.Protect(pkcs8, Entropy, DataProtectionScope.CurrentUser));
+        }
+        finally { CryptographicOperations.ZeroMemory(pkcs8); }
+        var publicCopy = Path.Combine(directory, "release-key.public.json");
+        if (!File.Exists(publicCopy)) File.WriteAllText(publicCopy, pub.ToJson());
+        using (var restored = LoadPrivate(privatePath))
+            if (PublicKey.From(restored).KeyId != pub.KeyId) throw new CryptographicException("la clave restaurada no verifica");
+        Console.WriteLine($"restaurada: {privatePath} (key_id {pub.KeyId}, DPAPI del usuario actual)");
+    }
+
+    private static char[] ReadPassword(string prompt, bool confirm)
+    {
+        if (Console.IsInputRedirected)
+        {
+            var line = Console.In.ReadLine() ?? "";
+            var redirected = line.ToCharArray();
+            if (confirm && Console.In.ReadLine() is { } again && again != line) throw new ArgumentException("las contrasenas no coinciden");
+            if (redirected.Length < MinPasswordLength) throw new ArgumentException($"la contrasena debe tener al menos {MinPasswordLength} caracteres");
+            return redirected;
+        }
+        var first = ReadHidden(prompt);
+        if (first.Length < MinPasswordLength) { Array.Clear(first); throw new ArgumentException($"la contrasena debe tener al menos {MinPasswordLength} caracteres"); }
+        if (!confirm) return first;
+        var second = ReadHidden("Repetir contrasena: ");
+        try
+        {
+            if (!first.AsSpan().SequenceEqual(second)) { Array.Clear(first); throw new ArgumentException("las contrasenas no coinciden"); }
+            return first;
+        }
+        finally { Array.Clear(second); }
+    }
+
+    private static char[] ReadHidden(string prompt)
+    {
+        Console.Write(prompt);
+        var buffer = new List<char>();
+        while (true)
+        {
+            var info = Console.ReadKey(intercept: true);
+            if (info.Key == ConsoleKey.Enter) break;
+            if (info.Key == ConsoleKey.Backspace) { if (buffer.Count > 0) buffer.RemoveAt(buffer.Count - 1); continue; }
+            if (!char.IsControl(info.KeyChar)) buffer.Add(info.KeyChar);
+        }
+        Console.WriteLine();
+        var result = buffer.ToArray();
+        buffer.Clear();
+        return result;
+    }
+
     private static void Trust(Dictionary<string, string> o)
     {
         var pub = PublicKey.Load(Required(o, "public"));
@@ -118,8 +234,7 @@ public static class Program
     private static async Task SignAsync(Dictionary<string, string> o)
     {
         var pub = PublicKey.Load(Required(o, "public"));
-        using var key = ECDsa.Create();
-        key.ImportPkcs8PrivateKey(ProtectedData.Unprotect(File.ReadAllBytes(Required(o, "key")), Entropy, DataProtectionScope.CurrentUser), out _);
+        using var key = LoadPrivate(Required(o, "key"));
         if (PublicKey.From(key).KeyId != pub.KeyId) throw new CryptographicException("la clave privada no corresponde a la publica indicada");
         var package = Path.GetFullPath(Required(o, "package"));
         var sequence = long.Parse(Required(o, "sequence"), CultureInfo.InvariantCulture);
