@@ -1,5 +1,5 @@
 {
-  "source_sha256": "aaab697c821cb990a5f41d6d78e0a154208e08feea5ff46887a9cb1009fd1824",
+  "source_sha256": "b5ef0da5791e4b00ce070aaf790920c5c0b199d63d399383004040929b9fedcb",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -13643,6 +13643,49 @@
         }
       }
     },
+    "DeviceInventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os_edition",
+        "cpu",
+        "ram_bytes",
+        "architecture"
+      ],
+      "properties": {
+        "os_edition": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Edicion legible, p. ej. \"Windows 11 Pro\" (Home/Pro determina AppLocker/BitLocker)."
+        },
+        "os_build": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "cpu": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "ram_bytes": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "disk_bytes": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "architecture": {
+          "type": "string",
+          "enum": [
+            "x64",
+            "arm64"
+          ]
+        }
+      },
+      "description": "Inventario declarado por el agente. Se envia en el primer sync de cada arranque y cuando cambia; el servidor actualiza el equipo sin tocar su version de edicion."
+    },
     "DeviceLogin": {
       "type": "object",
       "additionalProperties": false,
@@ -17194,6 +17237,9 @@
         },
         "security": {
           "$ref": "#/components/schemas/SecurityReport"
+        },
+        "inventory": {
+          "$ref": "#/components/schemas/DeviceInventory"
         },
         "command_results": {
           "type": "array",

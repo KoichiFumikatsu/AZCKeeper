@@ -145,6 +145,13 @@ try {
     $sync['policy_version'] = 2;
     $s = expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'client ahead'); check($s['policy'] === null, 'no policy downgrade');
     check((int) $appliedVersion() === 1, 'version beyond the compiled one is not recorded');
+    $inventorySync = $sync; $inventorySync['sequence'] = 3; $inventorySync['policy_version'] = 1;
+    $inventorySync['inventory'] = ['os_edition' => 'Windows 11 Pro', 'os_build' => '26200.6584', 'cpu' => 'Intel(R) Core(TM) i5-10400 CPU @ 2.90GHz (12 hilos)', 'ram_bytes' => 17179869184, 'disk_bytes' => 511101108224, 'architecture' => 'x64'];
+    expect(request('POST', '/client/sync', $inventorySync, $key, $bearer, Util::uuid()), 200, 'sync with inventory');
+    $stored = $db->one('SELECT os_edition,os_build,cpu,ram_bytes,disk_bytes,JSON_UNQUOTE(JSON_EXTRACT(specs,\'$.architecture\')) arch,version FROM devices WHERE tenant_id=? AND id=?', [$tenant, $device]);
+    check($stored['os_edition'] === 'Windows 11 Pro' && $stored['os_build'] === '26200.6584' && (int) $stored['ram_bytes'] === 17179869184 && (int) $stored['disk_bytes'] === 511101108224 && $stored['arch'] === 'x64', 'inventory stored on the device');
+    $badInventory = $inventorySync; $badInventory['sequence'] = 4; $badInventory['inventory']['architecture'] = 'x86';
+    expect(request('POST', '/client/sync', $badInventory, $key, $bearer, Util::uuid()), 422, 'invalid inventory rejected by contract');
     $sync['policy_version'] = 1;
     expect(request('POST', '/client/sync', $sync, $key, $bearer), 422, 'idempotency mandatory');
     expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid(), null, [], false), 401, 'bearer alone rejected');

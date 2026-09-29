@@ -56,6 +56,32 @@ public sealed class AgentDiagnosticsTests
     }
 
     [Fact]
+    public async Task SinCambiosNoRepiteLogYElReporteSaleSoloComoSenalDeVidaCadaHora()
+    {
+        // Antes: log "degraded" y SecurityReport cada 5 min aunque nada cambiara (288 filas/dia por equipo).
+        var clock = new TestClock();
+        var context = Samples.Context(clock);
+        var snapshot = new ModuleSnapshot("control", null, null, "unknown", "unhardened");
+        var diagnostics = new AgentDiagnostics(() => [snapshot]);
+        await diagnostics.InitAsync(context);
+        var events = (MemoryEvents)context.Outbox;
+        await diagnostics.TickAsync(default);
+        Assert.Single(events.SecurityReports);
+        Assert.Single(events.Logs);
+        for (var i = 0; i < 11; i++) { clock.Advance(TimeSpan.FromMinutes(5)); await diagnostics.TickAsync(default); }   // 55 min
+        Assert.Single(events.SecurityReports);
+        Assert.Single(events.Logs);
+        clock.Advance(TimeSpan.FromMinutes(5)); await diagnostics.TickAsync(default);   // 60 min: senal de vida
+        Assert.Equal(2, events.SecurityReports.Count);
+        Assert.Single(events.Logs);
+        snapshot = snapshot with { State = "applied", ErrorCode = null };
+        clock.Advance(TimeSpan.FromMinutes(5)); await diagnostics.TickAsync(default);   // cambio: reporte y log
+        Assert.Equal(3, events.SecurityReports.Count);
+        Assert.Equal(2, events.Logs.Count);
+        Assert.Equal("ready", events.Logs[^1].Code);
+    }
+
+    [Fact]
     public async Task ThrottlePreservesErrorsAndRecoveryDoesNotLatchOwnDegradedState()
     {
         var clock = new TestClock();

@@ -134,6 +134,13 @@ final class Application
                 $json = Util::json($response);
                 if (strlen($json) > 262144 && $response['policy'] !== null) { $response['policy'] = null; $json = Util::json($response); }
                 $db->run('UPDATE device_sync_state SET last_sequence=GREATEST(last_sequence,?),updated_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND device_id=? AND enrollment_id=?', [$b->sequence, $c['tenant_id'], $c['device_id'], $c['enrollment_id']]);
+                // Inventario declarado (primer sync de cada arranque o cuando cambia). No toca devices.version (ETag
+                // de edicion del panel). La arquitectura va a specs: la usa la oferta de releases.
+                if (isset($b->inventory)) {
+                    $inv = $b->inventory;
+                    $db->run('UPDATE devices SET os_edition=?,os_build=?,cpu=?,ram_bytes=?,disk_bytes=?,specs=JSON_SET(COALESCE(specs,JSON_OBJECT()),\'$.architecture\',?) WHERE tenant_id=? AND id=?',
+                        [$inv->os_edition, $inv->os_build ?? null, $inv->cpu, $inv->ram_bytes, $inv->disk_bytes ?? null, $inv->architecture, $c['tenant_id'], $c['device_id']]);
+                }
                 // policy_version del request = la que el agente tiene APLICADA. Se guarda solo si existe en el servidor
                 // (1..version compilada) y sin tocar devices.version, que es el ETag de edicion del panel.
                 $applied = isset($b->policy_version) && $b->policy_version > 0 && $b->policy_version <= $version ? (int) $b->policy_version : null;

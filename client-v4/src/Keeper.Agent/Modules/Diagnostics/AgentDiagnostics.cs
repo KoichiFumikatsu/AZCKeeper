@@ -9,6 +9,13 @@ public sealed class AgentDiagnostics(Func<IReadOnlyList<ModuleSnapshot>> snapsho
 {
     public override string Name => "AgentDiagnostics";
     private DateTimeOffset _next;
+    // Se evalua cada 5 min, pero solo se registra/envia lo que cambio: antes salian un log "degraded" y un
+    // SecurityReport cada 5 min aunque nada cambiara (288 filas/dia por equipo). El reporte se reenvia igual cada
+    // hora como senal de vida, para que la ficha no muestre un "ultimo reporte" viejo en un equipo sano.
+    private static readonly TimeSpan Heartbeat = TimeSpan.FromHours(1);
+    private string? _lastState;
+    private string? _lastSignature;
+    private DateTimeOffset _lastReportAt;
     public IReadOnlyList<ModuleSnapshot> Health { get; private set; } = [];
     public override async Task TickAsync(CancellationToken ct)
     {
@@ -30,7 +37,11 @@ public sealed class AgentDiagnostics(Func<IReadOnlyList<ModuleSnapshot>> snapsho
             }
         }).ToArray();
         State = controls.Any(c => c.State != SecurityControlState.Applied) ? "degraded" : "ready";
-        await ReportAsync(State, ct);
+        if (State != _lastState) { await ReportAsync(State, ct); _lastState = State; }
+        var signature = string.Join('|', controls.Select(c => $"{c.ControlId}:{c.State}:{c.ErrorCode}"));
+        var now = Context.Clock.GetUtcNow();
+        if (signature == _lastSignature && now - _lastReportAt < Heartbeat) return;
+        _lastSignature = signature; _lastReportAt = now;
         await Context.Outbox.EnqueueAsync(new SecurityReport
         {
             EventId = Guid.NewGuid(), ObservedAt = Context.Clock.GetUtcNow(), Controls = controls,

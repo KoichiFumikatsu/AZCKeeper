@@ -69,7 +69,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
             ? Math.Clamp(hours, 6, 720) : 24;
         var moduleList = new List<IModule> { new WebEnforcer(registry), new UsbEnforcer(registry),
             new InstallEnforcer(registry, loadOptions: () => AppLockerOptions.FromEnvironment(Environment.GetEnvironmentVariable)),
-            new DownloadEnforcer(registry), deviceLock, commands, new Inventory(), updater,
+            new DownloadEnforcer(registry), deviceLock, commands, new Inventory(outbox.EnqueueInventoryAsync), updater,
             HardeningStatusModule.FromFile(Path.Combine(dataDirectory, "hardening", "state.json")),
             new RestorePointModule(new WindowsRestorePointService(!registry.IsDryRun), Path.Combine(dataDirectory, "restore-point.json"),
                 TimeSpan.FromHours(restorePointHours), TimeSpan.FromHours(6)),

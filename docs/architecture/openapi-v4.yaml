@@ -10102,6 +10102,41 @@ components:
             $ref: '#/components/schemas/SecurityControl'
           maxItems: 100
       description: Ultimo SecurityReport del equipo, para la ficha del panel.
+    DeviceInventory:
+      type: object
+      additionalProperties: false
+      required:
+      - os_edition
+      - cpu
+      - ram_bytes
+      - architecture
+      properties:
+        os_edition:
+          type: string
+          maxLength: 100
+          description: Edicion legible, p. ej. "Windows 11 Pro" (Home/Pro determina AppLocker/BitLocker).
+        os_build:
+          type: string
+          maxLength: 80
+        cpu:
+          type: string
+          maxLength: 160
+        ram_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        disk_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        architecture:
+          type: string
+          enum:
+          - x64
+          - arm64
+      description: >-
+        Inventario declarado por el agente. Se envia en el primer sync de cada arranque y cuando cambia; el
+        servidor actualiza el equipo sin tocar su version de edicion.
     CommandInput:
       type: object
       additionalProperties: false
@@ -11211,6 +11246,8 @@ components:
           maxItems: 50
         security:
           $ref: '#/components/schemas/SecurityReport'
+        inventory:
+          $ref: '#/components/schemas/DeviceInventory'
         command_results:
           type: array
           items:

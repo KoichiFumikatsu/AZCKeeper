@@ -6,7 +6,7 @@ namespace Keeper.Agent.Storage;
 
 public sealed record OutboxEvent(Guid Id, Episode? Episode = null, LogEntry? Log = null,
     SyncRequestCommandResultsItem? Command = null, SecurityReport? Security = null,
-    ActivitySnapshot? Activity = null);
+    ActivitySnapshot? Activity = null, DeviceInventory? Inventory = null);
 public sealed record PendingBatch(Guid IdempotencyKey, byte[] Body, IReadOnlyList<Guid> EventIds);
 public sealed record OutboxState(long Sequence, List<OutboxEvent> Events, List<OutboxEvent> Quarantine,
     PendingBatch? Pending);
@@ -42,6 +42,22 @@ public sealed class DurableOutbox(string path, int maxBytes = 16 * 1024 * 1024) 
         finally { _gate.Release(); }
     }
 
+    // Inventario: solo cuenta el ultimo. Sustituye al anterior que siga sin enviar; uno ya incluido en el lote
+    // pendiente se respeta para que el reintento lleve exactamente el mismo cuerpo (idempotencia).
+    public async Task EnqueueInventoryAsync(DeviceInventory inventory, CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            var state = await ReadAsync(ct);
+            var pending = state.Pending?.EventIds ?? [];
+            state.Events.RemoveAll(e => e.Inventory is not null && !pending.Contains(e.Id));
+            state.Events.Add(new OutboxEvent(Guid.NewGuid(), Inventory: inventory));
+            await SaveAsync(state, ct);
+        }
+        finally { _gate.Release(); }
+    }
+
     public async Task<PendingBatch> PrepareAsync(long? policyVersion, CancellationToken ct)
     {
         await _gate.WaitAsync(ct);
@@ -55,11 +71,12 @@ public sealed class DurableOutbox(string path, int maxBytes = 16 * 1024 * 1024) 
             var commands = new List<SyncRequestCommandResultsItem>();
             SecurityReport? security = null;
             ActivitySnapshot? activity = null;
+            DeviceInventory? inventory = null;
             byte[] Serialize() => JsonSerializer.SerializeToUtf8Bytes(new SyncRequest
             {
                 ProtocolVersion = 1, Sequence = checked(state.Sequence + 1), PolicyVersion = policyVersion,
                 ReleaseId = null, Episodes = episodes, Logs = logs, CommandResults = commands, Security = security,
-                Activity = activity
+                Activity = activity, Inventory = inventory
             }, ProtocolJson.Options);
             var body = Serialize();
             // El contrato lleva UN snapshot por sincronizacion, asi que si hay varios dias
@@ -72,12 +89,13 @@ public sealed class DurableOutbox(string path, int maxBytes = 16 * 1024 * 1024) 
                 if (selected.Count == 200) break;
                 if (item.Episode is not null && episodes.Count == 200 || item.Log is not null && logs.Count == 50 ||
                     item.Command is not null && commands.Count == 20 || item.Security is not null && security is not null
-                    || item.Activity is not null && !ReferenceEquals(item, oldestActivity)) continue;
+                    || item.Activity is not null && !ReferenceEquals(item, oldestActivity) || item.Inventory is not null && inventory is not null) continue;
                 if (item.Episode is not null) episodes.Add(item.Episode);
                 if (item.Log is not null) logs.Add(item.Log);
                 if (item.Command is not null) commands.Add(item.Command);
                 if (item.Security is not null) security = item.Security;
                 if (item.Activity is not null) activity = item.Activity;
+                if (item.Inventory is not null) inventory = item.Inventory;
                 var candidate = Serialize();
                 if (candidate.Length > MaxRequestBytes) break;
                 selected.Add(item);
@@ -109,6 +127,9 @@ public sealed class DurableOutbox(string path, int maxBytes = 16 * 1024 * 1024) 
                 }
                 state.Events.Remove(item);
             }
+            // El servidor no confirma el inventario por separado: si el sync que lo llevaba respondio, ya se aplico.
+            var sent = state.Pending.EventIds;
+            state.Events.RemoveAll(e => e.Inventory is not null && sent.Contains(e.Id));
             await SaveAsync(state with { Pending = null }, ct);
         }
         finally { _gate.Release(); }
