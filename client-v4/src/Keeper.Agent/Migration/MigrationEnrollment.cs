@@ -17,7 +17,7 @@ public static class MigrationEnrollment
     public static DeviceLogin CreateLogin(HttpMessageSigner signer, Guid device, string? ticket) => new()
     {
         DeviceId = ticket is null ? device : null, EnrollmentTicket = ticket, PublicKey = signer.PublicKey,
-        AgentVersion = "4.0.0", Hostname = Environment.MachineName
+        AgentVersion = Keeper.Agent.Storage.AgentIdentity.Version.ToString(3), Hostname = Environment.MachineName
     };
 
     public static async Task<DeviceToken> LoginAsync(HttpClient http, HttpMessageSigner signer, Guid tenant, Guid device,

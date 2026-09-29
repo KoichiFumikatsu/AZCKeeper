@@ -251,6 +251,29 @@ public sealed class TrackingTests
         Assert.Equal(2, events.Episodes.Select(e => e.EventId).Distinct().Count());
     }
 
+    [Theory]
+    [InlineData("2026-09-14T10:00:00Z", EpisodeTimeCategory.WorkHours)]    // lunes 10:00 UTC, dentro de 08-18
+    [InlineData("2026-09-14T12:30:00Z", EpisodeTimeCategory.Lunch)]        // almuerzo 12-13
+    [InlineData("2026-09-14T20:00:00Z", EpisodeTimeCategory.AfterHours)]   // fuera de horario
+    [InlineData("2026-09-13T10:00:00Z", EpisodeTimeCategory.AfterHours)]   // domingo
+    public async Task EpisodioLlevaLaFranjaHorariaDelHorario(string at, EpisodeTimeCategory expected)
+    {
+        // Antes el episodio salia sin time_category aunque el tracker la calculaba (brecha H3).
+        var clock = new TrackingClock(at);
+        var events = new CapturedEvents();
+        var activity = new ActivityTracker(new IdleInput());
+        activity.Schedule = new WorkSchedule(TimeZoneInfo.Utc, [new Keeper.Shared.Policy.Schedule
+        {
+            Id = Guid.NewGuid(), TenantId = Guid.NewGuid(), Name = "L-V", Timezone = "UTC", Days = [1, 2, 3, 4, 5],
+            StartLocal = "08:00", EndLocal = "18:00", LunchStartLocal = "12:00", LunchEndLocal = "13:00", Version = 1
+        }]);
+        var windows = new WindowTracker(new Foreground { Window = new("editor", "A") }, activity);
+        await activity.InitAsync(Context(clock, events)); await windows.InitAsync(Context(clock, events));
+        clock.Advance(5); await activity.TickAsync(default); await windows.TickAsync(default);
+        await windows.ShutdownAsync();
+        Assert.Equal(expected, Assert.Single(events.Episodes).TimeCategory);
+    }
+
     [Fact]
     public async Task UnchangedWindowFlushesBoundedEpisodesAndDoesNotChargeSuspend()
     {

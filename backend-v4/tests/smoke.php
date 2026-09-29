@@ -170,10 +170,12 @@ try {
     $ack = expect(request('POST', '/client/episodes:batch', ['episodes' => [$conflict]], $key, $bearer, Util::uuid()), 200, 'event hash conflict')['acks'][0]; check($ack['code'] === 'event_conflict', 'same UUID different body rejected');
     expect(request('POST', '/client/episodes:batch', ['episodes' => [$episode, $episode]], $key, $bearer, Util::uuid()), 422, 'duplicate UUID envelope rejected');
     $bad = $episode; $bad['event_id'] = Util::uuid(); $bad['active_seconds'] = 61;
-    $good = $episode; $good['event_id'] = Util::uuid();
+    $good = $episode; $good['event_id'] = Util::uuid(); $good['time_category'] = 'lunch';
     $acks = expect(request('POST', '/client/episodes:batch', ['episodes' => [$bad, $good]], $key, $bearer, Util::uuid()), 200, 'partial batch')['acks']; check($acks[0]['status'] === 'rejected' && $acks[1]['status'] === 'accepted', 'individual errors preserve valid events');
     $count = $db->one('SELECT COUNT(*) n FROM episodes WHERE tenant_id=? AND device_id=?', [$tenant, $device]); check((int) $count['n'] === 2, 'exactly two stored episodes');
     check((int) $db->one('SELECT COUNT(*) n FROM episode_ingest_keys WHERE tenant_id=? AND device_id=?', [$tenant, $device])['n'] === 2, 'ledger agrees');
+    $category = fn (string $id) => $db->one('SELECT time_category FROM episodes WHERE tenant_id=? AND device_id=? AND event_id=?', [$tenant, $device, Util::bin($id)]);
+    check(($category($good['event_id'])['time_category'] ?? null) === 'lunch' && array_key_exists('time_category', $category($episode['event_id']) ?: []) && $category($episode['event_id'])['time_category'] === null, 'time_category stored when sent, NULL when absent');
     echo "PASS bounded batch, ledger dedupe, partial ACK and cross-route retries\n";
 
     $command = Util::uuid();

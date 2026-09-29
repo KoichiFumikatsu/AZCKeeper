@@ -42,6 +42,13 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         var dataDirectory = DataDirectory();
         Directory.CreateDirectory(dataDirectory);
         await using var lease = new FileStream(Path.Combine(dataDirectory, "agent.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var tokenPath = Path.Combine(dataDirectory, "device-token.dpapi");
+        if (AgentVersionMarker.Changed(Path.Combine(dataDirectory, "agent-version.txt"), AgentVersion) && File.Exists(tokenPath))
+        {
+            // Login nuevo para que el backend registre la version (solo la guarda en /client/login).
+            File.Delete(tokenPath);
+            Log($"version del agente cambio a {AgentVersion}: se descarta el token para forzar login");
+        }
         using var key = await DeviceKeyStore.LoadOrCreateAsync(Path.Combine(dataDirectory, "device-key.dpapi"), stoppingToken);
         using var signer = new HttpMessageSigner(key);
         using var outbox = new DurableOutbox(Path.Combine(dataDirectory, "outbox.json"));
@@ -94,7 +101,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
             http.BaseAddress = root;
             transport = new SyncClient(http, signer, deviceId, outbox, policy, TimeProvider.System,
                 Environment.GetEnvironmentVariable("KEEPER_ENROLLMENT_TICKET"),
-                new DeviceTokenStore(Path.Combine(dataDirectory, "device-token.dpapi"), root.AbsoluteUri + signer.KeyId))
+                new DeviceTokenStore(tokenPath, root.AbsoluteUri + signer.KeyId))
             {
                 HardeningPassword = OperatingSystem.IsWindows()
                     ? new HardeningPasswordModule(dataDirectory, new WindowsHardeningPasswordFileSystem(), new DpapiHardeningPasswordProtector())
@@ -116,8 +123,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
     internal static string DataDirectory() => Environment.GetEnvironmentVariable("KEEPER_DATA_DIR") ??
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "AZCKeeper", "v4");
 
-    private static Version AgentVersion { get; } = typeof(AgentWorker).Assembly.GetName().Version is { } v
-        ? new Version(v.Major, v.Minor, Math.Max(0, v.Build)) : new Version(4, 0, 0);
+    private static Version AgentVersion => AgentIdentity.Version;
 
     private void Log(string message)
     {

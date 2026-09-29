@@ -75,7 +75,14 @@ public sealed class WindowTracker(IForegroundSource source, ActivityTracker acti
             {
                 EventId = Guid.NewGuid(), StartedAt = _start, EndedAt = _end,
                 ProcessName = _window.ProcessName, WindowTitle = _window.Title,
-                ActiveSeconds = (long)_active, IdleSeconds = (long)_idle
+                ActiveSeconds = (long)_active, IdleSeconds = (long)_idle,
+                // Un episodio nunca cruza de franja (se corta al cambiar _category), asi que su franja es unica.
+                TimeCategory = _category switch
+                {
+                    Presence.TimeCategory.WorkHours => EpisodeTimeCategory.WorkHours,
+                    Presence.TimeCategory.LunchTime => EpisodeTimeCategory.Lunch,
+                    _ => EpisodeTimeCategory.AfterHours
+                }
             }, ct);
         }
         _active = _idle = 0; _start = _end;
