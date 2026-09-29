@@ -120,6 +120,9 @@ Hallazgos del piloto:
 - SEGUNDO CICLO 4.0.1 -> 4.0.2 (seq 3) VALIDADO 14:43-14:54Z: el bootstrapper aplico el ACL nuevo de bin, Keeper.Session
   corre en la sesion del usuario (primera vez) y a las 14:59Z llegaron los primeros episodios al servidor (explorer, idle:
   el usuario no estaba frente al equipo). `time_category` llega NULL: revisar si lo calcula el cron o si falta en ingesta.
+- CORREGIDO en `cca5278` (desplegado Ingest.php en devkeep; backup deploy-backups/20260929-101627): time_category ahora
+  lo envia el cliente y lo guarda la ingesta; el login reportaba "4.0.0" FIJO y el agente fuerza login al cambiar de
+  version. Release 4.0.3 (seq 4, id 04d630a9-d837-4693-a25b-7cc9755f15c0) firmada y subida; FALTA registrarla.
 
 ### ACTUALIZACIÓN 2026-09-28 (noche) — cadena de firma y logs HECHOS; falta solo la ejecución real
 Commits `5ab0ca8` (logs + fix staging), `e71de31` (firma + Session en paquete + precheck), `69e1119` (backend:
