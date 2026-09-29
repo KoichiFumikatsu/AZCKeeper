@@ -88,6 +88,61 @@ public sealed class IntakeEnrollmentTests
         public Task DeleteAsync(CancellationToken ct) { Saved = null; return Task.CompletedTask; }
     }
 
+    [Fact]
+    public async Task AsksDocumentWhenBackendRequestsItAndSendsItOnNextRequest()
+    {
+        using var dir = new TestDirectory();
+        var device = Guid.NewGuid();
+        var handler = new IntakeHandler(device, ["ask", "pending", "approved"]);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://keeper.test/v1/") };
+        using var signer = new HttpMessageSigner(ECDsa.Create(ECCurve.NamedCurves.nistP256));
+        var asked = 0;
+        await new IntakeEnrollment(http, signer, "kek_company-secret-0123456789", TimeProvider.System, _ => { }, () => null, (_, _) => Task.CompletedTask)
+        {
+            AskDocument = _ => { asked++; return Task.FromResult<string?>("1020304050"); }
+        }.RunAsync(new MemoryTokens(), Path.Combine(dir.Root, "id.txt"), default);
+        Assert.Equal(1, asked);
+        var requests = handler.Requests.Where(r => r.Path.EndsWith("enrollment-requests", StringComparison.Ordinal)).ToList();
+        using var first = JsonDocument.Parse(requests[0].Body);
+        using var second = JsonDocument.Parse(requests[1].Body);
+        Assert.Equal(JsonValueKind.Null, first.RootElement.GetProperty("claimed_document").ValueKind);
+        Assert.Equal("1020304050", second.RootElement.GetProperty("claimed_document").GetString());
+    }
+
+    [Fact]
+    public async Task ClosedDocumentWindowIsNotReopenedBeforeThirtyMinutes()
+    {
+        using var dir = new TestDirectory();
+        var handler = new IntakeHandler(Guid.NewGuid(), ["ask", "ask", "approved"]);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://keeper.test/v1/") };
+        using var signer = new HttpMessageSigner(ECDsa.Create(ECCurve.NamedCurves.nistP256));
+        var asked = 0;
+        await new IntakeEnrollment(http, signer, "kek_company-secret-0123456789", new TestClock(), _ => { }, () => null, (_, _) => Task.CompletedTask)
+        {
+            AskDocument = _ => { asked++; return Task.FromResult<string?>(null); }
+        }.RunAsync(new MemoryTokens(), Path.Combine(dir.Root, "id.txt"), default);
+        Assert.Equal(1, asked);
+    }
+
+    [Theory]
+    [InlineData("1.020.304.050", "1020304050")]
+    [InlineData("10 20 30 40 50", "1020304050")]
+    [InlineData("1234", null)]
+    [InlineData("12345678901234567", null)]
+    [InlineData("10203A4050", null)]
+    [InlineData(null, null)]
+    public void DocumentNormalizationMatchesBackend(string? input, string? expected) =>
+        Assert.Equal(expected, Keeper.Shared.Contracts.IdentifyProtocol.Normalize(input));
+
+    [Fact]
+    public void IdentifyAnswerRejectsWrongVersionAndInvalidDocument()
+    {
+        Assert.Null(Keeper.Shared.Contracts.IdentifyProtocol.Validate(new(1, null)));
+        Assert.Equal("1020304050", Keeper.Shared.Contracts.IdentifyProtocol.Validate(new(1, "1020304050")));
+        Assert.Throws<InvalidDataException>(() => Keeper.Shared.Contracts.IdentifyProtocol.Validate(new(2, "1020304050")));
+        Assert.Throws<InvalidDataException>(() => Keeper.Shared.Contracts.IdentifyProtocol.Validate(new(1, "abc")));
+    }
+
     private sealed class IntakeHandler(Guid device, string[] script) : HttpMessageHandler
     {
         private int _step;
@@ -101,10 +156,12 @@ public sealed class IntakeEnrollmentTests
             {
                 var step = script[_step++];
                 if (int.TryParse(step, out var code)) return new HttpResponseMessage((HttpStatusCode)code);
+                var ask = step == "ask";
+                if (ask) step = "pending";
                 response = new
                 {
                     status = step, request_id = Guid.NewGuid(), retry_after_seconds = step == "pending" ? 300 : 0,
-                    enrollment_ticket = step == "approved" ? "ticket-1" : null, device_id = step == "enrolled" ? device : (Guid?)null
+                    enrollment_ticket = step == "approved" ? "ticket-1" : null, device_id = step == "enrolled" ? device : (Guid?)null, ask_document = ask
                 };
             }
             else if (path.EndsWith("challenges", StringComparison.Ordinal)) response = new { nonce = "intake-nonce-0123456789", expires_at = DateTimeOffset.UtcNow.AddMinutes(1) };

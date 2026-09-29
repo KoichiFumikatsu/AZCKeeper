@@ -54,6 +54,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         using var outbox = new DurableOutbox(Path.Combine(dataDirectory, "outbox.json"));
         var context = new ModuleContext(outbox, TimeProvider.System, Log, stoppingToken);
         var registry = new WindowsSystemPolicyStore(Environment.GetEnvironmentVariable("KEEPER_ENABLE_HKLM") == "1", Log);
+        using var trust = InstalledTrust.Load(AppContext.BaseDirectory);
         // device_id: el del paquete (KEEPER_DEVICE_ID) o, en el alta por clave de la empresa, el que asigno el servidor.
         var deviceIdPath = Path.Combine(dataDirectory, "device-id.txt");
         var deviceId = Guid.TryParse(Environment.GetEnvironmentVariable("KEEPER_DEVICE_ID"), out var configuredId) ? configuredId : IntakeEnrollment.ReadDeviceId(deviceIdPath);
@@ -69,13 +70,17 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
             Log("sin device_id: alta por solicitud con la clave de la empresa");
             deviceId = await new IntakeEnrollment(intakeHttp, signer, enrollmentKey, TimeProvider.System, Log,
                     () => OperatingSystem.IsWindows() ? Smbios.ReadSystemSerial() : null)
+                {
+                    AskDocument = OperatingSystem.IsWindows()
+                        ? new WindowsDocumentPrompt(new WindowsSessionLauncher(trust.BinaryHashes), Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), Log).AskAsync
+                        : null
+                }
                 .RunAsync(new DeviceTokenStore(tokenPath, apiRoot.AbsoluteUri + signer.KeyId), deviceIdPath, stoppingToken);
         }
         var deviceLock = new DeviceLock(Path.Combine(dataDirectory, "device-lock.json"), PinVerifier.LoadProtected(Path.Combine(dataDirectory, "pin-verifier.dpapi")));
         var commands = new CommandExecutor(Path.Combine(dataDirectory, "commands.json"), deviceId, deviceLock,
             new WindowsDeviceActions(!registry.IsDryRun),
             OperatingSystem.IsWindows() ? new WindowsComputerNamer(!registry.IsDryRun) : null);
-        using var trust = InstalledTrust.Load(AppContext.BaseDirectory);
         using var updateHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         var updater = new UpdateManager(Path.Combine(dataDirectory, "staging"), trust.ReleaseKeys, trust.InstalledSequence, trust.Channel,
             registry.IsDryRun ? null : new WindowsReleaseDownloader(updateHttp),

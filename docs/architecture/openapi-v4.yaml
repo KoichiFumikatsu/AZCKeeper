@@ -9112,6 +9112,7 @@ components:
       - enrollment_ticket
       - device_id
       - retry_after_seconds
+      - ask_document
       properties:
         status:
           enum:
@@ -9136,6 +9137,9 @@ components:
           type: integer
           minimum: 0
           maximum: 86400
+        ask_document:
+          type: boolean
+          description: La empresa pide la cédula de la persona y este equipo aún no la envió; el agente la pregunta en la sesión del usuario.
     ExpectedDeviceInput:
       type: object
       additionalProperties: false

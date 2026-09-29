@@ -16,7 +16,12 @@ public sealed class IntakeEnrollment(HttpClient http, HttpMessageSigner signer, 
     public static readonly TimeSpan NetworkRetry = TimeSpan.FromMinutes(2);
     public static readonly TimeSpan MaxWait = TimeSpan.FromHours(6);
     private readonly Func<TimeSpan, CancellationToken, Task> _delay = delay ?? ((wait, ct) => Task.Delay(wait, ct));
-    public string? ClaimedDocument { get; init; }
+    // Autoidentificacion: el backend avisa (ask_document) y se pregunta a la persona; si cierra la ventana se
+    // vuelve a preguntar a los 30 minutos. La cedula enviada queda guardada en el backend.
+    public Func<CancellationToken, Task<string?>>? AskDocument { get; init; }
+    public static readonly TimeSpan AskAgain = TimeSpan.FromMinutes(30);
+    private string? _claimedDocument;
+    private DateTimeOffset _nextAsk;
 
     public static Guid ReadDeviceId(string path)
     {
@@ -59,6 +64,12 @@ public sealed class IntakeEnrollment(HttpClient http, HttpMessageSigner signer, 
                     Persist(deviceIdPath, device);
                     return device;
                 }
+                if (status.Status == EnrollmentRequestStatusStatus.Pending && status.AskDocument && _claimedDocument is null &&
+                    AskDocument is not null && clock.GetUtcNow() >= _nextAsk)
+                {
+                    _nextAsk = clock.GetUtcNow() + AskAgain;
+                    if ((_claimedDocument = await AskDocument(ct)) is not null) continue;
+                }
                 wait = TimeSpan.FromSeconds(Math.Clamp(status.RetryAfterSeconds, 60, (int)MaxWait.TotalSeconds));
             }
             catch (TransportException ex)
@@ -89,7 +100,7 @@ public sealed class IntakeEnrollment(HttpClient http, HttpMessageSigner signer, 
         var body = new EnrollmentRequestInput
         {
             EnrollmentKey = enrollmentKey, PublicKey = signer.PublicKey, SerialNumber = serial(),
-            Hostname = Environment.MachineName, AgentVersion = AgentIdentity.Version.ToString(3), ClaimedDocument = ClaimedDocument
+            Hostname = Environment.MachineName, AgentVersion = AgentIdentity.Version.ToString(3), ClaimedDocument = _claimedDocument
         };
         var status = await PostAsync<EnrollmentRequestStatus>("client/enrollment-requests", body, HttpMessageSigner.CreateNonce(), ct);
         if (status.RequestId == Guid.Empty) throw new InvalidDataException("invalid_enrollment_status");

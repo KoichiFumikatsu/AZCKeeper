@@ -112,8 +112,10 @@ function intakeTests(Database $db): void
 
     // Autoidentificacion por cedula: apagada no sugiere; sugerencia; confirmacion automatica.
     $pairG = keypair();
-    check(expect(intakeAsk($key['key'], $pairG, null, 'DESKTOP-SELF', '1020304050'), 200, 'self identify off')['status'] === 'pending', 'document ignored when disabled');
+    $off = expect(intakeAsk($key['key'], $pairG, null, 'DESKTOP-SELF', '1020304050'), 200, 'self identify off');
+    check($off['status'] === 'pending' && $off['ask_document'] === false, 'document ignored and not asked when disabled');
     check(expect(adminRequest($admin, 'PUT', '/enrollments/settings', ['auto_approve_serial_match' => true, 'self_identify' => true, 'self_identify_auto_confirm' => false]), 200, 'enable self identify')['self_identify'], 'settings saved');
+    check(expect(intakeAsk($key['key'], keypair(), null, 'DESKTOP-ASK'), 200, 'ask for document')['ask_document'] === true, 'agent asked for document when enabled and missing');
     expect(intakeAsk($key['key'], $pairG, null, 'DESKTOP-SELF', '1020304050'), 200, 'self identify suggestion');
     $g = expect(adminRequest($admin, 'GET', '/enrollments/requests?status=pending'), 200, 'queue after self identify');
     $gRow = array_values(array_filter($g['data'], fn ($x) => $x['hostname'] === 'DESKTOP-SELF'))[0];

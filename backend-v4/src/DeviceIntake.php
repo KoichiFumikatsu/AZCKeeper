@@ -77,7 +77,8 @@ final class DeviceIntake
             }
             // Se reevalua en cada reintento: IT puede cargar el CSV despues de que los equipos ya pidieron alta.
             if ($row['status'] === 'pending') { $row = $this->evaluate($row); }
-            $out = ['status' => $row['status'], 'request_id' => Util::id($row['id']), 'enrollment_ticket' => null, 'device_id' => null, 'retry_after_seconds' => Config::number('ENROLLMENT_RETRY_SECONDS', 300)];
+            $out = ['status' => $row['status'], 'request_id' => Util::id($row['id']), 'enrollment_ticket' => null, 'device_id' => null, 'retry_after_seconds' => Config::number('ENROLLMENT_RETRY_SECONDS', 300),
+                'ask_document' => $row['status'] === 'pending' && $row['claimed_document'] === null && (bool) $this->settings($tenant)['self_identify']];
             if ($row['status'] === 'approved') {
                 $out['enrollment_ticket'] = $this->ticket($row, $thumb);
                 $out['retry_after_seconds'] = 0;

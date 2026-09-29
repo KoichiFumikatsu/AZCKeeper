@@ -1,5 +1,5 @@
 {
-  "source_sha256": "feef8aa46e492fd84b241b8a6e5e2a5250222818f0615f6a0bb305b8d84d3ae2",
+  "source_sha256": "18116707085536b93e1cdfd0b035be7543357d4fa3431b2e8b60b74334f50591",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -15900,7 +15900,8 @@
         "request_id",
         "enrollment_ticket",
         "device_id",
-        "retry_after_seconds"
+        "retry_after_seconds",
+        "ask_document"
       ],
       "properties": {
         "status": {
@@ -15941,6 +15942,10 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 86400
+        },
+        "ask_document": {
+          "type": "boolean",
+          "description": "La empresa pide la cédula de la persona y este equipo aún no la envió; el agente la pregunta en la sesión del usuario."
         }
       }
     },
