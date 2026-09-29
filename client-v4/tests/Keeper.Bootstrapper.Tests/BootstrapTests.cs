@@ -145,7 +145,7 @@ public sealed class BootstrapTests
         Assert.DoesNotContain(machine.EnvironmentValues, value => value.StartsWith("KEEPER_ENROLLMENT_TICKET=", StringComparison.Ordinal));
         Assert.True(machine.Running);
         Assert.Empty(elevation.Requests);
-        Assert.Equal(new[] { "mkdir-acl", "mkdir", "mkdir", "copy", "copy", "copy", "create", "environment", "recovery", "start" }, machine.Mutations);
+        Assert.Equal(new[] { "mkdir-acl", "mkdir", "mkdir", "copy", "copy", "copy", "bin-acl", "create", "environment", "recovery", "start" }, machine.Mutations);
     }
 
     [Fact]
@@ -213,6 +213,33 @@ public sealed class BootstrapTests
         var overlapping = Path.Combine(machine.InstallDirectory, relative);
         Assert.Throws<ArgumentException>(() => App.Run(Options with { SystemMode = true, SystemUpdate = true, PayloadDirectory = overlapping }, []));
         Assert.Empty(machine.Mutations);
+    }
+
+    [Fact]
+    public void InstalacionYActualizacionDanLecturaAUsuariosSoloEnBin()
+    {
+        // Keeper.Session corre como el usuario: sin lectura en bin, el apphost de .NET no resuelve su ruta.
+        elevation.Elevated = true;
+        App.Run(Options with { SystemMode = true }, []);
+        var bin = Path.Combine(machine.InstallDirectory, "bin");
+        Assert.Equal([bin], machine.BinaryAclPaths);
+        Assert.True(machine.Mutations.LastIndexOf("bin-acl") > machine.Mutations.LastIndexOf("copy"));
+        Assert.True(machine.Mutations.IndexOf("bin-acl") < machine.Mutations.IndexOf("start"));
+        machine.Mutations.Clear();
+        machine.BinaryAclPaths.Clear();
+        Assert.Equal(0, App.Run(Options with { SystemMode = true, SystemUpdate = true }, []));
+        Assert.Equal([bin], machine.BinaryAclPaths);
+        Assert.True(machine.Mutations.IndexOf("bin-acl") > machine.Mutations.LastIndexOf("copy"));
+        Assert.True(machine.Mutations.IndexOf("bin-acl") < machine.Mutations.IndexOf("start"));
+    }
+
+    [Fact]
+    public void SddlDeBinDaSoloLecturaYEjecucionAUsuarios()
+    {
+        Assert.Contains("(A;OICI;0x1200a9;;;BU)", WindowsConstants.BinDirectorySddl);
+        Assert.Contains("(A;;0x1200a9;;;BU)", WindowsConstants.BinFileSddl);
+        Assert.DoesNotContain("BU)", WindowsConstants.DirectorySddl);   // v4 (datos) sigue cerrado
+        Assert.StartsWith("O:BAG:BAD:P", WindowsConstants.BinDirectorySddl);
     }
 
     [Fact]

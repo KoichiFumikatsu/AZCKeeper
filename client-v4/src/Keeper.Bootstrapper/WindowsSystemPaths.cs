@@ -50,6 +50,23 @@ public sealed class WindowsSystemPaths : ISystemPaths
         }
     }
 
+    public void ApplyBinaryAcl(string path)
+    {
+        RequireInstallPath(path);
+        RejectLinks(path);
+        var security = new DirectorySecurity();
+        security.SetSecurityDescriptorSddlForm(WindowsConstants.BinDirectorySddl);
+        var directory = new DirectoryInfo(path);
+        directory.SetAccessControl(security);
+        var fileSecurity = new FileSecurity();
+        fileSecurity.SetSecurityDescriptorSddlForm(WindowsConstants.BinFileSddl);
+        foreach (var entry in Walk(directory))
+        {
+            if (entry is DirectoryInfo child) child.SetAccessControl(security);
+            else ((FileInfo)entry).SetAccessControl(fileSecurity);
+        }
+    }
+
     public void CopyFile(string source, string destination)
     {
         RequireInstallPath(destination);

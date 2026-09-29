@@ -54,7 +54,7 @@ public sealed class SessionSupervisor(WindowsSessionLauncher launcher, string se
         {
             try
             {
-                if (peer.Process.HasExited) throw new IOException("session_exited");
+                if (peer.Process.HasExited) throw new IOException($"session_exited (exit code {peer.Process.ExitCode})");
                 if (!peer.Connecting.IsCompleted)
                 {
                     if (now - peer.Started > TimeSpan.FromSeconds(20)) throw new IOException("session_connect_timeout");
@@ -81,6 +81,8 @@ public sealed class SessionSupervisor(WindowsSessionLauncher launcher, string se
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OperationCanceledException or InvalidDataException or System.ComponentModel.Win32Exception or System.Text.Json.JsonException)
             {
                 Remove(id); _retry[id] = now.AddSeconds(30);
+                // El codigo al servidor no cambia; el motivo queda en el log local para diagnosticar en el equipo.
+                Context.Log($"SessionSupervisor: sesion {id}: {ex.GetType().Name}: {ex.Message}");
                 await ReportAsync("session_capture_lost", ct);
             }
         }

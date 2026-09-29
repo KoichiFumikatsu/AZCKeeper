@@ -27,6 +27,7 @@ public interface ISystemPaths
     IReadOnlyList<string> PayloadFiles(string directory);
     void ValidateInstallTree(bool uninstall = false);
     void CreateProtectedDirectory(string path);
+    void ApplyBinaryAcl(string path);
     void CreateDirectory(string path);
     void CopyFile(string source, string destination);
     void DeleteInstallDirectory();

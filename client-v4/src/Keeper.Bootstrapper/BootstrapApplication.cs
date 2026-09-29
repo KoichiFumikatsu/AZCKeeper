@@ -102,6 +102,7 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
                 var destination = Path.Combine(bin, relative);
                 Step($"COPY \"{source}\" -> \"{destination}\" (sobrescribir)", () => paths.CopyFile(source, destination));
             }
+            Step($"ACL \"{bin}\" {WindowsConstants.BinDirectorySddl} (Usuarios: lectura+ejecucion para Keeper.Session)", () => paths.ApplyBinaryAcl(bin));
             var definition = new ServiceDefinition(ServiceName, Path.Combine(bin, "Keeper.Agent.exe"));
             Step(definition.Describe(exists), () => services.Configure(definition, exists));
             string[] environment = [$"KEEPER_DATA_DIR={data}", $"KEEPER_API_BASE={config!.ApiBase}",
@@ -163,6 +164,7 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
             var dst = Path.Combine(bin, relative);
             Step($"COPY \"{src}\" -> \"{dst}\" (sobrescribir)", () => paths.CopyFile(src, dst));
         }
+        Step($"ACL \"{bin}\" {WindowsConstants.BinDirectorySddl} (Usuarios: lectura+ejecucion para Keeper.Session)", () => paths.ApplyBinaryAcl(bin));
         Step($"SC FAILURE {ServiceName} (recovery: reinicio automatico ante caida)", () => services.ConfigureRecovery(ServiceName));
         Step($"DEL \"{Path.Combine(data, "next-sync.json")}\" (descartar backoff heredado)",
             () => { var stale = Path.Combine(data, "next-sync.json"); if (File.Exists(stale)) File.Delete(stale); });

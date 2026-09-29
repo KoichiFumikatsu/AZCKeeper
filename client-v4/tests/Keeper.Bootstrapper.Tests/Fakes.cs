@@ -64,6 +64,8 @@ internal sealed class FakeMachine : IServiceControl, ISystemPaths, IRegistryStor
     }
     public void CreateProtectedDirectory(string path) { Mutations.Add("mkdir-acl"); Directories.Add(path); }
     public void CreateDirectory(string path) { Mutations.Add("mkdir"); Directories.Add(path); }
+    public List<string> BinaryAclPaths { get; } = [];
+    public void ApplyBinaryAcl(string path) { Assert.False(Running); Mutations.Add("bin-acl"); BinaryAclPaths.Add(path); }
     public void CopyFile(string source, string destination)
     {
         Assert.False(Running);
