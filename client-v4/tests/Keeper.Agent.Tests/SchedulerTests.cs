@@ -160,4 +160,28 @@ public sealed class SchedulerTests
             return 120;
         }
     }
+
+    [Fact]
+    public async Task SyncExitosoDejaMarcaDeSaludParaElBootstrapper()
+    {
+        using var directory = new TestDirectory();
+        var clock = new TestClock();
+        await using var host = new ModuleHost([new TestModule()], Samples.Context(clock));
+        var cycle = new FakeCycle { Cost = 4 };
+        // Marca de salud: la usa el bootstrapper para decidir la vuelta atras tras un update.
+        var health = new Keeper.Shared.Diagnostics.AgentHealthFile(directory.File("health.json"), "4.0.7");
+        using (var withHealth = new Scheduler(host, cycle, new SyncSchedule(Samples.Device), clock, directory.File("health-deadline.json"), _ => { }, health))
+        {
+            Assert.Null(Keeper.Shared.Diagnostics.AgentHealth.Read(directory.File("health.json")));
+            for (var i = 0; i < 20 && Keeper.Shared.Diagnostics.AgentHealth.Read(directory.File("health.json"))?.LastSyncOk is null; i++)
+            {
+                clock.Advance(TimeSpan.FromMinutes(10));
+                await withHealth.StepAsync(default);
+            }
+            var written = Keeper.Shared.Diagnostics.AgentHealth.Read(directory.File("health.json"));
+            Assert.NotNull(written?.LastSyncOk);
+            Assert.Equal("4.0.7", written!.AgentVersion);
+        }
+    }
+
 }

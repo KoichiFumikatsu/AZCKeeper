@@ -33,6 +33,19 @@ public interface ISystemPaths
     void DeleteInstallDirectory();
 }
 
+// Vuelta atras del auto-update: respaldo de bin, comprobacion de que la version nueva sincroniza y restauracion.
+public enum UpdateHealth { Healthy, NetworkUnknown, Unhealthy }
+public interface IUpdateGuard
+{
+    void Backup(string bin);
+    void Restore(string bin);
+    // Espera a que la version nueva haga un sync exitoso despues de `since`. NetworkUnknown: el agente esta vivo
+    // pero tampoco el bootstrapper llega al servidor (la red, no la version: se conserva).
+    UpdateHealth WaitHealthy(DateTimeOffset since);
+    long? PayloadSequence(string payload);
+    void BlockRelease(long sequence);
+}
+
 public interface IRegistryStore
 {
     void SetEnvironment(string serviceName, string[] values);

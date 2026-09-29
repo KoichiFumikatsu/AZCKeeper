@@ -58,7 +58,7 @@ public interface IReleaseInstaller { void Install(string packagePath); }
 
 public sealed class UpdateManager(string stagingDirectory, IReadOnlyDictionary<string, ECDsa> trustedKeys,
     long installedSequence = 0, string channel = "stable", IReleaseDownloader? downloader = null,
-    IReleaseInstaller? installer = null, Version? agentVersion = null) : ModuleBase
+    IReleaseInstaller? installer = null, Version? agentVersion = null, string? blockedPath = null) : ModuleBase
 {
     public override string Name => "UpdateManager";
     private readonly Version _agentVersion = agentVersion ?? new Version(4, 0, 0);
@@ -70,6 +70,39 @@ public sealed class UpdateManager(string stagingDirectory, IReadOnlyDictionary<s
     private string? _error;
     private Task? _downloading;
     private Release? _downloadingRelease;
+    private DateTimeOffset _nextCleanup;
+    private long? _reportedBlocked;
+
+    // El bootstrapper escribe {data}\update-blocked.json al revertir una version que no sincronizo: esa secuencia
+    // no se reintenta (solo una posterior), o el agente restaurado reinstalaria la rota cada ~12 minutos.
+    private long? BlockedSequence()
+    {
+        if (blockedPath is null || !File.Exists(blockedPath)) return null;
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(blockedPath));
+            return document.RootElement.TryGetProperty("sequence", out var value) && value.TryGetInt64(out var sequence) ? sequence : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { return null; }
+    }
+
+    // Cada update deja el ZIP y su extraccion (~200 MB). Se borra lo de mas de 1 h que no sea la release en curso;
+    // lo reciente puede ser la carpeta desde la que aun corre el bootstrapper.
+    private void CleanStaging()
+    {
+        var now = Context.Clock.GetUtcNow();
+        if (now < _nextCleanup) return;
+        _nextCleanup = now.AddHours(6);
+        if (!Directory.Exists(stagingDirectory)) return;
+        var keep = _pending?.Id.ToString("N");
+        foreach (var entry in new DirectoryInfo(stagingDirectory).EnumerateFileSystemInfos())
+        {
+            if (keep is not null && entry.Name.StartsWith(keep, StringComparison.OrdinalIgnoreCase)) continue;
+            if (now.UtcDateTime - entry.LastWriteTimeUtc < TimeSpan.FromHours(1)) continue;
+            try { if (entry is DirectoryInfo d) d.Delete(recursive: true); else entry.Delete(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+    }
 
     public void Offer(Release? release)
     {
@@ -86,6 +119,7 @@ public sealed class UpdateManager(string stagingDirectory, IReadOnlyDictionary<s
 
     public override async Task TickAsync(CancellationToken ct)
     {
+        CleanStaging();
         if (_downloading is not null) { await PollDownloadAsync(ct); return; }
         var release = _pending;
         if (release is null || Context.Clock.GetUtcNow() < _next) return;
@@ -107,6 +141,12 @@ public sealed class UpdateManager(string stagingDirectory, IReadOnlyDictionary<s
         // anterior, u otro canal), la verificacion completa la rechazaria igual, pero despues de bajar el paquete
         // entero, y _failed no sobrevive a un reinicio del servicio. La firma se sigue exigiendo al aplicar.
         if (release.Sequence <= installedSequence || release.Channel != channel) { State = "current"; _error = null; return; }
+        if (BlockedSequence() == release.Sequence)
+        {
+            State = "failed"; _error = "release_rolled_back";
+            if (_reportedBlocked != release.Sequence) { _reportedBlocked = release.Sequence; await ReportAsync(_error, ct, LogEntryLevel.Error); }
+            return;
+        }
         if (!trustedKeys.ContainsKey(release.KeyId))
         {
             if (State != "unsupported" || _error != "release_key_untrusted")

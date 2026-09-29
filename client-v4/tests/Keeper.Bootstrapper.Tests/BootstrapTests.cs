@@ -261,6 +261,45 @@ public sealed class BootstrapTests
         finally { Directory.Delete(package, recursive: true); }
     }
 
+    [Theory]
+    [InlineData(UpdateHealth.Healthy, 0)]
+    [InlineData(UpdateHealth.NetworkUnknown, 0)]
+    [InlineData(UpdateHealth.Unhealthy, 3)]
+    public void UpdateConVueltaAtrasSoloSiLaVersionNuevaNoSincronizaConServidorAlcanzable(UpdateHealth health, int exit)
+    {
+        elevation.Elevated = true;
+        App.Run(Options with { SystemMode = true }, []);
+        machine.Mutations.Clear();
+        var guard = new FakeGuard(machine) { Result = health };
+        var app = new BootstrapApplication(elevation, machine, machine, machine, output.Add, guard: guard);
+        Assert.Equal(exit, app.Run(Options with { SystemMode = true, SystemUpdate = true }, []));
+        Assert.True(machine.Mutations.IndexOf("backup") < machine.Mutations.IndexOf("copy"));
+        Assert.True(machine.Mutations.IndexOf("health") > machine.Mutations.IndexOf("start"));
+        if (health == UpdateHealth.Unhealthy)
+        {
+            var tail = machine.Mutations.Skip(machine.Mutations.IndexOf("health") + 1).ToList();
+            Assert.Equal(new[] { "stop", "restore", "bin-acl", "start", "block" }, tail);
+            Assert.Equal(7, guard.Blocked);
+        }
+        else
+        {
+            Assert.DoesNotContain("restore", machine.Mutations);
+            Assert.Null(guard.Blocked);
+        }
+        Assert.True(machine.Running);
+    }
+
+    [Fact]
+    public void UpdateDryRunConGuardiaNoRespaldaNiEspera()
+    {
+        elevation.Elevated = true;
+        App.Run(Options with { SystemMode = true }, []);
+        machine.Mutations.Clear();
+        var app = new BootstrapApplication(elevation, machine, machine, machine, output.Add, guard: new FakeGuard(machine));
+        Assert.Equal(0, app.Run(Options with { SystemMode = true, SystemUpdate = true, DryRun = true }, []));
+        Assert.Empty(machine.Mutations);
+    }
+
     [Fact]
     public void SystemUpdateSinServicioInstaladoFalla()
     {

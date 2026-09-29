@@ -62,7 +62,8 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         using var updateHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         var updater = new UpdateManager(Path.Combine(dataDirectory, "staging"), trust.ReleaseKeys, trust.InstalledSequence, trust.Channel,
             registry.IsDryRun ? null : new WindowsReleaseDownloader(updateHttp),
-            !registry.IsDryRun && OperatingSystem.IsWindows() ? new WindowsReleaseInstaller() : null, AgentVersion);
+            !registry.IsDryRun && OperatingSystem.IsWindows() ? new WindowsReleaseInstaller() : null, AgentVersion,
+            Path.Combine(dataDirectory, "update-blocked.json"));
         PolicyCoordinator? policy = null;
         ModuleHost? hostReference = null;
         var restorePointHours = int.TryParse(Environment.GetEnvironmentVariable("KEEPER_RESTORE_POINT_HOURS"), out var hours)
@@ -115,7 +116,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         }
         var interval = int.TryParse(Environment.GetEnvironmentVariable("KEEPER_SYNC_SECONDS"), out var value) ? value : 120;
         using var scheduler = new Scheduler(modules, transport, new SyncSchedule(deviceId, interval), TimeProvider.System,
-            Path.Combine(dataDirectory, "next-sync.json"), Log);
+            Path.Combine(dataDirectory, "next-sync.json"), Log, new AgentHealthFile(Path.Combine(dataDirectory, "health.json"), AgentVersion.ToString(3)));
         Log($"Agent {AgentVersion} started: trust {(trust.ReleaseKeys.Count == 0 ? "sin claves de release (auto-update deshabilitado)" : $"{trust.ReleaseKeys.Count} clave(s), sequence {trust.InstalledSequence}, canal {trust.Channel}")}; {(registry.IsDryRun ? "dry-run" : "HKLM enabled")}; {(transport is null ? "offline" : "sync configured")}");
         await scheduler.RunAsync(stoppingToken);
     }

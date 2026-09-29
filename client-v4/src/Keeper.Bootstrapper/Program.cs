@@ -27,7 +27,8 @@ try
     Log($"Keeper.Bootstrapper {typeof(BootstrapApplication).Assembly.GetName().Version} pid {Environment.ProcessId}: {string.Join(' ', args.Where(a => a.StartsWith("--", StringComparison.Ordinal)))}");
     var options = BootstrapOptions.Parse(args, AppContext.BaseDirectory);
     var code = new BootstrapApplication(new WindowsElevation(), new WindowsServiceControl(), paths,
-        new WindowsRegistryStore(), Log, new WindowsHardeningRunner(paths, Log)).Run(options, args);
+        new WindowsRegistryStore(), Log, new WindowsHardeningRunner(paths, Log),
+        options.SystemUpdate ? new WindowsUpdateGuard(paths.InstallDirectory, TimeSpan.FromMinutes(5), Log) : null).Run(options, args);
     Log($"exit {code}");
     return code;
 }

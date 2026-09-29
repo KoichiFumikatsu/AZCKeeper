@@ -13,6 +13,9 @@ public sealed record AppLockerOptions
     public IReadOnlyList<string> TrustedPublishers { get; init; } =
         ["O=MICROSOFT CORPORATION, L=REDMOND, S=WASHINGTON, C=US"];
     public IReadOnlyList<string> AdditionalWritablePaths { get; init; } = [];
+    // Carpeta de instalacion de Keeper: siempre permitida para ejecutables (ver AppLockerPolicy.Create).
+    public string KeeperDirectory { get; init; } =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "AZCKeeper");
 
     public static AppLockerOptions FromEnvironment(Func<string, string?> read)
     {
@@ -57,6 +60,22 @@ public static class AppLockerPolicy
                   path.Length > 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] == '\\') || path.Contains('%'))
                 throw new ArgumentException("Additional writable paths must be absolute paths ending in \\*");
 
+        // Invariante: Keeper nunca se bloquea a si mismo. Keeper.Session (como el usuario) y el bootstrapper del
+        // auto-update (desde v4\staging) corren dentro de ProgramData\AZCKeeper, fuera de Program Files y sin firma
+        // de Microsoft. Sin esta excepcion, pasar a Enforce dejaria sin tracking a la flota y podria bloquear el
+        // propio update (el caso de K3 que bloqueo GitHub). Los usuarios no pueden escribir en esa carpeta (ACL).
+        var keeper = Path.TrimEndingDirectorySeparator(options.KeeperDirectory);
+        if (string.IsNullOrWhiteSpace(keeper) || !Path.IsPathFullyQualified(keeper) || keeper.Contains('*') || keeper.Contains('%'))
+            throw new ArgumentException("Keeper directory must be an absolute path");
+        var keeperRule = keeper + @"\*";
+        // En AppLocker una denegacion gana a un permiso: ninguna ruta escribible puede cubrir la carpeta de Keeper.
+        foreach (var path in options.AdditionalWritablePaths)
+        {
+            var pattern = "^" + System.Text.RegularExpressions.Regex.Escape(path).Replace(@"\*", ".*") + "$";
+            if (System.Text.RegularExpressions.Regex.IsMatch(keeper + @"\bin\Keeper.Session.exe", pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                throw new ArgumentException($"Writable path {path} would block Keeper itself");
+        }
+
         // AppLocker variables are not environment variables; PROGRAMFILES covers both architectures.
         string[] allowedPaths = [@"%PROGRAMFILES%\*", @"%WINDIR%\*"];
         string[] writablePaths = [@"%OSDRIVE%\Users\*\Downloads\*", @"%OSDRIVE%\Users\*\AppData\*",
@@ -66,6 +85,7 @@ public static class AppLockerPolicy
         {
             var collection = new XElement("RuleCollection", new XAttribute("Type", type), new XAttribute("EnforcementMode", mode));
             foreach (var path in allowedPaths) collection.Add(PathRule(type, "Allow", path));
+            if (type == "Exe") collection.Add(PathRule(type, "Allow", keeperRule));
             foreach (var publisher in options.TrustedPublishers.Distinct(StringComparer.OrdinalIgnoreCase))
                 collection.Add(PublisherRule(type, publisher));
             // A collection-wide path deny also covers renamed PE files (.scr), MSI and supported scripts.

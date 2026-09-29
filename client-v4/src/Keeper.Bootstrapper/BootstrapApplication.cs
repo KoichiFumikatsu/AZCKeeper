@@ -4,7 +4,7 @@ using Keeper.Bootstrapper.Hardening;
 namespace Keeper.Bootstrapper;
 
 public sealed class BootstrapApplication(IElevation elevation, IServiceControl services, ISystemPaths paths,
-    IRegistryStore registry, Action<string> log, IHardeningRunner? hardening = null)
+    IRegistryStore registry, Action<string> log, IHardeningRunner? hardening = null, IUpdateGuard? guard = null)
 {
     public const string ServiceName = "KeeperAgent";
     public const int ElevationCancelled = 1223;
@@ -157,7 +157,9 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
         paths.ValidateInstallTree(false);
         var data = Path.Combine(paths.InstallDirectory, "v4");
         if (options.DryRun) log("DRY-RUN: actualizacion en sitio; preserva entorno y datos. Operaciones:");
+        var sequence = guard?.PayloadSequence(options.PayloadDirectory);
         Step($"STOP {ServiceName}; esperar Stopped (60 s)", () => services.Stop(ServiceName));
+        if (guard is not null) Step($"BACKUP \"{bin}\" -> \"{bin}.previous\" (vuelta atras si la version nueva no sincroniza)", () => guard.Backup(bin));
         foreach (var relative in files.Order(StringComparer.OrdinalIgnoreCase))
         {
             var src = Path.Combine(options.PayloadDirectory, relative);
@@ -168,7 +170,26 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
         Step($"SC FAILURE {ServiceName} (recovery: reinicio automatico ante caida)", () => services.ConfigureRecovery(ServiceName));
         Step($"DEL \"{Path.Combine(data, "next-sync.json")}\" (descartar backoff heredado)",
             () => { var stale = Path.Combine(data, "next-sync.json"); if (File.Exists(stale)) File.Delete(stale); });
+        var startedAt = DateTimeOffset.UtcNow;
         Step($"START {ServiceName}; esperar Running (60 s)", () => services.Start(ServiceName));
+        if (guard is not null && !options.DryRun)
+        {
+            log("Esperando un sync exitoso de la version nueva...");
+            var health = guard.WaitHealthy(startedAt);
+            if (health == UpdateHealth.Unhealthy)
+            {
+                log("ROLLBACK: la version nueva no sincronizo y el servidor si responde. Se restaura la anterior.");
+                services.Stop(ServiceName);
+                guard.Restore(bin);
+                paths.ApplyBinaryAcl(bin);
+                services.Start(ServiceName);
+                if (sequence is { } blocked) { guard.BlockRelease(blocked); log($"Release sequence {blocked} bloqueada: el agente no la reintentara."); }
+                log("Vuelta atras completada. Servicio Running con la version anterior.");
+                return 3;
+            }
+            log(health == UpdateHealth.Healthy ? "Version nueva sana: sync exitoso."
+                : "Sin sync pero tampoco hay red hacia el servidor: se conserva la version nueva (no es fallo de la version).");
+        }
         log(options.DryRun ? "DRY-RUN finalizado: 0 mutaciones."
             : "Actualizacion completada; entorno y datos preservados. Servicio Running.");
         return 0;

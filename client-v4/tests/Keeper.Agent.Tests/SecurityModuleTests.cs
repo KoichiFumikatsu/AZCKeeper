@@ -295,6 +295,53 @@ public sealed class SecurityModuleTests
     }
 
     [Fact]
+    public async Task ReleaseRevertidaPorElBootstrapperNoSeReintentaPeroUnaPosteriorSi()
+    {
+        // Sin esto, el agente restaurado volveria a bajar e instalar la release rota cada ~12 minutos.
+        using var directory = new TestDirectory();
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var bytes = Encoding.UTF8.GetBytes("pkg");
+        var broken = SignedRelease(key, bytes);   // sequence 2
+        File.WriteAllText(directory.File("update-blocked.json"), "{\"sequence\":2}");
+        var downloader = new FakeDownloader(bytes);
+        var updater = new UpdateManager(Path.Combine(directory.Root, "staging"), new Dictionary<string, ECDsa> { [broken.KeyId] = key },
+            1, "stable", downloader, new FakeInstaller(), new Version(4, 0, 0), directory.File("update-blocked.json"));
+        var context = Samples.Context(new TestClock());
+        await updater.InitAsync(context);
+        updater.Offer(broken);
+        await updater.TickAsync(default);
+        Assert.Equal(0, downloader.Calls);
+        Assert.Equal("failed", updater.Snapshot().State);
+        Assert.Equal("release_rolled_back", updater.Snapshot().ErrorCode);
+        var fix = SignedRelease(key, bytes) with { Sequence = 3 };
+        updater.Offer(fix);
+        await updater.TickAsync(default);
+        Assert.Equal(1, downloader.Calls);
+    }
+
+    [Fact]
+    public async Task StagingSeLimpiaSinTocarLoRecienteNiLaReleaseEnCurso()
+    {
+        using var directory = new TestDirectory();
+        var staging = Path.Combine(directory.Root, "staging");
+        Directory.CreateDirectory(Path.Combine(staging, "old.zip.d", "agent"));
+        File.WriteAllText(Path.Combine(staging, "old.zip"), "x");
+        File.WriteAllText(Path.Combine(staging, "old.zip.d", "agent", "a.dll"), "x");
+        File.WriteAllText(Path.Combine(staging, "fresh.zip"), "x");
+        var clock = new TestClock();
+        var past = clock.GetUtcNow().UtcDateTime.AddHours(-3);
+        File.SetLastWriteTimeUtc(Path.Combine(staging, "old.zip"), past);
+        Directory.SetLastWriteTimeUtc(Path.Combine(staging, "old.zip.d"), past);
+        File.SetLastWriteTimeUtc(Path.Combine(staging, "fresh.zip"), clock.GetUtcNow().UtcDateTime);
+        var updater = new UpdateManager(staging, new Dictionary<string, ECDsa>());
+        await updater.InitAsync(Samples.Context(clock));
+        await updater.TickAsync(default);
+        Assert.False(File.Exists(Path.Combine(staging, "old.zip")));
+        Assert.False(Directory.Exists(Path.Combine(staging, "old.zip.d")));
+        Assert.True(File.Exists(Path.Combine(staging, "fresh.zip")));
+    }
+
+    [Fact]
     public async Task DescargaFallidaSeReportaYNoAplica()
     {
         using var directory = new TestDirectory();

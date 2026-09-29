@@ -13,6 +13,18 @@ internal sealed class FakeElevation : IElevation
     public int Relaunch(string[] arguments) { Requests.Add(arguments); return Result; }
 }
 
+internal sealed class FakeGuard(FakeMachine machine) : IUpdateGuard
+{
+    public UpdateHealth Result { get; set; } = UpdateHealth.Healthy;
+    public long? Sequence { get; set; } = 7;
+    public long? Blocked { get; private set; }
+    public void Backup(string bin) { Assert.False(machine.Running); machine.Mutations.Add("backup"); }
+    public void Restore(string bin) { Assert.False(machine.Running); machine.Mutations.Add("restore"); }
+    public UpdateHealth WaitHealthy(DateTimeOffset since) { Assert.True(machine.Running); machine.Mutations.Add("health"); return Result; }
+    public long? PayloadSequence(string payload) => Sequence;
+    public void BlockRelease(long sequence) { Blocked = sequence; machine.Mutations.Add("block"); }
+}
+
 internal sealed class FakeMachine : IServiceControl, ISystemPaths, IRegistryStore
 {
     public string InstallDirectory => Path.GetFullPath(Path.Combine("fake-machine", "ProgramData", "AZCKeeper"));

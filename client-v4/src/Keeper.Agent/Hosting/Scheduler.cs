@@ -1,11 +1,12 @@
 using System.Text.Json;
 using Keeper.Agent.Storage;
 using Keeper.Agent.Transport;
+using Keeper.Shared.Diagnostics;
 
 namespace Keeper.Agent.Hosting;
 
 public sealed class Scheduler(ModuleHost host, ISyncCycle? sync, SyncSchedule schedule, TimeProvider clock,
-    string statePath, Action<string> log) : IDisposable
+    string statePath, Action<string> log, AgentHealthFile? health = null) : IDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private long? _dueTimestamp;
@@ -18,6 +19,7 @@ public sealed class Scheduler(ModuleHost host, ISyncCycle? sync, SyncSchedule sc
             while (!ct.IsCancellationRequested)
             {
                 await host.TickAsync(ct);
+                health?.Alive(clock.GetUtcNow());
                 if (network is null || network.IsCompleted)
                 {
                     if (network is not null) await network;
@@ -59,6 +61,7 @@ public sealed class Scheduler(ModuleHost host, ISyncCycle? sync, SyncSchedule sc
             {
                 serverSeconds = await sync.ExecuteAsync(ct);
                 success = true;
+                health?.SyncOk(clock.GetUtcNow());
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)

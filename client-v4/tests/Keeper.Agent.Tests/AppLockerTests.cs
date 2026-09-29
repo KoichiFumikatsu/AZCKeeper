@@ -6,12 +6,36 @@ namespace Keeper.Agent.Tests;
 public sealed class AppLockerTests
 {
     [Theory]
+    [InlineData(@"C:\ProgramData\*")]
+    [InlineData(@"C:\ProgramData\AZCKeeper\*")]
+    [InlineData(@"C:\ProgramData\AZCKeeper\bin\*")]
+    [InlineData(@"C:\*\AZCKeeper\*")]
+    [InlineData(@"c:\programdata\*")]
+    public void RutaEscribibleQueAnulariaLaExcepcionDeKeeperSeRechaza(string writable)
+    {
+        // En AppLocker una denegacion gana a un permiso: esta ruta bloquearia a Keeper y su propio update.
+        var options = new AppLockerOptions { KeeperDirectory = @"C:\ProgramData\AZCKeeper", AdditionalWritablePaths = [writable] };
+        var error = Assert.Throws<ArgumentException>(() => AppLockerPolicy.Create(options));
+        Assert.Contains("Keeper", error.Message);
+    }
+
+    [Fact]
+    public void RutasEscribiblesAjenasAKeeperSiguenPermitidas()
+    {
+        var options = new AppLockerOptions { KeeperDirectory = @"C:\ProgramData\AZCKeeper", AdditionalWritablePaths = [@"D:\Profiles\*\AppData\*", @"C:\ProgramData\Otra\*"] };
+        var xml = XElement.Parse(AppLockerPolicy.Create(options));
+        var exe = xml.Elements().Single(c => (string?)c.Attribute("Type") == "Exe");
+        Assert.Contains(@"C:\ProgramData\AZCKeeper\*", Paths(exe, "Allow"));
+        Assert.Contains(@"C:\ProgramData\Otra\*", Paths(exe, "Deny"));
+    }
+
+    [Theory]
     [InlineData(AppLockerMode.Enforce, "Enabled")]
     [InlineData(AppLockerMode.Audit, "AuditOnly")]
     public async Task InstallAppliesExpectedCollectionsPathsPublishersAndService(AppLockerMode mode, string enforcement)
     {
         var store = new MemorySystemPolicyStore();
-        var options = new AppLockerOptions { Mode = mode, TrustedPublishers = ["O=MICROSOFT CORPORATION, L=REDMOND, S=WASHINGTON, C=US", "O=Tenant & Co, C=CO"] };
+        var options = new AppLockerOptions { Mode = mode, TrustedPublishers = ["O=MICROSOFT CORPORATION, L=REDMOND, S=WASHINGTON, C=US", "O=Tenant & Co, C=CO"], KeeperDirectory = @"C:\ProgramData\AZCKeeper" };
         var module = new InstallEnforcer(store, options);
         await module.InitAsync(Samples.Context());
         await module.ApplyPolicyAsync(Samples.Policy(Samples.Rule(RuleKind.Installation, RuleEffect.Deny, "*")));
@@ -39,7 +63,10 @@ public sealed class AppLockerTests
                 Assert.Equal("*", (string?)Assert.Single(collection.Descendants("FilePublisherCondition")).Attribute("PublisherName"));
                 continue;
             }
-            Assert.Equal(new[] { @"%PROGRAMFILES%\*", @"%WINDIR%\*" }, Paths(collection, "Allow"));
+            // Keeper nunca se bloquea a si mismo: Session y el bootstrapper corren desde ProgramData\AZCKeeper.
+            Assert.Equal((string?)collection.Attribute("Type") == "Exe"
+                ? new[] { @"%PROGRAMFILES%\*", @"%WINDIR%\*", @"C:\ProgramData\AZCKeeper\*" }
+                : new[] { @"%PROGRAMFILES%\*", @"%WINDIR%\*" }, Paths(collection, "Allow"));
             Assert.Equal(new[] { @"%OSDRIVE%\Users\*\Downloads\*", @"%OSDRIVE%\Users\*\AppData\*", @"%WINDIR%\Temp\*", @"%OSDRIVE%\Temp\*" }, Paths(collection, "Deny"));
             Assert.Equal(options.TrustedPublishers, collection.Descendants("FilePublisherCondition").Select(p => (string?)p.Attribute("PublisherName")));
             foreach (var publisher in collection.Descendants("FilePublisherCondition"))
