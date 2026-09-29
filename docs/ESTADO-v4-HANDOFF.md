@@ -117,6 +117,9 @@ Hallazgos del piloto:
 - `devices.agent_version` queda en 4.0.0 tras el update: solo se escribe en /client/login y el agente reusa su token.
   Pendiente: forzar re-login cuando cambia la version del agente (sin tocar el contrato).
 - La cadencia de 5 min entre descarga, verificacion y aplicacion hace que un update tarde ~10 min: aceptable.
+- SEGUNDO CICLO 4.0.1 -> 4.0.2 (seq 3) VALIDADO 14:43-14:54Z: el bootstrapper aplico el ACL nuevo de bin, Keeper.Session
+  corre en la sesion del usuario (primera vez) y a las 14:59Z llegaron los primeros episodios al servidor (explorer, idle:
+  el usuario no estaba frente al equipo). `time_category` llega NULL: revisar si lo calcula el cron o si falta en ingesta.
 
 ### ACTUALIZACIÓN 2026-09-28 (noche) — cadena de firma y logs HECHOS; falta solo la ejecución real
 Commits `5ab0ca8` (logs + fix staging), `e71de31` (firma + Session en paquete + precheck), `69e1119` (backend:
