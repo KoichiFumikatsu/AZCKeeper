@@ -106,6 +106,18 @@ Todo commiteado en `feature/keeper-v4` (commits: `abf6859`, `e27831e`, `cb818ae`
 
 ## 6. FALTA (pendientes priorizados)
 
+### RESULTADO 2026-09-29 — AUTO-UPDATE VALIDADO EN EQUIPO REAL (DESKTOP-949SGVE)
+4.0.0 (trust seq 1) -> 4.0.1 (seq 2) solo, sin intervencion: descarga 14:19:37Z (UN solo GET de 126 MB), verificacion
+14:24:37, `update_applying` 14:29:38, bootstrapper lanzado por el agente 14:29:46 (SOBREVIVE al stop del servicio),
+`Agent 4.0.1 started ... sequence 2` 14:29:54. Corte del servicio ~16 s. Sin re-descarga posterior.
+Hallazgos del piloto:
+- Keeper.Session NO arrancaba: .NET Runtime 1023 "Failed to resolve full path of the current executable" -> bin solo
+  daba acceso a SY/BA y Session corre con el token del usuario. Corregido en `a0b8abc` (bin: Usuarios lectura+ejecucion).
+  Release 4.0.2 (seq 3) construida, firmada y subida a devkeep; FALTA registrarla (`tools/register-release.sh`).
+- `devices.agent_version` queda en 4.0.0 tras el update: solo se escribe en /client/login y el agente reusa su token.
+  Pendiente: forzar re-login cuando cambia la version del agente (sin tocar el contrato).
+- La cadencia de 5 min entre descarga, verificacion y aplicacion hace que un update tarde ~10 min: aceptable.
+
 ### ACTUALIZACIÓN 2026-09-28 (noche) — cadena de firma y logs HECHOS; falta solo la ejecución real
 Commits `5ab0ca8` (logs + fix staging), `e71de31` (firma + Session en paquete + precheck), `69e1119` (backend:
 oferta a equipos v4 + sync no cae por release no verificable). Tests: Agent 294, Bootstrapper 121, smoke backend 1261.
