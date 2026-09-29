@@ -11648,6 +11648,11 @@ components:
           description: >-
             rename_computer. Nombre NetBIOS/DNS valido (1-15, letras, numeros y guion, no solo numeros). Una placa
             de activo como ACT_0015 se convierte a ACT-0015 (el guion bajo no es valido en DNS).
+        admin_name:
+          type: string
+          minLength: 1
+          maxLength: 20
+          description: harden/unharden. Cuenta local gestionada del Modo B (ajuste de la empresa).
         restart_now:
           type: boolean
           description: rename_computer. Si es false, el nombre se aplica en el proximo reinicio del equipo.

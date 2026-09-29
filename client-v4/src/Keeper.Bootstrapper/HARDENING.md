@@ -34,6 +34,10 @@ Para instalar en modo Auto, agregar **este objeto bajo `hardening`** dentro de `
 
 `HardeningMode` admite `Auto|Panel` (serializado `hardening_mode`). Ausente equivale a Panel. En Panel no se accede a cuentas/políticas ni se lee la contraseña; se guarda estado de espera. Un fallo de Auto persiste Panel y no vuelve a intentarlo al reinstalar. `--harden` es la orden explícita que permite reintentar después de reparar la causa. Si hay una operación incompleta, primero exige `--unharden`.
 
+Destinos (desde 4.0.10): además de las sesiones, **todas las administradoras locales** salvo la cuenta gestionada y la integrada RID-500 (`demote_all_local_admins`, true por defecto; false conserva el comportamiento anterior). Otra cuenta administradora con clave conocida anularía el endurecimiento. Todas quedan en `restore_admin_sids` y `--unharden` las restaura.
+
+Desde el panel (comando `harden`/`unharden`, agente >= 4.0.10): el agente lanza este bootstrapper verificado contra el trust con `--hardening-config` (solo `admin_name`), lee el journal y, si hubo degradaciones, avisa en la sesión y la cierra a los 2 minutos: el token de la sesión abierta conserva Administradores hasta un nuevo inicio de sesión. `--harden`/`--unharden` escriben `logs/bootstrapper-*.log`.
+
 Destinos: sesiones WTS **activas** (consola/RDP), deduplicadas por SID; solo cuentas de la SAM local. Si no existen, `EnrolledAccounts` usa la lista de SIDs configurada, o `LastConsoleUser` usa `last_console_user_sid` proporcionado por el enrolador/IT. No se adivina el último usuario a partir del nombre de quien ejecuta SYSTEM. Destinos vacíos, de dominio, desconocidos o protegidos abortan antes de degradar. Se asegura Usuarios también a destinos ya estándar.
 
 ## Contraseña sin exposición

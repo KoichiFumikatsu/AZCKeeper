@@ -51,6 +51,9 @@ public sealed record HardeningConfig
     public NoSessionTarget NoSessionTarget { get; init; } = NoSessionTarget.EnrolledAccounts;
     public string[] EnrolledAccountSids { get; init; } = [];
     public string? LastConsoleUserSid { get; init; }
+    // true: ademas de las cuentas con sesion, se degradan TODAS las administradoras locales (salvo la gestionada y la
+    // integrada). Sin esto, otra cuenta admin con clave conocida anula el endurecimiento.
+    public bool DemoteAllLocalAdmins { get; init; } = true;
 
     public void Validate()
     {

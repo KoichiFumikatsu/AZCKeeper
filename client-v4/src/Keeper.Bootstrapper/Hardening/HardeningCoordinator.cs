@@ -26,7 +26,7 @@ public sealed class HardeningCoordinator(ILocalAccounts accounts, ISecurityPolic
                 log($"1. Crear/verificar propiedad de {config.AdminName}; clave compartida protegida -> NetUserAdd/NetUserSetInfo; grupo S-1-5-32-544.");
                 log("2. Verificar cuenta habilitada, membresia admin y LogonUser INTERACTIVE; si falla, abortar.");
                 log("3. LsaAddAccountRights: S-1-5-114 -> SeDenyNetworkLogonRight; verificar.");
-                log($"4. Resolver sesiones WTS activas; sin sesion: {config.NoSessionTarget}. Guardar journal; agregar S-1-5-32-545 y retirar S-1-5-32-544 solo con admin operativo.");
+                log($"4. Resolver sesiones WTS activas; sin sesion: {config.NoSessionTarget}{(config.DemoteAllLocalAdmins ? "; ademas todas las administradoras locales salvo " + config.AdminName + " y la integrada" : "")}. Guardar journal; agregar S-1-5-32-545 y retirar S-1-5-32-544 solo con admin operativo.");
                 log("5. Revalidar admin operativo; preservar RID-500 deshabilitado. Fallo -> restaurar membresias.");
                 log($"6. HKLM64 Winlogon\\SpecialAccounts\\UserList: {config.AdminName}=DWORD 0; verificar.");
                 log("7. Persistir estado para SecurityReport; fallo -> rollback y Panel. Tokens actuales requieren nuevo inicio de sesion.");
@@ -82,11 +82,16 @@ public sealed class HardeningCoordinator(ILocalAccounts accounts, ISecurityPolic
 
             step = 4;
             var active = accounts.ActiveUserSids();
-            var targets = active.Count > 0 ? active : config.NoSessionTarget == NoSessionTarget.EnrolledAccounts
+            IReadOnlyList<string> sessionTargets = active.Count > 0 ? active : config.NoSessionTarget == NoSessionTarget.EnrolledAccounts
                 ? config.EnrolledAccountSids : config.LastConsoleUserSid is { } last ? [last] : Array.Empty<string>();
-            Require(targets.Count > 0, "no_target_accounts");
             inventory = accounts.List();
-            var selected = targets.Distinct(StringComparer.OrdinalIgnoreCase).Select(sid =>
+            var otherAdmins = config.DemoteAllLocalAdmins
+                ? inventory.Where(a => a.Administrator && a.Sid != admin.Sid && !a.BuiltInAdministrator &&
+                    !a.Name.Equals(config.AdminName, StringComparison.OrdinalIgnoreCase)).Select(a => a.Sid)
+                : [];
+            var targets = sessionTargets.Concat(otherAdmins).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            Require(targets.Length > 0, "no_target_accounts");
+            var selected = targets.Select(sid =>
                 inventory.SingleOrDefault(a => a.Sid == sid) ?? throw new InvalidOperationException("target_not_local")).ToArray();
             Require(selected.All(a => a.Sid != admin.Sid && !a.BuiltInAdministrator &&
                 !a.Name.Equals(config.AdminName, StringComparison.OrdinalIgnoreCase)), "protected_target");

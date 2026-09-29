@@ -17,8 +17,9 @@ if (!OperatingSystem.IsWindows() || !Environment.Is64BitProcess)
     return 1;
 }
 var paths = new WindowsSystemPaths();
-// El auto-update lanza este proceso sin consola y detiene el servicio: sin archivo, su salida se perderia.
-RollingFileLog? file = args.Contains("--system-update", StringComparer.Ordinal)
+// El auto-update y el endurecimiento desde el panel lanzan este proceso sin consola: sin archivo, su salida se perderia.
+RollingFileLog? file = args.Contains("--system-update", StringComparer.Ordinal) || args.Contains("--harden", StringComparer.Ordinal) ||
+    args.Contains("--unharden", StringComparer.Ordinal)
     ? new RollingFileLog(Path.Combine(paths.InstallDirectory, "v4", "logs"), "bootstrapper") : null;
 void Log(string message) { Console.WriteLine(message); file?.Write("INFO", "Bootstrapper", message); }
 void Fail(string message) { Console.Error.WriteLine(message); file?.Write("ERROR", "Bootstrapper", message); }

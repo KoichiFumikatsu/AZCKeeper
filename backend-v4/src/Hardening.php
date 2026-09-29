@@ -98,11 +98,15 @@ final class Hardening
         )) {
             throw new ApiError(409, 'invalid_transition');
         }
+        // Antes de 4.0.10 el agente rechazaba harden/unharden (unsupported_command) y no conoce el parametro admin_name
+        // (los agentes rechazan campos desconocidos en todo el sync): se niega en vez de dejar el equipo sin sincronizar.
+        if (version_compare($device['agent_version'], '4.0.10', '<')) { throw new ApiError(409, 'agent_too_old'); }
+        $parameters = Util::json(['admin_name' => $this->settings()['admin_name']]);
         $sequence = max((int) $device['command_sequence'] + 1, (int) $this->db->one('SELECT COALESCE(MAX(sequence),0)+1 n FROM device_command WHERE tenant_id=? AND device_id=?', [$tenant, $id])['n']);
         $command = Util::bin(Util::uuid());
         $this->db->run('UPDATE devices SET command_sequence=? WHERE tenant_id=? AND id=?', [$sequence, $tenant, $id]);
-        $this->db->run("INSERT INTO device_command (tenant_id,id,device_id,sequence,type,reason,created_at,expires_at)
-            VALUES (?,?,?,?,?,'Panel hardening command',UTC_TIMESTAMP(6),UTC_TIMESTAMP(6)+INTERVAL 1 DAY)", [$tenant, $command, $id, $sequence, $b->action]);
+        $this->db->run("INSERT INTO device_command (tenant_id,id,device_id,sequence,type,reason,parameters,created_at,expires_at)
+            VALUES (?,?,?,?,?,'Panel hardening command',?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6)+INTERVAL 1 DAY)", [$tenant, $command, $id, $sequence, $b->action, $parameters]);
         $audit->record($this->c, $this->r, 'hardening.command.' . $b->action, 'device_command', $command, ['type', 'device_id', 'expires_at']);
         return AdminApi::response(['command_id' => Util::id($command), 'device_id' => Util::id($id), 'action' => $b->action, 'status' => 'pending'], 202);
     }

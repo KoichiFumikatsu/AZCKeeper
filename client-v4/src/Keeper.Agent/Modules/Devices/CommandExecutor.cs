@@ -110,7 +110,7 @@ public sealed class WindowsDeviceActions(bool enabled) : IDeviceActions
 
 public sealed record InboxEntry(Command Command, CommandResult? Result, bool Started, bool Published = false);
 public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock deviceLock, IDeviceActions actions,
-    IComputerNamer? namer = null) : ModuleBase
+    IComputerNamer? namer = null, IHardeningLauncher? hardening = null, ISessionLogoff? logoff = null) : ModuleBase
 {
     public override string Name => "CommandExecutor";
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -180,6 +180,8 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
                         case CommandType.Shutdown: await actions.ExecuteAsync(DeviceAction.Shutdown, ct); break;
                         case CommandType.Wipe: await actions.ExecuteAsync(DeviceAction.Wipe, ct); break;
                         case CommandType.RenameComputer: code = await RenameAsync(command, ct); break;
+                        case CommandType.Harden: case CommandType.Unharden:
+                            (status, code) = await HardeningAsync(command, command.Type == CommandType.Unharden, ct); break;
                         default: throw new NotSupportedException("unsupported_command");
                     }
                 }
@@ -199,6 +201,18 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
             await SaveAsync(ct);
         }
         finally { _gate.Release(); }
+    }
+    private async Task<(CommandResultStatus, string)> HardeningAsync(Command command, bool undo, CancellationToken ct)
+    {
+        if (hardening is null) throw new CommandRejectedException("device_actions_dry_run");
+        var adminName = HardeningCommand.ValidateAdminName(command.Parameters?.AdminName ?? "azcadmin");
+        var outcome = await hardening.RunAsync(undo, adminName, ct);
+        // Solo se cierra la sesion de las cuentas degradadas en ESTE endurecimiento, y solo si termino bien.
+        var loggedOff = !undo && outcome.ExitCode == 0 && outcome.State is { Status: "hardened", LogoffRequired: true } state && logoff is not null
+            ? logoff.Schedule(state.RestoreAdminSids.Concat(state.AddedUsersSids).ToArray(), HardeningCommand.LogoffDelay) : 0;
+        var (ok, code) = HardeningCommand.Result(outcome, undo, loggedOff);
+        Context.Log(ok ? $"endurecimiento: {code}" : $"endurecimiento warn: {code}");
+        return (ok ? CommandResultStatus.Succeeded : CommandResultStatus.Failed, code);
     }
     private async Task<string> RenameAsync(Command command, CancellationToken ct)
     {

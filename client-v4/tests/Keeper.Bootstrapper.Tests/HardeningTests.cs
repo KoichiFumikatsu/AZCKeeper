@@ -337,12 +337,35 @@ public sealed class HardeningTests
     }
 
     [Fact]
-    public void MissingSessionAndFallbackAbortWithoutDemotion()
+    public void MissingSessionAndFallbackAbortWithoutDemotionWhenOnlySessionsAreTargeted()
     {
         fake.Active = [];
-        Assert.Equal(1, Harden());
+        Assert.Equal(1, Coordinator.Run(new() { DemoteAllLocalAdmins = false }, false, true));
         Assert.True(WorkerIsAdmin);
         Assert.Equal(4, fake.State!.Step);
+    }
+
+    [Fact]
+    public void LocalAdministratorsWithoutSessionAreDemotedByDefault()
+    {
+        fake.Active = [];
+        Assert.Equal(0, Harden());
+        Assert.False(WorkerIsAdmin);
+        Assert.Equal(new[] { HardeningFake.Worker }, fake.State!.RestoreAdminSids);
+        Assert.True(fake.State.LogoffRequired);
+    }
+
+    [Fact]
+    public void OtherLocalAdministratorIsDemotedAlongsideTheSessionUser()
+    {
+        const string other = "S-1-5-21-1-2-3-1005";
+        fake.Accounts.Add(new("otro-admin", other, true, true, true));
+        Assert.Equal(0, Harden());
+        Assert.False(WorkerIsAdmin);
+        Assert.False(fake.Accounts.Single(a => a.Sid == other).Administrator);
+        Assert.Equal(0, Coordinator.Run(new(), false, true, undo: true));
+        Assert.True(WorkerIsAdmin);
+        Assert.True(fake.Accounts.Single(a => a.Sid == other).Administrator);
     }
 
     [Fact]

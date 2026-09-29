@@ -1,5 +1,5 @@
 {
-  "source_sha256": "d54e5d8b8ebb94dead40c8598d6b8f08d6f07ef8c468f0fa7c55802e4019a170",
+  "source_sha256": "50c46dde2c8e5bd1e4ffe8deae60ece61fc7769ad2b7f7c5f0cdbe0e7ae56db8",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -14730,6 +14730,12 @@
           "type": "string",
           "pattern": "^(?![0-9]+$)[A-Za-z0-9-]{1,15}$",
           "description": "rename_computer. Nombre NetBIOS/DNS valido (1-15, letras, numeros y guion, no solo numeros). Una placa de activo como ACT_0015 se convierte a ACT-0015 (el guion bajo no es valido en DNS)."
+        },
+        "admin_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "description": "harden/unharden. Cuenta local gestionada del Modo B (ajuste de la empresa)."
         },
         "restart_now": {
           "type": "boolean",

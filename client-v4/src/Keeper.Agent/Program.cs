@@ -80,7 +80,9 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         var deviceLock = new DeviceLock(Path.Combine(dataDirectory, "device-lock.json"), PinVerifier.LoadProtected(Path.Combine(dataDirectory, "pin-verifier.dpapi")));
         var commands = new CommandExecutor(Path.Combine(dataDirectory, "commands.json"), deviceId, deviceLock,
             new WindowsDeviceActions(!registry.IsDryRun),
-            OperatingSystem.IsWindows() ? new WindowsComputerNamer(!registry.IsDryRun) : null);
+            OperatingSystem.IsWindows() ? new WindowsComputerNamer(!registry.IsDryRun) : null,
+            OperatingSystem.IsWindows() && !registry.IsDryRun ? new WindowsHardeningLauncher(AppContext.BaseDirectory, dataDirectory, trust.BinaryHashes) : null,
+            OperatingSystem.IsWindows() && !registry.IsDryRun ? new WindowsSessionLogoff(new WindowsSessionLauncher(trust.BinaryHashes), Log) : null);
         using var updateHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         var updater = new UpdateManager(Path.Combine(dataDirectory, "staging"), trust.ReleaseKeys, trust.InstalledSequence, trust.Channel,
             registry.IsDryRun ? null : new WindowsReleaseDownloader(updateHttp),

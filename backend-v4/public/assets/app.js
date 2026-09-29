@@ -341,6 +341,8 @@ async function device() {
   const owner = node('p'); const ownerLink = node('a', 'Ver la persona asignada'); ownerLink.href = `/miembro.php?id=${encodeURIComponent(d.user_id)}`; owner.append(ownerLink); summary.append(owner);
   $('content').append(summary);
   $('content').append(renameSection(d));
+  const hardening = await hardeningSection(d);
+  if (hardening) $('content').append(hardening);
 
   // Estado declarado por el agente en su último reporte; no es una verificación independiente.
   const controls = node('section', undefined, 'work-surface'); controls.append(node('h2', 'Controles del equipo'));
@@ -371,6 +373,40 @@ async function device() {
     else appendError(logs, error);
   }
   $('content').append(logs);
+}
+// Endurecimiento (Modo B) desde el panel: el agente lanza el bootstrapper instalado. Al endurecer, las cuentas
+// administradoras locales quedan como usuario estandar (salvo la cuenta gestionada de IT) y su sesion se cierra a los
+// 2 minutos con aviso, para que el cambio aplique. Revertir restaura exactamente las cuentas degradadas.
+const hardeningStates = { none: 'Sin endurecer', hardened: 'Endurecido', unhardened: 'Revertido', failed: 'Falló (revertido)', running: 'En curso', recovery_required: 'Requiere revertir', rollback_failed: 'Reversión incompleta', waiting_panel: 'Sin endurecer' };
+async function hardeningSection(d) {
+  let status;
+  try { status = await api('GET', `/admin/devices/${d.id}/hardening`); }
+  catch (error) { if ([403, 404].includes(error.status)) return null; throw error; }
+  const section = node('section', undefined, 'work-surface'); section.append(node('h2', 'Endurecimiento de cuentas (Modo B)'));
+  details(section, [['Estado', hardeningStates[status.state] || status.state], ['Último paso', status.last_step], ['Detalle', status.detail],
+    ['Endurecido desde', status.hardened_at ? dateTime(status.hardened_at) : null], ['Último reporte', status.reported_at ? dateTime(status.reported_at) : null]]);
+  section.append(node('p', 'Endurecer deja a las cuentas administradoras del equipo como usuario estándar y crea la cuenta de IT. La persona verá un aviso y su sesión se cerrará a los 2 minutos para aplicar el cambio. Revertir lo deshace.', 'help'));
+  const bar = node('div', undefined, 'toolbar');
+  const harden = node('button', 'Endurecer', 'primary'); harden.type = 'button';
+  const undo = node('button', 'Revertir'); undo.type = 'button';
+  const fb = node('p', undefined, 'help'); fb.setAttribute('role', 'status');
+  const problem = node('p', undefined, 'error-message'); problem.hidden = true; problem.setAttribute('role', 'alert');
+  const send = async (action, button) => {
+    const verb = action === 'harden' ? 'endurecer' : 'revertir el endurecimiento de';
+    if (prompt(`Vas a ${verb} ${d.hostname}. Escribe el nombre del equipo para confirmar.`) !== d.hostname) return;
+    showError(problem, null); fb.textContent = ''; button.disabled = true;
+    try {
+      await api('POST', `/admin/devices/${d.id}/hardening/command`, { body: { action }, idempotencyKey: crypto.randomUUID() });
+      fb.textContent = `Orden enviada. El equipo la ejecuta en su próxima sincronización (unos 2 minutos); el resultado aparece en su registro y en este estado.`;
+    } catch (error) {
+      showError(problem, error.code === 'agent_too_old' ? new Error('El agente de este equipo es anterior a 4.0.10: actualízalo antes de endurecerlo desde el panel.')
+        : error.status === 409 && action === 'harden' ? new Error('No se puede endurecer: falta cargar la clave de la cuenta de IT de la empresa, o el equipo requiere revertir primero.') : error);
+    } finally { button.disabled = false; }
+  };
+  harden.addEventListener('click', () => send('harden', harden));
+  undo.addEventListener('click', () => send('unharden', undo));
+  bar.append(harden, undo); section.append(bar, fb, problem);
+  return section;
 }
 // Cambio del nombre de Windows del equipo (comando rename_computer). La placa de activo ACT_0015 se convierte a
 // ACT-0015: el guion bajo no es valido en nombres DNS. El agente lo aplica en el proximo reinicio o al reiniciar ahora.

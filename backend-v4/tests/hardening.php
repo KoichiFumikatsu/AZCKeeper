@@ -16,6 +16,7 @@ function hardeningTests(Database $db): void
     $device = Util::bin($token['device_id']);
     $path = '/admin/tenants/' . $tid . '/hardening';
     $devicePath = '/admin/devices/' . $token['device_id'] . '/hardening';
+    $db->run("UPDATE devices SET agent_version='4.0.10' WHERE tenant_id=? AND id=?", [$tenant, $device]);
     $foreignPath = '/admin/devices/' . $otherToken['device_id'] . '/hardening';
     $password = 'Hardening-A-' . Util::b64(random_bytes(24));
     $otherPassword = 'Hardening-B-' . Util::b64(random_bytes(24));
@@ -110,6 +111,10 @@ function hardeningTests(Database $db): void
     expect(request('POST', '/client/hardening/report', ['state' => 'hardened', 'tenant_id' => $bid], $key, $token['access_token'], Util::uuid()), 422, 'report rejects tenant override');
     expect(request('POST', '/client/hardening/report', ['state' => 'hardened', 'device_id' => $otherToken['device_id']], $key, $token['access_token'], Util::uuid()), 422, 'report rejects device override');
     check(expect(adminRequest($other, 'GET', $foreignPath), 200, 'tenant B status unchanged')['state'] === 'none', 'reports cannot cross tenant');
+    // Agentes < 4.0.10 no ejecutan harden/unharden ni conocen admin_name: se niega en vez de romper su sync.
+    $db->run("UPDATE devices SET agent_version='4.0.9' WHERE tenant_id=? AND id=?", [$tenant, $device]);
+    check(expect(adminRequest($admin, 'POST', $devicePath . '/command', ['action' => 'harden'], ['idempotency-key' => Util::uuid()]), 409, 'old agent cannot harden')['code'] === 'agent_too_old', 'agent_too_old reported');
+    $db->run("UPDATE devices SET agent_version='4.0.10' WHERE tenant_id=? AND id=?", [$tenant, $device]);
     foreach (['harden', 'unharden'] as $action) {
         $idem = ['idempotency-key' => Util::uuid()];
         $r = adminRequest($admin, 'POST', $devicePath . '/command', ['action' => $action], $idem);
@@ -126,8 +131,10 @@ function hardeningTests(Database $db): void
     $db->run('UPDATE device_command SET created_at=UTC_TIMESTAMP(6)-INTERVAL 1 SECOND WHERE tenant_id=? AND device_id=?', [$tenant, $device]);
     $commands = request('GET', '/client/commands', null, $key, $token['access_token']);
     $queue = expect($commands, 200, 'agent pulls hardening queue');
-    foreach ($queue['data'] as $command) { (new Validator())->named('Command', (object) $command); }
+    foreach ($queue['data'] as $command) { (new Validator())->named('Command', json_decode(json_encode($command))); }
     check(in_array('harden', array_column($queue['data'], 'type'), true) && !str_contains($commands[3], $password), 'pull includes hardening without secret');
+    $hardenCommand = array_values(array_filter($queue['data'], static fn ($c) => $c['type'] === 'harden'))[0];
+    check(($hardenCommand['parameters']['admin_name'] ?? null) === 'azcadmin' && count($hardenCommand['parameters']) === 1, 'harden carries only the managed admin name');
     $db->run("UPDATE devices SET status='revoked' WHERE tenant_id=? AND id=?", [$tenant, $device]);
     expect(adminRequest($admin, 'POST', $devicePath . '/command', ['action' => 'unharden'], ['idempotency-key' => Util::uuid()]), 409, 'inactive device rejects commands');
     $settingsOnly = $input; unset($settingsOnly['shared_password']); $settingsOnly['deny_network_logon'] = false;
