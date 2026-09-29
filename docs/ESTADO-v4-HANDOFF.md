@@ -115,7 +115,9 @@ Diseño y uso: `docs/architecture/v4-alta-equipos.md`. Commits `b2a84cb`, `fbe51
 - Agente: `KEEPER_ENROLLMENT_KEY` sin `device_id` → pide alta, reintenta, login por ticket, `device-id.txt`.
   Autoidentificación: `ask_document` → Keeper.Session en modo identificación pide la cédula.
 - Bootstrapper: `installation.json` acepta `enrollment_key` (paquete genérico), redactado en logs.
-- FALTA: release del agente con esto (4.0.9) y prueba real: equipo nuevo con paquete genérico, cruce por serie,
+- 4.0.9 (seq 10) firmada y subida a devkeep/releases (sha256 80349b1e...); FALTA registrarla (`bash client-v4/tools/register-release.sh client-v4/artifacts/release-4.0.9.json`). Trae: alta por clave, cedula, y hostname en inventario (sin ella el panel tarda hasta 1 h en mostrar un renombre).
+- Renombre validado en DESKTOP-949SGVE -> ACT-0987 (orden succeeded 22:56 UTC, reinicio y sync 23:00).
+- FALTA (antes): release del agente con esto (4.0.9) y prueba real: equipo nuevo con paquete genérico, cruce por serie,
   cola, aprobación, placa + renombre. Hasta entonces los agentes desplegados no usan estas rutas.
 
 ### 2026-09-29 (noche, 2) — renombrar equipo + serie del fabricante (4.0.8, seq 9, firmada y subida; FALTA registrar)
