@@ -141,8 +141,9 @@ final class Application
                 // de edicion del panel). La arquitectura va a specs: la usa la oferta de releases.
                 if (isset($b->inventory)) {
                     $inv = $b->inventory;
-                    $db->run('UPDATE devices SET os_edition=?,os_build=?,cpu=?,ram_bytes=?,disk_bytes=?,specs=JSON_SET(COALESCE(specs,JSON_OBJECT()),\'$.architecture\',?,\'$.serial_number\',?) WHERE tenant_id=? AND id=?',
-                        [$inv->os_edition, $inv->os_build ?? null, $inv->cpu, $inv->ram_bytes, $inv->disk_bytes ?? null, $inv->architecture, $inv->serial_number ?? null, $c['tenant_id'], $c['device_id']]);
+                    // hostname: tras un renombre + reinicio el agente reutiliza su token y no pasa por /client/login.
+                    $db->run('UPDATE devices SET os_edition=?,os_build=?,cpu=?,ram_bytes=?,disk_bytes=?,hostname=COALESCE(?,hostname),specs=JSON_SET(COALESCE(specs,JSON_OBJECT()),\'$.architecture\',?,\'$.serial_number\',?) WHERE tenant_id=? AND id=?',
+                        [$inv->os_edition, $inv->os_build ?? null, $inv->cpu, $inv->ram_bytes, $inv->disk_bytes ?? null, $inv->hostname ?? null, $inv->architecture, $inv->serial_number ?? null, $c['tenant_id'], $c['device_id']]);
                 }
                 // policy_version del request = la que el agente tiene APLICADA. Se guarda solo si existe en el servidor
                 // (1..version compilada) y sin tocar devices.version, que es el ETag de edicion del panel.

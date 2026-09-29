@@ -1,5 +1,5 @@
 {
-  "source_sha256": "59370549e5227d08d1b3efbb53cf9fe14254682b0a1dfe88f59f170af5ce6f4c",
+  "source_sha256": "d54e5d8b8ebb94dead40c8598d6b8f08d6f07ef8c468f0fa7c55802e4019a170",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -15224,6 +15224,12 @@
           "type": "string",
           "maxLength": 120,
           "description": "Serie del fabricante (SMBIOS tipo 1); cruza el equipo con la placa de activo del Portal AZC."
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Nombre de Windows al arrancar el agente; refleja un renombre sin esperar al siguiente login."
         },
         "architecture": {
           "type": "string",

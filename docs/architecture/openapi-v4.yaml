@@ -11625,6 +11625,11 @@ components:
           type: string
           maxLength: 120
           description: Serie del fabricante (SMBIOS tipo 1); cruza el equipo con la placa de activo del Portal AZC.
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Nombre de Windows al arrancar el agente; refleja un renombre sin esperar al siguiente login.
         architecture:
           type: string
           enum:
