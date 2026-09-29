@@ -106,6 +106,18 @@ Todo commiteado en `feature/keeper-v4` (commits: `abf6859`, `e27831e`, `cb818ae`
 
 ## 6. FALTA (pendientes priorizados)
 
+### 2026-09-29 (noche) — resiliencia del auto-update (4.0.7, seq 8, firmada y subida; FALTA registrar)
+- 4.0.6 VALIDADA: inventario real en la ficha (piloto = Windows 11 **Pro**, i5-8350U, 8 GB; FumiWork = Home).
+- `b5d240a`: (1) AppLocker nunca bloquea a Keeper (excepcion Exe+Script para ProgramData\AZCKeeper; se rechaza
+  toda ruta escribible que la cubra). ANTES: pasar a Enforce habria bloqueado Keeper.Session a toda la flota y
+  posiblemente el propio update (caso K3/GitHub). (2) Vuelta atras: health.json del agente + bin.previous; si la
+  version nueva no sincroniza en 5 min con el servidor alcanzable se restaura y se bloquea esa secuencia
+  (update-blocked.json). (3) Limpieza de staging cada 6 h.
+- `136ddfc`: rescate independiente `recovery\Keeper-Recovery.ps1` (PowerShell 5.1, tarea horaria SYSTEM, NO lo
+  toca ningun update): si el agente lleva >6 h sin sync y el servidor responde, reinstala el paquete firmado de
+  `{servidor}/releases/recovery.json`. PENDIENTE: publicar recovery.json (= release-4.0.7.json tras validarla).
+- Pendiente tras 4.0.7: probar un rollback real con una release deliberadamente rota en el piloto.
+
 ### 2026-09-29 (tarde) — paquete, ficha de equipo y recompilacion
 - **Paquete con runtime compartido** (`c3eb424`): 120 MB -> 62,5 MB. Transicion: 4.0.4 (seq 5, formato Legacy,
   171 MB, instalador que entiende ambos formatos) y luego 4.0.5 (seq 6, formato Shared). Ambas firmadas y subidas
