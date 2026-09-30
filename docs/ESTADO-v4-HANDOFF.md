@@ -118,7 +118,7 @@ Todo commiteado en `feature/keeper-v4` (commits: `abf6859`, `e27831e`, `cb818ae`
   proceso y el servidor rechazaba 86401 s. Todo corregido; 4.0.11 instalada a mano por DWService 18:14 UTC; recovery.json
   -> 4.0.12. 4.0.12 registrada; VALIDADO 2026-09-30 18:59-19:01 UTC: fotos del dia 30 llegan y avanzan en cada sync (idle 557->689, secuencia en ms).
 
-### 2026-09-29 (noche, 4) — endurecer/revertir desde el panel (4.0.10, seq 11, firmada y subida; FALTA registrar y probar)
+### 2026-09-29 (noche, 4) — endurecer/revertir desde el panel (4.0.10; VALIDADO 2026-09-30 19:05 UTC en ACT-0987 con 4.0.12: harden succeeded hardened_logoff_1, journal step 7; estado del panel derivado del log desde e55f447)
 - Ficha del equipo: seccion Modo B con Endurecer/Revertir (confirmacion escribiendo el hostname). Orden exige agente >= 4.0.10.
 - Agente lanza el bootstrapper verificado contra el trust; si degrada, aviso WTS en la sesion y cierre a los 2 min.
 - Modo B degrada TODAS las administradoras locales (salvo azcadmin y RID-500); journal y --unharden las restauran.
