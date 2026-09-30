@@ -106,6 +106,13 @@ Todo commiteado en `feature/keeper-v4` (commits: `abf6859`, `e27831e`, `cb818ae`
 
 ## 6. FALTA (pendientes priorizados)
 
+### 2026-09-30 21:34 UTC — LIMPIEZA de devkeep (pedida por Koichi: empezar con datos reales)
+- Backup completo previo: /home/keeper/deploy-backups/20260930-2133*-cleanup/keeper_v4.sql.gz.
+- Borrado: actividad importada de K3 (43.969 episodios y agregados), 298 equipos K3, 238 personas K3 (con sus cedulas
+  k3:cc), alertas/detecciones, notas de cobertura. Queda: 1 persona (la de ACT-0987), ACT-0987 activo, test-mb retirado
+  (esta en la auditoria, append-only), organizacion, reglas, horarios, festivos, tiers, roles, admin, clave azcadmin.
+- Resumenes del 29-30 recalculados con datos reales (30: 2023 s activos). Las personas se recargan por CSV/alta.
+
 ### 2026-09-30 — cron de productividad programado en devkeep
 - No habia cron desde 2026-09-22 (agregados day_summary/episode_daily/focus + doble empleo/apps sospechosas sin calcular).
 - Hestia (usuario keeper): */10 php config/productivity-cron.php >> private/productivity-cron.log. Primera corrida automatica
