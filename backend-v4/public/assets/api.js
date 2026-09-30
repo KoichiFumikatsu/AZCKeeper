@@ -70,7 +70,10 @@ export async function api(method, path, { body, tenant = tenantId, idempotencyKe
     method, headers, credentials: 'include', mode: 'same-origin', cache: 'no-store', redirect: 'error',
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (response.status === 401 && document.body.dataset.page !== 'login') goToLogin();
+  // Una contraseña mal escrita al confirmar (reautenticación o cambio de contraseña) devuelve 401 pero la sesión sigue
+  // viva: solo se muestra el error. Cualquier otro 401 es sesión vencida y vuelve al login.
+  const confirming = path === '/auth/reauth' || path === '/auth/password';
+  if (response.status === 401 && !confirming && document.body.dataset.page !== 'login') goToLogin();
   if (response.status === 403 && document.body.dataset.page !== 'login') {
     // Contraseña temporal sin cambiar: se manda a crearla (la API rechaza todo lo demás).
     const peek = await response.clone().json().catch(() => ({}));
