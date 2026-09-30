@@ -11246,6 +11246,14 @@ components:
         firm_id:
           type: string
           format: uuid
+        document:
+          anyOf:
+          - type: string
+            minLength: 3
+            maxLength: 40
+            pattern: ^[0-9A-Za-z .\-]+$
+          - type: 'null'
+          description: Cédula o documento. Se guarda sin puntos, espacios ni guiones; con él el equipo se identifica en el alta.
         display_name:
           type: string
           maxLength: 160
@@ -11285,6 +11293,7 @@ components:
       - panel_login_enabled
       - tier_id
       - version
+      - document
       properties:
         id:
           type: string
@@ -11295,6 +11304,11 @@ components:
         firm_id:
           type: string
           format: uuid
+        document:
+          anyOf:
+          - type: string
+            maxLength: 160
+          - type: 'null'
         display_name:
           type: string
           maxLength: 160
@@ -11347,6 +11361,14 @@ components:
         firm_id:
           type: string
           format: uuid
+        document:
+          anyOf:
+          - type: string
+            minLength: 3
+            maxLength: 40
+            pattern: ^[0-9A-Za-z .\-]+$
+          - type: 'null'
+          description: Cédula o documento. Se guarda sin puntos, espacios ni guiones; con él el equipo se identifica en el alta.
         display_name:
           type: string
           maxLength: 160

@@ -80,6 +80,15 @@ function panelAccountsTests(Database $db): void
     $reset = expect(adminRequest($platform, 'POST', '/panel-accounts/' . $acct . '/reset-password'), 200, 'reset password');
     check($reset['account']['must_change_password'] && $reset['temporary_password'] !== $created['temporary_password'], 'new temporary password');
     check(panelLoginStatus($email, 'Nueva-clave-segura-1') === 401 && panelLoginStatus($email, $reset['temporary_password']) === 200, 'only the new temporary password logs in');
+    // Personas con cedula: normalizada, unica por empresa y visible en la ficha.
+    $src = $db->one('SELECT firm_id,site_id,area_id,position_id,schedule_id FROM users WHERE tenant_id=? AND id=?', [$tenant, $u['id']]);
+    $new = ['display_name' => 'Persona con cédula', 'email' => null, 'document' => '1.234.567-8'] + array_map(fn ($v) => Util::id($v), $src);
+    $made = expect(adminRequest($platform, 'POST', '/users', $new), 201, 'create person with document');
+    check($made['document'] === '12345678', 'document normalized');
+    $dupDoc = adminRequest($platform, 'POST', '/users', ['display_name' => 'Otra'] + $new);
+    check($dupDoc[0] === 409 && ($dupDoc[1]['detail'] ?? null) === 'document_in_use', 'document unique in company');
+    $cleared = expect(adminRequest($platform, 'PATCH', '/users/' . $made['id'], ['document' => null], ['if-match' => '"' . $made['version'] . '"']), 200, 'clear document');
+    check($cleared['document'] === null && $cleared['version'] > $made['version'], 'document cleared');
     // No puede desactivarse a si misma la cuenta de plataforma.
     $selfId = Util::id($platform['id']);
     check(adminRequest($platform, 'PATCH', '/panel-accounts/' . $selfId, ['active' => false, 'role_ids' => []])[1]['detail'] === 'cannot_disable_self', 'cannot disable self');

@@ -1,5 +1,5 @@
 {
-  "source_sha256": "c6bce67dc7900e3df69c099834a0666729145f3b31ea9aae2b2da1921635c112",
+  "source_sha256": "6bb6f368ebcaf27bee6e8854a29f6a9949fa93929428c5320d690f4b5d3f617b",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -21022,7 +21022,8 @@
         "role_ids",
         "panel_login_enabled",
         "tier_id",
-        "version"
+        "version",
+        "document"
       ],
       "properties": {
         "id": {
@@ -21036,6 +21037,17 @@
         "firm_id": {
           "type": "string",
           "format": "uuid"
+        },
+        "document": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 160
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "display_name": {
           "type": "string",
@@ -21120,6 +21132,20 @@
         "firm_id": {
           "type": "string",
           "format": "uuid"
+        },
+        "document": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 40,
+              "pattern": "^[0-9A-Za-z .\\-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Cédula o documento. Se guarda sin puntos, espacios ni guiones; con él el equipo se identifica en el alta."
         },
         "display_name": {
           "type": "string",
@@ -21256,6 +21282,20 @@
         "firm_id": {
           "type": "string",
           "format": "uuid"
+        },
+        "document": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 40,
+              "pattern": "^[0-9A-Za-z .\\-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Cédula o documento. Se guarda sin puntos, espacios ni guiones; con él el equipo se identifica en el alta."
         },
         "display_name": {
           "type": "string",

@@ -226,7 +226,11 @@ final class AdminApi
         $roles=$this->db->run('SELECT ur.role_id FROM user_roles ur JOIN roles r ON r.tenant_id=ur.tenant_id AND r.id=ur.role_id AND r.active=TRUE WHERE ur.tenant_id=? AND ur.user_id=? ORDER BY ur.role_id',[$this->tenant,$r['id']])->fetchAll();
         $sub=$this->currentSubscription($r['id']);
         $out=['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'display_name'=>$r['display_name'],'email'=>$r['email'],'status'=>$r['status'],'role_ids'=>array_map([Util::class,'id'],array_column($roles,'role_id')),'panel_login_enabled'=>(bool)$r['panel_login_enabled'],'tier_id'=>$sub?Util::id($sub['tier_id']):null,'version'=>(int)$r['version']];
-        foreach (['firm_id','site_id','area_id','position_id','schedule_id'] as $f) { $out[$f]=$r[$f]===null?null:Util::id($r[$f]); } return $out;
+        foreach (['firm_id','site_id','area_id','position_id','schedule_id'] as $f) { $out[$f]=$r[$f]===null?null:Util::id($r[$f]); }
+        // Cedula: la cargada en v4 ('document') o, si no hay, la importada de K3 ('k3:cc').
+        $doc=$this->db->one("SELECT external_ref FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source IN ('document','k3:cc') ORDER BY source='document' DESC LIMIT 1",[$this->tenant,$r['id']]);
+        $out['document']=$doc['external_ref']??null;
+        return $out;
     }
     private function filterUsers(string $alias='u'): array
     {
@@ -256,6 +260,7 @@ final class AdminApi
     }
     private function users(string $op,?string $id,?object $b): array
     {
+        $document=false; // false = no se envio; null = borrar la cedula
         if ($op==='listUsers') { [$where,$args]=$this->filterUsers(); return $this->page("SELECT u.* FROM users u WHERE u.tenant_id=? AND $where",[$this->tenant,...$args],fn($x)=>$this->userDto($x)); }
         if ($id) { $this->access->user($id); $old=$this->row('users',$id); if ($op==='getUser') { return $this->result($this->userDto($old)); } $this->match($old); }
         if ($op==='setUserRoles') {
@@ -270,8 +275,10 @@ final class AdminApi
             foreach ($b->role_ids as $rid) { $this->db->run('INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)',[$this->tenant,$id,Util::bin($rid)]); }
             $this->db->run('UPDATE users SET version=version+1 WHERE tenant_id=? AND id=?',[$this->tenant,$id]); $this->invalidateUser($id);
         } else {
-            $values=[];
-            foreach (get_object_vars($b) as $f=>$value) { $values[$f]=$value!==null && str_ends_with($f,'_id')?Util::bin($value):$value; }
+            $values=[]; $fields=get_object_vars($b);
+            $document=array_key_exists('document',$fields)?$fields['document']:false; unset($fields['document']);
+            if (is_string($document)) { $document=DeviceIntake::document($document); $this->documentFree($document,$id); }
+            foreach ($fields as $f=>$value) { $values[$f]=$value!==null && str_ends_with($f,'_id')?Util::bin($value):$value; }
             foreach (['firm','site','area','position'] as $kind) { if (isset($values[$kind.'_id'])) { $this->org($values[$kind.'_id'],$kind); } }
             if (isset($values['schedule_id'])) { $this->row('schedules',$values['schedule_id']); }
             $next=($values+($old??[]));
@@ -306,7 +313,7 @@ final class AdminApi
                 $defaultTier=$this->db->one("SELECT id FROM tier WHERE tenant_id=? AND is_default=1 AND active=TRUE",[$this->tenant]);
                 if ($defaultTier) { $this->db->run("INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at,status) VALUES (?,?,?,?,UTC_TIMESTAMP(6),'active')",[$this->tenant,Util::bin(Util::uuid()),$id,$defaultTier['id']]); }
             } else {
-                $this->update('users',$id,$values);
+                if ($values || $document===false) { $this->update('users',$id,$values); } else { $this->db->run('UPDATE users SET version=version+1 WHERE tenant_id=? AND id=?',[$this->tenant,$id]); }
                 if (array_intersect(array_keys($values),['firm_id','site_id','area_id','position_id','schedule_id'])) { $this->assignment($id,$next); }
                 $this->invalidateUser($id);
                 if (($b->status??null)==='inactive') {
@@ -316,8 +323,19 @@ final class AdminApi
                 }
             }
         }
+        if ($document!==false) {
+            $this->db->run("DELETE FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source='document'",[$this->tenant,$id]);
+            if ($document!==null) { $this->db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,'document',?)",[$this->tenant,$id,$document]); }
+        }
         $this->audit('user',$id,array_keys(get_object_vars($b))); $this->dirty($this->userDevices($id));
         return $this->result($this->userDto($this->row('users',$id)),$op==='createUser'?201:200);
+    }
+    // Una cedula identifica a una sola persona de la empresa (el alta de equipos la usa para asignar el equipo).
+    private function documentFree(string $document,?string $user): void
+    {
+        if (strlen($document)<3) { throw new ApiError(422,'validation_failed',[],'invalid_document'); }
+        $other=$this->db->one("SELECT user_id FROM user_external_refs WHERE tenant_id=? AND source IN ('document','k3:cc') AND external_ref=?".($user?' AND user_id<>?':''),$user?[$this->tenant,$document,$user]:[$this->tenant,$document]);
+        if ($other) { throw new ApiError(409,'invalid_transition',[],'document_in_use'); }
     }
     private function roleDto(array $r): array
     {

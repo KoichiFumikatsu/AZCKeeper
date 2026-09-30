@@ -468,6 +468,164 @@ async function tenantsPage() {
 }
 const sortCompanies = list => [...list].sort((a, b) => (b.id === PLATFORM_TENANT) - (a.id === PLATFORM_TENANT) || (a.branding?.display_name || a.name).localeCompare(b.branding?.display_name || b.name, 'es'));
 
+// ---- Personas ---------------------------------------------------------------------------------------------------
+const fold = v => String(v ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
+const ORG_FIELDS = [['firm', 'Firma'], ['site', 'Sede'], ['area', 'Área'], ['position', 'Cargo']];
+// Separa una linea CSV (coma o punto y coma, comillas dobles con "" escapado).
+function csvRows(text) {
+  const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) return [];
+  const sep = (lines[0].match(/;/g) || []).length > (lines[0].match(/,/g) || []).length ? ';' : ',';
+  return lines.map(line => {
+    const out = []; let cur = '', quoted = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (quoted) { if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; } else if (ch === '"') quoted = false; else cur += ch; }
+      else if (ch === '"') quoted = true; else if (ch === sep) { out.push(cur); cur = ''; } else cur += ch;
+    }
+    out.push(cur); return out.map(c => c.trim());
+  });
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Reintenta cuando la API limita la velocidad (importaciones grandes).
+async function patient(fn) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await fn(); } catch (e) { if (e.status !== 429 || attempt > 8) throw e; await sleep(Math.max(1, Number(e.retryAfter) || 2) * 1000); }
+  }
+}
+async function people() {
+  const [users, org, schedules] = await Promise.all([allPages('/users'), allPages('/organization'), optional(allPages('/schedules'))]);
+  let list = users; const n = names(org);
+  const units = kind => org.filter(o => o.kind === kind && o.active).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  const fallback = kind => { const u = units(kind); return u.length === 1 ? u[0] : u.find(o => fold(o.name).startsWith('sin ')) || null; };
+  const scheduleList = (schedules || []).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  const defaultSchedule = () => scheduleList.find(s => fold(s.name).includes('por defecto')) || scheduleList[0] || null;
+  const render = () => {
+    $('page-content').replaceChildren();
+    kpis([['Personas', String(list.length)], ['Activas', String(list.filter(u => u.status === 'active').length)],
+      ['Con cédula', String(list.filter(u => u.document).length), 'La usa el alta de equipos para saber de quién es el PC'],
+      ['Con cuenta del panel', String(list.filter(u => u.panel_login_enabled).length)]]);
+    const s = surface('Personas de la empresa');
+    const tools = el('div', undefined, 'actions no-margin');
+    const imp = el('button', 'Importar desde CSV'); imp.type = 'button'; imp.addEventListener('click', importer);
+    const tpl = el('button', 'Descargar plantilla CSV'); tpl.type = 'button'; tpl.addEventListener('click', template);
+    tools.append(imp, tpl); s.append(tools);
+    if (!list.length) { empty(s, 'Aún no hay personas', 'Créalas una a una con "Crear persona" o impórtalas desde un CSV (descarga la plantilla).'); return; }
+    table(s, 'Personas', [
+      ['Nombre', u => { const a = el('a', u.display_name); a.href = `/miembro.php?id=${encodeURIComponent(u.id)}`; const d = el('div'); d.append(a); if (u.email) d.append(el('small', u.email)); return d; }],
+      ['Cédula', u => u.document || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'],
+      ['Estado', u => badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : '')],
+      ['Acciones', u => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(u)); return b; }]],
+      list, { filters: [['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']] });
+  };
+  const editor = u => {
+    const { dialog, body, ok, show } = dialogShell(u ? `Editar ${u.display_name}` : 'Crear persona');
+    const name = labeled(body, 'Nombre completo', el('input')); name.maxLength = 160; name.value = u?.display_name || '';
+    const doc = labeled(body, 'Cédula', el('input'), 'Con ella, al instalar Keeper en su PC, el equipo queda asignado a esta persona.'); doc.maxLength = 40; doc.inputMode = 'numeric'; doc.value = u?.document || '';
+    const email = labeled(body, 'Correo (opcional)', el('input')); email.type = 'email'; email.maxLength = 254; email.value = u?.email || '';
+    const grid = el('div', undefined, 'form-grid'); body.append(grid);
+    const selects = {};
+    for (const [kind, label] of ORG_FIELDS) {
+      const sel = el('select'); units(kind).forEach(o => sel.append(new Option(o.name, o.id)));
+      sel.value = u?.[`${kind}_id`] || fallback(kind)?.id || ''; labeled(grid, label, sel); selects[kind] = sel;
+    }
+    const sched = el('select'); scheduleList.forEach(x => sched.append(new Option(x.name, x.id))); sched.value = u?.schedule_id || defaultSchedule()?.id || '';
+    labeled(grid, 'Horario', sched);
+    let status = null;
+    if (u) { status = el('select'); status.append(new Option('Activa', 'active'), new Option('Inactiva (retirada)', 'inactive')); status.value = u.status; labeled(body, 'Estado', status); }
+    ok.textContent = u ? 'Guardar' : 'Crear persona';
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (!name.value.trim()) { show('Escribe el nombre.'); return; }
+      if (ORG_FIELDS.some(([k]) => !selects[k].value) || !sched.value) { show('Faltan firma, sede, área, cargo u horario: créalos primero en Organización.'); return; }
+      if (status?.value === 'inactive' && u.status === 'active' && !confirm(`¿Marcar a ${u.display_name} como inactiva? Sus equipos quedan revocados y dejan de reportar.`)) return;
+      ok.disabled = true;
+      const payload = { display_name: name.value.trim(), document: doc.value.trim() || null, email: email.value.trim() || null, schedule_id: sched.value };
+      for (const [k] of ORG_FIELDS) payload[`${k}_id`] = selects[k].value;
+      if (status && status.value !== u.status) payload.status = status.value;
+      try {
+        const saved = u ? await api('PATCH', `/users/${u.id}`, { body: payload, ifMatch: u.version }) : await api('POST', '/users', { body: payload });
+        list = u ? list.map(x => x.id === u.id ? saved : x) : [...list, saved]; dialog.close(); render(); done();
+      } catch (e) {
+        const d = e.problem?.detail;
+        show(d === 'document_in_use' ? 'Esa cédula ya pertenece a otra persona de la empresa.' : d === 'invalid_document' ? 'La cédula no es válida.' : e.status === 412 ? 'Alguien más la modificó: recarga la página.' : e);
+        ok.disabled = false;
+      }
+    });
+    dialog.showModal();
+  };
+  const template = () => {
+    const ex = k => fallback(k)?.name || units(k)[0]?.name || '';
+    const csv = 'nombre;cedula;correo;firma;sede;area;cargo;horario\r\n' + `Ana María Pérez;1234567890;ana.perez@empresa.com;${ex('firm')};${ex('site')};${ex('area')};${ex('position')};${defaultSchedule()?.name || ''}\r\n`;
+    const a = el('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })); a.download = 'plantilla-personas.csv'; a.click();
+  };
+  const importer = () => {
+    const { dialog, body, ok, show } = dialogShell('Importar personas desde CSV');
+    dialog.classList.add('wide-dialog');
+    body.append(el('p', 'Columnas: nombre, cedula, correo, firma, sede, area, cargo, horario (la primera fila son los títulos). Firma, sede, área, cargo y horario se buscan por nombre; si van vacíos se usa "Sin …" o el horario por defecto. Las cédulas que ya existen se omiten.'));
+    const file = labeled(body, 'Archivo CSV (exportado de Excel o Google Sheets)', el('input')); file.type = 'file'; file.accept = '.csv,text/csv';
+    const preview = el('div'); body.append(preview);
+    let ready = [];
+    file.addEventListener('change', async () => {
+      preview.replaceChildren(); ready = []; ok.disabled = true;
+      const f = file.files[0]; if (!f) return;
+      const rows = csvRows(await f.text());
+      if (rows.length < 2) { show('El archivo no tiene filas de personas.'); return; }
+      const head = rows[0].map(fold);
+      const col = (...keys) => head.findIndex(h => keys.includes(h));
+      const idx = { name: col('nombre', 'name', 'nombre completo'), doc: col('cedula', 'documento', 'cc'), email: col('correo', 'email', 'e-mail'),
+        firm: col('firma'), site: col('sede'), area: col('area'), position: col('cargo'), schedule: col('horario') };
+      if (idx.name < 0) { show('Falta la columna "nombre".'); return; }
+      const known = new Set(list.map(u => u.document).filter(Boolean));
+      const seen = new Set(); const results = [];
+      for (const [i, r] of rows.slice(1).entries()) {
+        const get = k => idx[k] >= 0 ? (r[idx[k]] || '').trim() : '';
+        const problems = []; const payload = { display_name: get('name'), document: get('doc').replace(/[\s.\-]/g, '') || null, email: get('email') || null };
+        if (!payload.display_name) problems.push('sin nombre');
+        if (payload.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(payload.email)) problems.push('correo inválido');
+        for (const [kind, label] of ORG_FIELDS) {
+          const v = get(kind); const unit = v ? units(kind).find(o => fold(o.name) === fold(v)) : fallback(kind);
+          if (!unit) problems.push(v ? `${label} "${v}" no existe` : `${label} vacía y no hay "Sin …"`); else payload[`${kind}_id`] = unit.id;
+        }
+        const sv = get('schedule'); const sc = sv ? scheduleList.find(x => fold(x.name) === fold(sv)) : defaultSchedule();
+        if (!sc) problems.push(sv ? `horario "${sv}" no existe` : 'sin horario'); else payload.schedule_id = sc.id;
+        let skip = null;
+        if (payload.document && known.has(payload.document)) skip = 'ya existe';
+        else if (payload.document && seen.has(payload.document)) skip = 'cédula repetida en el archivo';
+        if (payload.document) seen.add(payload.document);
+        results.push({ line: i + 2, payload, problems, skip });
+      }
+      ready = results.filter(x => !x.problems.length && !x.skip);
+      const bad = results.filter(x => x.problems.length), skipped = results.filter(x => x.skip && !x.problems.length);
+      preview.append(el('p', `${ready.length} listas para crear · ${skipped.length} omitidas · ${bad.length} con errores.`, 'help'));
+      if (bad.length || skipped.length) {
+        const ul = el('ul', undefined, 'import-issues');
+        [...bad, ...skipped].slice(0, 60).forEach(x => ul.append(el('li', `Fila ${x.line} (${x.payload.display_name || 'sin nombre'}): ${x.problems.length ? x.problems.join(', ') : x.skip}`)));
+        preview.append(ul);
+      }
+      ok.disabled = !ready.length; ok.textContent = `Crear ${ready.length} personas`;
+    });
+    ok.disabled = true; ok.textContent = 'Crear personas';
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); ok.disabled = true; file.disabled = true;
+      const progress = el('p', '', 'help'); preview.append(progress); const failed = [];
+      for (const [i, x] of ready.entries()) {
+        progress.textContent = `Creando ${i + 1} de ${ready.length}…`;
+        try { list = [...list, await patient(() => api('POST', '/users', { body: x.payload }))]; }
+        catch (e) { failed.push(`Fila ${x.line} (${x.payload.display_name}): ${e.problem?.detail === 'document_in_use' ? 'cédula ya usada' : errorMessage(e)}`); }
+      }
+      render(); done();
+      if (!failed.length) { dialog.close(); return; }
+      progress.textContent = `Terminado: ${ready.length - failed.length} creadas, ${failed.length} con error.`;
+      const ul = el('ul', undefined, 'import-issues'); failed.forEach(t => ul.append(el('li', t))); preview.append(ul);
+      ok.hidden = true;
+    });
+    dialog.showModal();
+  };
+  const action = $('page-action'); action.textContent = 'Crear persona'; action.hidden = false; action.addEventListener('click', () => editor(null));
+  render();
+}
+
 // ---- Roles y permisos -------------------------------------------------------------------------------------------
 async function rolesPage() {
   const session = readSession();
@@ -557,6 +715,7 @@ async function start() {
     else if (page === 'assignments') await assignments();
     else if (page === 'accounts') await accounts();
     else if (page === 'roles') await rolesPage();
+    else if (page === 'users') await people();
     else if (page === 'tenants') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await tenantsPage(); }
     done();
   } catch (e) {
