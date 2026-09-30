@@ -51,7 +51,7 @@ export function goToLogin() {
   } catch { /* No persisted state. */ }
   location.replace('/login.php');
 }
-export async function api(method, path, { body, tenant = tenantId, idempotencyKey } = {}) {
+export async function api(method, path, { body, tenant = tenantId, idempotencyKey, ifMatch } = {}) {
   method = method.toUpperCase();
   if (!path.startsWith('/') || path.startsWith('//') || path.includes('://')) throw new Error('Ruta de API inválida.');
   const headers = { Accept: 'application/json, application/problem+json' };
@@ -65,6 +65,7 @@ export async function api(method, path, { body, tenant = tenantId, idempotencyKe
   }
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+  if (ifMatch !== undefined) headers['If-Match'] = `"${ifMatch}"`;
   const response = await fetch(`/v1${path}`, {
     method, headers, credentials: 'include', mode: 'same-origin', cache: 'no-store', redirect: 'error',
     body: body === undefined ? undefined : JSON.stringify(body),
