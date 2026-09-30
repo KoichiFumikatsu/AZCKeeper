@@ -98,7 +98,8 @@ public sealed class OutboxTests
         using var outbox = new DurableOutbox(directory.File("outbox.json"), maxBytes: 1500);
         var episode = Samples.Episode();
         await outbox.EnqueueAsync(episode, default);
-        await Assert.ThrowsAsync<IOException>(() => outbox.EnqueueAsync(Samples.Episode(new string('x', 1500)), default));
+        // Un evento que por si solo no cabe se rechaza sin tocar el estado; con presion normal se descarta lo viejo.
+        await Assert.ThrowsAsync<IOException>(() => outbox.EnqueueAsync(Samples.Episode(new string('x', 3000)), default));
         Assert.Equal(episode.EventId, Assert.Single((await outbox.InspectAsync()).Events).Id);
     }
 }

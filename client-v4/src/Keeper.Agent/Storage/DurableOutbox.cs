@@ -24,8 +24,22 @@ public sealed class DurableOutbox(string path, int maxBytes = 16 * 1024 * 1024) 
         EnqueueAsync(new OutboxEvent(result.Result.EventId, Command: result), ct);
     public Task EnqueueAsync(SecurityReport report, CancellationToken ct) =>
         EnqueueAsync(new OutboxEvent(report.EventId, Security: report), ct);
-    public Task EnqueueAsync(ActivitySnapshot activity, CancellationToken ct) =>
-        EnqueueAsync(new OutboxEvent(activity.SnapshotId, Activity: activity), ct);
+    // La foto de actividad es acumulada del dia (el servidor hace upsert monotonico): solo importa la ultima de cada
+    // dia. Guardarlas todas llenaba la cola (una por ciclo de sesion, se envia una por sync) hasta bloquear el agente.
+    public async Task EnqueueAsync(ActivitySnapshot activity, CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            var state = await ReadAsync(ct);
+            if (state.Events.Any(e => e.Id == activity.SnapshotId)) return;
+            var pending = state.Pending?.EventIds ?? [];
+            state.Events.RemoveAll(e => e.Activity is { } a && a.Day == activity.Day && a.Sequence < activity.Sequence && !pending.Contains(e.Id));
+            state.Events.Add(new OutboxEvent(activity.SnapshotId, Activity: activity));
+            await SaveAsync(state, ct, activity.SnapshotId);
+        }
+        finally { _gate.Release(); }
+    }
 
     private async Task EnqueueAsync(OutboxEvent item, CancellationToken ct)
     {
@@ -37,7 +51,7 @@ public sealed class DurableOutbox(string path, int maxBytes = 16 * 1024 * 1024) 
             var state = await ReadAsync(ct);
             if (state.Events.Any(e => e.Id == item.Id)) return;
             state.Events.Add(item);
-            await SaveAsync(state, ct);
+            await SaveAsync(state, ct, item.Id);
         }
         finally { _gate.Release(); }
     }
@@ -65,6 +79,11 @@ public sealed class DurableOutbox(string path, int maxBytes = 16 * 1024 * 1024) 
         {
             var state = await ReadAsync(ct);
             if (state.Pending is not null) return state.Pending;
+            // Fotos de actividad superadas (mismo dia, secuencia menor): el servidor las rechazaria y, al enviarse una
+            // por sync empezando por la mas vieja, retrasarian la del dia en curso. Colas de versiones anteriores.
+            var latestPerDay = state.Events.Where(e => e.Activity is not null).GroupBy(e => e.Activity!.Day)
+                .Select(g => g.MaxBy(e => e.Activity!.Sequence)!.Id).ToHashSet();
+            state.Events.RemoveAll(e => e.Activity is not null && !latestPerDay.Contains(e.Id));
             var selected = new List<OutboxEvent>();
             var episodes = new List<Episode>();
             var logs = new List<LogEntry>();
@@ -147,10 +166,31 @@ public sealed class DurableOutbox(string path, int maxBytes = 16 * 1024 * 1024) 
             ?? throw new InvalidDataException("invalid_outbox")
         : new OutboxState(0, [], [], null);
 
-    private Task SaveAsync(OutboxState state, CancellationToken ct)
+    // Cola llena: se descarta lo menos valioso en vez de bloquear el sync (una cola que no se puede guardar impide
+    // enviar y por tanto vaciarla). Orden: logs, fotos de actividad ya superadas, episodios; siempre lo mas viejo y
+    // nunca lo que va en el lote pendiente. Resultados de comandos, reportes de seguridad e inventario no se tocan.
+    private Task SaveAsync(OutboxState state, CancellationToken ct, Guid? keep = null)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(state, ProtocolJson.Options);
-        if (bytes.Length > maxBytes) throw new IOException("outbox_quota_exceeded");
+        if (bytes.Length > maxBytes)
+        {
+            var pending = state.Pending?.EventIds ?? [];
+            var latestDay = state.Events.Where(e => e.Activity is not null).GroupBy(e => e.Activity!.Day)
+                .Select(g => g.MaxBy(e => e.Activity!.Sequence)!.Id).ToHashSet();
+            var droppable = state.Events.Where(e => !pending.Contains(e.Id) && e.Id != keep).Select((e, i) => (Event: e, Index: i,
+                Rank: e.Log is not null ? 0 : e.Activity is not null && !latestDay.Contains(e.Id) ? 1 : e.Episode is not null ? 2 : -1))
+                .Where(x => x.Rank >= 0).OrderBy(x => x.Rank).ThenBy(x => x.Index).Select(x => x.Event).ToList();
+            state.Quarantine.Clear();
+            var removed = 0;
+            foreach (var victim in droppable)
+            {
+                if (bytes.Length <= maxBytes * 3L / 4) break;
+                state.Events.Remove(victim);
+                if (++removed % 50 == 0) bytes = JsonSerializer.SerializeToUtf8Bytes(state, ProtocolJson.Options);
+            }
+            bytes = JsonSerializer.SerializeToUtf8Bytes(state, ProtocolJson.Options);
+            if (bytes.Length > maxBytes) throw new IOException("outbox_quota_exceeded");
+        }
         return AtomicFile.WriteAsync(path, bytes, ct);
     }
 
