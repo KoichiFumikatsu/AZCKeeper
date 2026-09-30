@@ -113,6 +113,10 @@ Todo commiteado en `feature/keeper-v4` (commits: `abf6859`, `e27831e`, `cb818ae`
 - 4.0.11: una foto por dia + compactacion de colas heredadas + recorte al llenarse + backoff de modulos. recovery.json
   ahora apunta a 4.0.11 (backup en deploy-backups/recovery.json.*). FALTA registrar 4.0.11 y reparar el equipo.
 - Leccion: el rescate debe apuntar siempre a la ultima release sana, no a una fija.
+- CAUSA RAIZ (encontrada despues, 4.0.12 seq 13): el agente ignoraba activity_ack -> la foto enviada nunca salia
+  de la cola (el servidor tenia UNA foto en toda su historia). Ademas la sesion reiniciaba contadores/secuencia en cada
+  proceso y el servidor rechazaba 86401 s. Todo corregido; 4.0.11 instalada a mano por DWService 18:14 UTC; recovery.json
+  -> 4.0.12. FALTA registrar 4.0.12 y confirmar que llegan fotos de actividad (tabla activity_snapshots).
 
 ### 2026-09-29 (noche, 4) — endurecer/revertir desde el panel (4.0.10, seq 11, firmada y subida; FALTA registrar y probar)
 - Ficha del equipo: seccion Modo B con Endurecer/Revertir (confirmacion escribiendo el hostname). Orden exige agente >= 4.0.10.
