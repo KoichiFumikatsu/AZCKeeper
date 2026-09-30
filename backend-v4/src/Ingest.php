@@ -91,7 +91,24 @@ final class Ingest
         }
         if (isset($f->command_id)) { $this->ownCommand($f->command_id); }
         $this->write('INSERT INTO client_logs (tenant_id,device_id,event_id,at,level,code,component,control_id,command_id,attempt,error_code,body_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', [...$this->args($e->event_id), Util::sqlTime($e->at), $e->level, $e->code, $e->component, $f->control_id ?? null, isset($f->command_id) ? Util::bin($f->command_id) : null, $f->attempt ?? null, $f->error_code ?? null, Util::hash($e)]);
+        if ($e->component === 'LocalAccountHardening') { $this->hardeningFromJournal($e->code, Util::sqlTime($e->at)); }
         return self::ack($e->event_id);
+    }
+    // El agente publica el journal del Modo B como log (hardening_<estado>_step_<n>_mode_<modo>) y nunca llamo a
+    // /client/hardening/report: el estado del panel quedaba en "sin endurecer". Se deriva de ese log, solo si es
+    // mas reciente que lo guardado (los logs pueden llegar desordenados).
+    private function hardeningFromJournal(string $code, string $at): void
+    {
+        if (!preg_match('/^hardening_([a-z_]+)_step_(\d+)_mode_[a-z]+$/D', $code, $m)) { return; }
+        $state = match ($m[1]) { 'hardened' => 'hardened', 'running' => 'pending', 'rollback_failed', 'recovery_required' => 'recovery_required', default => 'none' };
+        $this->db->run("INSERT INTO device_hardening_status (tenant_id,device_id,state,last_step,detail,hardened_at,reported_at) VALUES (?,?,?,?,?,IF(?='hardened',?,NULL),?)
+            ON DUPLICATE KEY UPDATE
+              hardened_at=IF(VALUES(reported_at)>=reported_at, IF(VALUES(state)='hardened', IF(state='hardened', hardened_at, VALUES(reported_at)), NULL), hardened_at),
+              last_step=IF(VALUES(reported_at)>=reported_at, VALUES(last_step), last_step),
+              detail=IF(VALUES(reported_at)>=reported_at, VALUES(detail), detail),
+              state=IF(VALUES(reported_at)>=reported_at, VALUES(state), state),
+              reported_at=GREATEST(reported_at, VALUES(reported_at))",
+            [$this->c['tenant_id'], $this->c['device_id'], $state, 'step_' . $m[2], $code, $state, $at, $at]);
     }
     public function security(object $e): array
     {

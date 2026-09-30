@@ -17,6 +17,18 @@ function hardeningTests(Database $db): void
     $path = '/admin/tenants/' . $tid . '/hardening';
     $devicePath = '/admin/devices/' . $token['device_id'] . '/hardening';
     $db->run("UPDATE devices SET agent_version='4.0.10' WHERE tenant_id=? AND id=?", [$tenant, $device]);
+    // El estado del panel se deriva del journal que el agente publica como log (el agente no llama a /hardening/report).
+    $journal = static fn (string $code, int $at) => ['event_id' => Util::uuid(), 'at' => gmdate('Y-m-d\TH:i:s\Z', $at), 'level' => 'info', 'code' => $code, 'component' => 'LocalAccountHardening'];
+    $now = time();
+    expect(request('POST', '/client/logs', ['entries' => [$journal('hardening_hardened_step_7_mode_panel', $now - 60)]], $key, $token['access_token'], Util::uuid()), 200, 'journal hardened log');
+    $st = $db->one('SELECT * FROM device_hardening_status WHERE tenant_id=? AND device_id=?', [$tenant, $device]);
+    check($st['state'] === 'hardened' && $st['last_step'] === 'step_7' && $st['hardened_at'] !== null, 'hardened journal log sets panel state');
+    expect(request('POST', '/client/logs', ['entries' => [$journal('hardening_unhardened_step_0_mode_panel', $now - 120)]], $key, $token['access_token'], Util::uuid()), 200, 'older journal log');
+    check($db->one('SELECT state FROM device_hardening_status WHERE tenant_id=? AND device_id=?', [$tenant, $device])['state'] === 'hardened', 'older journal log does not overwrite');
+    expect(request('POST', '/client/logs', ['entries' => [$journal('hardening_unhardened_step_0_mode_panel', $now)]], $key, $token['access_token'], Util::uuid()), 200, 'newer journal log');
+    $st = $db->one('SELECT * FROM device_hardening_status WHERE tenant_id=? AND device_id=?', [$tenant, $device]);
+    check($st['state'] === 'none' && $st['hardened_at'] === null, 'unharden journal clears panel state');
+    $db->run('DELETE FROM device_hardening_status WHERE tenant_id=? AND device_id=?', [$tenant, $device]);
     $foreignPath = '/admin/devices/' . $otherToken['device_id'] . '/hardening';
     $password = 'Hardening-A-' . Util::b64(random_bytes(24));
     $otherPassword = 'Hardening-B-' . Util::b64(random_bytes(24));
