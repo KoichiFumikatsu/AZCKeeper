@@ -25,9 +25,36 @@ function query(path, values) {
   return url.pathname + url.search;
 }
 
+// Contraseña temporal: la cuenta la cambia antes de usar el panel (la API rechaza todo lo demás mientras tanto).
+function passwordChange(session, current) {
+  const box = $('login-form').parentElement;
+  $('form-title').textContent = 'Crea tu contraseña';
+  $('login-form').hidden = true;
+  const form = node('form'); form.noValidate = true;
+  form.append(node('p', 'Tu cuenta tiene una contraseña temporal. Elige una propia de al menos 12 caracteres para continuar.', 'help'));
+  const field = (text, name, value = '') => { const l = node('label', text); const i = node('input'); i.type = 'password'; i.name = name; i.value = value; i.autocomplete = name === 'current' ? 'current-password' : 'new-password'; l.append(i); form.append(l); return i; };
+  const now = field('Contraseña temporal', 'current', current || '');
+  const next = field('Contraseña nueva', 'next');
+  const again = field('Repite la contraseña nueva', 'again');
+  const error = node('p', undefined, 'error-message'); error.hidden = true; error.setAttribute('role', 'alert');
+  const submit = node('button', 'Guardar y entrar', 'primary'); submit.type = 'submit';
+  form.append(error, submit); box.append(form);
+  (current ? next : now).focus();
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); error.hidden = true;
+    if (next.value.length < 12) { showError(error, new Error('La contraseña nueva debe tener al menos 12 caracteres.')); return; }
+    if (next.value !== again.value) { showError(error, new Error('Las contraseñas nuevas no coinciden.')); return; }
+    submit.disabled = true;
+    try {
+      const fresh = await api('POST', '/auth/password', { body: { current_password: now.value, new_password: next.value } });
+      saveSession(fresh); location.replace('/');
+    } catch (e) { showError(error, e.code === 'weak_password' ? new Error('La contraseña nueva debe ser distinta de la temporal y de tu correo.') : e.code === 'invalid_credentials' ? new Error('La contraseña temporal no es correcta.') : e); submit.disabled = false; }
+  });
+}
 async function login() {
   const current = readSession();
-  if (current) { location.replace(current.is_platform_admin ? '/admin/' : '/'); return; }
+  if (current && new URLSearchParams(location.search).has('cambiar')) { passwordChange(current); return; }
+  if (current) { location.replace('/'); return; }
   const form = $('login-form');
   form.addEventListener('submit', async event => {
     event.preventDefault();
@@ -48,8 +75,10 @@ async function login() {
         session = await api('POST', '/auth/login', { body });
       }
       saveSession(session);
+      const typed = form.elements.password.value;
       form.elements.password.value = '';
-      location.replace(session.is_platform_admin ? '/admin/' : '/');
+      if (session.must_change_password) { $('login-status').textContent = ''; passwordChange(session, typed); return; }
+      location.replace('/');
     } catch (error) {
       showError($('login-error'), error);
       $('login-status').textContent = '';
@@ -192,7 +221,7 @@ async function navigation() {
     try { sessionStorage.setItem(NAV_CACHE, JSON.stringify({ tenant, expires: Date.now() + 300000, allowed })); } catch { /* sin cache */ }
   }
   if (failures.length) showError($('page-error'), new Error(failures.join(' ')));
-  if ($('platform-link')) $('platform-link').hidden = !session.is_platform_admin;
+  if ($('platform-group')) $('platform-group').hidden = !session.is_platform_admin;
   $('navigation').hidden = false;
 }
 function table(parent, title, columns) {

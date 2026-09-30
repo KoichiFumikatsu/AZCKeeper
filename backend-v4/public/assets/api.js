@@ -71,6 +71,11 @@ export async function api(method, path, { body, tenant = tenantId, idempotencyKe
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (response.status === 401 && document.body.dataset.page !== 'login') goToLogin();
+  if (response.status === 403 && document.body.dataset.page !== 'login') {
+    // Contraseña temporal sin cambiar: se manda a crearla (la API rechaza todo lo demás).
+    const peek = await response.clone().json().catch(() => ({}));
+    if (peek.code === 'password_change_required') { location.replace('/login.php?cambiar=1'); return new Promise(() => {}); }
+  }
   if (response.status === 204 && response.ok) return null;
   const type = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
   let data;

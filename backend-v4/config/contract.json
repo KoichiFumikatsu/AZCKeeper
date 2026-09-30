@@ -1,5 +1,5 @@
 {
-  "source_sha256": "50c46dde2c8e5bd1e4ffe8deae60ece61fc7769ad2b7f7c5f0cdbe0e7ae56db8",
+  "source_sha256": "9a51996a16542782a67d43f37405aac5dfb3bcd7226f98310efff77bc98fb765",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -13255,6 +13255,496 @@
         ],
         "x-permission": "reportes.ver"
       }
+    },
+    "/panel-accounts": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "listPanelAccounts",
+        "summary": "Cuentas del panel",
+        "description": "Cuentas de acceso al panel de la empresa seleccionada; la plataforma ve además las cuentas de superadmin.",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [
+          "PanelAccount"
+        ],
+        "responses": {
+          "200": {
+            "description": "Cuentas del panel",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PanelAccountList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "x-permission": "usuarios.editar"
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "createPanelAccount",
+        "summary": "Crear cuenta del panel",
+        "description": "Superadmin (solo plataforma) o cuenta de empresa ligada a una persona, con sus roles. Devuelve una contraseña temporal UNA vez; la persona debe cambiarla al entrar. Requiere reautenticación reciente.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [
+          "PanelAccount"
+        ],
+        "responses": {
+          "201": {
+            "description": "Crear cuenta del panel",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store"
+                },
+                "description": "No almacenar secretos/sesiones."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PanelAccountSecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PanelAccountInput"
+              }
+            }
+          }
+        },
+        "x-permission": "usuarios.editar",
+        "x-max-body-bytes": 4096
+      }
+    },
+    "/panel-accounts/{id}": {
+      "patch": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "patchPanelAccount",
+        "summary": "Editar cuenta del panel",
+        "description": "Activar/desactivar y cambiar roles. Desactivar cierra sus sesiones.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [
+          "PanelAccount"
+        ],
+        "responses": {
+          "200": {
+            "description": "Editar cuenta del panel",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PanelAccount"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PanelAccountPatch"
+              }
+            }
+          }
+        },
+        "x-permission": "usuarios.editar",
+        "x-max-body-bytes": 4096
+      }
+    },
+    "/panel-accounts/{id}/reset-password": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "resetPanelAccountPassword",
+        "summary": "Restablecer contraseña",
+        "description": "Nueva contraseña temporal, mostrada una vez; cierra las sesiones de la cuenta. Requiere reautenticación reciente.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [
+          "PanelAccount"
+        ],
+        "responses": {
+          "200": {
+            "description": "Restablecer contraseña",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store"
+                },
+                "description": "No almacenar secretos/sesiones."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PanelAccountSecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "x-permission": "usuarios.editar",
+        "x-max-body-bytes": 4096
+      }
+    },
+    "/auth/password": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "changeAdminPassword",
+        "summary": "Cambiar mi contraseña",
+        "description": "Cambia la contraseña de la cuenta con sesión. Obligatorio antes de usar el panel cuando la cuenta tiene contraseña temporal.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [
+          "PanelAccount"
+        ],
+        "responses": {
+          "200": {
+            "description": "Cambiar mi contraseña",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store"
+                },
+                "description": "No almacenar secretos/sesiones."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSession"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChange"
+              }
+            }
+          }
+        },
+        "x-max-body-bytes": 4096
+      }
     }
   },
   "parameters": {
@@ -13933,6 +14423,7 @@
       "additionalProperties": false,
       "required": [
         "admin_id",
+        "must_change_password",
         "tenant_id",
         "is_platform_admin",
         "expires_at",
@@ -13965,6 +14456,10 @@
         "idle_expires_at": {
           "type": "string",
           "format": "date-time"
+        },
+        "must_change_password": {
+          "type": "boolean",
+          "description": "La cuenta tiene contraseña temporal; debe cambiarla (POST /auth/password) antes de usar el panel."
         },
         "csrf_token": {
           "type": "string",
@@ -17692,6 +18187,209 @@
         }
       }
     },
+    "PanelAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "email",
+        "display_name",
+        "user_id",
+        "user_name",
+        "role_ids",
+        "active",
+        "must_change_password",
+        "created_at",
+        "last_login_at"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "kind": {
+          "enum": [
+            "platform",
+            "company"
+          ]
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 254
+        },
+        "display_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 160
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "user_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 160
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "role_ids": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "must_change_password": {
+          "type": "boolean"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_login_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "PanelAccountInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "email",
+        "display_name",
+        "user_id",
+        "role_ids"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "platform",
+            "company"
+          ]
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254
+        },
+        "display_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "role_ids": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    "PanelAccountList": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/PanelAccount"
+          }
+        }
+      }
+    },
+    "PanelAccountPatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active",
+        "role_ids"
+      ],
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "role_ids": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    "PanelAccountSecret": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "account",
+        "temporary_password"
+      ],
+      "properties": {
+        "account": {
+          "$ref": "#/components/schemas/PanelAccount"
+        },
+        "temporary_password": {
+          "type": "string",
+          "maxLength": 64
+        }
+      }
+    },
     "PanelSettings": {
       "type": "object",
       "additionalProperties": false,
@@ -17703,6 +18401,28 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 90
+        }
+      }
+    },
+    "PasswordChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "current_password",
+        "new_password"
+      ],
+      "properties": {
+        "current_password": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "writeOnly": true
+        },
+        "new_password": {
+          "type": "string",
+          "minLength": 12,
+          "maxLength": 256,
+          "writeOnly": true
         }
       }
     },
@@ -17863,6 +18583,10 @@
         "action": {
           "type": "string",
           "maxLength": 80
+        },
+        "platform_only": {
+          "type": "boolean",
+          "description": "Solo cuentas de plataforma pueden tenerlo; las empresas no lo ven al armar roles."
         },
         "delegable": {
           "type": "boolean"

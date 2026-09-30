@@ -136,6 +136,7 @@ final class AdminApi
             'listReleases','registerRelease','deployRelease'=>$this->releases($op,$b),
             'listExpectedDevices','createExpectedDevice','importExpectedDevices','cancelExpectedDevice','listEnrollmentRequests','approveEnrollmentRequest','rejectEnrollmentRequest',
             'getEnrollmentSettings','putEnrollmentSettings','listEnrollmentKeys','createEnrollmentKey','revokeEnrollmentKey'=>(new DeviceIntake($this->db))->admin($op,$id,$b,$this->access,$this->c,$this->r),
+            'listPanelAccounts','createPanelAccount','patchPanelAccount','resetPanelAccountPassword'=>(new PanelAccounts($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getProductivity'=>$this->report(), 'listAudit'=>$this->auditPage(),
             default=>throw new ApiError(404,'resource_not_found')
         };
@@ -325,7 +326,7 @@ final class AdminApi
         $this->db->run('UPDATE tenants SET auth_version=auth_version+1 WHERE tenant_id=?',[$this->tenant]);
         $this->audit('role',$id,array_keys(get_object_vars($b))); return $this->result($this->roleDto($this->row('roles',$id)),$op==='createRole'?201:200);
     }
-    private function permissionDto(array $r): array { return ['code'=>$r['code'],'label'=>$r['label'],'resource'=>$r['resource'],'action'=>$r['action'],'delegable'=>(bool)$r['delegable'],'version'=>(int)$r['version']]; }
+    private function permissionDto(array $r): array { return ['code'=>$r['code'],'label'=>$r['label'],'resource'=>$r['resource'],'action'=>$r['action'],'delegable'=>(bool)$r['delegable'],'platform_only'=>(bool)$r['platform_only'],'version'=>(int)$r['version']]; }
     private function permissions(string $op,?object $b): array
     {
         if ($op==='listPermissions') { return $this->page('SELECT * FROM permissions',[],fn($x)=>$this->permissionDto($x),'code','code'); }

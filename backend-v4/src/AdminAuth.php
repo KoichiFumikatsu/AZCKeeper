@@ -19,7 +19,7 @@ final class AdminAuth
     public function identity(Request $r): array
     {
         $cookie = $_COOKIE['__Host-keeper_admin'] ?? '';
-        $rows = $this->db->run('SELECT s.*,a.user_id,a.is_platform_admin,a.active,a.auth_version account_version,a.password_hash FROM admin_sessions s JOIN admin_accounts a ON a.tenant_id=s.tenant_id AND a.id=s.admin_id JOIN tenants t ON t.tenant_id=a.tenant_id WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>UTC_TIMESTAMP(6) AND s.idle_expires_at>UTC_TIMESTAMP(6) AND t.status=\'active\' LIMIT 2 FOR UPDATE', [hash('sha256', $cookie, true)])->fetchAll();
+        $rows = $this->db->run('SELECT s.*,a.user_id,a.is_platform_admin,a.active,a.auth_version account_version,a.password_hash,a.must_change_password,a.email FROM admin_sessions s JOIN admin_accounts a ON a.tenant_id=s.tenant_id AND a.id=s.admin_id JOIN tenants t ON t.tenant_id=a.tenant_id WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>UTC_TIMESTAMP(6) AND s.idle_expires_at>UTC_TIMESTAMP(6) AND t.status=\'active\' LIMIT 2 FOR UPDATE', [hash('sha256', $cookie, true)])->fetchAll();
         if (count($rows) !== 1 || !$rows[0]['active'] || $rows[0]['auth_version'] !== $rows[0]['account_version']) { throw new ApiError(401, 'session_expired'); }
         $s = $rows[0];
         if (!$s['is_platform_admin'] && !$this->db->one("SELECT id FROM users WHERE tenant_id=? AND id=? AND status='active' AND panel_login_enabled=TRUE", [$s['tenant_id'], $s['user_id']])) { throw new ApiError(401, 'session_expired'); }
@@ -30,6 +30,8 @@ final class AdminAuth
     public function context(Request $r): array
     {
         $s = $this->identity($r);
+        // Contraseña temporal: solo /auth/password, /auth/logout y /auth/csrf hasta que la persona la cambie.
+        if ($s['must_change_password']) { throw new ApiError(403, 'password_change_required'); }
         $tenantRoute = str_starts_with($r->route, '/tenants/{id}') || str_starts_with($r->route, '/admin/tenants/{id}');
         $tenant = $tenantRoute ? Util::bin($r->resourceId) : ($r->header('x-tenant-id') !== '' ? Util::bin($r->header('x-tenant-id')) : $s['tenant_id']);
         if (!$s['is_platform_admin'] && $tenant !== $s['tenant_id']) { throw new ApiError(404, 'resource_not_found'); }
@@ -75,11 +77,12 @@ final class AdminAuth
                 $a=$accounts[0]; $token=Util::b64(random_bytes(32)); $csrf=$this->csrf($token); $id=Util::bin(Util::uuid());
                 if (isset($_COOKIE['__Host-keeper_admin'])) { $this->db->run('UPDATE admin_sessions SET revoked_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND admin_id=? AND token_hash=? AND revoked_at IS NULL',[$a['tenant_id'],$a['id'],hash('sha256',$_COOKIE['__Host-keeper_admin'],true)]); }
                 $this->db->run('UPDATE admin_pre_sessions SET consumed_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?',[$pre['tenant_id'],$pre['id']]);
+                $this->db->run('UPDATE admin_accounts SET last_login_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?',[$a['tenant_id'],$a['id']]);
                 $this->db->run('INSERT INTO admin_sessions (tenant_id,id,admin_id,token_hash,csrf_hash,auth_version,created_at,last_seen_at,expires_at,idle_expires_at) VALUES (?,?,?,?,?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6)+INTERVAL 8 HOUR,UTC_TIMESTAMP(6)+INTERVAL 30 MINUTE)',[$a['tenant_id'],$id,$a['id'],hash('sha256',$token,true),hash('sha256',$csrf,true),$a['auth_version']]);
                 $s=$this->db->one('SELECT * FROM admin_sessions WHERE tenant_id=? AND id=?',[$a['tenant_id'],$id]);
                 $c=['tenant_id'=>$a['tenant_id'],'admin_tenant_id'=>$a['tenant_id'],'admin_id'=>$a['id'],'actor_type'=>'admin']; $c['principal_id']=$this->principal($c);
                 (new Audit($this->db))->record($c,$r,'admin.login','admin_session',$id,['session']);
-                return AdminApi::response(['admin_id'=>Util::id($a['id']),'tenant_id'=>$a['is_platform_admin']?null:Util::id($a['tenant_id']),'is_platform_admin'=>(bool)$a['is_platform_admin'],'expires_at'=>Util::time($s['expires_at']),'idle_expires_at'=>Util::time($s['idle_expires_at']),'csrf_token'=>$csrf],200,['Set-Cookie'=>$this->cookie('__Host-keeper_admin',$token,28800)]);
+                return AdminApi::response(['admin_id'=>Util::id($a['id']),'tenant_id'=>$a['is_platform_admin']?null:Util::id($a['tenant_id']),'is_platform_admin'=>(bool)$a['is_platform_admin'],'must_change_password'=>(bool)$a['must_change_password'],'expires_at'=>Util::time($s['expires_at']),'idle_expires_at'=>Util::time($s['idle_expires_at']),'csrf_token'=>$csrf],200,['Set-Cookie'=>$this->cookie('__Host-keeper_admin',$token,28800)]);
             }
             $s=$this->identity($r);
             $c=['tenant_id'=>$s['tenant_id'],'admin_tenant_id'=>$s['tenant_id'],'admin_id'=>$s['admin_id'],'actor_type'=>'admin']; $c['principal_id']=$this->principal($c);
@@ -88,11 +91,24 @@ final class AdminAuth
                 (new Audit($this->db))->record($c,$r,'admin.logout','admin_session',$s['id'],['session']);
                 return AdminApi::response(null,204,['Set-Cookie'=>$this->cookie('__Host-keeper_admin','',0)]);
             }
+            if ($r->route==='/auth/password') {
+                if (!password_verify($r->body->current_password,$s['password_hash'])) { throw new ApiError(401,'invalid_credentials'); }
+                $new=$r->body->new_password;
+                if (password_verify($new,$s['password_hash']) || strcasecmp($new,$s['email'])===0) { throw new ApiError(422,'weak_password',[], 'La contraseña nueva debe ser distinta de la actual y del correo.'); }
+                // Nueva version de la cuenta: cierra las demas sesiones y esta sigue viva con la version nueva.
+                $this->db->run('UPDATE admin_accounts SET password_hash=?,must_change_password=FALSE,auth_version=auth_version+1 WHERE tenant_id=? AND id=?',[password_hash($new,PASSWORD_DEFAULT),$s['tenant_id'],$s['admin_id']]);
+                $version=$this->db->one('SELECT auth_version FROM admin_accounts WHERE tenant_id=? AND id=?',[$s['tenant_id'],$s['admin_id']])['auth_version'];
+                $this->db->run('UPDATE admin_sessions SET revoked_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND admin_id=? AND id<>? AND revoked_at IS NULL',[$s['tenant_id'],$s['admin_id'],$s['id']]);
+                $this->db->run('UPDATE admin_sessions SET auth_version=?,reauthenticated_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?',[$version,$s['tenant_id'],$s['id']]);
+                (new Audit($this->db))->record($c,$r,'admin.password_changed','admin_account',$s['admin_id'],['password']);
+                $fresh=$this->db->one('SELECT expires_at,idle_expires_at FROM admin_sessions WHERE tenant_id=? AND id=?',[$s['tenant_id'],$s['id']]);
+                return AdminApi::response(['admin_id'=>Util::id($s['admin_id']),'tenant_id'=>$s['is_platform_admin']?null:Util::id($s['tenant_id']),'is_platform_admin'=>(bool)$s['is_platform_admin'],'must_change_password'=>false,'expires_at'=>Util::time($fresh['expires_at']),'idle_expires_at'=>Util::time($fresh['idle_expires_at']),'csrf_token'=>$this->csrf($_COOKIE['__Host-keeper_admin'])],200,['Cache-Control'=>'no-store']);
+            }
             if (!password_verify($r->body->password,$s['password_hash'])) { throw new ApiError(401,'invalid_credentials'); }
             $this->db->run('UPDATE admin_sessions SET reauthenticated_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?',[$s['tenant_id'],$s['id']]);
             (new Audit($this->db))->record($c,$r,'admin.reauthenticated','admin_session',$s['id'],['reauthentication']);
             $fresh=$this->db->one('SELECT expires_at,idle_expires_at FROM admin_sessions WHERE tenant_id=? AND id=?',[$s['tenant_id'],$s['id']]);
-            return AdminApi::response(['admin_id'=>Util::id($s['admin_id']),'tenant_id'=>$s['is_platform_admin']?null:Util::id($s['tenant_id']),'is_platform_admin'=>(bool)$s['is_platform_admin'],'expires_at'=>Util::time($fresh['expires_at']),'idle_expires_at'=>Util::time($fresh['idle_expires_at']),'csrf_token'=>$this->csrf($_COOKIE['__Host-keeper_admin'])]);
+            return AdminApi::response(['admin_id'=>Util::id($s['admin_id']),'tenant_id'=>$s['is_platform_admin']?null:Util::id($s['tenant_id']),'is_platform_admin'=>(bool)$s['is_platform_admin'],'must_change_password'=>(bool)$s['must_change_password'],'expires_at'=>Util::time($fresh['expires_at']),'idle_expires_at'=>Util::time($fresh['idle_expires_at']),'csrf_token'=>$this->csrf($_COOKIE['__Host-keeper_admin'])]);
         });
     }
 }

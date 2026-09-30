@@ -10,6 +10,7 @@ require __DIR__ . '/external-auth.php';
 require __DIR__ . '/activity-migration.php';
 require __DIR__ . '/hardening.php';
 require __DIR__ . '/intake.php';
+require __DIR__ . '/panel-accounts.php';
 
 use Keeper\{Config, Database, Util, Validator};
 
@@ -344,6 +345,7 @@ try {
     activityMigrationTests($db);
     hardeningTests($db);
     intakeTests($db);
+    panelAccountsTests($db);
     echo "SMOKE PASS: $checks assertions\n";
 } catch (Throwable $e) {
     fwrite(STDERR, $e instanceof PDOException ? 'Database fixture failure SQLSTATE=' . $e->getCode() . ' driver=' . ($e->errorInfo[1]??0) . "\n" : $e->getMessage() . "\n");
