@@ -106,6 +106,14 @@ Todo commiteado en `feature/keeper-v4` (commits: `abf6859`, `e27831e`, `cb818ae`
 
 ## 6. FALTA (pendientes priorizados)
 
+### 2026-09-30 — INCIDENTE: cola de eventos llena, sin sync ~17 h (corregido en 4.0.11, seq 12)
+- DESKTOP-949SGVE/ACT-0987 dejo de sincronizar 2026-09-29 23:57 UTC: outbox_quota_exceeded (16 MB). Causa: una foto de
+  actividad acumulada por ciclo de sesion, se guardaban todas y salia una por sync. Con la cola llena ni el lote se podia
+  guardar. El rescate (24 h, recovery.json -> 4.0.7) instalo 4.0.7 con la misma cola y la guarda volvio a 4.0.9.
+- 4.0.11: una foto por dia + compactacion de colas heredadas + recorte al llenarse + backoff de modulos. recovery.json
+  ahora apunta a 4.0.11 (backup en deploy-backups/recovery.json.*). FALTA registrar 4.0.11 y reparar el equipo.
+- Leccion: el rescate debe apuntar siempre a la ultima release sana, no a una fija.
+
 ### 2026-09-29 (noche, 4) — endurecer/revertir desde el panel (4.0.10, seq 11, firmada y subida; FALTA registrar y probar)
 - Ficha del equipo: seccion Modo B con Endurecer/Revertir (confirmacion escribiendo el hostname). Orden exige agente >= 4.0.10.
 - Agente lanza el bootstrapper verificado contra el trust; si degrada, aviso WTS en la sesion y cierre a los 2 min.
