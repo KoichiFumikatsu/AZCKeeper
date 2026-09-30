@@ -116,7 +116,7 @@ Todo commiteado en `feature/keeper-v4` (commits: `abf6859`, `e27831e`, `cb818ae`
 - CAUSA RAIZ (encontrada despues, 4.0.12 seq 13): el agente ignoraba activity_ack -> la foto enviada nunca salia
   de la cola (el servidor tenia UNA foto en toda su historia). Ademas la sesion reiniciaba contadores/secuencia en cada
   proceso y el servidor rechazaba 86401 s. Todo corregido; 4.0.11 instalada a mano por DWService 18:14 UTC; recovery.json
-  -> 4.0.12. FALTA registrar 4.0.12 y confirmar que llegan fotos de actividad (tabla activity_snapshots).
+  -> 4.0.12. 4.0.12 registrada; VALIDADO 2026-09-30 18:59-19:01 UTC: fotos del dia 30 llegan y avanzan en cada sync (idle 557->689, secuencia en ms).
 
 ### 2026-09-29 (noche, 4) — endurecer/revertir desde el panel (4.0.10, seq 11, firmada y subida; FALTA registrar y probar)
 - Ficha del equipo: seccion Modo B con Endurecer/Revertir (confirmacion escribiendo el hostname). Orden exige agente >= 4.0.10.
