@@ -106,6 +106,11 @@ Todo commiteado en `feature/keeper-v4` (commits: `abf6859`, `e27831e`, `cb818ae`
 
 ## 6. FALTA (pendientes priorizados)
 
+### 2026-09-30 — cron de productividad programado en devkeep
+- No habia cron desde 2026-09-22 (agregados day_summary/episode_daily/focus + doble empleo/apps sospechosas sin calcular).
+- Hestia (usuario keeper): */10 php config/productivity-cron.php >> private/productivity-cron.log. Primera corrida automatica
+  2026-09-30 20:40 UTC OK. Quitar: v-delete-cron-job keeper 1.
+
 ### 2026-09-30 — INCIDENTE: cola de eventos llena, sin sync ~17 h (corregido en 4.0.11, seq 12)
 - DESKTOP-949SGVE/ACT-0987 dejo de sincronizar 2026-09-29 23:57 UTC: outbox_quota_exceeded (16 MB). Causa: una foto de
   actividad acumulada por ciclo de sesion, se guardaban todas y salia una por sync. Con la cola llena ni el lote se podia
