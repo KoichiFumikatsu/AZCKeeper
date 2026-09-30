@@ -34,7 +34,8 @@ internal static class Program
             var sink = new SessionBuffer();
             var foreground = new WindowsForegroundSource();
             var calls = new CallDetector(foreground);
-            var activity = new ActivityTracker(new WindowsInputIdleSource(), () => calls.IsInCall);
+            var activityState = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AZCKeeper", "v4", "activity-state.json");
+            var activity = new ActivityTracker(new WindowsInputIdleSource(), () => calls.IsInCall, statePath: activityState);
             var screen = new LockScreen(dispatcher);
             var presenceFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AZCKeeper", "v4", "presence-day.txt");
             await using var modules = new ModuleHost([calls, activity, new WindowTracker(foreground, activity), new PresenceTracker(presenceFile), screen],

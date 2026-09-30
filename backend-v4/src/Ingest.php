@@ -146,7 +146,16 @@ final class Ingest
 
     public function activity(object $e): array
     {
-        if ($e->active_seconds + $e->idle_seconds > 86400 || $e->day > (new \DateTimeImmutable('now', new \DateTimeZone($this->c['timezone'])))->format('Y-m-d')) { throw new ApiError(422, 'invalid_range'); }
+        // Largo real del dia en la zona de la empresa (23/24/25 h con cambio de hora) + 120 s: una sesion abierta todo el
+        // dia suma exactamente el dia, y el redondeo de activo e inactivo por separado lo pasaba por 1 s (rechazo total).
+        $zone = new \DateTimeZone($this->c['timezone']);
+        $dayStart = new \DateTimeImmutable($e->day, $zone);
+        $dayLength = $dayStart->modify('+1 day')->getTimestamp() - $dayStart->getTimestamp();
+        if ($e->active_seconds + $e->idle_seconds > $dayLength + 120 || $e->day > (new \DateTimeImmutable('now', $zone))->format('Y-m-d')) { throw new ApiError(422, 'invalid_range'); }
+        // La tabla guarda como maximo 86400 s por dia: el exceso de redondeo (o la hora extra de un cambio de hora) se
+        // descuenta del tiempo inactivo, nunca del activo.
+        if ($e->active_seconds > 86400) { $e->active_seconds = 86400; }
+        if ($e->active_seconds + $e->idle_seconds > 86400) { $e->idle_seconds = 86400 - $e->active_seconds; }
         // Un dato imposible se rechaza en el borde: las llamadas son un subconjunto del tiempo
         // activo y el desglose no puede sumar mas que su total. K3 no comprobaba ninguna de las
         // dos y por eso tiene dias con 184 horas de llamada.

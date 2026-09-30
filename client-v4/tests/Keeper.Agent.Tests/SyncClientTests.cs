@@ -538,6 +538,34 @@ public sealed class SyncClientTests
         Assert.Equal(4, client.RequestCount);
     }
 
+    // Regresion 2026-09-30: el ack de actividad se ignoraba y la foto enviada nunca salia de la cola.
+    [Theory]
+    [InlineData(AckStatus.Accepted)]
+    [InlineData(AckStatus.Duplicate)]
+    [InlineData(AckStatus.Rejected)]
+    public async Task ActivityAckRemovesTheSnapshotFromTheOutbox(AckStatus status)
+    {
+        using var directory = new TestDirectory();
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var outbox = new DurableOutbox(directory.File("outbox.json"));
+        var snapshot = new ActivitySnapshot { SnapshotId = Guid.NewGuid(), Sequence = 5, Day = new DateOnly(2026, 9, 30), ActiveSeconds = 60, IdleSeconds = 0 };
+        await outbox.EnqueueAsync(snapshot, default);
+        var clock = new TestClock();
+        await using var host = new ModuleHost([], Samples.Context(clock));
+        var policy = new PolicyCoordinator(new MemoryPolicyStore(), host, Samples.Device);
+        using var handler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("challenges", StringComparison.Ordinal))
+                return Task.FromResult(Json(new Challenge { Nonce = "server-challenge", ExpiresAt = clock.GetUtcNow().AddMinutes(1) }));
+            if (request.RequestUri.AbsolutePath.EndsWith("login", StringComparison.Ordinal)) return Task.FromResult(Json(Token()));
+            return Task.FromResult(Json(Response(clock) with { Policy = Samples.Policy(), ActivityAck = new Ack { EventId = snapshot.SnapshotId, Status = status, Retryable = false } }));
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://keeper.test/v1/") };
+        using var signer = new HttpMessageSigner(key);
+        await new SyncClient(http, signer, Samples.Device, outbox, policy, clock).ExecuteAsync(default);
+        Assert.Empty((await outbox.InspectAsync()).Events);
+    }
+
     [Fact]
     public async Task RateLimitHasNoInlineRetryAndPreservesOutbox()
     {

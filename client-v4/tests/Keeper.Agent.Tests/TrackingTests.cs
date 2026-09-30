@@ -138,12 +138,47 @@ public sealed class TrackingTests
         var published = Assert.Single(sink.Activity);
         Assert.Equal(new DateOnly(2026, 9, 14), published.Day);
         Assert.Equal(2, published.WorkHoursActiveSeconds);
-        Assert.Equal(1, published.Sequence);
+        var first = published.Sequence;
 
         clock.Advance(2); await tracker.TickAsync(default);
         // La secuencia avanza para que el servidor sepa cual es el ultimo estado del dia.
-        Assert.Equal(2, sink.Activity[^1].Sequence);
+        Assert.True(sink.Activity[^1].Sequence > first);
         Assert.Equal(4, sink.Activity[^1].WorkHoursActiveSeconds);
+    }
+
+    // Regresion 2026-09-30: contadores y secuencia vivian solo en memoria. Tras reiniciar la sesion el dia volvia a
+    // cero y el servidor (upsert monotonico) rechazaba todas las fotos siguientes de ese dia.
+    [Fact]
+    public async Task AReinicioDeSesionConservaContadoresYLaSecuenciaSigueCreciendo()
+    {
+        using var directory = new TestDirectory();
+        var path = directory.File("activity-state.json");
+        var schedule = new WorkSchedule(TimeZoneInfo.Utc, [Shift()]);
+        var clock = new TrackingClock("2026-09-14T10:00:00Z");
+        var sink = new CapturedEvents();
+        var before = new ActivityTracker(new IdleInput(), statePath: path) { Schedule = schedule };
+        await before.InitAsync(new ModuleContext(sink, clock, _ => { }, CancellationToken.None));
+        for (var i = 0; i < 20; i++) { clock.Advance(2); await before.TickAsync(default); }
+        await before.ShutdownAsync();
+        var last = sink.Activity[^1];
+
+        var after = new ActivityTracker(new IdleInput(), statePath: path) { Schedule = schedule };
+        await after.InitAsync(new ModuleContext(sink, clock, _ => { }, CancellationToken.None));
+        clock.Advance(2); await after.TickAsync(default);
+        var next = sink.Activity[^1];
+        Assert.True(next.Sequence > last.Sequence);
+        Assert.Equal(last.ActiveSeconds + 2, next.ActiveSeconds);
+    }
+
+    [Fact]
+    public async Task SinArchivoLaSecuenciaIgualSuperaALaDeUnProcesoAnterior()
+    {
+        var clock = new TrackingClock("2026-09-14T10:00:00Z");
+        var sink = new CapturedEvents();
+        var tracker = new ActivityTracker(new IdleInput()) { Schedule = new WorkSchedule(TimeZoneInfo.Utc, [Shift()]) };
+        await tracker.InitAsync(new ModuleContext(sink, clock, _ => { }, CancellationToken.None));
+        clock.Advance(2); await tracker.TickAsync(default);
+        Assert.True(sink.Activity[^1].Sequence >= DateTimeOffset.Parse("2026-09-14T10:00:00Z").ToUnixTimeMilliseconds());
     }
 
     // En K3 el contador de llamadas solo se ponia a cero al arrancar el programa, de modo que

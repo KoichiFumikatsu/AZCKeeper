@@ -79,7 +79,10 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
         if (response.ProtocolVersion != 1 || response.PolicyVersion < 1 || response.NextSyncAfterSeconds is < 120 or > 3600)
             throw new InvalidDataException("invalid_sync_response");
         await outbox.CompleteAsync(response.EpisodeAcks.Concat(response.LogAcks).Concat(response.CommandAcks)
-            .Concat(response.SecurityAck is null ? [] : new[] { response.SecurityAck }), ct);
+            .Concat(response.SecurityAck is null ? [] : new[] { response.SecurityAck })
+            // Sin el ack de actividad la foto enviada nunca salia de la cola: se reenviaba la misma en cada sync y las
+            // nuevas se acumulaban hasta llenarla (incidente 2026-09-30).
+            .Concat(response.ActivityAck is null ? [] : new[] { response.ActivityAck }), ct);
         if (response.Token is not null) SetToken(response.Token, issuedAt);
         // Only an accepted sync makes the active token durable, including server rotation.
         if (tokenStore is not null) await tokenStore.SaveAsync(_token!, ct);

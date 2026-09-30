@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using Keeper.Shared.Contracts;
 using Keeper.Shared.Protocol;
 using Keeper.Session.Modules.Presence;
@@ -39,13 +40,22 @@ public sealed record ActivityTotals(double Active, double Idle);
 public sealed record DayActivity(double Active, double Idle, double Call,
     DateTimeOffset? First, DateTimeOffset? Last, long Samples);
 
+// Estado persistido del dia: sin esto cada reinicio de la sesion (reinicio del equipo, cierre de sesion, update del
+// agente) volvia los contadores y la secuencia a cero, y el servidor (upsert monotonico por dia) rechazaba todas las
+// fotos siguientes de ese dia. Regresion vista 2026-09-30: una sola foto aceptada en toda la historia del equipo.
+public sealed record ActivityState(long Sequence, List<ActivityStateDay> Days, List<ActivityStateTotal> Totals);
+public sealed record ActivityStateDay(DateOnly Day, double Active, double Idle, double Call, DateTimeOffset? First, DateTimeOffset? Last, long Samples);
+public sealed record ActivityStateTotal(DateOnly Day, TimeCategory Category, double Active, double Idle);
+
 public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall = null,
-    double idleThresholdSeconds = 600, double callMaxIdleSeconds = 300) : ModuleBase
+    double idleThresholdSeconds = 600, double callMaxIdleSeconds = 300, string? statePath = null) : ModuleBase
 {
     public override string Name => "ActivityTracker";
+    public static readonly TimeSpan SaveEvery = TimeSpan.FromSeconds(30);
     private DateTimeOffset _last;
     private long _timestamp;
     private long _sequence;
+    private DateTimeOffset _saved;
     public WorkSchedule Schedule { get; set; } = new(TimeZoneInfo.Local);
     public IReadOnlyList<ActivityInterval> Intervals { get; private set; } = [];
     public Dictionary<(DateOnly Day, TimeCategory Category), ActivityTotals> Totals { get; } = [];
@@ -54,7 +64,44 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
     public override async Task InitAsync(ModuleContext ctx)
     {
         await base.InitAsync(ctx);
-        _last = ctx.Clock.GetUtcNow(); _timestamp = ctx.Clock.GetTimestamp();
+        _last = ctx.Clock.GetUtcNow(); _timestamp = ctx.Clock.GetTimestamp(); _saved = _last;
+        Restore();
+    }
+    public override Task ShutdownAsync() { Save(); return base.ShutdownAsync(); }
+
+    // Secuencia estrictamente creciente tambien entre procesos: el tiempo en ms es mayor que cualquier secuencia de
+    // un proceso anterior (de contadores 1, 2, 3... o de milisegundos ya pasados).
+    private long NextSequence() => _sequence = Math.Max(_sequence + 1, Context.Clock.GetUtcNow().ToUnixTimeMilliseconds());
+
+    private void Restore()
+    {
+        if (statePath is null || !File.Exists(statePath)) return;
+        try
+        {
+            var state = JsonSerializer.Deserialize<ActivityState>(File.ReadAllBytes(statePath));
+            if (state is null) return;
+            var cutoff = Schedule.Day(Context.Clock.GetUtcNow()).AddDays(-7);
+            _sequence = Math.Max(_sequence, state.Sequence);
+            foreach (var d in state.Days.Where(d => d.Day >= cutoff)) Days[d.Day] = new(d.Active, d.Idle, d.Call, d.First, d.Last, d.Samples);
+            foreach (var t in state.Totals.Where(t => t.Day >= cutoff)) Totals[(t.Day, t.Category)] = new(t.Active, t.Idle);
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or NotSupportedException) { }
+    }
+
+    private void Save()
+    {
+        if (statePath is null || Context is null) return;
+        try
+        {
+            var state = new ActivityState(_sequence,
+                Days.Select(d => new ActivityStateDay(d.Key, d.Value.Active, d.Value.Idle, d.Value.Call, d.Value.First, d.Value.Last, d.Value.Samples)).ToList(),
+                Totals.Select(t => new ActivityStateTotal(t.Key.Day, t.Key.Category, t.Value.Active, t.Value.Idle)).ToList());
+            Directory.CreateDirectory(Path.GetDirectoryName(statePath)!);
+            var temp = statePath + ".tmp";
+            File.WriteAllBytes(temp, JsonSerializer.SerializeToUtf8Bytes(state));
+            File.Move(temp, statePath, true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
     public override Task ApplyPolicyAsync(EffectivePolicy policy)
     {
@@ -118,9 +165,10 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
         // medianoche: de lo contrario el ultimo tramo del dia viejo no llegaria nunca.
         foreach (var day in intervals.Select(i => Schedule.Day(i.Start)).Distinct())
         {
-            var snapshot = Snapshot(day, ++_sequence);
+            var snapshot = Snapshot(day, NextSequence());
             if (snapshot is not null) await Context.Outbox.EnqueueAsync(snapshot, ct);
         }
+        if (now - _saved >= SaveEvery) { Save(); _saved = now; }
     }
 
     /// <summary>

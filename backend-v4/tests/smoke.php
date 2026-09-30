@@ -226,6 +226,12 @@ try {
     $sync['activity']['snapshot_id'] = Util::uuid(); $sync['activity']['sequence']++; $sync['activity']['active_seconds']++;
     $s = expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'activity advances monotonically');
     check($s['activity_ack']['status'] === 'accepted', 'existing day accepts newer snapshot');
+    // Sesion abierta todo el dia: el redondeo puede sumar 86401; un dia imposible (mas de 24 h + margen) se rechaza.
+    $sync['activity']['snapshot_id'] = Util::uuid(); $sync['activity']['sequence']++; $sync['activity']['active_seconds'] = 60000; $sync['activity']['idle_seconds'] = 26401;
+    check(expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'full day with rounding')['activity_ack']['status'] === 'accepted', 'full day plus rounding accepted');
+    $sync['activity']['snapshot_id'] = Util::uuid(); $sync['activity']['sequence']++; $sync['activity']['idle_seconds'] = 30000;
+    $s = expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'impossible day');
+    check($s['activity_ack']['status'] === 'rejected' && $s['activity_ack']['code'] === 'invalid_range', 'more than a day rejected');
     unset($sync['activity']);
     snapshotRace($db, $tenant, $device, $user['id']);
     expect(request('GET', '/client/releases/' . Util::uuid(), null, $key, $bearer), 404, 'unassigned release');
