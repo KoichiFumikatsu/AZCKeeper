@@ -2,6 +2,7 @@ import { api, ApiError, PLATFORM_TENANT, isUuid, setTenant, saveSession, readSes
 import { coordinator } from './coordinator.js';
 import { operations, operationPaths } from './operations.js';
 import { intake, intakeProbe } from './intake.js';
+import './menu.js';
 
 const page = document.body.dataset.page;
 const surface = document.body.dataset.surface;
@@ -124,10 +125,6 @@ function dateRange() {
 }
 function reportPath() { return query('/reports/productivity', dateRange()); }
 
-function luminance(color) {
-  const values = color.slice(1).match(/../g).map(v => parseInt(v, 16) / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4);
-  return values[0] * .2126 + values[1] * .7152 + values[2] * .0722;
-}
 function applyBranding(company) {
   const root = document.documentElement;
   ['--tenant-primary', '--tenant-accent', '--accent', '--on-accent'].forEach(name => root.style.removeProperty(name));
@@ -139,15 +136,7 @@ function applyBranding(company) {
   for (const [field, variable] of [['primary_color', '--tenant-primary'], ['accent_color', '--tenant-accent']]) {
     if (/^#[0-9a-f]{6}$/i.test(brand[field])) root.style.setProperty(variable, brand[field]);
   }
-  if (/^#[0-9a-f]{6}$/i.test(brand.primary_color)) {
-    const l = luminance(brand.primary_color);
-    const dark = (l + .05) / (luminance('#303030') + .05);
-    const light = (luminance('#F8F8F8') + .05) / (l + .05);
-    if (Math.max(dark, light) >= 4.5) {
-      root.style.setProperty('--accent', brand.primary_color);
-      root.style.setProperty('--on-accent', dark >= light ? '#303030' : '#F8F8F8');
-    }
-  }
+  // El color de la empresa solo marca su logo y nombre: el panel conserva la paleta de Keeper (indigo).
   if (brand.logo_url) {
     try {
       const url = new URL(brand.logo_url, location.origin);

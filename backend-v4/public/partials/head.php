@@ -4,6 +4,6 @@
 <meta name="color-scheme" content="light">
 <title><?= htmlspecialchars($title, ENT_QUOTES, 'UTF-8') ?> · AZCKeeper</title>
 <link rel="icon" href="/assets/brand/favicon.ico">
-<link rel="stylesheet" href="/assets/styles.css?v=<?= filemtime(dirname(__DIR__) . '/assets/styles.css') ?>">
+<link rel="stylesheet" href="/assets/k3.css?v=<?= filemtime(dirname(__DIR__) . '/assets/k3.css') ?>">
 <script type="importmap"><?= $importMap ?></script>
 <script type="module" src="<?= htmlspecialchars($imports['/assets/app.js'], ENT_QUOTES, 'UTF-8') ?>"></script>

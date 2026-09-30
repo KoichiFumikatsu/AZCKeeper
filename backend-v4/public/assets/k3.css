@@ -8,3 +8,57 @@
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 @media(forced-colors:active){button,.surface,.kpi,.nav-link[aria-current],.badge,.gate,.bar-track{border:1px solid CanvasText;box-shadow:none}.primary{background:ButtonFace;color:ButtonText}.bar-fill{background:Highlight}.chart .series{stroke:CanvasText}.chart .secondary{stroke:Highlight}:focus-visible{outline-color:Highlight}}
 @media print{.sidebar,.topbar,.page-head>button,.review-tools,footer,dialog,.feedback,.toolbar,.pagination{display:none}main{margin:0;padding:0}.surface,.kpi{box-shadow:none;break-inside:avoid}.split{display:block}body{background:white}.table-wrap{overflow:visible}}
+
+/* ---- Compatibilidad: piezas de las pantallas existentes (app.js, coordinator.js, operations.js, intake.js) con la
+   paleta y el relieve del diseño nuevo. Se retira a medida que cada pantalla migre a sus propios componentes. ---- */
+.help{color:var(--muted);font-size:13px}
+.work-surface{border:1px solid #b5b5b5;border-radius:16px;background:var(--surface);box-shadow:var(--relief);padding:24px;min-width:0;margin-bottom:24px}
+#content>.work-surface,#content>section{margin-block:0 24px}
+.work-surface>h2,.coordinator .work-surface>h2{margin-bottom:16px}
+.section-title{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:end;gap:16px}
+.section-heading{margin:16px 0 8px}
+.kpi-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin:0 0 28px}
+.kpi-grid dt{font-size:12px;color:var(--muted);font-weight:600}
+.kpi-grid dd{margin:12px 0 8px;font-size:34px;letter-spacing:-1.4px;line-height:1.2;font-weight:500;font-variant-numeric:tabular-nums;color:var(--accent)}
+.kpi-grid .metric-note{color:var(--muted);font-size:11px;letter-spacing:normal;font-weight:400;overflow-wrap:anywhere}
+.coordinator{display:grid;gap:24px}.coordinator>.work-surface{margin:0}
+.coordinator-kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px;margin:20px 0}
+.coordinator-kpis dd{font-size:clamp(22px,2.5vw,32px);overflow-wrap:anywhere}
+.metric{padding:18px;border:1px solid #b5b5b5;border-radius:12px;box-shadow:var(--relief);min-width:0}
+.metric-error{color:var(--error)!important}
+.table-region{max-width:100%;overflow:auto;margin-top:18px;border:1px solid #b1b1b1;border-radius:9px;scrollbar-width:thin}
+.table-region table{min-width:650px}
+.empty-state{padding:24px;text-align:center;border:1px dashed #999;border-radius:10px;color:var(--muted);font-size:14px;margin-top:12px}
+.error-message{padding:12px;border:1px solid var(--error);border-radius:6px;margin:12px 0;color:var(--error);font-size:13px;overflow-wrap:anywhere}
+.details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:17px 24px;margin:0}
+.details>div{border-bottom:1px solid var(--line);padding-bottom:12px;min-width:0}
+.details dt{font-size:11px;color:var(--muted)}.details dd{margin:5px 0 0;font-size:13px;font-weight:600;overflow-wrap:anywhere}
+.pager,.tabs{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-block:16px}
+.tabs{border-bottom:1px solid #aaa;padding-bottom:12px}
+.tabs button{min-height:38px;padding:7px 12px;font-size:12px}
+.tabs [aria-selected="true"]{box-shadow:var(--pressed);border-color:var(--accent);color:var(--accent);font-weight:700;background:var(--p-50)}
+.toolbar>div{flex:1;min-width:135px}
+.toolbar label{margin:0}
+.report-filters{margin:0}
+.chart-frame{max-width:100%;overflow:auto;padding:4px}
+.trend-chart{display:block;width:100%;min-width:620px;height:auto;margin:20px 0 8px}
+.trend-chart text{fill:var(--muted);font:12px var(--body)}
+.chart-grid{stroke:#bbb;stroke-width:1;stroke-dasharray:3 5}
+.productivity-line{stroke:var(--p-700)}circle.productivity-line{fill:var(--p-700)}
+.focus-line{stroke:var(--p-400);stroke-dasharray:7 4}circle.focus-line{fill:var(--p-400);stroke-dasharray:none}
+summary{cursor:pointer;min-height:44px;padding-block:8px}
+.current-link{display:inline-flex;align-items:center;min-height:44px;padding:9px 16px;border-radius:8px;font-weight:650;box-shadow:var(--pressed)}
+form.toolbar{margin-block:16px}
+label+input,label+select{margin-top:6px}
+.tenant{display:flex;align-items:center;gap:12px}.tenant>strong,.tenant>small{display:block}
+.tenant{flex-wrap:wrap}.tenant-logo{max-width:120px;max-height:40px;object-fit:contain}
+#page-status{margin-bottom:18px}
+/* Login (superficie pública, sin barra lateral) */
+body.public main.access{margin:0 auto;max-width:1100px;padding:48px 24px}
+.access-layout{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);align-items:start;gap:64px}
+.access-intro h1{margin:10px 0 18px}.access-intro>p:not(.eyebrow){color:var(--muted);max-width:30rem;font-size:16px}
+.brand-wordmark{display:block;width:min(240px,100%);height:auto;margin-bottom:28px}
+.access-form form label{margin-top:18px}.access-form .primary{margin-top:22px;width:100%}
+@media(max-width:1000px){.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.access-layout{grid-template-columns:1fr;gap:28px}.details{grid-template-columns:1fr}.coordinator-kpis{grid-template-columns:1fr}}
+@media(max-width:420px){.kpi-grid{grid-template-columns:1fr}}

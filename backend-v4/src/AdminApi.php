@@ -143,7 +143,7 @@ final class AdminApi
     private function tenantDto(array $row): array
     {
         $brand=$this->db->one('SELECT display_name,logo_url,primary_color,accent_color FROM branding WHERE tenant_id=?',[$row['tenant_id']]);
-        $brand??=['display_name'=>$row['name'],'logo_url'=>null,'primary_color'=>'#003A5D','accent_color'=>'#BE1622'];
+        $brand??=['display_name'=>$row['name'],'logo_url'=>null,'primary_color'=>'#3C4082','accent_color'=>'#5A61B3'];
         $brand['display_name']=mb_substr($brand['display_name'],0,100);
         $brand['logo_url']??=rtrim(Config::get('ORIGIN'),'/').'/branding.svg';
         return ['id'=>Util::id($row['tenant_id']),'name'=>$row['name'],'status'=>$row['status'],'timezone'=>$row['timezone'],'rbac_self_management'=>(bool)$row['rbac_self_management'],'branding'=>$brand,'version'=>(int)$row['version']];

@@ -1,4 +1,5 @@
 import { api, isUuid, setTenant, readSession, refreshCsrf, goToLogin, errorMessage } from './api.js';
+import './menu.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
 // de la API; lo que la cuenta no puede ver se explica en vez de mostrarse vacío.
@@ -190,8 +191,6 @@ async function start() {
   let selected = null; try { selected = sessionStorage.getItem('keeper.presentation.tenant'); } catch { /* sin almacenamiento */ }
   tenant = session.is_platform_admin ? selected : session.tenant_id;
   $('now').textContent = new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
-  $('open-menu').addEventListener('click', () => { $('sidebar').classList.add('open'); $('open-menu').setAttribute('aria-expanded', 'true'); });
-  $('close-menu').addEventListener('click', () => { $('sidebar').classList.remove('open'); $('open-menu').setAttribute('aria-expanded', 'false'); });
   $('logout').addEventListener('click', async () => { try { await refreshCsrf(); await api('POST', '/auth/logout'); } finally { goToLogin(); } });
   if (!isUuid(tenant)) { fail(new Error('Elige primero una empresa desde el panel de plataforma.')); return; }
   setTenant(tenant);
