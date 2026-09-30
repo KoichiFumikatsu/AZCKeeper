@@ -1,4 +1,4 @@
-import { api, isUuid, setTenant, readSession, refreshCsrf, goToLogin, errorMessage } from './api.js';
+import { api, isUuid, setTenant, readSession, refreshCsrf, goToLogin, errorMessage, PLATFORM_TENANT } from './api.js';
 import './menu.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
@@ -54,11 +54,11 @@ function table(parent, caption, columns, rows, { filters = [] } = {}) {
   };
   search.addEventListener('input', render); selects.forEach(([s]) => s.addEventListener('change', render)); render();
 }
-async function allPages(path) {
+async function allPages(path, company) {
   const out = []; let cursor = null;
   do {
     const url = new URL(path, location.origin); url.searchParams.set('limit', '100'); if (cursor) url.searchParams.set('cursor', cursor);
-    const r = await api('GET', url.pathname + url.search); out.push(...r.data); cursor = r.next_cursor;
+    const r = await api('GET', url.pathname + url.search, company ? { tenant: company } : {}); out.push(...r.data); cursor = r.next_cursor;
   } while (cursor);
   return out;
 }
@@ -219,31 +219,56 @@ function showSecret(account, secret) {
   body.append(copy); dialog.showModal();
 }
 
+// Empresas visibles para la plataforma (la duena primero). Se carga en start() solo para superadmin.
+let companies = [];
+const ownerName = () => companies.find(c => c.id === PLATFORM_TENANT)?.branding?.display_name || 'AZC Keeper';
+const companyName = id => { const c = companies.find(x => x.id === id); return c ? (c.branding?.display_name || c.name) : 'Empresa'; };
+
 async function accounts() {
-  const session = readSession();
-  const [list, users, roles, org] = await Promise.all([api('GET', '/panel-accounts'), allPages('/users'), optional(allPages('/roles')), optional(allPages('/organization'))]);
-  const n = names(org || []); const roleName = new Map((roles || []).map(r => [r.id, r]));
+  const session = readSession(); const platform = !!session?.is_platform_admin;
+  const list = await api('GET', '/panel-accounts');
+  // Roles y nombres de sedes/areas por empresa (una cuenta solo tiene roles de su empresa).
+  const perCompany = new Map();
+  const companyData = async id => {
+    if (!perCompany.has(id)) perCompany.set(id, Promise.all([optional(allPages('/roles', id)), optional(allPages('/organization', id))])
+      .then(([roles, org]) => ({ roles: roles || [], n: names(org || []) })));
+    return perCompany.get(id);
+  };
+  const ids = [...new Set(list.data.filter(a => a.kind === 'company').map(a => a.tenant_id))];
+  const data = new Map(await Promise.all(ids.map(async id => [id, await companyData(id)])));
+  const rolesText = a => {
+    if (a.kind === 'platform') return 'Todo, en todas las empresas';
+    const d = data.get(a.tenant_id); const byId = new Map((d?.roles || []).map(r => [r.id, r]));
+    return a.role_ids.map(id => byId.get(id)).filter(Boolean).map(r => `${r.name} (${scopeText(r, d.n)})`).join(' · ') || 'Sin roles: no verá nada';
+  };
   const render = rows => {
     $('page-content').replaceChildren();
-    kpis([['Cuentas', String(rows.length)], ['Superadmin', String(rows.filter(a => a.kind === 'platform').length)], ['De la empresa', String(rows.filter(a => a.kind === 'company').length)],
+    kpis([['Cuentas', String(rows.length)], ['Superadmin', String(rows.filter(a => a.kind === 'platform').length), `De ${ownerName()}`],
+      ['De empresas', String(rows.filter(a => a.kind === 'company').length)],
       ['Pendientes de primer ingreso', String(rows.filter(a => a.must_change_password && a.active).length), 'Con contraseña temporal sin cambiar']]);
     const s = surface('Cuentas con acceso al panel');
-    s.append(el('p', 'Superadmin administra todas las empresas. Una cuenta de empresa pertenece a una persona y ve lo que permitan sus roles: toda la empresa, ciertas sedes o áreas, o solo lo propio.', 'help'));
-    table(s, 'Cuentas', [['Cuenta', a => { const d = el('div'); d.append(el('strong', a.user_name || a.display_name || a.email), el('small', a.email)); return d; }],
-      ['Tipo', a => badge(a.kind === 'platform' ? 'Superadmin' : 'Empresa', a.kind === 'platform' ? 'info' : '')],
-      ['Roles y alcance', a => a.kind === 'platform' ? 'Todo' : (a.role_ids.map(id => roleName.get(id)).filter(Boolean).map(r => `${r.name} (${scopeText(r, n)})`).join(' · ') || 'Sin roles: no verá nada')],
+    s.append(el('p', platform
+      ? `Las cuentas de ${ownerName()} son superadmin: administran todas las empresas. Las de una empresa pertenecen a una persona y ven lo que permitan sus roles (toda la empresa, ciertas sedes o áreas, o solo lo propio).`
+      : 'Cada cuenta pertenece a una persona de tu empresa y ve lo que permitan sus roles: toda la empresa, ciertas sedes o áreas, o solo lo propio.', 'help'));
+    const columns = [['Cuenta', a => { const d = el('div'); d.append(el('strong', a.user_name || a.display_name || a.email), el('small', a.email)); return d; }]];
+    if (platform) columns.push(['Empresa', a => a.kind === 'platform' ? badge(`${ownerName()} · superadmin`, 'info') : a.tenant_name]);
+    columns.push(['Roles y alcance', rolesText],
       ['Estado', a => badge(!a.active ? 'Desactivada' : a.must_change_password ? 'Debe crear su contraseña' : 'Activa', !a.active ? 'bad' : a.must_change_password ? 'warn' : 'good')],
-      ['Último ingreso', a => when(a.last_login_at)], ['Acciones', a => actionsFor(a)]], rows,
-      { filters: [['Tipo', a => a.kind === 'platform' ? 'Superadmin' : 'Empresa']] });
+      ['Último ingreso', a => when(a.last_login_at)], ['Acciones', a => actionsFor(a)]);
+    table(s, 'Cuentas', columns, rows, { filters: platform ? [['Empresa', a => a.kind === 'platform' ? ownerName() : a.tenant_name]] : [] });
   };
-  const refresh = async () => { list.data = (await api('GET', '/panel-accounts')).data; render(list.data); done(); };
+  const refresh = async () => {
+    list.data = (await api('GET', '/panel-accounts')).data;
+    for (const id of new Set(list.data.filter(a => a.kind === 'company').map(a => a.tenant_id))) if (!data.has(id)) data.set(id, await companyData(id));
+    render(list.data); done();
+  };
   const actionsFor = a => {
-    const box = el('div', undefined, 'actions no-margin');
+    const box = el('div', undefined, 'actions no-margin'); const opts = { tenant: a.tenant_id };
     const button = (text, fn) => { const b = el('button', text, 'link-button'); b.type = 'button'; b.addEventListener('click', fn); box.append(b); };
     if (a.kind === 'company') button('Roles', () => editRoles(a));
     button(a.active ? 'Desactivar' : 'Activar', async () => {
       if (a.active && !confirm(`¿Desactivar la cuenta ${a.email}? Se cierran sus sesiones.`)) return;
-      try { await api('PATCH', `/panel-accounts/${a.id}`, { body: { active: !a.active, role_ids: a.role_ids } }); await refresh(); } catch (e) { fail(e); }
+      try { await api('PATCH', `/panel-accounts/${a.id}`, { ...opts, body: { active: !a.active, role_ids: a.role_ids } }); await refresh(); } catch (e) { fail(e); }
     });
     button('Restablecer contraseña', () => {
       const { dialog, body, ok, show } = dialogShell(`Restablecer contraseña de ${a.email}`);
@@ -252,61 +277,77 @@ async function accounts() {
       ok.textContent = 'Restablecer';
       dialog.querySelector('form').addEventListener('submit', async ev => {
         ev.preventDefault(); ok.disabled = true;
-        try { await reauth(pw.value); const r = await api('POST', `/panel-accounts/${a.id}/reset-password`); dialog.close(); showSecret(r.account, r.temporary_password); await refresh(); }
+        try { await reauth(pw.value); const r = await api('POST', `/panel-accounts/${a.id}/reset-password`, opts); dialog.close(); showSecret(r.account, r.temporary_password); await refresh(); }
         catch (e) { show(e.code === 'invalid_credentials' ? 'Tu contraseña no es correcta.' : e); ok.disabled = false; }
       });
       dialog.showModal();
     });
     return box;
   };
-  const roleItems = () => (roles || []).filter(r => r.active).map(r => [r.id, r.name, scopeText(r, n)]);
-  const editRoles = a => {
+  const roleItems = d => d.roles.filter(r => r.active).map(r => [r.id, r.name, scopeText(r, d.n)]);
+  const editRoles = async a => {
+    const d = await companyData(a.tenant_id);
     const { dialog, body, ok, show } = dialogShell(`Roles de ${a.user_name || a.email}`);
-    if (!roles) { body.append(el('p', 'Tu cuenta no puede ver los roles.')); ok.disabled = true; }
-    const boxes = checks(body, roleItems(), a.role_ids);
+    if (!d.roles.length) body.append(el('p', 'Esta empresa aún no tiene roles: créalos en Roles y permisos.', 'help'));
+    const boxes = checks(body, roleItems(d), a.role_ids);
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault(); ok.disabled = true;
-      try { await api('PATCH', `/panel-accounts/${a.id}`, { body: { active: a.active, role_ids: boxes.filter(b => b.checked).map(b => b.value) } }); dialog.close(); await refresh(); }
+      try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, role_ids: boxes.filter(b => b.checked).map(b => b.value) } }); dialog.close(); await refresh(); }
       catch (e) { show(e.code === 'tenant_rbac_disabled' ? 'La empresa no tiene habilitada la gestión de sus propios roles: pídesela a la plataforma.' : e); ok.disabled = false; }
     });
     dialog.showModal();
   };
-  const action = $('page-action'); action.textContent = 'Crear cuenta'; action.hidden = false;
-  action.addEventListener('click', () => {
+  const create = preset => {
     const { dialog, body, ok, show } = dialogShell('Crear cuenta del panel');
-    const kind = el('select');
-    if (session?.is_platform_admin) kind.append(new Option('Superadmin (todas las empresas)', 'platform'));
-    kind.append(new Option('Cuenta de empresa (una persona)', 'company')); kind.value = 'company';
-    labeled(body, '¿Qué tipo de cuenta?', kind);
+    // La empresa decide el tipo: la duena da superadmin; cualquier otra, una cuenta de esa empresa ligada a una persona.
+    const company = el('select');
+    if (platform) {
+      company.append(new Option(`${ownerName()} (dueña) · superadmin de todo`, PLATFORM_TENANT));
+      companies.filter(c => c.id !== PLATFORM_TENANT && c.status === 'active').forEach(c => company.append(new Option(c.branding?.display_name || c.name, c.id)));
+      company.value = companies.some(c => c.id === preset) ? preset : PLATFORM_TENANT;
+      labeled(body, '¿De qué empresa es la cuenta?', company);
+    } else { company.append(new Option('', session.tenant_id)); company.value = session.tenant_id; }
     const email = labeled(body, 'Correo para entrar', el('input')); email.type = 'email'; email.maxLength = 254; email.autocomplete = 'off';
-    const nameBox = el('div'); body.append(nameBox);
-    const display = labeled(nameBox, 'Nombre', el('input')); display.maxLength = 160;
+    const ownerBox = el('div'); body.append(ownerBox);
+    const display = labeled(ownerBox, 'Nombre', el('input')); display.maxLength = 160;
+    ownerBox.append(el('p', 'Superadmin: entra a todas las empresas, crea empresas y cuentas, y cambia la marca del producto.', 'help'));
     const companyBox = el('div'); body.append(companyBox);
-    const person = el('select'); person.append(new Option('Elige la persona…', ''));
-    const withAccount = new Set(list.data.filter(a => a.user_id).map(a => a.user_id));
-    users.filter(u => u.status === 'active' && !withAccount.has(u.id)).sort((x, y) => x.display_name.localeCompare(y.display_name, 'es')).forEach(u => person.append(new Option(`${u.display_name}${u.email ? ' · ' + u.email : ''}`, u.id)));
-    labeled(companyBox, '¿A quién pertenece?', person, 'Si la persona no aparece, créala primero en Personas (o ya tiene cuenta).');
-    person.addEventListener('change', () => { const u = users.find(x => x.id === person.value); if (u?.email && !email.value) email.value = u.email; });
-    companyBox.append(el('p', 'Roles: deciden qué puede ver y hacer, y en qué sedes o áreas.', 'help'));
-    const boxes = checks(companyBox, roleItems());
-    if (!roleItems().length) companyBox.append(el('p', 'Aún no hay roles: crea uno en Roles y permisos. Sin roles la cuenta no verá nada.', 'help'));
-    const sync = () => { const platform = kind.value === 'platform'; nameBox.hidden = !platform; companyBox.hidden = platform; };
-    kind.addEventListener('change', sync); sync();
+    let person = null, boxes = [];
+    const drawCompany = async id => {
+      companyBox.replaceChildren(el('p', 'Cargando personas y roles…', 'help'));
+      const [users, d] = await Promise.all([allPages('/users', id), companyData(id)]);
+      companyBox.replaceChildren();
+      person = el('select'); person.append(new Option('Elige la persona…', ''));
+      const withAccount = new Set(list.data.filter(a => a.user_id).map(a => a.user_id));
+      users.filter(u => u.status === 'active' && !withAccount.has(u.id)).sort((x, y) => x.display_name.localeCompare(y.display_name, 'es'))
+        .forEach(u => person.append(new Option(`${u.display_name}${u.email ? ' · ' + u.email : ''}`, u.id)));
+      labeled(companyBox, '¿A quién pertenece?', person, users.length ? 'Si la persona no aparece, créala primero en Personas (o ya tiene cuenta).' : 'Esta empresa aún no tiene personas: créalas primero en Personas.');
+      person.addEventListener('change', () => { const u = users.find(x => x.id === person.value); if (u?.email && !email.value) email.value = u.email; });
+      companyBox.append(el('p', 'Roles: deciden qué puede ver y hacer, y en qué sedes o áreas.', 'help'));
+      boxes = checks(companyBox, roleItems(d));
+      if (!d.roles.length) companyBox.append(el('p', 'Aún no hay roles en esta empresa: créalos en Roles y permisos. Sin roles la cuenta no verá nada.', 'help'));
+    };
+    const sync = () => {
+      const owner = company.value === PLATFORM_TENANT; ownerBox.hidden = !owner; companyBox.hidden = owner;
+      if (!owner) drawCompany(company.value).catch(e => { companyBox.replaceChildren(); show(e); });
+    };
+    company.addEventListener('change', sync); sync();
     const pw = labeled(body, 'Tu contraseña (confirmación)', el('input')); pw.type = 'password'; pw.autocomplete = 'current-password';
     ok.textContent = 'Crear cuenta';
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
+      const owner = company.value === PLATFORM_TENANT;
       if (!email.value.includes('@')) { show('Escribe un correo válido.'); return; }
-      if (kind.value === 'company' && !person.value) { show('Elige a qué persona pertenece la cuenta.'); return; }
-      if (kind.value === 'platform' && !display.value.trim()) { show('Escribe el nombre de la cuenta.'); return; }
+      if (!owner && !person?.value) { show('Elige a qué persona pertenece la cuenta.'); return; }
+      if (owner && !display.value.trim()) { show('Escribe el nombre de la cuenta.'); return; }
       if (!pw.value) { show('Escribe tu contraseña para confirmar.'); return; }
       ok.disabled = true;
       try {
         await reauth(pw.value);
-        const body = kind.value === 'platform'
+        const payload = owner
           ? { kind: 'platform', email: email.value.trim(), display_name: display.value.trim(), user_id: null, role_ids: [] }
           : { kind: 'company', email: email.value.trim(), display_name: null, user_id: person.value, role_ids: boxes.filter(b => b.checked).map(b => b.value) };
-        const r = await api('POST', '/panel-accounts', { body });
+        const r = await api('POST', '/panel-accounts', { tenant: company.value, body: payload });
         dialog.close(); showSecret(r.account, r.temporary_password); await refresh();
       } catch (e) {
         const detail = e.problem?.detail;
@@ -316,9 +357,116 @@ async function accounts() {
       }
     });
     dialog.showModal();
-  });
+  };
+  const action = $('page-action'); action.textContent = 'Crear cuenta'; action.hidden = false;
+  action.addEventListener('click', () => create(null));
   render(list.data);
+  const preset = new URLSearchParams(location.search).get('empresa');
+  if (platform && isUuid(preset)) create(preset);
 }
+
+// ---- Empresas (solo plataforma) ---------------------------------------------------------------------------------
+const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+const fileBase64 = file => new Promise((resolve, reject) => {
+  const reader = new FileReader(); reader.onerror = () => reject(new Error('No se pudo leer el archivo.'));
+  reader.onload = () => resolve(String(reader.result).split(',')[1] || ''); reader.readAsDataURL(file);
+});
+function logoImage(company, className = 'company-logo') {
+  const url = company.branding?.logo_url || '';
+  const img = el('img', undefined, className); img.alt = '';
+  try { const u = new URL(url, location.origin); img.src = u.origin === location.origin && u.pathname === '/branding.svg' ? '/assets/brand/logo-main.png' : u.href; } catch { img.src = '/assets/brand/logo-main.png'; }
+  img.onerror = () => { img.hidden = true; };
+  return img;
+}
+async function tenantsPage() {
+  const render = () => {
+    $('page-content').replaceChildren();
+    const s = surface('Empresas');
+    s.append(el('p', `${ownerName()} es la empresa dueña de Keeper: su nombre y logo son los del producto (login y barra lateral). Las demás son empresas cliente; cada una con su marca, sus personas, equipos y cuentas.`, 'help'));
+    table(s, 'Empresas', [
+      ['Empresa', c => { const d = el('div', undefined, 'company-cell'); const t = el('div'); t.append(el('strong', c.branding?.display_name || c.name), el('small', c.name)); d.append(logoImage(c), t); return d; }],
+      ['Tipo', c => badge(c.id === PLATFORM_TENANT ? 'Dueña de la plataforma' : 'Cliente', c.id === PLATFORM_TENANT ? 'info' : '')],
+      ['Estado', c => badge(c.status === 'active' ? 'Activa' : 'Suspendida', c.status === 'active' ? 'good' : 'bad')],
+      ['Zona horaria', c => c.timezone],
+      ['Roles propios', c => c.id === PLATFORM_TENANT ? '—' : c.rbac_self_management ? 'Los gestiona la empresa' : 'Los gestiona la plataforma'],
+      ['Acciones', c => {
+        const box = el('div', undefined, 'actions no-margin');
+        const b = el('button', 'Editar y marca', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(c)); box.append(b);
+        const a = el('a', 'Cuentas', 'link-button'); a.href = c.id === PLATFORM_TENANT ? '/cuentas.php' : `/cuentas.php?empresa=${encodeURIComponent(c.id)}`; box.append(a);
+        return box;
+      }]], companies);
+  };
+  const reload = async () => { companies = sortCompanies(await allPages('/tenants', PLATFORM_TENANT)); render(); done(); };
+  const editor = c => {
+    const owner = c.id === PLATFORM_TENANT; const brand = c.branding || {};
+    const { dialog, body, ok, show } = dialogShell(owner ? `Marca del producto (${c.name})` : `Editar ${c.branding?.display_name || c.name}`);
+    if (owner) body.append(el('p', 'Esta es la empresa dueña: lo que cambies aquí (nombre visible y logo) se ve en el login y en la barra lateral de todas las cuentas.'));
+    const name = labeled(body, 'Nombre interno', el('input')); name.maxLength = 120; name.value = c.name;
+    const display = labeled(body, owner ? 'Nombre del producto' : 'Nombre visible (marca)', el('input')); display.maxLength = 100; display.value = brand.display_name || c.name;
+    const preview = el('div', undefined, 'logo-preview'); preview.append(logoImage(c, 'company-logo big')); body.append(preview);
+    const file = labeled(body, 'Logo nuevo (PNG, JPG o WebP, máx. 512 KB)', el('input'), 'Mejor un PNG con fondo transparente y ancho de al menos 300 px.');
+    file.type = 'file'; file.accept = LOGO_TYPES.join(',');
+    file.addEventListener('change', () => {
+      const f = file.files[0]; if (!f) return;
+      const img = el('img', undefined, 'company-logo big'); img.alt = ''; img.src = URL.createObjectURL(f); preview.replaceChildren(img);
+    });
+    const colors = el('div', undefined, 'form-grid'); body.append(colors);
+    const primary = labeled(colors, 'Color principal', el('input')); primary.type = 'color'; primary.value = /^#[0-9a-f]{6}$/i.test(brand.primary_color) ? brand.primary_color : '#3C4082';
+    const accent = labeled(colors, 'Color de acento', el('input')); accent.type = 'color'; accent.value = /^#[0-9a-f]{6}$/i.test(brand.accent_color) ? brand.accent_color : '#5A61B3';
+    const tz = labeled(body, 'Zona horaria', el('input'), 'Ejemplo: America/Bogota'); tz.maxLength = 64; tz.value = c.timezone;
+    let status = null, gate = null;
+    if (!owner) {
+      status = el('select'); status.append(new Option('Activa', 'active'), new Option('Suspendida (nadie de la empresa puede entrar)', 'suspended')); status.value = c.status;
+      labeled(body, 'Estado', status);
+      gate = el('input'); gate.type = 'checkbox'; gate.checked = c.rbac_self_management;
+      const gl = el('label', undefined, 'check'); gl.append(gate, ' La empresa gestiona sus propios roles y cuentas'); body.append(gl);
+    }
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const f = file.files[0];
+      if (!name.value.trim() || !display.value.trim()) { show('Escribe el nombre interno y el visible.'); return; }
+      if (f && (!LOGO_TYPES.includes(f.type) || f.size > 512 * 1024)) { show('El logo debe ser PNG, JPG o WebP de máximo 512 KB.'); return; }
+      if (status?.value === 'suspended' && c.status !== 'suspended' && !confirm(`¿Suspender ${c.name}? Nadie de esa empresa podrá entrar al panel.`)) return;
+      ok.disabled = true;
+      try {
+        const patch = { name: name.value.trim(), timezone: tz.value.trim(), branding: { display_name: display.value.trim(), logo_url: brand.logo_url || `${location.origin}/branding.svg`, primary_color: primary.value.toUpperCase(), accent_color: accent.value.toUpperCase() } };
+        if (status && status.value !== c.status) patch.status = status.value;
+        let saved = await api('PATCH', `/tenants/${c.id}`, { tenant: c.id, body: patch, ifMatch: c.version });
+        if (f) saved = await api('POST', `/tenants/${c.id}/logo`, { tenant: c.id, body: { content_type: f.type, data: await fileBase64(f) }, ifMatch: saved.version });
+        if (gate && gate.checked !== c.rbac_self_management) await api('PATCH', `/tenants/${c.id}/rbac-gate`, { tenant: c.id, body: { enabled: gate.checked }, ifMatch: saved.version });
+        dialog.close();
+        if (owner) { location.reload(); return; }
+        await reload();
+      } catch (e) {
+        show(e.status === 412 ? 'Alguien más cambió esta empresa: recarga la página.' : e.problem?.detail === 'invalid_image' ? 'El archivo no es una imagen válida del tipo indicado.' : e);
+        ok.disabled = false;
+      }
+    });
+    dialog.showModal();
+  };
+  const action = $('page-action'); action.textContent = 'Crear empresa'; action.hidden = false;
+  action.addEventListener('click', () => {
+    const { dialog, body, ok, show } = dialogShell('Crear empresa');
+    body.append(el('p', 'Después de crearla, agrega sus personas y crea su primera cuenta (por ejemplo, su administrador).'));
+    const name = labeled(body, 'Nombre de la empresa', el('input')); name.maxLength = 100;
+    const tz = labeled(body, 'Zona horaria', el('input'), 'Ejemplo: America/Bogota'); tz.maxLength = 64; tz.value = 'America/Bogota';
+    ok.textContent = 'Crear empresa';
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (!name.value.trim()) { show('Escribe el nombre de la empresa.'); return; }
+      ok.disabled = true;
+      try {
+        const created = await api('POST', '/tenants', { tenant: PLATFORM_TENANT, body: { name: name.value.trim(), timezone: tz.value.trim(),
+          branding: { display_name: name.value.trim(), logo_url: `${location.origin}/branding.svg`, primary_color: '#3C4082', accent_color: '#5A61B3' } } });
+        dialog.close(); await reload();
+        if (confirm(`${created.name} quedó creada. ¿Crear ahora su primera cuenta?`)) location.href = `/cuentas.php?empresa=${encodeURIComponent(created.id)}`;
+      } catch (e) { show(e.status === 422 ? 'Revisa el nombre y la zona horaria (ejemplo: America/Bogota).' : e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  });
+  render();
+}
+const sortCompanies = list => [...list].sort((a, b) => (b.id === PLATFORM_TENANT) - (a.id === PLATFORM_TENANT) || (a.branding?.display_name || a.name).localeCompare(b.branding?.display_name || b.name, 'es'));
 
 // ---- Roles y permisos -------------------------------------------------------------------------------------------
 async function rolesPage() {
@@ -380,20 +528,36 @@ async function rolesPage() {
 async function start() {
   const session = readSession();
   if (!session) { goToLogin(); return; }
-  let selected = null; try { selected = sessionStorage.getItem('keeper.presentation.tenant'); } catch { /* sin almacenamiento */ }
-  tenant = session.is_platform_admin ? selected : session.tenant_id;
   $('now').textContent = new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
   $('logout').addEventListener('click', async () => { try { await refreshCsrf(); await api('POST', '/auth/logout'); } finally { goToLogin(); } });
   if ($('platform-group')) $('platform-group').hidden = !session.is_platform_admin;
-  if (!isUuid(tenant)) { fail(new Error('Elige primero una empresa desde el panel de plataforma.')); return; }
+  // Una cuenta de empresa siempre trabaja en su empresa. Superadmin: Cuentas y Empresas son globales (empresa duena);
+  // las pantallas de una empresa usan la elegida en el selector (por defecto la primera empresa cliente).
+  const globalPage = ['accounts', 'tenants'].includes(page);
+  try {
+    if (session.is_platform_admin) {
+      companies = sortCompanies(await allPages('/tenants', PLATFORM_TENANT));
+      let selected = null; try { selected = sessionStorage.getItem('keeper.presentation.tenant'); } catch { /* sin almacenamiento */ }
+      tenant = globalPage ? PLATFORM_TENANT : (companies.some(c => c.id === selected) ? selected : companies.find(c => c.id !== PLATFORM_TENANT)?.id || PLATFORM_TENANT);
+      if (!globalPage) {
+        const select = $('tenant-select');
+        companies.forEach(c => select.append(new Option(c.id === PLATFORM_TENANT ? `${c.branding?.display_name || c.name} (dueña)` : (c.branding?.display_name || c.name), c.id)));
+        select.value = tenant; $('tenant-control').hidden = false;
+        select.addEventListener('change', () => { try { sessionStorage.setItem('keeper.presentation.tenant', select.value); } catch { /* sin almacenamiento */ } location.reload(); });
+      }
+    } else tenant = session.tenant_id;
+  } catch (e) { fail(e); return; }
+  if (!isUuid(tenant)) { fail(new Error('La sesión no tiene una empresa válida: vuelve a iniciar sesión.')); return; }
   setTenant(tenant);
-  try { const t = await api('GET', `/tenants/${tenant}`); $('tenant-name').textContent = t.branding?.display_name || t.name; } catch { /* el nombre es decorativo */ }
+  if (globalPage && session.is_platform_admin) { $('tenant-name').textContent = ownerName(); $('tenant-name').nextElementSibling.textContent = 'Administración de la plataforma'; }
+  else { try { const t = await api('GET', `/tenants/${tenant}`); $('tenant-name').textContent = t.branding?.display_name || t.name; } catch { /* el nombre es decorativo */ } }
   try {
     if (page === 'sites') await sites();
     else if (page === 'organization') await organization();
     else if (page === 'assignments') await assignments();
     else if (page === 'accounts') await accounts();
     else if (page === 'roles') await rolesPage();
+    else if (page === 'tenants') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await tenantsPage(); }
     done();
   } catch (e) {
     if (e.status === 403) { $('page-content').replaceChildren(); empty($('page-content'), 'Sin permiso', 'Tu cuenta no tiene acceso a esta sección. Pide a un administrador el permiso correspondiente.'); $('page-status').textContent = ''; }

@@ -2,7 +2,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
-<title><?= htmlspecialchars($title, ENT_QUOTES, 'UTF-8') ?> · AZCKeeper</title>
+<?php require_once __DIR__ . '/brand.php'; ?>
+<title><?= htmlspecialchars($title . ' · ' . $brand['name'], ENT_QUOTES, 'UTF-8') ?></title>
 <link rel="icon" href="/assets/brand/favicon.ico">
 <link rel="stylesheet" href="/assets/k3.css?v=<?= filemtime(dirname(__DIR__) . '/assets/k3.css') ?>">
 <script type="importmap"><?= $importMap ?></script>

@@ -14,18 +14,19 @@ $portal = [
         ['roles', 'Roles y permisos', '/roles.php', false], ['holidays', 'Festivos', '/festivos.php'], ['dual-job', 'Doble empleo', '/doble-empleo.php'],
         ['suspicious-apps', 'Apps sospechosas', '/apps-sospechosas.php'], ['coverage', 'Cobertura', '/cobertura.php']],
 ];
-$platform = [['platform-home', 'Resumen de plataforma', '/admin/'], ['tenants', 'Empresas', '/admin/tenants.php'], ['tiers', 'Planes (tiers)', '/admin/tiers.php'],
+$platform = [['platform-home', 'Resumen de plataforma', '/admin/'], ['tenants', 'Empresas', '/empresas.php', false], ['tiers', 'Planes (tiers)', '/admin/tiers.php'],
     ['releases', 'Versiones del agente', '/admin/releases.php'], ['audit', 'Auditoría', '/admin/auditoria.php'], ['client-logs', 'Logs de los equipos', '/admin/logs.php'],
     ['server-health', 'Salud del servidor', '/admin/salud.php'], ['panel-settings', 'Ajustes', '/admin/ajustes.php']];
 if ($surface === 'admin' && $current === 'home') { $current = 'platform-home'; }
 $h = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+require_once __DIR__ . '/brand.php';
 $link = static function (array $l, bool $probeSurface) use ($current, $h): string {
     [$key, $text, $url] = $l; $probe = ($l[3] ?? true) && $probeSurface && $key !== 'platform-home';
     return '      <a class="nav-link" href="' . $h($url) . '"' . ($probe ? ' data-nav="' . $h($key) . '"' : '') . ($key === $current ? ' aria-current="page"' : '') . '><span class="nav-label">' . $h($text) . "</span></a>\n";
 };
 ?>
 <aside class="sidebar" id="sidebar" aria-label="Navegación lateral">
-  <a class="brand" href="/"><img src="/assets/brand/logo-mark.png" width="294" height="364" alt=""><span><strong>AZC<span>Keeper</span></strong><small>Administración · v4</small></span></a>
+  <a class="brand" href="/"><?php if ($brand['logo']): ?><img class="custom-logo" src="<?= $h($brand['logo']) ?>" alt=""><?php else: ?><img src="/assets/brand/logo-mark.png" width="294" height="364" alt=""><?php endif; ?><span><strong><?= $h($brand['name']) ?></strong><small>Administración · v4</small></span></a>
   <button class="icon-button sidebar-close" id="close-menu" type="button" aria-label="Cerrar menú">×</button>
   <nav id="navigation" aria-label="Secciones del panel">
 <?php foreach ($portal as $heading => $links): ?>

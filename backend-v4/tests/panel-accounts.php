@@ -59,6 +59,18 @@ function panelAccountsTests(Database $db): void
     $list = expect(adminRequest($platform, 'GET', '/panel-accounts'), 200, 'list accounts');
     $emails = array_column($list['data'], 'email');
     check(in_array($email, $emails, true) && in_array($superEmail, $emails, true), 'platform sees company and platform accounts');
+    $row = array_values(array_filter($list['data'], fn ($x) => $x['email'] === $email))[0];
+    check($row['tenant_id'] === $tid && $row['tenant_name'] !== '', 'account carries its company');
+
+    // Logo de la empresa: solo imagen real y del tipo declarado; queda en su marca.
+    $png = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR4nGOwcWgiCTGMahjVMHw1AADDzP4BEW/mBgAAAABJRU5ErkJggg==';
+    $t = expect(adminRequest($platform, 'GET', '/tenants/' . $tid), 200, 'read tenant');
+    check(adminRequest($platform, 'POST', '/tenants/' . $tid . '/logo', ['content_type' => 'image/jpeg', 'data' => $png], ['if-match' => '"' . $t['version'] . '"'])[0] === 422, 'logo type must match content');
+    check(adminRequest($platform, 'POST', '/tenants/' . $tid . '/logo', ['content_type' => 'image/png', 'data' => base64_encode('<svg onload=alert(1)></svg>')], ['if-match' => '"' . $t['version'] . '"'])[0] === 422, 'non-image rejected');
+    $logo = expect(adminRequest($platform, 'POST', '/tenants/' . $tid . '/logo', ['content_type' => 'image/png', 'data' => $png], ['if-match' => '"' . $t['version'] . '"']), 200, 'upload logo');
+    $file = dirname(__DIR__) . '/public' . parse_url($logo['branding']['logo_url'], PHP_URL_PATH);
+    check(str_contains($logo['branding']['logo_url'], '/uploads/brand/') && is_file($file) && $logo['version'] > $t['version'], 'logo stored and linked');
+    @unlink($file);
 
     // Desactivar corta la sesion; restablecer da una temporal nueva.
     $acct = $created['account']['id'];

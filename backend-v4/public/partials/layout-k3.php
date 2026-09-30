@@ -14,6 +14,7 @@ $importMap = json_encode(['imports' => $imports], JSON_UNESCAPED_SLASHES);
 $importHash = base64_encode(hash('sha256', $importMap, true));
 header("Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-$importHash'; style-src 'self'; img-src 'self' https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
 $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+require_once __DIR__ . '/brand.php';
 ?>
 <!doctype html>
 <html lang="es">
@@ -21,7 +22,7 @@ $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
-<title><?= $e($title) ?> · AZCKeeper</title>
+<title><?= $e($title . ' · ' . $brand['name']) ?></title>
 <link rel="icon" href="/assets/brand/favicon.ico">
 <link rel="stylesheet" href="/assets/k3.css?v=<?= filemtime($assetDir . '/k3.css') ?>">
 <script type="importmap"><?= $importMap ?></script>
@@ -33,6 +34,7 @@ $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 <header class="topbar">
   <button class="icon-button mobile-menu" id="open-menu" type="button" aria-controls="sidebar" aria-expanded="false" aria-label="Abrir menú">☰</button>
   <div class="tenant"><strong id="tenant-name">Empresa</strong><small>Administración de empresa</small></div>
+  <label class="tenant-picker" id="tenant-control" hidden>Empresa<select id="tenant-select"></select></label>
   <div class="top-meta"><span class="help time" id="now"></span></div>
 </header>
 <main id="main" tabindex="-1">

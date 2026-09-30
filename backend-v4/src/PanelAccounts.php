@@ -26,18 +26,19 @@ final class PanelAccounts
 
     private function platformTenant(): string { return Util::bin(AdminAuth::PLATFORM); }
 
+    // La plataforma (empresa duena) ve las cuentas de todas las empresas; una cuenta de empresa, solo las suyas.
     private function list(): array
     {
-        $rows = $this->db->run('SELECT a.*,u.display_name user_name FROM admin_accounts a LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.user_id WHERE a.tenant_id=? AND a.is_platform_admin=FALSE ORDER BY a.email', [$this->tenant])->fetchAll();
-        if ($this->c['platform']) {
-            $rows = [...$this->db->run('SELECT a.*,NULL user_name FROM admin_accounts a WHERE a.tenant_id=? AND a.is_platform_admin=TRUE ORDER BY a.email', [$this->platformTenant()])->fetchAll(), ...$rows];
-        }
+        $sql = 'SELECT a.*,u.display_name user_name,t.name tenant_name FROM admin_accounts a JOIN tenants t ON t.tenant_id=a.tenant_id LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.user_id';
+        $rows = $this->c['platform']
+            ? $this->db->run($sql . ' ORDER BY a.is_platform_admin DESC,t.name,a.email')->fetchAll()
+            : $this->db->run($sql . ' WHERE a.tenant_id=? AND a.is_platform_admin=FALSE ORDER BY a.email', [$this->tenant])->fetchAll();
         return AdminApi::response(['data' => array_map(fn ($a) => $this->dto($a), $rows)]);
     }
 
     private function find(?string $id): array
     {
-        $a = $this->db->one('SELECT a.*,u.display_name user_name FROM admin_accounts a LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.user_id WHERE a.id=? AND (a.tenant_id=? OR (a.tenant_id=? AND ?)) FOR UPDATE',
+        $a = $this->db->one('SELECT a.*,u.display_name user_name,t.name tenant_name FROM admin_accounts a JOIN tenants t ON t.tenant_id=a.tenant_id LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.user_id WHERE a.id=? AND (a.tenant_id=? OR (a.tenant_id=? AND ?)) FOR UPDATE',
             [$id, $this->tenant, $this->platformTenant(), (int) $this->c['platform']]);
         if (!$a) { throw new ApiError(404, 'resource_not_found'); }
         return $a;
@@ -109,7 +110,7 @@ final class PanelAccounts
             $tenant = $this->tenant;
         }
         (new Audit($this->db))->record($this->c, $this->r, 'createPanelAccount', 'admin_account', $id, ['kind', 'email', 'user_id', 'role_ids']);
-        $a = $this->db->one('SELECT a.*,u.display_name user_name FROM admin_accounts a LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.user_id WHERE a.tenant_id=? AND a.id=?', [$tenant, $id]);
+        $a = $this->db->one('SELECT a.*,u.display_name user_name,t.name tenant_name FROM admin_accounts a JOIN tenants t ON t.tenant_id=a.tenant_id LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.user_id WHERE a.tenant_id=? AND a.id=?', [$tenant, $id]);
         return AdminApi::response(['account' => $this->dto($a), 'temporary_password' => $temporary], 201, ['Cache-Control' => 'no-store']);
     }
 
@@ -151,7 +152,7 @@ final class PanelAccounts
     private function dto(array $a): array
     {
         $roles = $a['is_platform_admin'] ? [] : array_map([Util::class, 'id'], array_column($this->db->run('SELECT role_id FROM user_roles WHERE tenant_id=? AND user_id=? ORDER BY role_id', [$a['tenant_id'], $a['user_id']])->fetchAll(), 'role_id'));
-        return ['id' => Util::id($a['id']), 'kind' => $a['is_platform_admin'] ? 'platform' : 'company', 'email' => $a['email'], 'display_name' => $a['display_name'],
+        return ['tenant_id' => Util::id($a['tenant_id']), 'tenant_name' => $a['tenant_name'], 'id' => Util::id($a['id']), 'kind' => $a['is_platform_admin'] ? 'platform' : 'company', 'email' => $a['email'], 'display_name' => $a['display_name'],
             'user_id' => $a['user_id'] === null ? null : Util::id($a['user_id']), 'user_name' => $a['user_name'] ?? null, 'role_ids' => $roles,
             'active' => (bool) $a['active'], 'must_change_password' => (bool) $a['must_change_password'], 'created_at' => Util::time($a['created_at']),
             'last_login_at' => $a['last_login_at'] === null ? null : Util::time($a['last_login_at'])];

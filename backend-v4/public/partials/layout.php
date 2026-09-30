@@ -17,6 +17,7 @@ $importMap = json_encode(['imports' => $imports], JSON_UNESCAPED_SLASHES);
 $importHash = base64_encode(hash('sha256', $importMap, true));
 header("Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-$importHash'; style-src 'self'; img-src 'self' https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
 $h = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+require_once __DIR__ . '/brand.php';
 ?>
 <!doctype html>
 <html lang="es">
@@ -28,8 +29,8 @@ $h = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
   <?php if ($page === 'login'): ?>
   <div class="access-layout">
     <section class="access-intro" aria-labelledby="login-title">
-      <img class="brand-wordmark" src="/assets/brand/logo-main.png" width="447" height="172" alt="AZCKeeper">
-      <p class="eyebrow">AZCKeeper</p><h1 id="login-title">Tu empresa,<br>en un solo lugar.</h1>
+      <img class="brand-wordmark" src="<?= $h($brand['logo'] ?? '/assets/brand/logo-main.png') ?>" width="447" height="172" alt="<?= $h($brand['name']) ?>">
+      <p class="eyebrow"><?= $h($brand['name']) ?></p><h1 id="login-title">Tu empresa,<br>en un solo lugar.</h1>
       <p>Accede a los equipos, personas y reportes disponibles para tu cuenta.</p>
     </section>
     <section class="surface access-form" aria-labelledby="form-title">
@@ -70,7 +71,7 @@ $h = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
     <?php endif; ?>
     <div id="content" aria-busy="true"></div>
   </div>
-  <footer><span>AZCKeeper v4</span><span>Fechas en la zona horaria del navegador</span></footer>
+  <footer><span><?= $h($brand['name']) ?> · v4</span><span>Fechas en la zona horaria del navegador</span></footer>
 </main>
 <?php endif; ?>
 <noscript><p class="error-message">Activa JavaScript para usar el panel.</p></noscript>

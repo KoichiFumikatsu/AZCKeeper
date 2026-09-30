@@ -123,7 +123,7 @@ final class AdminApi
             'listInstallCoverage','putInstallCoverage','listClientLogs','getServerHealth','getPanelSettings','putPanelSettings'=>(new OperationsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getAppsReport','getPresenceReport','getUserActivity','getUserPolicies','getPeopleReport'=>(new ActivityReports($this->db,$this->c,$this->access))->dispatch($op,$id),
             'issueMigrationAuthorization','validateMigrationAuthorization','getEscrowKey','persistDeviceEscrow','verifyDeviceEscrow','recoverDeviceEscrow','getDeviceMigration','setDeviceMigration'=>(new MigrationApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
-            'listTenants','createTenant','getTenant','patchTenant','setRbacGate'=>$this->tenants($op,$b),
+            'listTenants','createTenant','getTenant','patchTenant','setRbacGate'=>$this->tenants($op,$b), 'uploadTenantLogo'=>$this->tenantLogo($b),
             'listOrganization','createOrgUnit','getOrgUnit','patchOrgUnit'=>$this->organization($op,$id,$b),
             'listSchedules','createSchedule','getSchedule','putSchedule'=>$this->schedules($op,$id,$b),
             'listUsers','createUser','getUser','patchUser','setUserRoles'=>$this->users($op,$id,$b),
@@ -179,6 +179,25 @@ final class AdminApi
         }
         $this->audit('tenant',$id,array_keys(get_object_vars($b)));
         return $this->result($this->tenantDto($this->row('tenants',$id,'tenant_id')),$op==='createTenant'?201:200);
+    }
+    // Logo subido desde el panel: solo PNG/JPEG/WebP verificados por su contenido (nunca SVG: podria llevar script). Se guarda con
+    // nombre derivado del hash en public/uploads/brand y queda como logo de la marca. El de la empresa duena es el logo del producto.
+    private function tenantLogo(object $b): array
+    {
+        $this->access->requireFull();
+        $row=$this->row('tenants',$this->tenant,'tenant_id'); $this->match($row);
+        $bytes=base64_decode($b->data,true);
+        $types=['image/png'=>[IMAGETYPE_PNG,'png'],'image/jpeg'=>[IMAGETYPE_JPEG,'jpg'],'image/webp'=>[IMAGETYPE_WEBP,'webp']];
+        $info=$bytes===false||strlen($bytes)>524288?false:@getimagesizefromstring($bytes);
+        if ($info===false || $info[2]!==$types[$b->content_type][0] || $info[0]<16 || $info[1]<16 || $info[0]>4000 || $info[1]>4000) { throw new ApiError(422,'validation_failed',[],'invalid_image'); }
+        $dir=dirname(__DIR__).'/public/uploads/brand'; if (!is_dir($dir) && !mkdir($dir,0755,true) && !is_dir($dir)) { throw new \RuntimeException('uploads not writable'); }
+        $name=Util::id($this->tenant).'-'.substr(hash('sha256',$bytes),0,16).'.'.$types[$b->content_type][1];
+        if (file_put_contents("$dir/$name",$bytes,LOCK_EX)!==strlen($bytes)) { throw new \RuntimeException('logo write failed'); }
+        $url=rtrim(Config::get('ORIGIN'),'/').'/uploads/brand/'.$name;
+        $this->db->run('INSERT INTO branding (tenant_id,display_name,logo_url,primary_color,accent_color) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE logo_url=VALUES(logo_url)',[$this->tenant,mb_substr($row['name'],0,100),$url,'#3C4082','#5A61B3']);
+        $this->db->run('UPDATE tenants SET version=version+1 WHERE tenant_id=?',[$this->tenant]);
+        $this->audit('tenant',$this->tenant,['branding.logo_url']);
+        return $this->result($this->tenantDto($this->row('tenants',$this->tenant,'tenant_id')));
     }
     private function orgDto(array $r): array { return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'kind'=>$r['kind'],'name'=>$r['name'],'parent_id'=>$r['parent_id']===null?null:Util::id($r['parent_id']),'active'=>(bool)$r['active'],'version'=>(int)$r['version']]; }
     private function organization(string $op,?string $id,?object $b): array
