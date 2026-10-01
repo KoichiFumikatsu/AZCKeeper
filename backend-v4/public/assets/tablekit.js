@@ -72,6 +72,14 @@ function enhance(table) {
     const sort = () => { state.dir = state.col === i ? -state.dir : (DATE_HEADER.test(th.textContent) ? -1 : 1); state.col = i; state.page = 0; render(); };
     th.addEventListener('click', sort); th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sort(); } });
   });
+  // Filas que la pantalla agrega despues ("Cargar mas"): se incorporan y se vuelve a ordenar y paginar.
+  new MutationObserver(records => {
+    if (table.dataset.kitBusy) return;
+    const added = records.flatMap(r => [...r.addedNodes]).filter(n => n.nodeName === 'TR' && !keys.has(n));
+    if (!added.length) return;
+    added.forEach(r => { rows.push(r); keys.set(r, [...r.cells].map(c => key(c.textContent || ''))); });
+    render();
+  }).observe(body, { childList: true });
   search?.addEventListener('input', () => { state.term = search.value.trim().toLocaleLowerCase('es'); state.page = 0; render(); });
   prev.addEventListener('click', () => { state.page--; render(); });
   next.addEventListener('click', () => { state.page++; render(); });

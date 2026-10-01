@@ -8,15 +8,18 @@ $surface ??= 'portal';
 $current = ['member' => 'users', 'device' => 'devices'][$page] ?? $page;
 $portal = [
     'Principal' => [['home', 'Inicio', '/'], ['sites', 'Sedes', '/sedes.php', false], ['users', 'Personas', '/usuarios.php'],
-        ['intake', 'Registrar equipos nuevos', '/alta.php'], ['devices', 'Equipos', '/equipos.php'], ['reports', 'Productividad', '/reportes.php']],
-    'Gestión avanzada' => [['policies', 'Reglas', '/reglas.php'], ['classification', 'Clasificación de apps', '/clasificacion.php', false], ['organization', 'Organización', '/organizacion.php', false],
-        ['assignments', 'Asignación de equipos', '/asignaciones.php', false], ['accounts', 'Cuentas del panel', '/cuentas.php', false],
-        ['roles', 'Roles y permisos', '/roles.php', false], ['sources', 'Fuentes de datos', '/fuentes.php', false], ['schedules', 'Horarios', '/horarios.php', false], ['absences', 'Ausencias', '/ausencias.php', false], ['doors', 'Puertas', '/puertas.php', false], ['holidays', 'Festivos', '/festivos.php'], ['dual-job', 'Doble empleo', '/doble-empleo.php'],
-        ['suspicious-apps', 'Apps sospechosas', '/apps-sospechosas.php'], ['coverage', 'Cobertura', '/cobertura.php']],
+        ['devices', 'Equipos', '/equipos.php'], ['reports', 'Productividad', '/reportes.php'], ['intake', 'Registrar equipos nuevos', '/alta.php']],
+    'Organización' => [['organization', 'Unidades (firmas, sedes, áreas, cargos)', '/organizacion.php', false], ['schedules', 'Horarios', '/horarios.php', false],
+        ['holidays', 'Festivos', '/festivos.php', false], ['absences', 'Ausencias', '/ausencias.php', false], ['doors', 'Puertas', '/puertas.php', false],
+        ['assignments', 'Asignación de equipos', '/asignaciones.php', false]],
+    'Control' => [['policies', 'Reglas de los equipos', '/reglas.php', false], ['classification', 'Clasificación de apps', '/clasificacion.php', false],
+        ['tiers', 'Planes', '/planes.php', false], ['suspicious-apps', 'Apps sospechosas', '/apps-sospechosas.php', false], ['dual-job', 'Doble empleo', '/doble-empleo.php'],
+        ['coverage', 'Cobertura de instalación', '/cobertura.php']],
+    'Accesos' => [['accounts', 'Cuentas del panel', '/cuentas.php', false], ['roles', 'Roles y permisos', '/roles.php', false], ['sources', 'Fuentes de datos', '/fuentes.php', false]],
+    'Registro y ajustes' => [['audit', 'Auditoría', '/auditoria.php', false], ['client-logs', 'Logs de los equipos', '/logs.php', false], ['panel-settings', 'Ajustes', '/ajustes.php', false]],
 ];
-$platform = [['platform-home', 'Resumen de plataforma', '/admin/'], ['tenants', 'Empresas', '/empresas.php', false], ['tiers', 'Planes (tiers)', '/admin/tiers.php'],
-    ['releases', 'Versiones del agente', '/admin/releases.php'], ['audit', 'Auditoría', '/admin/auditoria.php'], ['client-logs', 'Logs de los equipos', '/admin/logs.php'],
-    ['server-health', 'Salud del servidor', '/admin/salud.php'], ['panel-settings', 'Ajustes', '/admin/ajustes.php']];
+$platform = [['platform-home', 'Resumen de plataforma', '/admin/'], ['tenants', 'Empresas', '/empresas.php', false],
+    ['releases', 'Versiones del agente', '/admin/releases.php'], ['server-health', 'Salud del servidor', '/admin/salud.php', false]];
 if ($surface === 'admin' && $current === 'home') { $current = 'platform-home'; }
 $h = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 require_once __DIR__ . '/brand.php';

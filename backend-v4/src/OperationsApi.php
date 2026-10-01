@@ -41,9 +41,18 @@ final class OperationsApi
         }
         if ($op==='putPanelSettings') {
             $this->db->run('INSERT INTO panel_settings (tenant_id,install_coverage_heartbeat_days) VALUES (?,?) ON DUPLICATE KEY UPDATE install_coverage_heartbeat_days=VALUES(install_coverage_heartbeat_days)',[$this->tenant,$b->install_coverage_heartbeat_days]);
+            // Retencion: cuanto se guarda el detalle, los resumenes y los registros tecnicos (el detalle nunca menos que la ventana de llegada tardia).
+            $set=[]; foreach (['raw_days','aggregate_months','log_days'] as $f) { if (isset($b->$f)) { $set[$f]=(int)$b->$f; } }
+            if ($set) {
+                $late=(int)($this->db->one('SELECT late_arrival_days FROM retention_settings WHERE tenant_id=?',[$this->tenant])['late_arrival_days']??30);
+                if (isset($set['raw_days']) && $set['raw_days']<$late) { throw new ApiError(422,'validation_failed',[],'raw_days_below_late_arrival'); }
+                $this->db->run('UPDATE retention_settings SET '.implode(',',array_map(fn($k)=>"$k=?",array_keys($set))).' WHERE tenant_id=?',[...array_values($set),$this->tenant]);
+            }
             $this->audit('panel_settings',$this->tenant,$b);
         }
-        return AdminApi::response(['install_coverage_heartbeat_days'=>(int)($this->db->one('SELECT install_coverage_heartbeat_days FROM panel_settings WHERE tenant_id=?',[$this->tenant])['install_coverage_heartbeat_days']??7)]);
+        $r=$this->db->one('SELECT raw_days,aggregate_months,log_days FROM retention_settings WHERE tenant_id=?',[$this->tenant]);
+        return AdminApi::response(['install_coverage_heartbeat_days'=>(int)($this->db->one('SELECT install_coverage_heartbeat_days FROM panel_settings WHERE tenant_id=?',[$this->tenant])['install_coverage_heartbeat_days']??7)]
+            +($r?['raw_days'=>(int)$r['raw_days'],'aggregate_months'=>(int)$r['aggregate_months'],'log_days'=>(int)$r['log_days']]:[]));
     }
     private function audit(string $type,string $id,object $b): void { (new Audit($this->db))->record($this->c,$this->r,$this->r->operation['operationId'],$type,$id,array_keys(get_object_vars($b))); }
     private function catalog(string $op,?string $id,?object $b): array
@@ -133,6 +142,9 @@ final class OperationsApi
         [$scope,$args]=$this->access->usersSql('u');
         if (isset($_GET['device_id'])) { $id=Util::bin($_GET['device_id']); $d=$this->row('devices',$id); $this->access->user($d['user_id']); $scope.=' AND l.device_id=?'; $args[]=$id; }
         if (isset($_GET['level'])) { $scope.=' AND l.level=?'; $args[]=$_GET['level']; }
+        // Filtros de la pantalla de logs: componente del agente, codigo y desde que dia.
+        foreach (['component'=>'l.component','code'=>'l.code'] as $f=>$col) { if (isset($_GET[$f]) && $_GET[$f]!=='') { $scope.=" AND $col=?"; $args[]=$_GET[$f]; } }
+        if (isset($_GET['since'])) { $scope.=' AND l.at>=?'; $args[]=$_GET['since'].' 00:00:00'; }
         return $this->page("SELECT l.*,d.hostname FROM client_logs l JOIN devices d ON d.tenant_id=l.tenant_id AND d.id=l.device_id JOIN users u ON u.tenant_id=d.tenant_id AND u.id=d.user_id JOIN retention_settings r ON r.tenant_id=l.tenant_id WHERE l.tenant_id=? AND l.at>=UTC_TIMESTAMP()-INTERVAL r.log_days DAY AND $scope ORDER BY l.at DESC,l.device_id,l.event_id",[$this->tenant,...$args],static fn($r)=>['device_id'=>Util::id($r['device_id']),'event_id'=>Util::id($r['event_id']),'hostname'=>$r['hostname'],'at'=>Util::time($r['at']),'level'=>$r['level'],'code'=>$r['code'],'component'=>$r['component'],'error_code'=>$r['error_code']]);
     }
 }

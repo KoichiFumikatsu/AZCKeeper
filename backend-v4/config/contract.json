@@ -1,5 +1,5 @@
 {
-  "source_sha256": "14a955e652d3f8bdd79fa4d5c3e0b677bb0c0bb2db167668e0f5277d52abcebc",
+  "source_sha256": "2219960def4530b16730f8aba113394fea68277a726239f086d2dfc048b64e16",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -4042,6 +4042,20 @@
           },
           {
             "$ref": "#/components/parameters/To"
+          },
+          {
+            "name": "actor_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "admin",
+                "device",
+                "integration",
+                "system"
+              ]
+            }
           }
         ],
         "x-permission": "auditoria.ver"
@@ -6407,6 +6421,30 @@
                 "warn",
                 "error"
               ]
+            }
+          },
+          {
+            "name": "component",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 80
+            }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
             }
           }
         ],
@@ -18454,6 +18492,30 @@
         "changed_fields"
       ],
       "properties": {
+        "actor_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 254
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Quién (correo o nombre de la cuenta, equipo o integración)."
+        },
+        "resource_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 254
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Sobre qué (nombre del equipo, persona, rol...), si tiene nombre."
+        },
         "id": {
           "type": "string",
           "format": "uuid"
@@ -23216,6 +23278,24 @@
         "install_coverage_heartbeat_days"
       ],
       "properties": {
+        "raw_days": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 3650,
+          "description": "Días que se guarda el detalle de ventanas y aplicaciones."
+        },
+        "aggregate_months": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120,
+          "description": "Meses que se guardan los resúmenes diarios (productividad, presencia)."
+        },
+        "log_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365,
+          "description": "Días que se guardan los registros técnicos de los equipos."
+        },
         "install_coverage_heartbeat_days": {
           "type": "integer",
           "minimum": 1,

@@ -70,8 +70,12 @@ final class PolicyComposer
             if (isset($emitted[$identity])) { $provenance[$emitted[$identity]-1]['assignment_ids'][]=$candidate['assignment']; continue; }
             $provenance[]=['rule'=>$rule,'scope'=>$candidate['level']==='platform'?'global':$candidate['level'],'assignment_ids'=>[$candidate['assignment']]];
             $emitted[$identity] = count($provenance);
-            $rules[] = $rule;
+            // El agente aplica la web como lista de bloqueo. Un "permitir" que gana (p. ej. Facebook para una persona de
+            // Mercadeo sobre el bloqueo de la empresa) ya cumplio su funcion: el sitio sale de la lista. Enviarlo hacia
+            // que el agente rechazara toda la politica web del equipo. Queda en la procedencia para explicarlo.
             $parts[$candidate['level']]['rules'][] = $rule;
+            if ($rule->kind === 'web' && $rule->effect !== 'deny') { continue; }
+            $rules[] = $rule;
             if ($rule->schedule_id !== null) {
                 $schedule = $input['rule_schedules'][$candidate['level'] === 'platform' ? 'global/' . $rule->schedule_id : 'tenant/' . $rule->schedule_id];
                 $key = $schedule->tenant_id . '/' . $schedule->id;

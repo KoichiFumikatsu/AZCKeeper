@@ -1190,6 +1190,362 @@ async function classificationPage() {
   render();
 }
 
+// ---- Reglas (politicas) ---------------------------------------------------------------------------------------------
+// Solo se ofrece lo que el agente sabe aplicar: bloquear sitios web (con excepciones), descargas e instalaciones
+// (bloquear todo o permitir como excepcion) y USB (bloquear, solo lectura o permitir). Gana lo mas especifico:
+// equipo > persona > area > sede > empresa.
+const SCOPE_LABEL = { tenant: 'Toda la empresa', site: 'Sede', area: 'Área', user: 'Persona', device: 'Equipo' };
+async function policiesPage() {
+  const [org, users, devices] = await Promise.all([optional(allPages('/organization')), optional(allPages('/users')), optional(allPages(`/tenants/${tenant}/devices`))]);
+  let list = await allPages('/policies');
+  const n = names(org || []); const who = new Map((users || []).map(u => [u.id, u.display_name])); const dev = new Map((devices || []).map(d => [d.id, d.hostname]));
+  const targetName = p => p.target_type === 'tenant' ? 'Toda la empresa' : p.target_type === 'user' ? `Persona: ${who.get(p.target_id) || '—'}` : p.target_type === 'device' ? `Equipo: ${dev.get(p.target_id) || '—'}` : `${SCOPE_LABEL[p.target_type]}: ${n.get(p.target_id) || '—'}`;
+  const describe = r => {
+    if (r.kind === 'web') return `${r.effect === 'deny' ? 'Bloquea' : 'Permite (excepción)'} ${r.targets.join(', ')}`;
+    if (r.kind === 'download') return r.effect === 'deny' ? 'Bloquea las descargas' : 'Permite las descargas (excepción)';
+    if (r.kind === 'installation') return r.effect === 'deny' ? 'Bloquea instalar programas' : 'Permite instalar programas (excepción)';
+    if (r.kind === 'usb') return r.effect === 'allow' ? 'Permite USB (excepción)' : r.targets[0] === 'write' ? 'USB solo lectura' : 'Bloquea USB';
+    return `${r.kind} ${r.effect} ${r.targets.join(', ')}`;
+  };
+  const render = () => {
+    $('page-content').replaceChildren();
+    const s = surface('Reglas de los equipos');
+    s.append(el('p', 'Una regla dice qué se bloquea o se permite y a quién aplica. Si dos reglas chocan, gana la más específica: equipo, luego persona, área, sede y por último la empresa. Así se hacen excepciones: la empresa bloquea Facebook y una persona de Mercadeo lo tiene permitido.', 'help'));
+    if (!list.length) { empty(s, 'Aún no hay reglas', 'Crea la primera con "Crear regla".'); return; }
+    table(s, 'Reglas', [['Nombre', p => p.name], ['Aplica a', targetName], ['Qué hace', p => { const ul = el('ul'); p.rules.forEach(r => ul.append(el('li', describe(r)))); return ul; }],
+      ['Estado', p => badge(p.enabled ? 'Activa' : 'Inactiva', p.enabled ? 'good' : '')],
+      ['', p => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(p)); return b; }]], list,
+      { filters: [['Aplica a', p => SCOPE_LABEL[p.target_type]], ['Estado', p => p.enabled ? 'Activa' : 'Inactiva']] });
+  };
+  const domains = text => [...new Set(text.split(/[\s,;]+/).map(x => x.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')).filter(Boolean))];
+  const editor = p => {
+    const { dialog, body, ok, show } = dialogShell(p ? `Editar ${p.name}` : 'Crear regla');
+    dialog.classList.add('wide-dialog');
+    const name = labeled(body, 'Nombre', el('input'), 'Ej.: Bloqueos generales, Excepción Mercadeo'); name.maxLength = 120; name.value = p?.name || '';
+    const scope = el('select'); Object.entries(SCOPE_LABEL).forEach(([v, t]) => scope.append(new Option(t, v))); scope.value = p?.target_type || 'tenant'; labeled(body, '¿A quién aplica?', scope);
+    const target = el('select'); const targetLabel = labeled(body, 'Cuál', target);
+    const fill = () => {
+      target.replaceChildren(); targetLabel.hidden = scope.value === 'tenant';
+      const items = scope.value === 'site' || scope.value === 'area' ? (org || []).filter(o => o.kind === scope.value && o.active).map(o => [o.id, o.name])
+        : scope.value === 'user' ? (users || []).filter(u => u.status === 'active').map(u => [u.id, u.display_name])
+        : scope.value === 'device' ? (devices || []).filter(d => d.status === 'active').map(d => [d.id, `${d.hostname} (${who.get(d.user_id) || 'sin persona'})`]) : [];
+      items.sort((a, b) => a[1].localeCompare(b[1], 'es')).forEach(([v, t]) => target.append(new Option(t, v)));
+      if (p && p.target_type === scope.value) target.value = p.target_id;
+    };
+    fill(); scope.addEventListener('change', fill);
+    const rule = kind => p?.rules.find(r => r.kind === kind);
+    const rules = p?.rules || [];
+    body.append(el('h3', 'Sitios web'));
+    const block = labeled(body, 'Bloquear estos sitios (uno por línea)', el('textarea'), 'Ej.: facebook.com, youtube.com. Bloquea también sus subdominios.');
+    block.value = rules.filter(r => r.kind === 'web' && r.effect === 'deny').flatMap(r => r.targets).join('\n');
+    const allow = labeled(body, 'Permitir estos sitios (excepción a un bloqueo más general)', el('textarea'), 'Úsalo en reglas de persona, área o sede: quita el sitio del bloqueo de la empresa solo para ellos.');
+    allow.value = rules.filter(r => r.kind === 'web' && r.effect === 'allow').flatMap(r => r.targets).join('\n');
+    body.append(el('h3', 'Equipo'));
+    const choice = (label, options, current) => { const sel = el('select'); options.forEach(([v, t]) => sel.append(new Option(t, v))); sel.value = current; labeled(body, label, sel); return sel; };
+    const effectOf = kind => rule(kind) ? rule(kind).effect : '';
+    const download = choice('Descargas desde el navegador', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['allow', 'Permitir (excepción)']], effectOf('download'));
+    const install = choice('Instalar programas', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['allow', 'Permitir (excepción)']], effectOf('installation'));
+    const usbRule = rule('usb');
+    const usb = choice('Memorias USB', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['write', 'Solo lectura (no copiar a la USB)'], ['allow', 'Permitir (excepción)']], usbRule ? (usbRule.effect === 'allow' ? 'allow' : usbRule.targets[0] === 'write' ? 'write' : 'deny') : '');
+    const enabled = el('input'); enabled.type = 'checkbox'; enabled.checked = p ? p.enabled : true;
+    const el2 = el('label', undefined, 'check'); el2.append(enabled, ' Regla activa'); body.append(el2);
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (!name.value.trim()) { show('Escribe el nombre.'); return; }
+      if (scope.value !== 'tenant' && !target.value) { show('Elige a quién aplica.'); return; }
+      const out = []; const id = () => crypto.randomUUID();
+      const blocked = domains(block.value), allowed = domains(allow.value);
+      const bad = [...blocked, ...allowed].find(d => !/^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(d));
+      if (bad) { show(`"${bad}" no parece un sitio (escribe solo el dominio, p. ej. facebook.com).`); return; }
+      if (blocked.some(d => allowed.includes(d))) { show('Un mismo sitio no puede estar bloqueado y permitido en la misma regla.'); return; }
+      if (blocked.length) out.push({ id: id(), kind: 'web', effect: 'deny', targets: blocked, schedule_id: null, priority: 0 });
+      if (allowed.length) out.push({ id: id(), kind: 'web', effect: 'allow', targets: allowed, schedule_id: null, priority: 0 });
+      if (download.value) out.push({ id: id(), kind: 'download', effect: download.value, targets: ['*'], schedule_id: null, priority: 0 });
+      if (install.value) out.push({ id: id(), kind: 'installation', effect: install.value, targets: ['*'], schedule_id: null, priority: 0 });
+      if (usb.value) out.push({ id: id(), kind: 'usb', effect: usb.value === 'allow' ? 'allow' : 'deny', targets: [usb.value === 'write' ? 'write' : '*'], schedule_id: null, priority: 0 });
+      if (!out.length) { show('La regla no hace nada: agrega al menos un bloqueo o permiso.'); return; }
+      ok.disabled = true;
+      const payload = { name: name.value.trim(), target_type: scope.value, target_id: scope.value === 'tenant' ? tenant : target.value, enabled: enabled.checked, rules: out };
+      try {
+        const saved = p ? await api('PATCH', `/policies/${p.id}`, { body: payload, ifMatch: p.version }) : await api('POST', '/policies', { body: payload });
+        list = p ? list.map(x => x.id === p.id ? saved : x) : [...list, saved]; dialog.close(); render(); done();
+      } catch (e) {
+        show(e.code === 'invalid_transition' || e.status === 409 ? 'Choca con otra regla del mismo nivel (una bloquea y otra permite lo mismo). Ponlas en niveles distintos o únelas.' : e.status === 422 ? 'Revisa los sitios: escribe solo dominios y no bloquees el propio panel de Keeper.' : e);
+        ok.disabled = false;
+      }
+    });
+    dialog.showModal();
+  };
+  const action = $('page-action'); action.textContent = 'Crear regla'; action.hidden = false; action.addEventListener('click', () => editor(null));
+  render();
+}
+
+// ---- Planes (tiers) -------------------------------------------------------------------------------------------------
+const MODULES = [
+  ['activity', 'Actividad', 'Qué aplicaciones y sitios se usan y cuánto tiempo.'],
+  ['productivity', 'Productividad', 'Productividad, distracción, focus y ranking.'],
+  ['presence', 'Presencia', 'Llegada, salida, puntualidad y entradas por puerta.'],
+  ['devices', 'Equipos', 'Inventario y acciones remotas (bloquear, reiniciar, apagar).'],
+  ['policies', 'Reglas', 'Bloqueos de sitios web, descargas, instalaciones y USB.'],
+  ['integrations', 'Integraciones', 'Acceso por API desde otros sistemas (One, puertas).'],
+];
+async function tiersPage() {
+  let list = await allPages('/tiers');
+  const users = (await optional(allPages('/users'))) || [];
+  const count = id => users.filter(u => u.tier_id === id && u.status === 'active').length;
+  const render = () => {
+    $('page-content').replaceChildren();
+    const s = surface('Planes de la empresa');
+    s.append(el('p', 'Un plan decide qué funciones de Keeper aplican a cada persona: si un módulo no está en su plan, Keeper no mide ni aplica eso en sus equipos (por ejemplo, sin "Reglas" no se le bloquea nada). Cada persona tiene un plan en su ficha.', 'help'));
+    const grid = el('div', undefined, 'three'); s.append(grid);
+    for (const t of list) {
+      const card = surface(t.name, grid);
+      card.append(badge(t.active ? `${count(t.id)} personas` : 'Inactivo', t.active ? 'info' : ''), el('p', t.badge_label, 'help'));
+      const ul = el('ul', undefined, 'tier-modules');
+      MODULES.forEach(([code, name]) => { const li = el('li', `${t.entitlements.includes(code) ? '✓' : '✗'} ${name}`); if (!t.entitlements.includes(code)) li.className = 'muted'; ul.append(li); });
+      card.append(ul);
+      const b = el('button', 'Editar plan'); b.type = 'button'; b.addEventListener('click', () => editor(t)); card.append(b);
+    }
+  };
+  const editor = t => {
+    const { dialog, body, ok, show } = dialogShell(t ? `Editar ${t.name}` : 'Crear plan');
+    const name = labeled(body, 'Nombre', el('input')); name.maxLength = 80; name.value = t?.name || '';
+    const label = labeled(body, 'Descripción corta', el('input')); label.maxLength = 120; label.value = t?.badge_label || '';
+    body.append(el('h3', '¿Qué incluye?'));
+    const boxes = checks(body, MODULES.map(([code, n, d]) => [code, n, d]), t?.entitlements || []);
+    const active = el('input'); active.type = 'checkbox'; active.checked = t ? t.active : true;
+    const al = el('label', undefined, 'check'); al.append(active, ' Plan activo'); body.append(al);
+    if (t && count(t.id)) body.append(el('p', `Los cambios aplican de inmediato a las ${count(t.id)} personas con este plan.`, 'help'));
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
+      ok.disabled = true;
+      const payload = { name: name.value.trim(), badge_label: label.value.trim() || name.value.trim(), entitlements: boxes.filter(b => b.checked).map(b => b.value), active: active.checked };
+      try {
+        const saved = t ? await api('PATCH', `/tiers/${t.id}`, { body: payload, ifMatch: t.version }) : await api('POST', '/tiers', { body: payload });
+        list = t ? list.map(x => x.id === t.id ? saved : x) : [...list, saved]; dialog.close(); render(); done();
+      } catch (e) { show(e.status === 412 ? 'Alguien más lo cambió: recarga la página.' : e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
+  const action = $('page-action'); action.textContent = 'Crear plan'; action.hidden = false; action.addEventListener('click', () => editor(null));
+  render();
+}
+
+// ---- Auditoria ------------------------------------------------------------------------------------------------------
+const AUDIT_ACTIONS = {
+  'admin.login': 'Inició sesión en el panel', 'admin.logout': 'Cerró sesión', 'admin.reauthenticated': 'Confirmó su contraseña', 'admin.password_changed': 'Cambió su contraseña',
+  createPanelAccount: 'Creó una cuenta del panel', patchPanelAccount: 'Cambió una cuenta del panel', resetPanelAccountPassword: 'Restableció una contraseña',
+  createUser: 'Creó una persona', patchUser: 'Editó una persona', setUserRoles: 'Cambió los roles de una persona', createRole: 'Creó un rol', patchRole: 'Editó un rol',
+  createOrgUnit: 'Creó una unidad', patchOrgUnit: 'Editó una unidad', createTenant: 'Creó una empresa', patchTenant: 'Editó una empresa', uploadTenantLogo: 'Cambió el logo',
+  createPolicy: 'Creó una regla', patchPolicy: 'Editó una regla', createDeviceCommand: 'Envió un comando a un equipo', createEnrollment: 'Autorizó un equipo',
+  registerRelease: 'Registró una versión del agente', deployRelease: 'Desplegó una versión', createCompanyGroup: 'Creó un grupo empresarial', patchCompanyGroup: 'Editó un grupo empresarial',
+  'hardening.settings.set': 'Cambió la seguridad de cuentas de Windows', 'hardening.command.harden': 'Endureció un equipo', 'hardening.command.unharden': 'Revirtió el endurecimiento',
+  'device.enrolled': 'Equipo registrado', 'device.created': 'Equipo creado', 'device.login': 'El equipo se conectó', 'device.session_renewed': 'El equipo renovó su sesión',
+  'security.reported': 'El equipo reportó su seguridad', 'policy.compiled': 'Se recalculó la política de un equipo', 'command.result': 'El equipo respondió un comando',
+  'device.key_recovered': 'Se recuperó la llave de un equipo', createRoleRule: 'Creó una asignación automática', patchRoleRule: 'Editó una asignación automática',
+  putAppClassification: 'Clasificó una aplicación', createAppClassificationOverride: 'Creó una excepción de clasificación', createDataSource: 'Conectó una fuente de datos',
+  runDataSource: 'Sincronizó una fuente', approveSyncRun: 'Aprobó una sincronización bloqueada', resolveSyncItem: 'Resolvió un pendiente de sincronización',
+  createAbsence: 'Registró una ausencia', patchAbsence: 'Editó una ausencia', createDoor: 'Registró una puerta', patchDoor: 'Editó una puerta',
+};
+const ACTOR = { admin: 'Persona', device: 'Equipo', integration: 'Integración', system: 'Keeper' };
+async function auditPage() {
+  const day = o => new Date(Date.now() + o * 864e5).toISOString().slice(0, 10);
+  const bar = el('form', undefined, 'toolbar'); $('page-content').append(bar);
+  const from = labeled(bar, 'Desde', el('input')); from.type = 'date'; from.value = day(-7);
+  const to = labeled(bar, 'Hasta (incluido)', el('input')); to.type = 'date'; to.value = day(0);
+  const who = el('select'); [['admin', 'Solo acciones de personas'], ['', 'Todo (incluye lo automático de los equipos)']].forEach(([v, t]) => who.append(new Option(t, v))); labeled(bar, 'Mostrar', who);
+  const go = el('button', 'Consultar', 'primary'); go.type = 'submit'; bar.append(go);
+  const out = el('div'); $('page-content').append(out);
+  const load = async () => {
+    out.replaceChildren(el('p', 'Consultando…', 'help'));
+    const next = new Date(`${to.value}T00:00:00`); next.setDate(next.getDate() + 1);
+    const qs = new URLSearchParams({ from: from.value, to: next.toISOString().slice(0, 10) }); if (who.value) qs.set('actor_type', who.value);
+    const rows = await allPages(`/audit?${qs}`);
+    out.replaceChildren();
+    const s = surface(`Qué pasó (${rows.length})`, out);
+    if (!rows.length) { empty(s, 'Sin registros', 'No hay acciones en ese período.'); return; }
+    table(s, 'Auditoría', [['Cuándo', r => when(r.at)], ['Quién', r => { const d = el('div'); d.append(el('strong', r.actor_name || '—'), el('small', ACTOR[r.actor_type] || r.actor_type)); return d; }],
+      ['Qué hizo', r => AUDIT_ACTIONS[r.action] || r.action], ['Sobre qué', r => r.resource_name || '—'],
+      ['Resultado', r => badge(r.outcome === 'allowed' ? 'Hecho' : r.outcome === 'denied' ? 'Denegado' : 'Falló', r.outcome === 'allowed' ? 'good' : 'bad')],
+      ['Campos', r => (r.changed_fields || []).join(', ') || '—']], rows,
+      { filters: [['Quién', r => r.actor_name || '—'], ['Qué hizo', r => AUDIT_ACTIONS[r.action] || r.action]] });
+  };
+  bar.addEventListener('submit', ev => { ev.preventDefault(); load().then(done, fail); });
+  await load();
+}
+
+// ---- Logs de los equipos --------------------------------------------------------------------------------------------
+const LOG_CODES = {
+  capture_gap: 'El equipo estuvo suspendido o sin medir unos segundos (normal al dormir o bloquear)', applied: 'Regla aplicada en el equipo', degraded: 'Algún control no está funcionando del todo',
+  package_verified: 'Versión nueva descargada y verificada', update_applying: 'Instalando versión nueva', first_login: 'Primer inicio de sesión del día',
+  restore_point_created: 'Punto de restauración creado', failed: 'Falló', unsupported_rule: 'El equipo no soporta una regla', conflicting_rules: 'Reglas en conflicto',
+};
+const LOG_COMPONENTS = { ActivityTracker: 'Medición de actividad', WebEnforcer: 'Bloqueo web', UsbEnforcer: 'USB', InstallEnforcer: 'Instalaciones', DownloadEnforcer: 'Descargas',
+  UpdateManager: 'Actualizaciones', LocalAccountHardening: 'Cuentas de Windows', RestorePoint: 'Puntos de restauración', AgentDiagnostics: 'Diagnóstico', Presence: 'Presencia' };
+async function logsPage() {
+  const devices = (await optional(allPages(`/tenants/${tenant}/devices`))) || [];
+  const day = o => new Date(Date.now() + o * 864e5).toISOString().slice(0, 10);
+  const bar = el('form', undefined, 'toolbar'); $('page-content').append(bar);
+  const dev = el('select'); dev.append(new Option('Todos los equipos', '')); devices.sort((a, b) => a.hostname.localeCompare(b.hostname)).forEach(d => dev.append(new Option(d.hostname, d.id))); labeled(bar, 'Equipo', dev);
+  const level = el('select'); [['', 'Todos'], ['error', 'Errores'], ['warn', 'Advertencias'], ['info', 'Información']].forEach(([v, t]) => level.append(new Option(t, v))); labeled(bar, 'Nivel', level);
+  const comp = el('select'); comp.append(new Option('Todos', '')); Object.entries(LOG_COMPONENTS).forEach(([v, t]) => comp.append(new Option(t, v))); labeled(bar, 'Parte del agente', comp);
+  const since = labeled(bar, 'Desde', el('input')); since.type = 'date'; since.value = day(-7);
+  const go = el('button', 'Consultar', 'primary'); go.type = 'submit'; bar.append(go);
+  const out = el('div'); $('page-content').append(out);
+  let rows = [], offset = 0, more = false;
+  const fetchPage = async () => {
+    const qs = new URLSearchParams({ limit: 100, offset }); if (dev.value) qs.set('device_id', dev.value); if (level.value) qs.set('level', level.value); if (comp.value) qs.set('component', comp.value); if (since.value) qs.set('since', since.value);
+    const r = await api('GET', `/audit/client-logs?${qs}`); rows = [...rows, ...r.data]; more = r.next_offset !== null; offset = r.next_offset ?? offset;
+  };
+  const render = () => {
+    out.replaceChildren();
+    const s = surface(`Registros técnicos de los equipos (${rows.length}${more ? '+' : ''})`, out);
+    s.append(el('p', 'Lo que reporta el agente de cada equipo. Los errores y advertencias son lo que conviene revisar; lo informativo es el día a día normal.', 'help'));
+    if (!rows.length) { empty(s, 'Sin registros', 'No hay registros con esos filtros.'); return; }
+    table(s, 'Logs', [['Cuándo', r => when(r.at)], ['Equipo', r => r.hostname], ['Nivel', r => badge(r.level === 'error' ? 'Error' : r.level === 'warn' ? 'Advertencia' : 'Info', r.level === 'error' ? 'bad' : r.level === 'warn' ? 'warn' : '')],
+      ['Parte', r => LOG_COMPONENTS[r.component] || r.component], ['Qué pasó', r => LOG_CODES[r.code] || r.code], ['Detalle', r => r.error_code || '—']], rows,
+      { filters: [['Equipo', r => r.hostname], ['Parte', r => LOG_COMPONENTS[r.component] || r.component]] });
+    if (more) { const b = el('button', 'Cargar 100 más'); b.type = 'button'; b.addEventListener('click', async () => { b.disabled = true; try { await fetchPage(); render(); } catch (e) { fail(e); } }); s.append(b); }
+  };
+  bar.addEventListener('submit', async ev => { ev.preventDefault(); rows = []; offset = 0; try { await fetchPage(); render(); done(); } catch (e) { fail(e); } });
+  await fetchPage(); render();
+}
+
+// ---- Salud del servidor ---------------------------------------------------------------------------------------------
+async function healthPage() {
+  const h = await api('GET', '/tenants/server-health');
+  const age = v => v ? (Date.now() - Date.parse(v)) / 60000 : Infinity;
+  const checksList = [
+    ['Cálculo de productividad', h.cron_status === 'ok' && age(h.cron_last_success) < 30, h.cron_last_success ? `Último cálculo correcto: ${when(h.cron_last_success)}` : 'Nunca se ha ejecutado', 'Corre cada 10 minutos. Si se detiene, los reportes dejan de actualizarse.'],
+    ['Días por recalcular', h.pending_rollup_days < 40, `${h.pending_rollup_days} días en cola`, 'Se vacía sola; si crece sin parar, el cálculo no da abasto.'],
+    ['Equipos reportando', age(h.last_sync) < 15, h.last_sync ? `Último contacto: ${when(h.last_sync)}` : 'Ningún equipo ha reportado', 'Si pasan más de 15 minutos sin contacto de ningún equipo, revisa la red o el servidor.'],
+    ['Datos de actividad', age(h.last_ingest) < 60, h.last_ingest ? `Últimos datos: ${when(h.last_ingest)}` : 'Sin datos', 'Ventanas y aplicaciones que llegan de los equipos.'],
+    ['Comandos pendientes', h.pending_commands < 50, `${h.pending_commands} comandos esperando a su equipo`, 'Bloquear, reiniciar o endurecer: se entregan cuando el equipo se conecta.'],
+    ['Reglas por recalcular', h.pending_policy_compiles === 0, h.pending_policy_compiles ? 'Hay cambios de reglas sin aplicar' : 'Todo aplicado', 'Se aplican en segundos tras cada cambio.'],
+  ];
+  const ok = checksList.filter(c => c[1]).length;
+  kpis([['Estado general', ok === checksList.length ? 'Todo bien' : `${checksList.length - ok} por revisar`], ['Versión del cálculo', h.calculation_version], ['Base de datos', h.database_version], ['Plataforma', h.version]]);
+  const s = surface('Revisión');
+  const grid = el('div', undefined, 'three'); s.append(grid);
+  for (const [name, good, detail, help] of checksList) {
+    const card = surface(name, grid); card.append(badge(good ? 'Bien' : 'Revisar', good ? 'good' : 'warn'), el('p', detail), el('p', help, 'help'));
+  }
+}
+
+// ---- Ajustes del panel ----------------------------------------------------------------------------------------------
+async function settingsPage() {
+  const cfg = await api('GET', '/tenants/panel-settings');
+  const s = surface('Ajustes de la empresa');
+  const form = el('form'); s.append(form);
+  const grid = el('div', undefined, 'form-grid'); form.append(grid);
+  const num = (label, value, min, max, help) => { const i = labeled(grid, label, el('input'), help); i.type = 'number'; i.min = min; i.max = max; i.value = value ?? ''; return i; };
+  const heartbeat = num('Días sin conexión para alertar en Cobertura', cfg.install_coverage_heartbeat_days, 1, 90, 'Un equipo que no reporta en estos días aparece como "sin conexión reciente".');
+  const raw = num('Días que se guarda el detalle (ventanas, apps)', cfg.raw_days, 30, 3650, 'Después se borra el detalle y quedan solo los resúmenes.');
+  const agg = num('Meses que se guardan los resúmenes', cfg.aggregate_months, 1, 120, 'Productividad, presencia y reportes por día.');
+  const logs = num('Días que se guardan los registros técnicos', cfg.log_days, 1, 365, 'Lo que se ve en Logs de los equipos.');
+  const save = el('button', 'Guardar ajustes', 'primary'); save.type = 'submit'; form.append(save);
+  const msg = el('p', '', 'help'); form.append(msg);
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault(); save.disabled = true;
+    try { await api('PUT', '/tenants/panel-settings', { body: { install_coverage_heartbeat_days: Number(heartbeat.value), raw_days: Number(raw.value), aggregate_months: Number(agg.value), log_days: Number(logs.value) } }); msg.textContent = 'Guardado.'; done(); }
+    catch (e) { msg.textContent = e.problem?.detail === 'raw_days_below_late_arrival' ? 'El detalle no puede guardarse menos días que el plazo en que llegan datos atrasados de los equipos (30).' : errorMessage(e); }
+    finally { save.disabled = false; }
+  });
+  const more = surface('Otros ajustes');
+  const ul = el('ul');
+  [['Marca, logo y colores', '/empresas.php'], ['Horarios', '/horarios.php'], ['Festivos', '/festivos.php'], ['Clasificación de apps', '/clasificacion.php'], ['Planes', '/planes.php'], ['Fuentes de datos (AZC One)', '/fuentes.php'], ['Seguridad de cuentas de Windows', '/equipos.php']]
+    .forEach(([t, href]) => { const li = el('li'); const a = el('a', t); a.href = href; li.append(a); ul.append(li); });
+  more.append(ul);
+}
+
+// ---- Festivos -------------------------------------------------------------------------------------------------------
+async function holidaysPage() {
+  const [domains, sources] = await Promise.all([optional(api('GET', '/data-domains')), optional(api('GET', '/data-sources'))]);
+  const ownerId = domains?.data?.find(d => d.domain === 'festivos')?.source_id || null;
+  const owner = ownerId ? (sources?.data?.find(x => x.id === ownerId)?.name || 'una fuente externa') : null;
+  const pageAll = async path => { const out = []; let next = 0; while (next !== null) { const r = await api('GET', `${path}${path.includes('?') ? '&' : '?'}limit=100&offset=${next}`); out.push(...r.data); next = r.next_offset; } return out; };
+  let list = await pageAll('/schedules/holidays');
+  const societies = (await optional(pageAll('/schedules/holiday-societies'))) || [];
+  const sname = new Map(societies.map(s => [s.id, s.name]));
+  const fmt = d => new Intl.DateTimeFormat('es-CO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${d}T00:00:00Z`));
+  const today = new Date().toISOString().slice(0, 10);
+  const render = () => {
+    $('page-content').replaceChildren();
+    const upcoming = list.filter(h => h.day >= today).sort((a, b) => a.day.localeCompare(b.day));
+    kpis([['Festivos registrados', String(list.length)], ['Próximo', upcoming[0] ? `${upcoming[0].name}` : 'Ninguno', upcoming[0] ? fmt(upcoming[0].day) : ''], ['Este año', String(list.filter(h => h.day.slice(0, 4) === today.slice(0, 4)).length)]]);
+    const s = surface('Festivos');
+    s.append(el('p', owner ? `Los festivos llegan de ${owner}.` : 'En un festivo nadie tiene jornada: no cuenta como ausencia ni tardanza. Puede aplicar a toda la empresa o solo a algunas sociedades.', owner ? 'notice' : 'help'));
+    if (!list.length) { empty(s, 'Sin festivos', 'Agrega los festivos del año con "Agregar festivo".'); return; }
+    table(s, 'Festivos', [['Fecha', h => h.day], ['Día', h => fmt(h.day)], ['Festivo', h => h.name], ['Aplica a', h => h.society_ids.length ? h.society_ids.map(id => sname.get(id) || '—').join(', ') : 'Toda la empresa'],
+      ['', h => {
+        if (owner) return '';
+        const box = el('div', undefined, 'actions no-margin');
+        const e = el('button', 'Editar', 'link-button'); e.type = 'button'; e.addEventListener('click', () => editor(h));
+        const d = el('button', 'Quitar', 'link-button'); d.type = 'button'; d.addEventListener('click', async () => { if (!confirm(`¿Quitar ${h.name}?`)) return; try { await api('DELETE', `/schedules/holidays/${h.id}`); list = list.filter(x => x.id !== h.id); render(); done(); } catch (er) { fail(er); } });
+        box.append(e, d); return box;
+      }]], list, { filters: [['Año', h => h.day.slice(0, 4)]] });
+  };
+  const editor = h => {
+    const { dialog, body, ok, show } = dialogShell(h ? `Editar ${h.name}` : 'Agregar festivo');
+    const name = labeled(body, 'Nombre', el('input')); name.maxLength = 160; name.value = h?.name || '';
+    const dayIn = labeled(body, 'Fecha', el('input')); dayIn.type = 'date'; dayIn.value = h?.day || '';
+    let boxes = [];
+    if (societies.length) { body.append(el('p', 'Si no marcas ninguna sociedad, aplica a toda la empresa.', 'help')); boxes = checks(body, societies.map(s => [s.id, s.name]), h?.society_ids || []); }
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); if (!name.value.trim() || !dayIn.value) { show('Escribe el nombre y la fecha.'); return; }
+      ok.disabled = true;
+      const body2 = { name: name.value.trim(), day: dayIn.value, society_ids: boxes.filter(b => b.checked).map(b => b.value) };
+      try { const saved = h ? await api('PUT', `/schedules/holidays/${h.id}`, { body: body2 }) : await api('POST', '/schedules/holidays', { body: body2 }); list = h ? list.map(x => x.id === h.id ? saved : x) : [...list, saved]; dialog.close(); render(); done(); }
+      catch (e) { show(e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
+  const action = $('page-action'); action.textContent = 'Agregar festivo'; action.hidden = !!owner; action.addEventListener('click', () => editor(null));
+  render();
+}
+
+// ---- Apps sospechosas -----------------------------------------------------------------------------------------------
+const SUSPICIOUS_CATEGORY = { remote_desktop: ['Escritorio remoto', 'Controlar otro computador (AnyDesk, TeamViewer…)'], foreign_vpn: ['VPN externa', 'Conectarse a la red de otra empresa'], foreign_workspace: ['Espacio de trabajo externo', 'Herramientas de trabajo de otra empresa'], vm: ['Máquina virtual', 'Otro computador dentro del equipo'] };
+async function suspiciousPage() {
+  const day = o => new Date(Date.now() + o * 864e5).toISOString().slice(0, 10);
+  const pageAll = async path => { const out = []; let next = 0; while (next !== null) { const r = await api('GET', `${path}${path.includes('?') ? '&' : '?'}limit=100&offset=${next}`); out.push(...r.data); next = r.next_offset; } return out; };
+  const devices = (await optional(allPages(`/tenants/${tenant}/devices`))) || []; const host = new Map(devices.map(d => [d.id, d.hostname]));
+  let catalog = await pageAll('/policies/suspicious-apps');
+  let detections = await pageAll(`/reports/suspicious-apps?from=${day(-29)}&to=${day(1)}`);
+  const render = () => {
+    $('page-content').replaceChildren();
+    const people = new Set(detections.map(d => d.user_id));
+    kpis([['Detecciones (30 días)', String(detections.length)], ['Personas', String(people.size)], ['Horas en estas apps', (detections.reduce((s, d) => s + d.active_seconds, 0) / 3600).toFixed(1)], ['Apps vigiladas', String(catalog.filter(c => c.active).length)]]);
+    const s = surface('Detecciones de los últimos 30 días');
+    s.append(el('p', 'Uso de aplicaciones que pueden indicar trabajo para otra empresa o acceso a otro computador. Una detección es una señal para revisar, no una prueba.', 'help'));
+    if (!detections.length) empty(s, 'Sin detecciones', 'Nadie usó apps de la lista en los últimos 30 días.');
+    else table(s, 'Detecciones', [['Día', d => d.day], ['Persona', d => d.display_name], ['Equipo', d => host.get(d.device_id) || '—'], ['Aplicación', d => d.process_name], ['Tiempo', d => `${Math.round(d.active_seconds / 60)} min`],
+      ['Horario', d => d.first_activity ? `${new Date(d.first_activity).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} – ${new Date(d.last_activity).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}` : '—']], detections,
+      { filters: [['Persona', d => d.display_name], ['Aplicación', d => d.process_name]] });
+    const c = surface('Apps que se vigilan');
+    c.append(el('p', 'Si el nombre del programa o el título de su ventana contiene el texto, se registra como detección.', 'help'));
+    table(c, 'Catálogo', [['Contiene', a => a.app_pattern], ['Tipo', a => SUSPICIOUS_CATEGORY[a.category]?.[0] || a.category], ['Descripción', a => a.description || '—'], ['Estado', a => badge(a.active ? 'Vigilada' : 'Pausada', a.active ? 'good' : '')],
+      ['', a => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(a)); return b; }]], catalog);
+    const add = el('button', 'Agregar app a vigilar'); add.type = 'button'; add.addEventListener('click', () => editor(null)); c.append(add);
+  };
+  const editor = a => {
+    const { dialog, body, ok, show } = dialogShell(a ? `Editar ${a.app_pattern}` : 'Agregar app a vigilar');
+    const pat = labeled(body, 'El programa o título contiene', el('input'), 'Ej.: anydesk, teamviewer, VirtualBox'); pat.maxLength = 160; pat.value = a?.app_pattern || '';
+    const cat = el('select'); Object.entries(SUSPICIOUS_CATEGORY).forEach(([v, [t, d]]) => cat.append(new Option(`${t} — ${d}`, v))); cat.value = a?.category || 'remote_desktop'; labeled(body, 'Tipo', cat);
+    const desc = labeled(body, 'Descripción (opcional)', el('input')); desc.maxLength = 255; desc.value = a?.description || '';
+    const act = el('input'); act.type = 'checkbox'; act.checked = a ? a.active : true; const al = el('label', undefined, 'check'); al.append(act, ' Vigilar'); body.append(al);
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); if (!pat.value.trim()) { show('Escribe el texto a vigilar.'); return; }
+      ok.disabled = true;
+      const b = { app_pattern: pat.value.trim(), category: cat.value, description: desc.value.trim(), active: act.checked };
+      try { const saved = a ? await api('PUT', `/policies/suspicious-apps/${a.id}`, { body: b }) : await api('POST', '/policies/suspicious-apps', { body: b }); catalog = a ? catalog.map(x => x.id === a.id ? saved : x) : [...catalog, saved]; dialog.close(); render(); done(); }
+      catch (e) { show(e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
+  render();
+}
+
 // ---- Roles y permisos -------------------------------------------------------------------------------------------
 async function rolesPage() {
   const session = readSession();
@@ -1347,6 +1703,14 @@ async function start() {
     else if (page === 'doors') await doorsPage();
     else if (page === 'absences') await absencesPage();
     else if (page === 'classification') await classificationPage();
+    else if (page === 'policies') await policiesPage();
+    else if (page === 'tiers') await tiersPage();
+    else if (page === 'audit') await auditPage();
+    else if (page === 'client-logs') await logsPage();
+    else if (page === 'server-health') await healthPage();
+    else if (page === 'panel-settings') await settingsPage();
+    else if (page === 'holidays') await holidaysPage();
+    else if (page === 'suspicious-apps') await suspiciousPage();
     else if (page === 'tenants') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await tenantsPage(); }
     done();
   } catch (e) {

@@ -2643,6 +2643,16 @@ paths:
       - $ref: '#/components/parameters/Limit'
       - $ref: '#/components/parameters/From'
       - $ref: '#/components/parameters/To'
+      - name: actor_type
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - admin
+          - device
+          - integration
+          - system
       x-permission: auditoria.ver
   /integrations:
     get:
@@ -4435,6 +4445,21 @@ paths:
           - info
           - warn
           - error
+      - name: component
+        in: query
+        schema:
+          type: string
+          maxLength: 80
+      - name: code
+        in: query
+        schema:
+          type: string
+          maxLength: 100
+      - name: since
+        in: query
+        schema:
+          type: string
+          format: date
       x-permission: operacion.logs
   /tenants/server-health:
     get:
@@ -13952,6 +13977,21 @@ components:
       required:
       - install_coverage_heartbeat_days
       properties:
+        raw_days:
+          type: integer
+          minimum: 30
+          maximum: 3650
+          description: Días que se guarda el detalle de ventanas y aplicaciones.
+        aggregate_months:
+          type: integer
+          minimum: 1
+          maximum: 120
+          description: Meses que se guardan los resúmenes diarios (productividad, presencia).
+        log_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: Días que se guardan los registros técnicos de los equipos.
         install_coverage_heartbeat_days:
           type: integer
           minimum: 1
@@ -16336,6 +16376,18 @@ components:
       - outcome
       - changed_fields
       properties:
+        actor_name:
+          anyOf:
+          - type: string
+            maxLength: 254
+          - type: 'null'
+          description: Quién (correo o nombre de la cuenta, equipo o integración).
+        resource_name:
+          anyOf:
+          - type: string
+            maxLength: 254
+          - type: 'null'
+          description: Sobre qué (nombre del equipo, persona, rol...), si tiene nombre.
         id:
           type: string
           format: uuid

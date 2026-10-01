@@ -1,4 +1,4 @@
 <?php
 declare(strict_types=1);
-$page = 'tiers'; $title = 'Tiers'; $surface = 'admin';
-require dirname(__DIR__) . '/partials/layout.php';
+// Planes se administran ahora por empresa en /planes.php.
+header('Location: /planes.php', true, 301);

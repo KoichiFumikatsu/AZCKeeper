@@ -157,14 +157,14 @@ function adminTests(Database $db): void
     expect(adminRequest($admin,'PUT',$futurePath,$futureBody,['if-match'=>'"'.$nextFuture['version'].'"']),200,'later subscription preserves gap');
     check($db->one('SELECT ends_at FROM subscriptions WHERE tenant_id=? AND id=?',[$tenant,Util::bin($nextFuture['id'])])['ends_at']===Util::sqlTime($nextFuture['ends_at']),'finite subscription never extended');
     $v1=(int)$db->one('SELECT MAX(policy_version) v FROM effective_policies WHERE tenant_id=? AND device_id=?',[$tenant,Util::bin($device)])['v'];
-    $policyBody=['name'=>'Web policy','target_type'=>'tenant','target_id'=>$tid,'enabled'=>true,'rules'=>[compilerRule()]];
+    $policyBody=['name'=>'Web policy','target_type'=>'tenant','target_id'=>$tid,'enabled'=>true,'rules'=>[compilerRule('deny',['example.test'],0,'web')]];
     $policy=expect(adminRequest($admin,'POST','/policies',$policyBody),201,'create policy compiles');
     $v2=(int)$db->one('SELECT MAX(policy_version) v FROM effective_policies WHERE tenant_id=? AND device_id=?',[$tenant,Util::bin($device)])['v']; check($v2>$v1,'policy save raises effective version');
     expect(adminRequest($admin,'GET','/policies'),200,'list policies'); expect(adminRequest($admin,'GET','/policies/'.$policy['id']),200,'get policy');
     $policyBody['rules'][0]->targets=['another.example.test'];
     $policy=expect(adminRequest($admin,'PATCH','/policies/'.$policy['id'],$policyBody,['if-match'=>'"1"']),200,'new immutable policy revision');
     $v3=(int)$db->one('SELECT MAX(policy_version) v FROM effective_policies WHERE tenant_id=? AND device_id=?',[$tenant,Util::bin($device)])['v']; check($v3>$v2,'policy edit recompiles');
-    $conflict=$policyBody; $conflict['rules'][]=compilerRule('allow',['another.example.test']);
+    $conflict=$policyBody; $conflict['rules'][]=compilerRule('allow',['another.example.test'],0,'web');
     expect(adminRequest($admin,'PATCH','/policies/'.$policy['id'],$conflict,['if-match'=>'"2"']),409,'conflicting policy rolls back');
     check((int)$db->one('SELECT version FROM policy_documents WHERE tenant_id=? AND id=?',[$tenant,Util::bin($policy['id'])])['version']===2,'invalid policy did not commit');
     check((int)$db->one('SELECT COUNT(*) n FROM policy_versions WHERE tenant_id=? AND policy_id=?',[$tenant,Util::bin($policy['id'])])['n']===2,'policy versions retained');

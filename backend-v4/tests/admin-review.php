@@ -70,11 +70,11 @@ function adminReviewTests(Database $db, array $admin, array $base, array $member
         $api = new AdminApi($db, $context, adminReviewRequest('/policies', 'POST'), $validator);
         $validateRules = new ReflectionMethod(AdminApi::class, 'validateRules');
         foreach (['panel.azc.com', '*.azc.com', 'azc.com', 'AZC.COM', 'com'] as $target) {
-            try { $validateRules->invoke($api, [compilerRule('deny', [$target])]); check(false, 'management host ancestor must be rejected'); }
+            try { $validateRules->invoke($api, [compilerRule('deny', [$target], 0, 'web')]); check(false, 'management host ancestor must be rejected'); }
             catch (ApiError $e) { check($e->status === 422, 'bare and wildcard host ancestors rejected'); }
         }
-        foreach (['otherazc.com', 'azc.com.example.test', 'other.azc.com'] as $target) { $validateRules->invoke($api, [compilerRule('deny', [$target])]); }
-        $validateRules->invoke($api, [compilerRule('allow', ['azc.com'])]);
+        foreach (['otherazc.com', 'azc.com.example.test', 'other.azc.com'] as $target) { $validateRules->invoke($api, [compilerRule('deny', [$target], 0, 'web')]); }
+        $validateRules->invoke($api, [compilerRule('allow', ['azc.com'], 0, 'web')]);
         check(true, 'host guard preserves unrelated domains and allow rules');
     } finally { putenv($savedOrigin === false ? 'KEEPER_ORIGIN' : 'KEEPER_ORIGIN=' . $savedOrigin); }
 

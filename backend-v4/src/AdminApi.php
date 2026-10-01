@@ -663,11 +663,46 @@ final class AdminApi
     {
         $this->access->requireFull(); [$from,$to]=$this->dates(366);
         $zone=new \DateTimeZone($this->c['timezone']); $start=Util::sqlTime((new \DateTimeImmutable($from,$zone))->format('c')); $end=Util::sqlTime((new \DateTimeImmutable($to,$zone))->format('c'));
-        return $this->page('SELECT * FROM audit_log WHERE tenant_id=? AND at>=? AND at<?',[$this->tenant,$start,$end],static function($r) {
+        // Filtro opcional por tipo de actor: el registro es casi todo automatico (reportes del agente, compilaciones).
+        $actor=$_GET['actor_type']??null; $extra=$actor===null?'':' AND actor_type=?';
+        $names=[];
+        return $this->page('SELECT * FROM audit_log WHERE tenant_id=? AND at>=? AND at<?'.$extra,$actor===null?[$this->tenant,$start,$end]:[$this->tenant,$start,$end,$actor],function($r) use (&$names) {
             $out=[]; foreach (['id','tenant_id','actor_id','resource_id','request_id'] as $f) { $out[$f]=Util::id($r[$f]); }
             foreach (['actor_type','action','resource_type','outcome'] as $f) { $out[$f]=$r[$f]; }
-            return $out+['at'=>Util::time($r['at']),'changed_fields'=>json_decode($r['changed_fields'])];
+            $actorKey='a'.$r['actor_id']; $resKey=$r['resource_type'].$r['resource_id'];
+            $names[$actorKey]??=$this->auditActor($r); $names[$resKey]??=$this->auditResource($r['resource_type'],$r['resource_id']);
+            return $out+['at'=>Util::time($r['at']),'changed_fields'=>json_decode($r['changed_fields']),'actor_name'=>$names[$actorKey],'resource_name'=>$names[$resKey]];
         },'at');
+    }
+    /** Quien hizo la accion, en palabras: correo de la cuenta, nombre del equipo o de la integracion. */
+    private function auditActor(array $r): ?string
+    {
+        $p=$this->db->one('SELECT * FROM principals WHERE tenant_id=? AND id=?',[$r['tenant_id'],$r['actor_id']]);
+        if (!$p) { return null; }
+        return match ($p['kind']) {
+            'admin'=>$this->db->one('SELECT COALESCE(u.display_name,a.display_name,a.email) n FROM admin_accounts a LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.user_id WHERE a.tenant_id=? AND a.id=?',[$p['admin_tenant_id'],$p['admin_id']])['n']??null,
+            'device'=>$this->db->one('SELECT hostname n FROM devices WHERE tenant_id=? AND id=?',[$p['tenant_id'],$p['device_id']])['n']??null,
+            'integration'=>$this->db->one('SELECT name n FROM integrations WHERE tenant_id=? AND id=?',[$p['tenant_id'],$p['integration_id']])['n']??null,
+            default=>'Keeper (automático)',
+        };
+    }
+    /** Sobre que se hizo, en palabras (cuando el recurso tiene nombre). */
+    private function auditResource(string $type,string $id): ?string
+    {
+        // [consulta, argumentos]: los recursos de la empresa se buscan con su tenant; cuentas y versiones son globales.
+        $q=match ($type) {
+            'device'=>['SELECT hostname n FROM devices WHERE tenant_id=? AND id=?',[$this->tenant,$id]],
+            'user'=>['SELECT display_name n FROM users WHERE tenant_id=? AND id=?',[$this->tenant,$id]],
+            'role'=>['SELECT name n FROM roles WHERE tenant_id=? AND id=?',[$this->tenant,$id]],
+            'org_unit'=>['SELECT name n FROM org_units WHERE tenant_id=? AND id=?',[$this->tenant,$id]],
+            'schedule'=>['SELECT name n FROM schedules WHERE tenant_id=? AND id=?',[$this->tenant,$id]],
+            'tenant'=>['SELECT name n FROM tenants WHERE tenant_id=?',[$id]],
+            'admin_account'=>['SELECT email n FROM admin_accounts WHERE id=?',[$id]],
+            'release'=>['SELECT version n FROM client_releases WHERE id=?',[$id]],
+            default=>null,
+        };
+        if ($q===null) { return null; }
+        try { return $this->db->one($q[0],$q[1])['n']??null; } catch (\Throwable) { return null; }
     }
     private function scheduleDto(array $r): array
     {

@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 use Keeper\{Database, PolicyCompiler, PolicyComposer, PolicyConflict, Util, Validator};
 
-function compilerRule(string $effect = 'deny', array $targets = ['example.test'], int $priority = 0, string $kind = 'web', ?string $schedule = null): object
+function compilerRule(string $effect = 'deny', array $targets = ['example.test'], int $priority = 0, string $kind = 'installation', ?string $schedule = null): object
 {
     return (object) ['id' => Util::uuid(), 'kind' => $kind, 'effect' => $effect, 'targets' => $targets, 'schedule_id' => $schedule, 'priority' => $priority];
 }
