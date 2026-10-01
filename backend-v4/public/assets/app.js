@@ -1,4 +1,5 @@
 import { api, ApiError, PLATFORM_TENANT, isUuid, setTenant, saveSession, readSession, refreshCsrf, goToLogin, errorMessage } from './api.js';
+import { applyNavAccess } from './nav-access.js';
 import { coordinator } from './coordinator.js';
 import './tablekit.js';
 import { operations, operationPaths } from './operations.js';
@@ -506,6 +507,7 @@ async function context() {
   }
   if ($('group-group')) $('group-group').hidden = !(session.group?.tenants?.length > 1);
   setTenant(tenant);
+  applyNavAccess(); // menu segun los permisos de la cuenta en esta empresa
   try {
     const company = await get(`/tenants/${tenant}`);
     timezone = company.timezone;

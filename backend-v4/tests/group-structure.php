@@ -126,3 +126,26 @@ function tenantArchiveTests(Database $db): void
     check(adminRequest($mine, 'POST', '/organization', ['kind' => 'site', 'name' => 'Nueva', 'parent_id' => null, 'active' => true])[0] === 201, 'writable again');
     echo 'PASS tenant archive (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+// Menu segun permisos: /me/access devuelve permisos y alcances; cada item del menu tiene su regla (2026-10-01).
+function myAccessTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db);
+    $admin = adminFixture($db, $u, ['usuarios.ver', 'festivos.ver'], false, 'area', [$u['area_id']]);
+    $mine = expect(adminRequest($admin, 'GET', '/me/access'), 200, 'my access');
+    $codes = array_column($mine['permissions'], 'scopes', 'code');
+    check($mine['platform'] === false && isset($codes['usuarios.ver'], $codes['festivos.ver']) && !isset($codes['reglas.ver']), 'only granted permissions');
+    check($codes['festivos.ver'] === ['area'], 'scope reported (festivos needs whole company, so the menu hides it)');
+    $platform = sharedPlatform($db); $platform['tenant'] = $u['tenant_id'];
+    check(expect(adminRequest($platform, 'GET', '/me/access'), 200, 'platform access')['platform'] === true, 'platform sees everything');
+    // Guardia: todo item de empresa del menu tiene regla y apunta a un permiso que existe.
+    $js = file_get_contents(dirname(__DIR__) . '/public/assets/nav-access.js');
+    preg_match_all("/'?([a-z-]+)'?: \['([a-z_.]+)', (true|false)\]/", $js, $m, PREG_SET_ORDER);
+    $rules = []; foreach ($m as $x) { $rules[$x[1]] = $x[2]; }
+    foreach ($rules as $key => $code) { check((bool) $db->one('SELECT code FROM permissions WHERE code=?', [$code]), "menu $key uses existing permission $code"); }
+    preg_match_all("/\['([a-z-]+)', '[^']+', '\/[^']*'/", file_get_contents(dirname(__DIR__) . '/public/partials/sidebar.php'), $s);
+    $platformKeys = ['platform-home', 'tenants', 'releases', 'server-health', 'group', 'home'];
+    foreach (array_diff($s[1], $platformKeys) as $key) { check(isset($rules[$key]), "menu item $key has a permission rule"); }
+    echo 'PASS my access (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}

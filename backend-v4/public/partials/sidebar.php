@@ -25,7 +25,7 @@ $h = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 require_once __DIR__ . '/brand.php';
 $link = static function (array $l, bool $probeSurface) use ($current, $h): string {
     [$key, $text, $url] = $l; $probe = ($l[3] ?? true) && $probeSurface && $key !== 'platform-home';
-    return '      <a class="nav-link" href="' . $h($url) . '"' . ($probe ? ' data-nav="' . $h($key) . '"' : '') . ($key === $current ? ' aria-current="page"' : '') . '><span class="nav-label">' . $h($text) . "</span></a>\n";
+    return '      <a class="nav-link" data-key="' . $h($key) . '" href="' . $h($url) . '"' . ($probe ? ' data-nav="' . $h($key) . '"' : '') . ($key === $current ? ' aria-current="page"' : '') . '><span class="nav-label">' . $h($text) . "</span></a>\n";
 };
 ?>
 <aside class="sidebar" id="sidebar" aria-label="Navegación lateral">

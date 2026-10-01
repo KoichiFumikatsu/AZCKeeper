@@ -1,5 +1,5 @@
 {
-  "source_sha256": "bed71e7d3928de48a3f80b12354d02767093e91b80064e4beebf2a8bb0accdf8",
+  "source_sha256": "4b83d79349326310b026818012aad8f855efba63fd89f207cf85528dcdc209d2",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -2570,6 +2570,64 @@
         },
         "x-permission": "usuarios.crear",
         "x-max-body-bytes": 65536
+      }
+    },
+    "/me/access": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "getMyAccess",
+        "summary": "getMyAccess",
+        "description": "Permisos y alcances de la cuenta en la empresa elegida. El panel lo usa para mostrar solo los modulos que la cuenta puede abrir. No exige un permiso propio; la API sigue validando cada operacion.",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesion.",
+        "x-resources": [
+          "MyAccess"
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "200": {
+            "description": "Permisos de la cuenta",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyAccess"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "x-permission": "sesion"
       }
     },
     "/organization": {
@@ -23504,6 +23562,51 @@
           "items": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      }
+    },
+    "MyAccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "permissions"
+      ],
+      "properties": {
+        "platform": {
+          "type": "boolean"
+        },
+        "permissions": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "scopes"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "scopes": {
+                "type": "array",
+                "maxItems": 5,
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "tenant",
+                    "area",
+                    "site",
+                    "self",
+                    "team"
+                  ]
+                }
+              }
+            }
           }
         }
       }

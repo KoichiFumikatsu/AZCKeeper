@@ -13,6 +13,8 @@ final class AdminApi
         $this->tenant=$c['tenant_id'];
         if (($r->operation['x-platform-only'] ?? false) && !$c['platform']) { throw new ApiError(403,'permission_denied'); }
         $permission=$r->operation['x-permission'];
+        // Permisos de la propia cuenta (menu del panel): cualquier sesion valida de la empresa los puede leer.
+        if ($r->operation['operationId']==='getMyAccess') { return; }
         if ($r->operation['operationId']==='createDeviceCommand') {
             $permission=match($r->body->type) { 'lock'=>'equipos.bloquear','unlock'=>'equipos.desbloquear','restart'=>'equipos.reiniciar','shutdown'=>'equipos.apagar','wipe'=>'equipos.borrar','refresh_policy'=>'reglas.aplicar','rename_computer'=>'equipos.editar',default=>throw new ApiError(422,'validation_failed') };
         }
@@ -141,6 +143,7 @@ final class AdminApi
             'listAbsences','createAbsence','patchAbsence'=>(new Absences($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listDoors','createDoor','patchDoor','getDoorQuarantine'=>(new DoorsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
+            'getMyAccess'=>$this->myAccess(),
             'listCompanyGroups','createCompanyGroup','patchCompanyGroup','deleteCompanyGroup'=>(new CompanyGroups($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
             'listDataSources','createDataSource','patchDataSource','getDataDomains','putDataDomains','runDataSource','listSyncRuns','listSyncItems','approveSyncRun','listPendingSyncItems','resolveSyncItem'=>(new DataSources($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getProductivity'=>$this->report(), 'listAudit'=>$this->auditPage(),
@@ -372,6 +375,22 @@ final class AdminApi
         if ($op!=='setUserRoles') { RoleRules::apply($this->db,$this->tenant); }
         $this->audit('user',$id,array_keys(get_object_vars($b))); $this->dirty($this->userDevices($id));
         return $this->result($this->userDto($this->row('users',$id)),$op==='createUser'?201:200);
+    }
+    /** Permisos efectivos y sus alcances, con las mismas reglas que AdminAccess (roles de la persona o roles de grupo). */
+    private function myAccess(): array
+    {
+        if ($this->c['platform']) {
+            $rows=array_map(fn($x)=>['code'=>$x['code'],'scopes'=>['tenant']],$this->db->run('SELECT code FROM permissions ORDER BY code')->fetchAll());
+            return self::response(['platform'=>true,'permissions'=>$rows]);
+        }
+        if (($this->c['group_id']??null)!==null && $this->c['tenant_id']!==$this->c['admin_tenant_id']) {
+            $grants=$this->db->run('SELECT p.permission_code code,r.scope_kind FROM admin_account_roles g JOIN roles r ON r.tenant_id=g.tenant_id AND r.id=g.role_id AND r.active=TRUE JOIN role_permissions p ON p.tenant_id=r.tenant_id AND p.role_id=r.id JOIN permissions m ON m.code=p.permission_code AND m.platform_only=FALSE WHERE g.admin_tenant_id=? AND g.admin_id=? AND g.tenant_id=?',[$this->c['admin_tenant_id'],$this->c['admin_id'],$this->tenant])->fetchAll();
+        } else {
+            $grants=$this->c['user_id']===null?[]:$this->db->run('SELECT p.permission_code code,r.scope_kind FROM user_roles u JOIN roles r ON r.tenant_id=u.tenant_id AND r.id=u.role_id AND r.active=TRUE JOIN role_permissions p ON p.tenant_id=r.tenant_id AND p.role_id=r.id JOIN permissions m ON m.code=p.permission_code AND m.platform_only=FALSE WHERE u.tenant_id=? AND u.user_id=?',[$this->tenant,$this->c['user_id']])->fetchAll();
+        }
+        $by=[]; foreach ($grants as $g) { $by[$g['code']][$g['scope_kind']]=true; }
+        ksort($by);
+        return self::response(['platform'=>false,'permissions'=>array_map(fn($code)=>['code'=>$code,'scopes'=>array_keys($by[$code])],array_keys($by))]);
     }
     private function placeholderFirm(): string
     {

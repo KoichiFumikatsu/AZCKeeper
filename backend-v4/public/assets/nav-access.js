@@ -1,0 +1,34 @@
+import { api } from './api.js';
+
+// Menu segun permisos (Koichi 2026-10-01): un modulo que la cuenta no puede abrir no se muestra. Cada pantalla pide
+// un permiso y, varias, alcance "toda la empresa" (la API exige requireFull). La API sigue validando todo: esto solo
+// evita mostrar lo que daria "sin permiso".
+const NEEDS = {
+  sites: ['organizacion.ver', true], users: ['usuarios.ver', false], devices: ['equipos.ver', false], reports: ['reportes.ver', false],
+  intake: ['equipos.enrolar', true], organization: ['organizacion.ver', true], schedules: ['horarios.ver', true], holidays: ['festivos.ver', true],
+  absences: ['presencia.ver', false], doors: ['organizacion.ver', true], assignments: ['equipos.asignar', false], policies: ['reglas.ver', true],
+  classification: ['reportes.ver', true], tiers: ['tiers.ver', true], 'suspicious-apps': ['cumplimiento.ver', true], 'dual-job': ['cumplimiento.ver', false],
+  coverage: ['cobertura.ver', false], accounts: ['usuarios.editar', true], roles: ['roles.ver', true], sources: ['integraciones.ver', true],
+  audit: ['auditoria.ver', true], 'client-logs': ['operacion.logs', false], 'panel-settings': ['operacion.ajustes_ver', true],
+};
+
+export function allowed(access, key) {
+  const need = NEEDS[key];
+  if (!need || access.platform) return true;
+  const grant = access.permissions.find(p => p.code === need[0]);
+  return !!grant && (!need[1] || grant.scopes.includes('tenant'));
+}
+
+export async function applyNavAccess() {
+  let access;
+  try { access = await api('GET', '/me/access'); } catch { return null; }
+  for (const link of document.querySelectorAll('#navigation a[data-key]')) {
+    if (link.closest('#platform-group, #group-group')) continue;
+    link.hidden = !allowed(access, link.dataset.key);
+  }
+  for (const group of document.querySelectorAll('#navigation .nav-group')) {
+    if (group.id === 'platform-group' || group.id === 'group-group') continue;
+    group.hidden = ![...group.querySelectorAll('a[data-key]')].some(a => !a.hidden);
+  }
+  return access;
+}
