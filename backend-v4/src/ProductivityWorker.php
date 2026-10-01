@@ -89,8 +89,8 @@ final class ProductivityWorker
                     IF($expected=0 OR COALESCE(s.first_at,e.first_at) IS NULL,NULL,GREATEST(0,TIMESTAMPDIFF(SECOND,c.work_start,COALESCE(s.first_at,e.first_at)))),
                     s.work_active,s.work_idle,s.lunch_active,s.lunch_idle,s.after_active,s.after_idle,s.samples,s.utc_offset
                     FROM user_assignments u JOIN activity_calendar c ON c.schedule_id=u.schedule_id
-                    LEFT JOIN (SELECT user_id,user_assignment_id,SUM(active) active,SUM(idle) idle,SUM(calls) calls,SUM(IF(category='productive',active,0)) productive,
-                      MIN(IF(active>0,first_at,NULL)) first_at,MAX(IF(active>0,last_at,NULL)) last_at FROM activity_segments GROUP BY user_id,user_assignment_id) e ON e.user_assignment_id=u.id AND e.user_id=u.user_id
+                    LEFT JOIN (SELECT user_id,SUM(active) active,SUM(idle) idle,SUM(calls) calls,SUM(IF(category='productive',active,0)) productive,
+                      MIN(IF(active>0,first_at,NULL)) first_at,MAX(IF(active>0,last_at,NULL)) last_at FROM activity_segments GROUP BY user_id) e ON e.user_id=u.user_id
                     LEFT JOIN (SELECT user_id,SUM(active_seconds) active,SUM(idle_seconds) idle,SUM(call_seconds) calls,
                       MIN(first_activity_at) first_at,MAX(last_activity_at) last_at,SUM(sample_count) samples,MIN(utc_offset_minutes) utc_offset,
                       -- Si algun dispositivo no reporta el desglose, el reparto del dia queda
@@ -103,13 +103,17 @@ final class ProductivityWorker
                       IF(COUNT(*)=COUNT(after_hours_idle_seconds),SUM(after_hours_idle_seconds),NULL) after_idle
                       FROM activity_snapshots WHERE tenant_id=? AND day=? GROUP BY user_id) s ON s.user_id=u.user_id
                     WHERE u.tenant_id=? AND u.starts_at<c.ends_at AND (u.ends_at IS NULL OR u.ends_at>c.starts_at)
-                      AND NOT EXISTS (SELECT 1 FROM day_summary old WHERE old.tenant_id=u.tenant_id AND old.day=c.day AND old.user_assignment_id=u.id)",[$tenant,$day,self::VERSION,$through,$tenant,$day,$tenant]);
+                      -- Un dia = una fila por persona, en la ULTIMA asignacion que toca el dia (misma regla que la importacion
+                      -- de K3). Antes cada asignacion del dia recibia el total del snapshot y un cambio de ficha duplicaba horas.
+                      AND NOT EXISTS (SELECT 1 FROM user_assignments later WHERE later.tenant_id=u.tenant_id AND later.user_id=u.user_id AND later.starts_at>u.starts_at AND later.starts_at<c.ends_at)
+                      AND NOT EXISTS (SELECT 1 FROM day_summary old WHERE old.tenant_id=u.tenant_id AND old.day=c.day AND old.user_id=u.user_id)",[$tenant,$day,self::VERSION,$through,$tenant,$day,$tenant]);
                 $this->db->run('INSERT INTO focus_daily (tenant_id,day,user_id,user_assignment_id,focus_seconds,focus_score,context_switches,deep_work_seconds,distraction_seconds,calculation_version,calculated_at,data_through,first_activity_time,scheduled_start,punctuality_minutes,productivity_pct,constancy_pct,deep_work_sessions,longest_focus_streak_seconds)
                     SELECT d.tenant_id,d.day,d.user_id,d.user_assignment_id,COALESCE(f.focus_seconds,0),100*f.focus_seconds/NULLIF(d.active_seconds,0),COALESCE(f.context_switches,0),COALESCE(f.deep_work_seconds,0),COALESCE(f.distraction_seconds,0),?,UTC_TIMESTAMP(6),?,
                       TIME(d.first_activity+INTERVAL c.utc_offset SECOND),c.start_local,IF(d.expected_seconds=0,NULL,TIMESTAMPDIFF(MINUTE,d.first_activity,c.work_start)),
                       100*d.productive_seconds/NULLIF(d.active_seconds+d.idle_seconds,0),NULL,COALESCE(f.deep_work_sessions,0),COALESCE(f.longest_focus_streak_seconds,0)
                     FROM day_summary d JOIN user_assignments u ON u.tenant_id=d.tenant_id AND u.id=d.user_assignment_id JOIN activity_calendar c ON c.schedule_id=u.schedule_id
-                    LEFT JOIN activity_focus f ON f.user_id=d.user_id AND f.user_assignment_id=d.user_assignment_id WHERE d.tenant_id=? AND d.day=?
+                    LEFT JOIN (SELECT user_id,SUM(focus_seconds) focus_seconds,SUM(context_switches) context_switches,SUM(deep_work_seconds) deep_work_seconds,SUM(distraction_seconds) distraction_seconds,
+                      SUM(deep_work_sessions) deep_work_sessions,MAX(longest_focus_streak_seconds) longest_focus_streak_seconds FROM activity_focus GROUP BY user_id) f ON f.user_id=d.user_id WHERE d.tenant_id=? AND d.day=?
                     AND NOT EXISTS (SELECT 1 FROM focus_daily old WHERE old.tenant_id=d.tenant_id AND old.day=d.day AND old.user_assignment_id=d.user_assignment_id)',[self::VERSION,$through,$tenant,$day]);
                 $this->constancy($tenant,$day);
                 (new ComplianceWorker($this->db))->calculate($tenant,$day);

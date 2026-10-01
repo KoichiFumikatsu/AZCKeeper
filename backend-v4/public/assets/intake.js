@@ -257,7 +257,7 @@ async function keysAndSettings(content, tenant, rerender) {
   });
 
   s.append(el('h3', 'Claves de alta'));
-  const keys = await api('GET', '/enrollments/keys?limit=100', { tenant });
+  const keys = await api('GET', '/enrollments/keys', { tenant });
   const active = keys.data.filter(k => !k.revoked_at);
   if (!keys.data.length) s.append(el('p', 'Aún no hay clave de alta: créala para generar el paquete genérico de la empresa.', 'empty-state'));
   else {
