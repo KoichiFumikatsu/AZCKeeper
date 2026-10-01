@@ -97,6 +97,8 @@ export function errorMessage(error) {
     invalid_response: 'La API devolvió una respuesta inválida.',
   };
   let message = messages[error.code];
+  // Dato gestionado por una fuente externa (One, BD de cliente): se cambia en la fuente, no en Keeper.
+  if (error.problem?.detail === 'managed_by_source') message = 'Esto lo gestiona una fuente externa (ver Fuentes de datos): cámbialo en la fuente y se actualizará aquí.';
   if (!message) {
     if (error.status === 401) message = 'Tu sesión venció. Inicia sesión de nuevo.';
     else if (error.status === 403) message = 'No tienes permiso para consultar esta información.';

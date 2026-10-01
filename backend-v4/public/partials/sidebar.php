@@ -11,7 +11,7 @@ $portal = [
         ['intake', 'Alta de equipos', '/alta.php'], ['devices', 'Equipos', '/equipos.php'], ['reports', 'Productividad', '/reportes.php']],
     'Gestión avanzada' => [['policies', 'Reglas', '/reglas.php'], ['organization', 'Organización', '/organizacion.php', false],
         ['assignments', 'Asignaciones', '/asignaciones.php', false], ['accounts', 'Cuentas del panel', '/cuentas.php', false],
-        ['roles', 'Roles y permisos', '/roles.php', false], ['schedules', 'Horarios', '/horarios.php', false], ['holidays', 'Festivos', '/festivos.php'], ['dual-job', 'Doble empleo', '/doble-empleo.php'],
+        ['roles', 'Roles y permisos', '/roles.php', false], ['sources', 'Fuentes de datos', '/fuentes.php', false], ['schedules', 'Horarios', '/horarios.php', false], ['holidays', 'Festivos', '/festivos.php'], ['dual-job', 'Doble empleo', '/doble-empleo.php'],
         ['suspicious-apps', 'Apps sospechosas', '/apps-sospechosas.php'], ['coverage', 'Cobertura', '/cobertura.php']],
 ];
 $platform = [['platform-home', 'Resumen de plataforma', '/admin/'], ['tenants', 'Empresas', '/empresas.php', false], ['tiers', 'Planes (tiers)', '/admin/tiers.php'],

@@ -494,8 +494,11 @@ async function patient(fn) {
   }
 }
 async function people() {
-  const [users, org, schedules] = await Promise.all([allPages('/users'), allPages('/organization'), optional(allPages('/schedules'))]);
+  const [users, org, schedules, domains, sources] = await Promise.all([allPages('/users'), allPages('/organization'), optional(allPages('/schedules')), optional(api('GET', '/data-domains')), optional(api('GET', '/data-sources'))]);
   let list = users; const n = names(org);
+  // Si una fuente (p. ej. AZC One) manda en "personas", aqui no se crean ni editan: se cambian en la fuente.
+  const ownerId = domains?.data?.find(d => d.domain === 'personas')?.source_id || null;
+  const owner = ownerId ? (sources?.data?.find(x => x.id === ownerId)?.name || 'una fuente externa') : null;
   const units = kind => org.filter(o => o.kind === kind && o.active).sort((a, b) => a.name.localeCompare(b.name, 'es'));
   const fallback = kind => { const u = units(kind); return u.length === 1 ? u[0] : u.find(o => fold(o.name).startsWith('sin ')) || null; };
   const scheduleList = (schedules || []).sort((a, b) => a.name.localeCompare(b.name, 'es'));
@@ -506,16 +509,19 @@ async function people() {
       ['Con cédula', String(list.filter(u => u.document).length), 'La usa el alta de equipos para saber de quién es el PC'],
       ['Con cuenta del panel', String(list.filter(u => u.panel_login_enabled).length)]]);
     const s = surface('Personas de la empresa');
-    const tools = el('div', undefined, 'actions no-margin');
-    const imp = el('button', 'Importar desde CSV'); imp.type = 'button'; imp.addEventListener('click', importer);
-    const tpl = el('button', 'Descargar plantilla CSV'); tpl.type = 'button'; tpl.addEventListener('click', template);
-    tools.append(imp, tpl); s.append(tools);
+    if (owner) s.append(el('p', `Las personas las gestiona ${owner}: las altas, cambios y retiros se hacen allá y llegan solos. Solo las que no vienen de ${owner} se editan aquí.`, 'notice'));
+    else {
+      const tools = el('div', undefined, 'actions no-margin');
+      const imp = el('button', 'Importar desde CSV'); imp.type = 'button'; imp.addEventListener('click', importer);
+      const tpl = el('button', 'Descargar plantilla CSV'); tpl.type = 'button'; tpl.addEventListener('click', template);
+      tools.append(imp, tpl); s.append(tools);
+    }
     if (!list.length) { empty(s, 'Aún no hay personas', 'Créalas una a una con "Crear persona" o impórtalas desde un CSV (descarga la plantilla).'); return; }
     table(s, 'Personas', [
       ['Nombre', u => { const a = el('a', u.display_name); a.href = `/miembro.php?id=${encodeURIComponent(u.id)}`; const d = el('div'); d.append(a); if (u.email) d.append(el('small', u.email)); return d; }],
       ['Cédula', u => u.document || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'],
       ['Estado', u => badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : '')],
-      ['Acciones', u => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(u)); return b; }]],
+      ['Acciones', u => { if (u.managed_by) return el('small', `Gestionada por ${u.managed_by}`); const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(u)); return b; }]],
       list, { filters: [['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']] });
   };
   const editor = u => {
@@ -622,7 +628,7 @@ async function people() {
     });
     dialog.showModal();
   };
-  const action = $('page-action'); action.textContent = 'Crear persona'; action.hidden = false; action.addEventListener('click', () => editor(null));
+  const action = $('page-action'); action.textContent = 'Crear persona'; action.hidden = !!owner; action.addEventListener('click', () => editor(null));
   render();
 }
 
@@ -703,6 +709,161 @@ async function schedulesPage() {
     dialog.showModal();
   };
   const action = $('page-action'); action.textContent = 'Crear horario'; action.hidden = false; action.addEventListener('click', () => editor(null));
+  render();
+}
+
+// ---- Fuentes de datos -------------------------------------------------------------------------------------------
+const DOMAIN_LABELS = { firmas: 'Firmas', sedes: 'Sedes', areas: 'Áreas', cargos: 'Cargos', horarios: 'Horarios', festivos: 'Festivos', personas: 'Personas',
+  jerarquia: 'Jerarquía (a quién reporta)', ausencias: 'Ausencias de RR. HH.' };
+const RUN_STATUS = { applied: ['Aplicada', 'good'], simulated: ['Simulación', 'info'], blocked: ['Bloqueada: requiere aprobación', 'warn'], failed: ['Falló', 'bad'], running: ['En curso', ''] };
+const BLOCK_REASONS = { too_many_deactivations: 'Iba a retirar a más personas de las permitidas de una sola vez.', list_too_small: 'La fuente devolvió muy pocas personas (o ninguna): parece una lista incompleta.' };
+const RUN_ERRORS = { source_unreachable: 'No se pudo conectar con la fuente.', invalid_envelope: 'La fuente respondió con un formato que no es keeper.roster.v1.', incomplete_list: 'La fuente no marcó la lista como completa.',
+  inconsistent_pages: 'Las páginas de la lista no eran de la misma fecha.', insecure_url: 'La URL no es https.', source_invalid_json: 'La fuente no devolvió JSON válido.', too_many_pages: 'La lista tenía demasiadas páginas.' };
+const PENDING = {
+  matched_name: ['Ya existe algo con el mismo nombre en Keeper. ¿Es lo mismo?', 'Sí, es lo mismo (vincular)', 'No, crear aparte'],
+  orphan: ['Esta persona está en Keeper pero la fuente no la trae.', 'Retirarla', 'Dejarla como persona local'],
+  document_change: ['La fuente cambió la cédula de esta persona.', 'Aceptar la nueva cédula', 'Mantener la actual'],
+  deactivate_in_use: ['La fuente la desactivó, pero todavía tiene personas asignadas. Muévelas primero.', 'Desactivar (sin personas)', 'Entendido, dejar activa'],
+};
+const runCounts = r => {
+  const parts = [];
+  for (const [domain, c] of Object.entries(r.counts || {})) {
+    const bits = [['create', 'nuevas'], ['update', 'cambios'], ['link', 'vinculadas'], ['deactivate', 'retiros'], ['pending', 'pendientes'], ['error', 'errores']].filter(([k]) => c[k]).map(([k, t]) => `${c[k]} ${t}`);
+    if (bits.length) parts.push(`${DOMAIN_LABELS[domain] || domain}: ${bits.join(', ')}`);
+  }
+  return parts.join(' · ') || 'Sin cambios';
+};
+async function sourcesPage() {
+  let [sources, domains, runs, pending] = await Promise.all([api('GET', '/data-sources'), api('GET', '/data-domains'), api('GET', '/sync-runs'), optional(api('GET', '/sync-items/pending'))]);
+  const name = id => sources.data.find(s => s.id === id)?.name || 'Fuente';
+  const reload = async () => {
+    [sources, domains, runs, pending] = await Promise.all([api('GET', '/data-sources'), api('GET', '/data-domains'), api('GET', '/sync-runs'), optional(api('GET', '/sync-items/pending'))]);
+    render(); done();
+  };
+  const runNow = async (s, simulate) => {
+    $('page-status').textContent = simulate ? 'Simulando… puede tardar un minuto.' : 'Sincronizando… puede tardar un minuto.';
+    try { const r = await api('POST', `/data-sources/${s.id}/runs`, { body: { kind: 'full', simulate } }); await reload(); showRun(r); } catch (e) { fail(e); }
+  };
+  const showRun = async r => {
+    const { dialog, body, ok, cancel } = dialogShell(`Vuelta del ${when(r.started_at)}`);
+    dialog.classList.add('wide-dialog'); cancel.hidden = true; ok.textContent = 'Cerrar'; ok.type = 'button'; ok.addEventListener('click', () => dialog.close());
+    const [label, tone] = RUN_STATUS[r.status] || [r.status, ''];
+    body.append(badge(label, tone), el('p', runCounts(r)));
+    if (r.status === 'blocked') body.append(el('p', BLOCK_REASONS[r.blocked_reason] || r.blocked_reason, 'error-text'));
+    if (r.status === 'failed') body.append(el('p', RUN_ERRORS[r.error_code] || r.error_code, 'error-text'));
+    if (r.simulate) body.append(el('p', 'Es una simulación: muestra lo que haría, sin cambiar nada.', 'help'));
+    try {
+      const items = (await api('GET', `/sync-runs/${r.id}/items`)).data;
+      const t = el('div'); body.append(t);
+      const action = { create: 'Nueva', update: 'Cambio', link: 'Vinculada', deactivate: 'Retiro / baja', error: 'Error', pending: 'Pendiente' };
+      table(t, 'Detalle', [['Qué', i => action[i.action] || i.action], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain], ['Nombre', i => i.label || i.external_id || '—'],
+        ['Detalle', i => i.reason || (i.fields ? Object.keys(i.fields).join(', ') : '')]], items, { filters: [['Qué', i => action[i.action] || i.action], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain]] });
+    } catch (e) { body.append(el('p', errorMessage(e), 'error-text')); }
+    if (r.status === 'blocked') {
+      const b = el('button', 'Aplicar igualmente (vuelve a leer la fuente)', 'danger'); b.type = 'button';
+      b.addEventListener('click', async () => {
+        if (!confirm('Se aplicarán los retiros sin frenos. ¿Seguro?')) return;
+        try { const nr = await api('POST', `/sync-runs/${r.id}/approve`); dialog.close(); await reload(); showRun(nr); } catch (e) { fail(e); }
+      });
+      body.append(b);
+    }
+    dialog.showModal();
+  };
+  const editor = s => {
+    const { dialog, body, ok, show } = dialogShell(s ? `Editar ${s.name}` : 'Conectar una fuente');
+    body.append(el('p', 'Una fuente es otro sistema (por ejemplo AZC One) que entrega la nómina en el formato keeper.roster.v1. Arranca en simulación: no cambia nada hasta que la pases a real.'));
+    const nm = labeled(body, 'Nombre', el('input')); nm.maxLength = 120; nm.value = s?.name || 'AZC One';
+    const url = labeled(body, 'URL base (https)', el('input'), 'Ejemplo: https://one.azclegal.com/api/keeper/v1'); url.type = 'url'; url.maxLength = 2048; url.value = s?.base_url || '';
+    const company = labeled(body, 'Empresa en la fuente (filtro)', el('input'), 'El identificador que la fuente usa para esta empresa, p. ej. grupo-azc.'); company.maxLength = 120; company.value = s?.company || '';
+    const token = labeled(body, s?.has_token ? 'Token (déjalo vacío para conservar el actual)' : 'Token de acceso', el('input')); token.type = 'password'; token.autocomplete = 'off'; token.maxLength = 4096;
+    const grid = el('div', undefined, 'form-grid'); body.append(grid);
+    const every = labeled(grid, 'Revisar cambios cada (minutos)', el('input')); every.type = 'number'; every.min = 5; every.max = 1440; every.value = s?.interval_minutes ?? 10;
+    const fullAt = labeled(grid, 'Revisión completa diaria a las', timeInput(s?.full_reconcile_local || '02:00'));
+    let maxD, maxP, minL;
+    if (s) {
+      body.append(el('h3', 'Frenos de seguridad'));
+      const g2 = el('div', undefined, 'form-grid'); body.append(g2);
+      maxD = labeled(g2, 'Retiros máximos por vuelta', el('input')); maxD.type = 'number'; maxD.min = 0; maxD.value = s.max_deactivations;
+      maxP = labeled(g2, '…o este % de las personas', el('input')); maxP.type = 'number'; maxP.min = 1; maxP.max = 100; maxP.value = s.max_deactivation_percent;
+      minL = labeled(g2, 'Bloquear si la lista trae menos de este %', el('input')); minL.type = 'number'; minL.min = 0; minL.max = 100; minL.value = s.min_list_percent;
+    }
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (!url.value.startsWith('https://')) { show('La URL debe empezar por https://'); return; }
+      ok.disabled = true;
+      const payload = { name: nm.value.trim(), base_url: url.value.trim(), company: company.value.trim() || null, interval_minutes: Number(every.value), full_reconcile_local: fullAt.value || '02:00' };
+      if (token.value) payload.token = token.value;
+      if (s) Object.assign(payload, { max_deactivations: Number(maxD.value), max_deactivation_percent: Number(maxP.value), min_list_percent: Number(minL.value) });
+      try {
+        if (s) await api('PATCH', `/data-sources/${s.id}`, { body: payload, ifMatch: s.version }); else await api('POST', '/data-sources', { body: payload });
+        dialog.close(); await reload();
+      } catch (e) { show(e.problem?.detail === 'https_required' ? 'La URL debe ser https.' : e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
+  const setMode = async (s, mode) => {
+    if (mode === 'live' && !confirm(`Desde ahora ${s.name} cambiará datos reales en Keeper (crear, actualizar y retirar personas según la fuente). ¿Continuar?`)) return;
+    try { await api('PATCH', `/data-sources/${s.id}`, { body: { mode }, ifMatch: s.version }); await reload(); }
+    catch (e) { fail(e.problem?.detail === 'simulation_required' ? new Error('Primero corre y revisa una simulación completa.') : e); }
+  };
+  const render = () => {
+    $('page-content').replaceChildren();
+    // Pendientes primero: es lo que requiere a alguien.
+    if (pending?.data?.length) {
+      const p = surface(`Pendientes de aprobación (${pending.data.length})`);
+      p.append(el('p', 'La sincronización no adivina: estas decisiones las toma una persona.', 'help'));
+      table(p, 'Pendientes', [['Qué pasa', i => (PENDING[i.reason] || [i.reason])[0]], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain], ['Nombre', i => i.label || '—'],
+        ['Decisión', i => {
+          const box = el('div', undefined, 'actions no-margin'); const [, yes, no] = PENDING[i.reason] || ['', 'Aprobar', 'Rechazar'];
+          for (const [text, approve] of [[yes, true], [no, false]]) {
+            const b = el('button', text, approve ? 'link-button' : 'link-button'); b.type = 'button';
+            b.addEventListener('click', async () => {
+              if (approve && i.reason === 'orphan' && !confirm(`¿Retirar a ${i.label}? Sus equipos dejan de reportar.`)) return;
+              try { await api('POST', `/sync-items/${i.id}/resolve`, { body: { approve } }); await reload(); }
+              catch (e) { fail(e.code === 'org_unit_in_use' ? new Error('Todavía tiene personas o áreas activas: muévelas primero.') : e); }
+            });
+            box.append(b);
+          }
+          return box;
+        }]], pending.data);
+    }
+    const s = surface('Fuentes conectadas');
+    if (!sources.data.length) empty(s, 'Sin fuentes', 'Keeper es el dueño de todos los datos de esta empresa (se cargan a mano o por CSV). Conecta una fuente como AZC One para que los mantenga al día.');
+    else table(s, 'Fuentes', [['Fuente', x => { const d = el('div'); d.append(el('strong', x.name), el('small', `${x.base_url || ''}${x.company ? ' · ' + x.company : ''}`)); return d; }],
+      ['Modo', x => badge(x.mode === 'live' ? 'Real' : 'Simulación', x.mode === 'live' ? 'good' : 'info')],
+      ['Manda en', x => x.domains.map(d => DOMAIN_LABELS[d]).join(', ') || 'Nada aún'],
+      ['Última vuelta exitosa', x => when(x.last_success_at)],
+      ['Acciones', x => {
+        const box = el('div', undefined, 'actions no-margin');
+        const add = (t, fn) => { const b = el('button', t, 'link-button'); b.type = 'button'; b.addEventListener('click', fn); box.append(b); };
+        add('Simular ahora', () => runNow(x, true));
+        if (x.mode === 'live') add('Sincronizar ahora', () => runNow(x, false));
+        add(x.mode === 'live' ? 'Volver a simulación' : 'Pasar a real', () => setMode(x, x.mode === 'live' ? 'simulate' : 'live'));
+        add('Editar', () => editor(x));
+        return box;
+      }]], sources.data);
+    const d = surface('¿Quién manda en cada dato?');
+    d.append(el('p', 'Cada tipo de dato tiene un solo dueño. Lo que manda una fuente no se edita en Keeper; lo que manda Keeper se edita aquí o por CSV.', 'help'));
+    const selects = domains.data.map(row => {
+      const sel = el('select'); sel.append(new Option('Keeper (se edita aquí)', ''));
+      sources.data.forEach(x => sel.append(new Option(x.name, x.id))); sel.value = row.source_id || '';
+      labeled(d, DOMAIN_LABELS[row.domain] || row.domain, sel); return [row, sel];
+    });
+    const save = el('button', 'Guardar dueños', 'primary'); save.type = 'button'; d.append(save);
+    save.addEventListener('click', async () => {
+      const changed = selects.filter(([row, sel]) => (row.source_id || '') !== sel.value);
+      if (!changed.length) return;
+      const toKeeper = changed.filter(([, sel]) => !sel.value).map(([row]) => DOMAIN_LABELS[row.domain]);
+      if (!confirm(toKeeper.length ? `${toKeeper.join(', ')} volverán a editarse en Keeper y la fuente dejará de actualizarlos. ¿Continuar?` : 'Esos datos pasarán a editarse solo en la fuente. ¿Continuar?')) return;
+      try { await api('PUT', '/data-domains', { body: { domains: changed.map(([row, sel]) => ({ domain: row.domain, source_id: sel.value || null })) } }); await reload(); } catch (e) { fail(e); }
+    });
+    const h = surface('Historial de sincronización');
+    if (!runs.data.length) empty(h, 'Aún no hay vueltas', 'Corre una simulación para ver qué haría la fuente.');
+    else table(h, 'Vueltas', [['Cuándo', r => when(r.started_at)], ['Fuente', r => name(r.source_id)], ['Tipo', r => `${r.kind === 'full' ? 'Completa' : 'Cambios'}${r.trigger === 'manual' ? ' (manual)' : r.trigger === 'approval' ? ' (aprobada)' : ''}`],
+      ['Resultado', r => { const [t, tone] = RUN_STATUS[r.status] || [r.status, '']; return badge(t, tone); }], ['Resumen', runCounts],
+      ['Detalle', r => { const b = el('button', 'Ver', 'link-button'); b.type = 'button'; b.addEventListener('click', () => showRun(r)); return b; }]], runs.data);
+  };
+  const action = $('page-action'); action.textContent = 'Conectar fuente'; action.hidden = false; action.addEventListener('click', () => editor(null));
   render();
 }
 
@@ -797,6 +958,7 @@ async function start() {
     else if (page === 'roles') await rolesPage();
     else if (page === 'users') await people();
     else if (page === 'schedules') await schedulesPage();
+    else if (page === 'sources') await sourcesPage();
     else if (page === 'tenants') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await tenantsPage(); }
     done();
   } catch (e) {

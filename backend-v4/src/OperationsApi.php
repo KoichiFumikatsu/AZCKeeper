@@ -61,6 +61,7 @@ final class OperationsApi
         if (str_starts_with($op,'list')) { return $this->page("SELECT * FROM $table WHERE tenant_id=? ORDER BY id",[$this->tenant],$dto); }
         $old=$id===null?null:$this->row($table,$id);
         if (str_starts_with($op,'get')) { return AdminApi::response($dto($old)); }
+        if ($table==='holidays') { DataSources::guardWrite($this->db,$this->tenant,'festivos','holiday',$id); }
         $id??=Util::bin(Util::uuid());
         if (str_starts_with($op,'delete')) {
             $this->db->run("DELETE FROM $table WHERE tenant_id=? AND id=?",[$this->tenant,$id]); $this->audit($table,$id,(object)[]);

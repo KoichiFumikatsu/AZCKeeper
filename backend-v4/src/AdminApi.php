@@ -137,6 +137,7 @@ final class AdminApi
             'listExpectedDevices','createExpectedDevice','importExpectedDevices','cancelExpectedDevice','listEnrollmentRequests','approveEnrollmentRequest','rejectEnrollmentRequest',
             'getEnrollmentSettings','putEnrollmentSettings','listEnrollmentKeys','createEnrollmentKey','revokeEnrollmentKey'=>(new DeviceIntake($this->db))->admin($op,$id,$b,$this->access,$this->c,$this->r),
             'listPanelAccounts','createPanelAccount','patchPanelAccount','resetPanelAccountPassword'=>(new PanelAccounts($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
+            'listDataSources','createDataSource','patchDataSource','getDataDomains','putDataDomains','runDataSource','listSyncRuns','listSyncItems','approveSyncRun','listPendingSyncItems','resolveSyncItem'=>(new DataSources($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getProductivity'=>$this->report(), 'listAudit'=>$this->auditPage(),
             default=>throw new ApiError(404,'resource_not_found')
         };
@@ -217,6 +218,7 @@ final class AdminApi
                 || $this->db->one('SELECT id FROM policy_assignments WHERE tenant_id=? AND (area_id=? OR site_id=?) LIMIT 1',[$this->tenant,$id,$id])) { throw new ApiError(409,'org_unit_in_use',[], 'La unidad tiene usuarios, unidades hijas activas, scopes de roles o asignaciones de políticas.'); }
         }
         $values=['kind'=>$b->kind,'name'=>$b->name,'parent_id'=>$parent,'active'=>(int)$b->active];
+        DataSources::guardWrite($this->db,$this->tenant,['firm'=>'firmas','site'=>'sedes','area'=>'areas','position'=>'cargos'][$b->kind]??'areas','org_unit',$id);
         if ($id) { $this->update('org_units',$id,$values); } else { $id=Util::bin(Util::uuid()); $this->db->run('INSERT INTO org_units (tenant_id,id,kind,name,parent_id,active) VALUES (?,?,?,?,?,?)',[$this->tenant,$id,...array_values($values)]); }
         $this->audit('org_unit',$id,array_keys($values)); $this->dirty();
         return $this->result($this->orgDto($this->row('org_units',$id)),$op==='createOrgUnit'?201:200);
@@ -230,6 +232,7 @@ final class AdminApi
         // Cedula: la cargada en v4 ('document') o, si no hay, la importada de K3 ('k3:cc').
         $doc=$this->db->one("SELECT external_ref FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source IN ('document','k3:cc') ORDER BY source='document' DESC LIMIT 1",[$this->tenant,$r['id']]);
         $out['document']=$doc['external_ref']??null;
+        $out['managed_by']=DataSources::managedBy($this->db,$this->tenant,$r['id']);
         return $out;
     }
     private function filterUsers(string $alias='u'): array
@@ -275,6 +278,7 @@ final class AdminApi
             foreach ($b->role_ids as $rid) { $this->db->run('INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)',[$this->tenant,$id,Util::bin($rid)]); }
             $this->db->run('UPDATE users SET version=version+1 WHERE tenant_id=? AND id=?',[$this->tenant,$id]); $this->invalidateUser($id);
         } else {
+            DataSources::guardWrite($this->db,$this->tenant,'personas','user',$id);
             $values=[]; $fields=get_object_vars($b);
             $document=array_key_exists('document',$fields)?$fields['document']:false; unset($fields['document']);
             if (is_string($document)) { $document=DeviceIntake::document($document); $this->documentFree($document,$id); }
@@ -649,6 +653,7 @@ final class AdminApi
         $this->access->requireFull();
         if ($op==='listSchedules') { return $this->page('SELECT * FROM schedules WHERE tenant_id=?',[$this->tenant],fn($x)=>$this->scheduleDto($x)); }
         if ($id) { $old=$this->row('schedules',$id); if ($op==='getSchedule') { return $this->result($this->scheduleDto($old)); } $this->match($old); }
+        DataSources::guardWrite($this->db,$this->tenant,'horarios','schedule',$id);
         $this->timezone($b->timezone); $this->unique($b->days);
         // Almuerzo y franjas por dia son opcionales: si no vienen se conservan (clientes viejos no los conocen).
         $lunch=property_exists($b,'lunch_start_local')||property_exists($b,'lunch_end_local')

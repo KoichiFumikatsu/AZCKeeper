@@ -488,4 +488,5 @@ Todas resueltas el 2026-09-30 (decisiones 10 a 17). Se reabren con la primera si
 | Fase | Estado |
 |---|---|
 | F0 horarios por día | Hecho 2026-09-30: migración 0026, API (`day_hours`, almuerzo), calendario, política (franjas solo a agentes ≥ 4.0.13), agente 4.0.13, pantalla Horarios |
-| F1 en adelante | Pendiente |
+| F1 motor + fuentes | Hecho 2026-09-30: migración 0027 (`data_sources`, `data_domain_owners`, `entity_links`, `sync_runs`, `sync_items`), motor `DataSync` (REST canónico, simulación por SAVEPOINT, frenos, pendientes que recuerdan la respuesta), API `/data-sources`, `/data-domains`, `/sync-runs`, `/sync-items`, bloqueo `managed_by_source`, cron `config/sync-cron.php`, pantalla Fuentes de datos |
+| F2 en adelante | Pendiente (F2 = conectar One cuando exista su API; el conector ya existe) |
