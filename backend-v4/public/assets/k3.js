@@ -1335,21 +1335,65 @@ async function tiersPage() {
 }
 
 // ---- Auditoria ------------------------------------------------------------------------------------------------------
+// Todas las acciones auditables (operaciones del contrato y eventos automaticos), en palabras. auditAction() tiene
+// un respaldo que traduce verbo + objeto, para que una accion nueva nunca salga en ingles tecnico.
 const AUDIT_ACTIONS = {
   'admin.login': 'Inició sesión en el panel', 'admin.logout': 'Cerró sesión', 'admin.reauthenticated': 'Confirmó su contraseña', 'admin.password_changed': 'Cambió su contraseña',
-  createPanelAccount: 'Creó una cuenta del panel', patchPanelAccount: 'Cambió una cuenta del panel', resetPanelAccountPassword: 'Restableció una contraseña',
-  createUser: 'Creó una persona', patchUser: 'Editó una persona', setUserRoles: 'Cambió los roles de una persona', createRole: 'Creó un rol', patchRole: 'Editó un rol',
-  createOrgUnit: 'Creó una unidad', patchOrgUnit: 'Editó una unidad', createTenant: 'Creó una empresa', patchTenant: 'Editó una empresa', uploadTenantLogo: 'Cambió el logo',
-  createPolicy: 'Creó una regla', patchPolicy: 'Editó una regla', createDeviceCommand: 'Envió un comando a un equipo', createEnrollment: 'Autorizó un equipo',
-  registerRelease: 'Registró una versión del agente', deployRelease: 'Desplegó una versión', createCompanyGroup: 'Creó un grupo empresarial', patchCompanyGroup: 'Editó un grupo empresarial',
-  'hardening.settings.set': 'Cambió la seguridad de cuentas de Windows', 'hardening.command.harden': 'Endureció un equipo', 'hardening.command.unharden': 'Revirtió el endurecimiento',
+  adminLogin: 'Inició sesión en el panel', adminLogout: 'Cerró sesión', adminReauth: 'Confirmó su contraseña', changeAdminPassword: 'Cambió su contraseña',
   'device.enrolled': 'Equipo registrado', 'device.created': 'Equipo creado', 'device.login': 'El equipo se conectó', 'device.session_renewed': 'El equipo renovó su sesión',
-  'security.reported': 'El equipo reportó su seguridad', 'policy.compiled': 'Se recalculó la política de un equipo', 'command.result': 'El equipo respondió un comando',
-  'device.key_recovered': 'Se recuperó la llave de un equipo', createRoleRule: 'Creó una asignación automática', patchRoleRule: 'Editó una asignación automática',
-  putAppClassification: 'Clasificó una aplicación', createAppClassificationOverride: 'Creó una excepción de clasificación', createDataSource: 'Conectó una fuente de datos',
-  runDataSource: 'Sincronizó una fuente', approveSyncRun: 'Aprobó una sincronización bloqueada', resolveSyncItem: 'Resolvió un pendiente de sincronización',
+  'device.status_changed': 'Cambió el estado del equipo', 'device.key_recovered': 'Se recuperó la llave de un equipo',
+  'security.reported': 'El equipo reportó su seguridad', 'policy.compiled': 'Se recalculó la política de un equipo', 'policy.changed': 'Cambió la política de un equipo',
+  'policy.conflict': 'Conflicto entre reglas', 'command.result': 'El equipo respondió un comando', 'command.completed': 'El equipo terminó un comando',
+  'hardening.settings.set': 'Cambió la seguridad de cuentas de Windows', 'hardening.command.harden': 'Endureció un equipo', 'hardening.command.unharden': 'Revirtió el endurecimiento',
+  'hardening.password.reveal': 'Vio la contraseña de administrador local',
+  'migration.authorization_issued': 'Autorizó una migración desde K3', 'migration.escrow_persisted': 'Guardó la llave de migración', 'migration.escrow_recovered': 'Recuperó la llave de migración',
+  'migration.escrow_verified': 'Verificó la llave de migración', 'migration.phase_reported': 'El equipo reportó su avance de migración',
+  approveEnrollmentRequest: 'Aprobó un equipo nuevo', rejectEnrollmentRequest: 'Rechazó un equipo nuevo', requestEnrollment: 'Un equipo pidió registrarse', createEnrollment: 'Autorizó un equipo',
+  createEnrollmentKey: 'Creó una clave de registro de equipos', revokeEnrollmentKey: 'Revocó una clave de registro', putEnrollmentSettings: 'Cambió los ajustes de registro de equipos',
+  createExpectedDevice: 'Agregó un equipo esperado', importExpectedDevices: 'Importó equipos esperados', externalImportExpectedDevices: 'Otro sistema cargó equipos esperados', cancelExpectedDevice: 'Canceló un equipo esperado',
+  assignDevice: 'Asignó un equipo a una persona', transferDevice: 'Transfirió un equipo', patchDevice: 'Editó un equipo', createDeviceCommand: 'Envió un comando a un equipo',
+  createHardeningCommand: 'Envió un endurecimiento a un equipo', setTenantHardening: 'Cambió la seguridad de cuentas de Windows', revealTenantHardening: 'Vio la contraseña de administrador local',
+  reportHardening: 'El equipo reportó su endurecimiento', reportSecurity: 'El equipo reportó su seguridad', reportCommandResult: 'El equipo respondió un comando',
+  deviceLogin: 'El equipo se conectó', deviceChallenge: 'El equipo pidió conectarse', syncDevice: 'El equipo se sincronizó', ingestEpisodes: 'El equipo envió actividad', ingestLogs: 'El equipo envió registros',
+  createCheckIn: 'Se registró una entrada', externalCheckInsBatch: 'El sistema de puertas envió entradas',
+  createUser: 'Creó una persona', patchUser: 'Editó una persona', setUserRoles: 'Cambió los roles de una persona', setSubscription: 'Cambió el plan de una persona',
+  createPanelAccount: 'Creó una cuenta del panel', patchPanelAccount: 'Cambió una cuenta del panel', resetPanelAccountPassword: 'Restableció una contraseña',
+  createRole: 'Creó un rol', patchRole: 'Editó un rol', patchPermission: 'Editó un permiso', setRbacGate: 'Cambió quién gestiona los roles de la empresa',
+  createRoleRule: 'Creó una asignación automática', patchRoleRule: 'Editó una asignación automática', putMonitoringExclusions: 'Cambió los cargos que no se monitorean',
+  createOrgUnit: 'Creó una unidad', patchOrgUnit: 'Editó una unidad', createSchedule: 'Creó un horario', putSchedule: 'Editó un horario',
+  createHoliday: 'Agregó un festivo', putHoliday: 'Editó un festivo', deleteHoliday: 'Quitó un festivo', createHolidaySociety: 'Creó una sociedad', putHolidaySociety: 'Editó una sociedad', deleteHolidaySociety: 'Quitó una sociedad',
   createAbsence: 'Registró una ausencia', patchAbsence: 'Editó una ausencia', createDoor: 'Registró una puerta', patchDoor: 'Editó una puerta',
+  createPolicy: 'Creó una regla de equipos', patchPolicy: 'Editó una regla de equipos', createTier: 'Creó un plan', patchTier: 'Editó un plan',
+  createSuspiciousApp: 'Agregó una app a vigilar', putSuspiciousApp: 'Editó una app vigilada', deleteSuspiciousApp: 'Dejó de vigilar una app', putInstallCoverage: 'Editó la cobertura de una persona',
+  putAppClassification: 'Clasificó una aplicación', createAppClassificationOverride: 'Creó una excepción de clasificación', deleteAppClassificationOverride: 'Quitó una excepción de clasificación', createAppSite: 'Agregó un sitio reconocible',
+  createTenant: 'Creó una empresa', patchTenant: 'Editó una empresa', uploadTenantLogo: 'Cambió el logo de la empresa', putPanelSettings: 'Cambió los ajustes del panel',
+  createCompanyGroup: 'Creó un grupo empresarial', patchCompanyGroup: 'Editó un grupo empresarial',
+  createDataSource: 'Conectó una fuente de datos', patchDataSource: 'Editó una fuente de datos', putDataDomains: 'Cambió quién manda en cada dato', runDataSource: 'Sincronizó una fuente',
+  approveSyncRun: 'Aprobó una sincronización bloqueada', resolveSyncItem: 'Resolvió un pendiente de sincronización',
+  createIntegration: 'Creó una integración', revokeIntegration: 'Revocó una integración', rotateIntegration: 'Cambió la clave de una integración', issueExternalToken: 'Una integración pidió acceso',
+  createWebhook: 'Creó un aviso automático (webhook)', deleteWebhook: 'Quitó un aviso automático (webhook)',
+  registerRelease: 'Registró una versión del agente', deployRelease: 'Desplegó una versión del agente',
+  issueMigrationAuthorization: 'Autorizó una migración desde K3', validateMigrationAuthorization: 'Validó una autorización de migración', setDeviceMigration: 'Cambió la migración de un equipo',
+  persistDeviceEscrow: 'Guardó la llave de migración', recoverDeviceEscrow: 'Recuperó la llave de migración', verifyDeviceEscrow: 'Verificó la llave de migración',
 };
+const AUDIT_VERBS = { create: 'Creó', put: 'Editó', patch: 'Editó', delete: 'Quitó', set: 'Cambió', approve: 'Aprobó', reject: 'Rechazó', revoke: 'Revocó', register: 'Registró', deploy: 'Desplegó', upload: 'Subió', run: 'Ejecutó', resolve: 'Resolvió', import: 'Importó' };
+const auditAction = a => AUDIT_ACTIONS[a] || (() => {
+  const m = String(a).match(/^([a-z]+)([A-Z].*)$/);
+  return m && AUDIT_VERBS[m[1]] ? `${AUDIT_VERBS[m[1]]} ${m[2].replace(/([A-Z])/g, ' $1').trim().toLowerCase()}` : String(a).replace(/[._]/g, ' ');
+})();
+const AUDIT_FIELDS = {
+  name: 'nombre', display_name: 'nombre', email: 'correo', document: 'cédula', timezone: 'zona horaria', branding: 'marca', permissions: 'permisos', scope: 'alcance', active: 'activo',
+  enabled: 'activa', status: 'estado', days: 'días', start_local: 'hora de entrada', end_local: 'hora de salida', lunch_start_local: 'inicio de almuerzo', lunch_end_local: 'fin de almuerzo',
+  day_hours: 'horas por día', firm_id: 'firma', site_id: 'sede', area_id: 'área', position_id: 'cargo', schedule_id: 'horario', reports_to_user_id: 'jefe', monitoring_override: 'monitoreo',
+  role_ids: 'roles', kind: 'tipo', user_id: 'persona', group_id: 'grupo', group_roles: 'roles en el grupo', password: 'contraseña', session: 'sesión', reauthentication: 'confirmación de contraseña',
+  rules: 'reglas', target_type: 'a quién aplica', target_id: 'a quién aplica', entitlements: 'módulos', badge_label: 'descripción', category: 'clasificación', key: 'aplicación', label: 'etiqueta',
+  pattern: 'texto a reconocer', app_pattern: 'texto a vigilar', description: 'descripción', day: 'fecha', society_ids: 'sociedades', counts_for_presence: 'cuenta para presencia', source_ref: 'referencia',
+  base_url: 'dirección', company: 'empresa en la fuente', token: 'clave', mode: 'modo', interval_minutes: 'frecuencia', domains: 'dominios', approve: 'decisión', rows: 'filas', parent_id: 'depende de',
+  note: 'nota', starts_at: 'desde', ends_at: 'hasta', all_day: 'día completo', install_coverage_heartbeat_days: 'días sin conexión', raw_days: 'retención del detalle', aggregate_months: 'retención de resúmenes',
+  log_days: 'retención de registros', tenant_ids: 'empresas', position_ids: 'cargos', condition_kind: 'condición', confirm_sensitive: 'confirmación', assignable_by_rule: 'asignable por regla',
+  shared_password: 'contraseña compartida', admin_name: 'usuario administrador', action: 'acción', reason: 'motivo', ring: 'anillo', percentage: 'porcentaje', version: 'versión',
+};
+const auditFields = list => (list || []).map(f => AUDIT_FIELDS[f] || String(f).replace(/^branding\./, 'marca: ').replace(/_/g, ' ')).filter((v, i, a) => a.indexOf(v) === i).join(', ');
 const ACTOR = { admin: 'Persona', device: 'Equipo', integration: 'Integración', system: 'Keeper' };
 async function auditPage() {
   const day = o => new Date(Date.now() + o * 864e5).toISOString().slice(0, 10);
@@ -1368,10 +1412,10 @@ async function auditPage() {
     const s = surface(`Qué pasó (${rows.length})`, out);
     if (!rows.length) { empty(s, 'Sin registros', 'No hay acciones en ese período.'); return; }
     table(s, 'Auditoría', [['Cuándo', r => when(r.at)], ['Quién', r => { const d = el('div'); d.append(el('strong', r.actor_name || '—'), el('small', ACTOR[r.actor_type] || r.actor_type)); return d; }],
-      ['Qué hizo', r => AUDIT_ACTIONS[r.action] || r.action], ['Sobre qué', r => r.resource_name || '—'],
+      ['Qué hizo', r => auditAction(r.action)], ['Sobre qué', r => r.resource_name || '—'],
       ['Resultado', r => badge(r.outcome === 'allowed' ? 'Hecho' : r.outcome === 'denied' ? 'Denegado' : 'Falló', r.outcome === 'allowed' ? 'good' : 'bad')],
-      ['Campos', r => (r.changed_fields || []).join(', ') || '—']], rows,
-      { filters: [['Quién', r => r.actor_name || '—'], ['Qué hizo', r => AUDIT_ACTIONS[r.action] || r.action]] });
+      ['Qué cambió', r => auditFields(r.changed_fields) || '—']], rows,
+      { filters: [['Quién', r => r.actor_name || '—'], ['Qué hizo', r => auditAction(r.action)]] });
   };
   bar.addEventListener('submit', ev => { ev.preventDefault(); load().then(done, fail); });
   await load();

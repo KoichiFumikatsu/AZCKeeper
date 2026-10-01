@@ -35,5 +35,14 @@ function opsTests(Database $db): void
             check(in_array('limit', $params, true), basename($file) . " pages $path, which must accept limit");
         }
     }
+    // Guardia: toda operacion de escritura del contrato tiene su traduccion en Auditoria (si no, sale en ingles tecnico).
+    $js = file_get_contents(dirname(__DIR__) . '/public/assets/k3.js');
+    $block = substr($js, strpos($js, 'const AUDIT_ACTIONS = {'), strpos($js, 'const AUDIT_VERBS') - strpos($js, 'const AUDIT_ACTIONS = {'));
+    foreach ($contract['paths'] as $path => $ops) {
+        foreach (['post', 'put', 'patch', 'delete'] as $m) {
+            $op = $ops[$m]['operationId'] ?? null;
+            if ($op !== null) { check(preg_match("/[\\s{,]'?" . preg_quote($op, '/') . "'?:\\s*'/", $block) === 1, "audit label in Spanish for $op"); }
+        }
+    }
     echo 'PASS ops (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
