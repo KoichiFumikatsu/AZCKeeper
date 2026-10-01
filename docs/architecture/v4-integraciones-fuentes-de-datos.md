@@ -19,6 +19,11 @@ Este documento define cómo Keeper recibe y entrega datos de otros sistemas (AZC
    - permisos del panel → **no se sincronizan directamente**. One envía cargo y jerarquía; Keeper los convierte en roles con **reglas propias** (§8).
 8. **Un CSV hace dueño a Keeper.** Si el dato se carga por CSV o a mano, Keeper es el origen y se edita en Keeper.
 9. **Una BD externa es solo de entrada y por vista.** Keeper nunca escribe en una BD ajena ni lee sus tablas internas.
+10. **Persona en dos empresas (excepción):** en Keeper existe en **una sola** empresa, la principal. La elige un administrador cuando se detecta y se puede cambiar después (§5.6).
+11. **Dueños del grupo (p. ej. el presidente de Grupo AZC, Bilingüe y LawyerDesk):** como persona monitoreada, una sola empresa; como observador, una **cuenta de grupo empresarial** con acceso a varias empresas, selector y tablero consolidado (§8.5). No es superadmin.
+12. **Horarios distintos por día existen** (sábados, medio tiempo): Keeper extiende `schedules` para horas por día (§4.3).
+13. **One reactiva el mismo registro al recontratar:** el id externo es estable de por vida.
+14. **Personas previas que One no trae:** nunca se retiran solas; van a revisión (§5.3).
 
 ---
 
@@ -190,12 +195,18 @@ JSON UTF-8. Fechas-hora en ISO 8601 UTC (`2026-09-30T13:05:00Z`); fechas en `YYY
 ### 4.3 Horario
 
 ```json
-{ "external_id": "jornada-l-v", "name": "Lunes a viernes 8-5", "timezone": "America/Bogota",
-  "start_local": "08:00", "end_local": "17:00", "weekdays": [1,2,3,4,5],
-  "lunch": { "start_local": "12:00", "end_local": "13:00" }, "active": true, "updated_at": "..." }
+{ "external_id": "jornada-l-s", "name": "L-V 8-5 y sábado 8-12", "timezone": "America/Bogota",
+  "days": [
+    { "weekday": 1, "start_local": "08:00", "end_local": "17:00", "lunch": { "start_local": "12:00", "end_local": "13:00" } },
+    { "weekday": 2, "start_local": "08:00", "end_local": "17:00", "lunch": { "start_local": "12:00", "end_local": "13:00" } },
+    { "weekday": 6, "start_local": "08:00", "end_local": "12:00", "lunch": null }
+  ],
+  "active": true, "updated_at": "..." }
 ```
 
-Limitación actual de Keeper: una franja horaria para todos los días del horario. Un horario con horas distintas por día se envía como **varios horarios**, o se extiende Keeper (pendiente §12).
+`weekday`: 1 = lunes … 7 = domingo; los días que no aparecen no son laborables.
+
+**Cambio en Keeper (decidido 2026-09-30: los horarios distintos por día sí existen):** hoy `schedules` tiene una sola franja (`start_local`/`end_local`) y `schedule_days` solo marca días. Se añaden `start_local`, `end_local`, `lunch_start_local` y `lunch_end_local` a `schedule_days`; las columnas de `schedules` quedan como valor por defecto para los días sin franja propia. Presencia, puntualidad y productividad pasan a leer la franja del día.
 
 ### 4.4 Festivo
 
@@ -283,7 +294,7 @@ Una cédula que coincide con **dos** personas activas (no debería pasar, Keeper
 Cuando un dominio tiene dueño externo:
 - La API de administración rechaza crear o editar esas entidades con `409 managed_by_source` (detalle con el nombre de la fuente). Solo se permiten los campos de Keeper (por ejemplo, `panel_login_enabled`, roles manuales).
 - El panel muestra "Gestionado por AZC One", oculta "Crear" y deshabilita los campos.
-- Una persona creada a mano en Keeper **antes** de conectar la fuente y que la fuente no trae queda como **huérfana**: no se retira automáticamente; aparece en el panel de la fuente para que alguien decida (vincular a mano, retirar o dejar).
+- Una persona creada en Keeper **antes** de conectar la fuente (a mano, por CSV o desde K3) y que la fuente no trae queda como **huérfana**: nunca se retira automáticamente. Aparece en la bandeja de aprobación y un administrador decide, una por una o en grupo: **vincular** con alguien de la fuente, **retirar** o **dejar** como persona local (decidido 2026-09-30).
 
 ### 5.4 Frenos de seguridad
 
@@ -302,6 +313,15 @@ Desbloquear requiere permiso `integraciones.aprobar` y queda auditado. Los umbra
 ### 5.5 Simulación
 
 Toda fuente nueva arranca en `mode=simulate`: corre vueltas completas, calcula y muestra qué haría (altas, cambios, retiros, vínculos por cédula, vínculos por nombre a aprobar, huérfanas), pero **no escribe nada**. Pasa a `live` con un clic de quien tenga `integraciones.gestionar`, después de revisar al menos una vuelta.
+
+### 5.6 Persona en dos empresas
+
+One puede devolver a la misma persona (mismo `external_id` o misma cédula) en dos empresas. En Keeper, una persona y sus equipos pertenecen a **una** empresa.
+
+- **Detección:** al sincronizar una empresa, si el `external_id` o la cédula ya está vinculado en otra empresa conectada a la misma fuente, el elemento queda `pending_approval` con motivo `multi_company`.
+- **Elección:** la bandeja muestra "Esta persona está en Grupo AZC y LawyerDesk, ¿cuál es su empresa principal?". La elección se guarda en `person_primary_company` (fuente, `external_id`, empresa elegida, quién y cuándo) y **One no la pisa**: en las demás empresas esa persona se ignora desde entonces.
+- **Cambio posterior:** botón "Mover a otra empresa" en la ficha de la persona (plataforma, o cuenta de grupo con `personas.mover`). Mueve a la persona con su historial (asignaciones, actividad, presencia, ausencias) a la otra empresa y re-mapea sede, área, cargo y horario a los equivalentes de la destino (si no hay equivalente vinculado, los elige quien mueve). Sus **equipos** reciben un comando de cambio de empresa y se enrolan en la destino sin reinstalar (comando nuevo del agente).
+- Mientras nadie decida, la persona sigue solo en la empresa donde se creó primero.
 
 ---
 
@@ -374,6 +394,19 @@ Comportamiento:
 
 Nuevo `scope_kind`: la persona y quienes le reportan directa o indirectamente según `jerarquia`. Se resuelve en tiempo de consulta (como `area`/`site` hoy) para que un cambio de jefe aplique en la siguiente vuelta sin reescribir roles.
 
+### 8.5 Cuentas de grupo empresarial (dueños y directivos de varias empresas)
+
+Caso: el presidente es dueño de Grupo AZC, Bilingüe y LawyerDesk y debe ver las tres.
+
+- **Grupo empresarial:** nueva entidad `company_groups` (nombre, empresas miembro), administrada por la plataforma.
+- **Cuenta de grupo:** un tercer tipo de cuenta del panel, además de superadmin y de empresa. Un correo y una contraseña; en cada empresa del grupo tiene sus propios roles (p. ej. "Directivo: ve todo, no edita" en las tres, o editor solo en una). Los roles se asignan empresa por empresa en Cuentas del panel.
+- **No es superadmin:** no ve versiones del agente, no crea empresas, no cambia la marca ni ve empresas fuera de su grupo.
+- **Navegación (decidido 2026-09-30: ambas):**
+  - selector de empresa arriba, limitado a las empresas de su grupo donde tiene roles;
+  - **tablero "Grupo"** con los totales de las empresas sumadas (personas, equipos en línea, productividad, presencia, alertas), con desglose por empresa y enlace a cada una. Solo suma lo que sus roles le permiten ver en cada empresa.
+- **Como persona monitoreada** (su propio PC), el dueño es una persona más en **una** empresa (§5.6). Puede tener cuenta de grupo sin ser persona monitoreada en ninguna.
+- Seguridad: la API sigue validando empresa por empresa; el selector y el tablero son comodidad, no autorización.
+
 ---
 
 ## 9. Módulo Keeper dentro de One
@@ -433,6 +466,9 @@ En **Roles y permisos**: sección "Asignación automática" con las reglas cargo
 | F3 | Entradas por puerta: endpoint batch, cuarentena, `counts_for_presence`, trabajo en el servidor de puertas | F1 (para cédulas vinculadas); puede ir en paralelo a F2 |
 | F4 | Ausencias y su efecto en presencia/productividad | F2 |
 | F5 | Jerarquía, alcance `team`, reglas cargo → rol | F2 |
+| F5b | Grupos empresariales, cuentas de grupo, tablero consolidado (§8.5) | F1; no depende de One |
+| F5c | Persona en dos empresas: detección, elección, "Mover a otra empresa" (§5.6) | F2 |
+| F0 | Horarios distintos por día en Keeper (§4.3) | Ninguna; conviene antes de F2 |
 | F6 | Módulo Keeper en One: consulta por `ref:`, aserciones JWT | F2, F5 |
 | F7 | Conector de vista SQL | Cuando un cliente lo necesite |
 
@@ -442,9 +478,8 @@ La carga actual de AZC (K3 o CSV) puede hacerse antes de F2: al conectar One, el
 
 ## 13. Preguntas abiertas
 
-1. **Persona en dos empresas** (p. ej. trabaja para Grupo AZC y LawyerDesk): en Keeper son dos personas en dos empresas, con equipos separados. ¿One puede devolver la misma persona en dos empresas? Si sí, ¿un mismo PC debe reportar a ambas? (Hoy un equipo pertenece a una empresa.)
-2. **Horarios por día:** si One maneja horas distintas por día de la semana, hay que extender `schedules` (hoy es una franja para todos los días).
-3. **Identidad estable:** confirmar que el id de empleado de One no cambia al recontratar a alguien (si cambia, la cédula lo re-vincula, pero su historial anterior queda en la persona vieja).
-4. **Huérfanas de K3:** las personas cargadas desde K3 que One no traiga, ¿se retiran tras revisión o se quedan como históricas?
-5. **Umbrales de los frenos** para AZC: confirmar 5 personas / 5 % y 50 % de lista mínima.
-6. **Puertas fuera de AZC:** si un cliente tiene otro sistema de acceso, ¿se le ofrece el mismo endpoint `check-ins:batch`? (El contrato ya lo permite.)
+Resueltas el 2026-09-30: persona en dos empresas (§5.6), horarios por día (§4.3), id estable al recontratar (decisión 13), huérfanas de K3/CSV (§5.3), dueños del grupo (§8.5).
+
+1. **Umbrales de los frenos** para AZC: se proponen 5 personas / 5 % por vuelta y lista mínima del 50 %. Se ajustan con la primera simulación real.
+2. **Puertas fuera de AZC:** si un cliente tiene otro sistema de acceso, ¿se le ofrece el mismo endpoint `check-ins:batch`? (El contrato ya lo permite.)
+3. **Monitoreo de directivos:** ¿los dueños y directivos tienen el agente en su PC como cualquier persona, o se excluyen?
