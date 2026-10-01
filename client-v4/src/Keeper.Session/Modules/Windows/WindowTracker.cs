@@ -40,6 +40,9 @@ public sealed class WindowTracker(IForegroundSource source, ActivityTracker acti
     private double _active, _idle;
     private DateOnly _day;
     private Presence.TimeCategory _category;
+    // Fin del ultimo intervalo ya contado. Si ActivityTracker queda en pausa (el host lo reintenta con espera tras un
+    // fallo) sus Intervals siguen siendo los del ultimo tick: sin esto se volvian a contar en cada tick (episodios x31).
+    private DateTimeOffset _consumed = DateTimeOffset.MinValue;
     public override Task InitAsync(ModuleContext ctx)
     {
         _window = source.Read(); _start = _end = ctx.Clock.GetUtcNow();
@@ -49,6 +52,8 @@ public sealed class WindowTracker(IForegroundSource source, ActivityTracker acti
     {
         foreach (var interval in activity.Intervals)
         {
+            if (interval.End <= _consumed) continue;
+            _consumed = interval.End;
             var day = activity.Schedule.Day(interval.Start);
             if (_end != interval.Start || day != _day || interval.Category != _category || (interval.End - _start).TotalSeconds > 120)
             {

@@ -85,6 +85,9 @@ final class Ingest
         if (!$settings) { throw new ApiError(503, 'temporarily_unavailable'); }
         if ($a->getTimestamp() < time() - (int) $settings['late_arrival_days'] * 86400) { throw new ApiError(422, 'event_too_old'); }
         $start = Util::sqlTime($e->started_at); $end = Util::sqlTime($e->ended_at);
+        // Agentes <= 4.0.13 podian repetir el mismo episodio con ids nuevos (ventana contada varias veces tras una pausa
+        // del contador de actividad). Un episodio identico del mismo equipo se confirma sin guardarlo otra vez.
+        if ($this->db->one('SELECT 1 FROM episodes WHERE tenant_id=? AND device_id=? AND started_at=? AND ended_at=? AND process_name=? LIMIT 1', [$this->c['tenant_id'], $this->c['device_id'], $start, $end, $e->process_name])) { return self::ack($e->event_id, 'duplicate'); }
         if ($start < $this->c['assignment_start'] || ($this->c['assignment_end'] !== null && $end > $this->c['assignment_end'])) { throw new ApiError(422, 'assignment_conflict'); }
         $assignment = $this->db->one('SELECT a.id,s.timezone FROM user_assignments a JOIN schedules s ON s.tenant_id=a.tenant_id AND s.id=a.schedule_id WHERE a.tenant_id=? AND a.user_id=? AND a.starts_at<=? AND (a.ends_at IS NULL OR a.ends_at>=?) LOCK IN SHARE MODE', [$this->c['tenant_id'], $this->c['user_id'], $start, $end]);
         if (!$assignment) { throw new ApiError(422, 'assignment_conflict'); }

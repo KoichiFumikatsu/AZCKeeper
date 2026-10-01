@@ -192,8 +192,11 @@ try {
     $ack = expect(request('POST', '/client/episodes:batch', ['episodes' => [$conflict]], $key, $bearer, Util::uuid()), 200, 'event hash conflict')['acks'][0]; check($ack['code'] === 'event_conflict', 'same UUID different body rejected');
     expect(request('POST', '/client/episodes:batch', ['episodes' => [$episode, $episode]], $key, $bearer, Util::uuid()), 422, 'duplicate UUID envelope rejected');
     $bad = $episode; $bad['event_id'] = Util::uuid(); $bad['active_seconds'] = 61;
-    $good = $episode; $good['event_id'] = Util::uuid(); $good['time_category'] = 'lunch';
+    $good = $episode; $good['event_id'] = Util::uuid(); $good['time_category'] = 'lunch'; $good['started_at'] = gmdate('Y-m-d\TH:i:s\Z', strtotime($episode['started_at']) - 1);
     $acks = expect(request('POST', '/client/episodes:batch', ['episodes' => [$bad, $good]], $key, $bearer, Util::uuid()), 200, 'partial batch')['acks']; check($acks[0]['status'] === 'rejected' && $acks[1]['status'] === 'accepted', 'individual errors preserve valid events');
+    // Regresion 2026-10-01: el mismo tramo con un id nuevo (agentes <= 4.0.13) se confirma sin guardarse dos veces.
+    $twin = $episode; $twin['event_id'] = Util::uuid();
+    check(expect(request('POST', '/client/episodes:batch', ['episodes' => [$twin]], $key, $bearer, Util::uuid()), 200, 'identical episode new id')['acks'][0]['status'] === 'duplicate', 'identical episode deduplicated');
     $count = $db->one('SELECT COUNT(*) n FROM episodes WHERE tenant_id=? AND device_id=?', [$tenant, $device]); check((int) $count['n'] === 2, 'exactly two stored episodes');
     check((int) $db->one('SELECT COUNT(*) n FROM episode_ingest_keys WHERE tenant_id=? AND device_id=?', [$tenant, $device])['n'] === 2, 'ledger agrees');
     $category = fn (string $id) => $db->one('SELECT time_category FROM episodes WHERE tenant_id=? AND device_id=? AND event_id=?', [$tenant, $device, Util::bin($id)]);

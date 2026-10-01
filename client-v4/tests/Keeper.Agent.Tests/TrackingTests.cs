@@ -356,6 +356,25 @@ public sealed class TrackingTests
         Assert.All(events.Episodes, e => Assert.InRange((e.EndedAt - e.StartedAt).TotalSeconds, 1, 120));
     }
 
+    // Regresion 2026-10-01: si ActivityTracker falla, el host lo pausa 2-32 s y sus Intervals quedan congelados. El
+    // WindowTracker los volvia a contar en cada tick y el mismo episodio salia hasta 31 veces con ids nuevos.
+    [Fact]
+    public async Task FrozenIntervalsAreCountedOnce()
+    {
+        var clock = new TrackingClock("2026-09-14T10:00:00Z");
+        var events = new CapturedEvents();
+        var activity = new ActivityTracker(new IdleInput());
+        var foreground = new Foreground { Window = new("editor", "A") };
+        var windows = new WindowTracker(foreground, activity);
+        await activity.InitAsync(Context(clock, events)); await windows.InitAsync(Context(clock, events));
+        clock.Advance(5); await activity.TickAsync(default);
+        for (var i = 0; i < 30; i++) { await windows.TickAsync(default); }
+        foreground.Window = new("browser", "B"); await windows.TickAsync(default);
+        await windows.ShutdownAsync();
+        Assert.Equal(5, events.Episodes.Sum(e => e.ActiveSeconds));
+        Assert.Single(events.Episodes, e => e.ProcessName == "editor");
+    }
+
     [Theory]
     [InlineData("ZOOM.exe", "", true)]
     [InlineData("chrome", "Google Meet - daily", true)]
