@@ -190,7 +190,7 @@ const moduleNames = { usuarios: 'Personas', equipos: 'Equipos', reglas: 'Reglas'
   organizacion: 'Organización', horarios: 'Horarios', festivos: 'Festivos', cumplimiento: 'Doble empleo y apps sospechosas', cobertura: 'Cobertura de instalación',
   hardening: 'Seguridad de cuentas de Windows', roles: 'Roles y permisos', tiers: 'Planes', empresas: 'Empresa', notificaciones: 'Notificaciones',
   integraciones: 'Integraciones', auditoria: 'Auditoría', operacion: 'Operación del panel', releases: 'Versiones del agente', migration: 'Migración desde K3', permisos: 'Catálogo de permisos' };
-const scopeText = (role, n) => role.scope.kind === 'tenant' ? 'Toda la empresa' : role.scope.kind === 'self' ? 'Solo lo propio'
+const scopeText = (role, n) => role.scope.kind === 'tenant' ? 'Toda la empresa' : role.scope.kind === 'self' ? 'Solo lo propio' : role.scope.kind === 'team' ? 'Su equipo (quienes le reportan)'
   : `${role.scope.kind === 'site' ? 'Sedes' : 'Áreas'}: ${role.scope.resource_ids.map(id => n.get(id) || id).join(', ')}`;
 function dialogShell(title) {
   const dialog = el('dialog'); const form = el('form'); form.noValidate = true; form.append(el('h2', title));
@@ -574,6 +574,7 @@ async function people() {
       ['Con cédula', String(list.filter(u => u.document).length), 'La usa el alta de equipos para saber de quién es el PC'],
       ['Con cuenta del panel', String(list.filter(u => u.panel_login_enabled).length)]]);
     const s = surface('Personas de la empresa');
+    renderExclusions();
     if (owner) s.append(el('p', `Las personas las gestiona ${owner}: las altas, cambios y retiros se hacen allá y llegan solos. Solo las que no vienen de ${owner} se editan aquí.`, 'notice'));
     else {
       const tools = el('div', undefined, 'actions no-margin');
@@ -585,7 +586,7 @@ async function people() {
     table(s, 'Personas', [
       ['Nombre', u => { const a = el('a', u.display_name); a.href = `/miembro.php?id=${encodeURIComponent(u.id)}`; const d = el('div'); d.append(a); if (u.email) d.append(el('small', u.email)); return d; }],
       ['Cédula', u => u.document || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'],
-      ['Estado', u => badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : '')],
+      ['Estado', u => { const d = el('div'); d.append(badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : '')); if (u.monitoring === 'excluded') d.append(' ', badge('No se monitorea', 'info')); return d; }],
       ['Acciones', u => { if (u.managed_by) return el('small', `Gestionada por ${u.managed_by}`); const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(u)); return b; }]],
       list, { filters: [['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']] });
   };
@@ -594,6 +595,11 @@ async function people() {
     const name = labeled(body, 'Nombre completo', el('input')); name.maxLength = 160; name.value = u?.display_name || '';
     const doc = labeled(body, 'Cédula', el('input'), 'Con ella, al instalar Keeper en su PC, el equipo queda asignado a esta persona.'); doc.maxLength = 40; doc.inputMode = 'numeric'; doc.value = u?.document || '';
     const email = labeled(body, 'Correo (opcional)', el('input')); email.type = 'email'; email.maxLength = 254; email.value = u?.email || '';
+    const boss = el('select'); boss.append(new Option('Nadie', ''));
+    list.filter(x => x.status === 'active' && x.id !== u?.id).sort((a, b) => a.display_name.localeCompare(b.display_name, 'es')).forEach(x => boss.append(new Option(x.display_name, x.id)));
+    boss.value = u?.reports_to_user_id || ''; labeled(body, 'Reporta a (jefe)', boss, 'Con esto el jefe puede ver a su equipo si tiene un rol de alcance "Su equipo".');
+    const mon = el('select'); [['auto', 'Automático (según el cargo)'], ['monitored', 'Siempre monitorear'], ['excluded', 'No monitorear (directivo, dueño)']].forEach(([v, t]) => mon.append(new Option(t, v)));
+    mon.value = u?.monitoring_override || 'auto'; labeled(body, 'Monitoreo', mon);
     const grid = el('div', undefined, 'form-grid'); body.append(grid);
     const selects = {};
     for (const [kind, label] of ORG_FIELDS) {
@@ -611,7 +617,7 @@ async function people() {
       if (ORG_FIELDS.some(([k]) => !selects[k].value) || !sched.value) { show('Faltan firma, sede, área, cargo u horario: créalos primero en Organización.'); return; }
       if (status?.value === 'inactive' && u.status === 'active' && !confirm(`¿Marcar a ${u.display_name} como inactiva? Sus equipos quedan revocados y dejan de reportar.`)) return;
       ok.disabled = true;
-      const payload = { display_name: name.value.trim(), document: doc.value.trim() || null, email: email.value.trim() || null, schedule_id: sched.value };
+      const payload = { display_name: name.value.trim(), document: doc.value.trim() || null, email: email.value.trim() || null, schedule_id: sched.value, reports_to_user_id: boss.value || null, monitoring_override: mon.value };
       for (const [k] of ORG_FIELDS) payload[`${k}_id`] = selects[k].value;
       if (status && status.value !== u.status) payload.status = status.value;
       try {
@@ -619,11 +625,23 @@ async function people() {
         list = u ? list.map(x => x.id === u.id ? saved : x) : [...list, saved]; dialog.close(); render(); done();
       } catch (e) {
         const d = e.problem?.detail;
-        show(d === 'document_in_use' ? 'Esa cédula ya pertenece a otra persona de la empresa.' : d === 'invalid_document' ? 'La cédula no es válida.' : e.status === 412 ? 'Alguien más la modificó: recarga la página.' : e);
+        show(d === 'hierarchy_cycle' ? 'Ese jefe reporta (directa o indirectamente) a esta persona: no puede ser su jefe.' : d === 'document_in_use' ? 'Esa cédula ya pertenece a otra persona de la empresa.' : d === 'invalid_document' ? 'La cédula no es válida.' : e.status === 412 ? 'Alguien más la modificó: recarga la página.' : e);
         ok.disabled = false;
       }
     });
     dialog.showModal();
+  };
+  // Cargos que no se monitorean (directivos y dueños): sus equipos nunca se aprueban solos en el alta.
+  let excluded = (await optional(api('GET', '/monitoring-exclusions')))?.position_ids || null;
+  const renderExclusions = () => {
+    if (excluded === null) return;
+    const s = surface('Cargos que no se monitorean');
+    s.append(el('p', 'Directivos y dueños. Una persona con estos cargos no se monitorea, salvo que en su ficha se marque "Siempre monitorear".', 'help'));
+    const boxes = checks(s, units('position').map(o => [o.id, o.name]), excluded);
+    const save = el('button', 'Guardar cargos'); save.type = 'button'; s.append(save);
+    save.addEventListener('click', async () => {
+      try { excluded = (await api('PUT', '/monitoring-exclusions', { body: { position_ids: boxes.filter(b => b.checked).map(b => b.value) } })).position_ids; list = await allPages('/users'); render(); done(); } catch (e) { fail(e); }
+    });
   };
   const template = () => {
     const ex = k => fallback(k)?.name || units(k)[0]?.name || '';
@@ -963,15 +981,63 @@ async function rolesPage() {
     $('page-content').replaceChildren();
     const s = surface('Roles de la empresa');
     s.append(el('p', 'Un rol es un conjunto de permisos con un alcance. Asígnalo a una cuenta en Cuentas del panel.', 'help'));
-    table(s, 'Roles', [['Rol', r => r.name], ['Alcance', r => scopeText(r, n)],
+    table(s, 'Roles', [['Rol', r => r.assignable_by_rule ? `${r.name} · automático` : r.name], ['Alcance', r => scopeText(r, n)],
       ['Permisos', r => { const d = el('details'); d.append(el('summary', `${r.permissions.length} permisos`)); const ul = el('ul'); r.permissions.forEach(c => ul.append(el('li', labelOf.get(c) || c))); d.append(ul); return d; }],
       ['Estado', r => badge(r.active ? 'Activo' : 'Inactivo', r.active ? 'good' : '')], ['Acciones', r => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(r)); return b; }]], list);
+    renderRules();
+  };
+  // ---- Asignacion automatica (reglas cargo/jefatura -> rol) ----
+  let rules = await optional(allPages('/role-rules'));
+  const CONDITIONS = [['position', 'Tiene el cargo…'], ['manages', 'Es jefe (alguien le reporta)'], ['position_in_area', 'Tiene el cargo… en el área…']];
+  const unitName = id => n.get(id) || '—';
+  const ruleText = x => x.condition_kind === 'manages' ? 'Es jefe de alguien' : x.condition_kind === 'position' ? `Cargo: ${unitName(x.position_id)}` : `Cargo: ${unitName(x.position_id)} en ${unitName(x.area_id)}`;
+  const renderRules = () => {
+    if (rules === null) return;
+    const s = surface('Asignación automática');
+    s.append(el('p', 'Cuando el cargo o la jefatura de una persona cambia (aquí o desde AZC One), estas reglas le dan o le quitan roles solas. Solo usan roles marcados como "se puede dar automáticamente" y solo quitan lo que ellas pusieron.', 'help'));
+    const add = el('button', 'Crear regla'); add.type = 'button'; add.addEventListener('click', () => ruleEditor(null)); s.append(add);
+    if (!rules.length) { s.append(el('p', 'Aún no hay reglas.', 'help')); return; }
+    table(s, 'Reglas', [['Regla', x => x.name], ['Cuándo', ruleText], ['Da el rol', x => list.find(r => r.id === x.role_id)?.name || '—'], ['Personas hoy', x => String(x.matches)],
+      ['Estado', x => badge(x.active ? 'Activa' : 'Inactiva', x.active ? 'good' : '')],
+      ['', x => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => ruleEditor(x)); return b; }]], rules);
+  };
+  const ruleEditor = x => {
+    const { dialog, body, ok, show } = dialogShell(x ? `Editar ${x.name}` : 'Crear regla de asignación');
+    const nm = labeled(body, 'Nombre', el('input')); nm.maxLength = 120; nm.value = x?.name || '';
+    const cond = el('select'); CONDITIONS.forEach(([v, t]) => cond.append(new Option(t, v))); cond.value = x?.condition_kind || 'position'; labeled(body, 'Cuándo aplica', cond);
+    const pos = el('select'); (org || []).filter(o => o.kind === 'position' && o.active).sort((a, b) => a.name.localeCompare(b.name, 'es')).forEach(o => pos.append(new Option(o.name, o.id)));
+    const posL = labeled(body, 'Cargo', pos); pos.value = x?.position_id || pos.value;
+    const area = el('select'); (org || []).filter(o => o.kind === 'area' && o.active).sort((a, b) => a.name.localeCompare(b.name, 'es')).forEach(o => area.append(new Option(o.name, o.id)));
+    const areaL = labeled(body, 'Área', area); area.value = x?.area_id || area.value;
+    const role = el('select'); list.filter(r => r.active && r.assignable_by_rule).forEach(r => role.append(new Option(`${r.name} (${scopeText(r, n)})`, r.id))); role.value = x?.role_id || role.value;
+    labeled(body, 'Da el rol', role, list.some(r => r.assignable_by_rule) ? 'Solo aparecen los roles marcados "se puede dar automáticamente".' : 'Primero marca un rol como "se puede dar automáticamente".');
+    const act = el('input'); act.type = 'checkbox'; act.checked = x ? x.active : true; const actL = el('label', undefined, 'check'); actL.append(act, ' Regla activa'); body.append(actL);
+    const sync = () => { posL.hidden = cond.value === 'manages'; areaL.hidden = cond.value !== 'position_in_area'; };
+    cond.addEventListener('change', sync); sync();
+    const send = async confirmSensitive => {
+      const payload = { name: nm.value.trim(), condition_kind: cond.value, position_id: cond.value === 'manages' ? null : pos.value || null, area_id: cond.value === 'position_in_area' ? area.value || null : null, role_id: role.value, active: act.checked };
+      if (confirmSensitive) payload.confirm_sensitive = true;
+      return x ? api('PATCH', `/role-rules/${x.id}`, { body: payload, ifMatch: x.version }) : api('POST', '/role-rules', { body: payload });
+    };
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (!nm.value.trim() || !role.value) { show('Escribe el nombre y elige el rol.'); return; }
+      ok.disabled = true;
+      try { await send(false); }
+      catch (e) {
+        if (e.problem?.detail === 'confirm_sensitive' && confirm('Esta regla da permisos de administración a más de 10 personas. ¿Seguro?')) {
+          try { await send(true); } catch (e2) { show(e2); ok.disabled = false; return; }
+        } else { show(e.problem?.detail === 'role_not_assignable' ? 'Ese rol no está marcado como "se puede dar automáticamente".' : e.problem?.detail === 'condition_incomplete' ? 'Elige el cargo (y el área, si aplica).' : e); ok.disabled = false; return; }
+      }
+      rules = await allPages('/role-rules'); dialog.close(); render(); done();
+    });
+    dialog.showModal();
   };
   const editor = role => {
     const { dialog, body, ok, show } = dialogShell(role ? `Editar ${role.name}` : 'Crear rol');
     dialog.classList.add('wide-dialog');
     const name = labeled(body, 'Nombre del rol', el('input')); name.maxLength = 120; name.value = role?.name || '';
-    const kind = el('select'); [['tenant', 'Toda la empresa'], ['site', 'Solo ciertas sedes'], ['area', 'Solo ciertas áreas'], ['self', 'Solo lo propio (su persona y sus equipos)']].forEach(([v, t]) => kind.append(new Option(t, v)));
+    const kind = el('select'); [['tenant', 'Toda la empresa'], ['site', 'Solo ciertas sedes'], ['area', 'Solo ciertas áreas'], ['team', 'Su equipo (él y quienes le reportan, directa o indirectamente)'], ['self', 'Solo lo propio (su persona y sus equipos)']].forEach(([v, t]) => kind.append(new Option(t, v)));
     kind.value = role?.scope.kind || 'tenant'; labeled(body, '¿Sobre qué puede actuar?', kind);
     const scopeBox = el('div'); body.append(scopeBox);
     const drawScope = () => {
@@ -991,13 +1057,15 @@ async function rolesPage() {
     });
     const active = el('input'); active.type = 'checkbox'; active.checked = role ? role.active : true;
     const al = el('label', undefined, 'check'); al.append(active, ' Rol activo'); body.append(al);
+    const auto = el('input'); auto.type = 'checkbox'; auto.checked = !!role?.assignable_by_rule;
+    const autol = el('label', undefined, 'check'); autol.append(auto, ' Se puede dar automáticamente (por cargo o jefatura, en "Asignación automática")'); body.append(autol);
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
       if (!name.value.trim()) { show('Escribe el nombre del rol.'); return; }
       const ids = scopeBoxes.filter(b => b.checked).map(b => b.value);
       if (['site', 'area'].includes(kind.value) && !ids.length) { show(`Elige al menos una ${kind.value === 'site' ? 'sede' : 'área'}.`); return; }
       ok.disabled = true;
-      const payload = { name: name.value.trim(), permissions: all.filter(b => b.checked).map(b => b.value), scope: { kind: kind.value, resource_ids: ids }, active: active.checked };
+      const payload = { name: name.value.trim(), permissions: all.filter(b => b.checked).map(b => b.value), scope: { kind: kind.value, resource_ids: ids }, active: active.checked, assignable_by_rule: auto.checked };
       try {
         const saved = role ? await api('PATCH', `/roles/${role.id}`, { body: payload, ifMatch: role.version }) : await api('POST', '/roles', { body: payload });
         list = role ? list.map(r => r.id === role.id ? saved : r) : [...list, saved]; dialog.close(); render(); done();

@@ -124,6 +124,28 @@ final class DataSync
         if (isset($data['schedules']) && in_array('horarios', $this->owned, true)) { $this->schedules($data['schedules']); }
         if (isset($data['holidays']) && in_array('festivos', $this->owned, true)) { $this->holidays($data['holidays'], $full); }
         if (isset($data['people']) && in_array('personas', $this->owned, true)) { $this->people($data['people'], $full); }
+        if (isset($data['people']) && in_array('jerarquia', $this->owned, true)) { $this->hierarchy($data['people']); }
+        // Cargos y jefes pudieron cambiar: los roles puestos por reglas se recalculan (dentro del mismo SAVEPOINT).
+        if (isset($data['people'])) { [$added, $removed] = RoleRules::apply($this->db, $this->tenant); if ($added + $removed) { $this->counts['roles']['update'] = $added + $removed; } }
+    }
+
+    // ---- Jerarquia: a quien reporta cada persona (§2.1) -------------------------------------------------------------
+    private function hierarchy(array $items): void
+    {
+        foreach ($items as $it) {
+            $external = self::ext($it['external_id'] ?? null); if ($external === null || ($it['status'] ?? null) !== 'active') { continue; }
+            $id = $this->linked('user', $external); if ($id === null) { continue; }
+            $boss = is_string($it['reports_to_external_id'] ?? null) ? $this->linked('user', $it['reports_to_external_id']) : null;
+            if (is_string($it['reports_to_external_id'] ?? null) && $boss === null) { $this->log('jerarquia', 'error', $external, $id, 'unknown_reference'); continue; }
+            $u = $this->db->one('SELECT display_name,reports_to_user_id FROM users WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
+            if ($u['reports_to_user_id'] === $boss) { continue; }
+            for ($m = $boss, $n = 0; $m !== null && $n < 50; $n++) {
+                if ($m === $id) { $this->log('jerarquia', 'error', $external, $id, 'hierarchy_cycle', $u['display_name']); continue 2; }
+                $m = $this->db->one('SELECT reports_to_user_id r FROM users WHERE tenant_id=? AND id=?', [$this->tenant, $m])['r'] ?? null;
+            }
+            $this->db->run('UPDATE users SET reports_to_user_id=?,version=version+1 WHERE tenant_id=? AND id=?', [$boss, $this->tenant, $id]);
+            $this->log('jerarquia', 'update', $external, $id, null, $u['display_name']);
+        }
     }
 
     // ---- Registro --------------------------------------------------------------------------------------------------

@@ -137,6 +137,7 @@ final class AdminApi
             'listExpectedDevices','createExpectedDevice','importExpectedDevices','cancelExpectedDevice','listEnrollmentRequests','approveEnrollmentRequest','rejectEnrollmentRequest',
             'getEnrollmentSettings','putEnrollmentSettings','listEnrollmentKeys','createEnrollmentKey','revokeEnrollmentKey'=>(new DeviceIntake($this->db))->admin($op,$id,$b,$this->access,$this->c,$this->r),
             'listPanelAccounts','createPanelAccount','patchPanelAccount','resetPanelAccountPassword'=>(new PanelAccounts($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
+            'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listCompanyGroups','createCompanyGroup','patchCompanyGroup'=>(new CompanyGroups($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
             'listDataSources','createDataSource','patchDataSource','getDataDomains','putDataDomains','runDataSource','listSyncRuns','listSyncItems','approveSyncRun','listPendingSyncItems','resolveSyncItem'=>(new DataSources($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getProductivity'=>$this->report(), 'listAudit'=>$this->auditPage(),
@@ -241,6 +242,8 @@ final class AdminApi
         $doc=$this->db->one("SELECT external_ref FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source IN ('document','k3:cc') ORDER BY source='document' DESC LIMIT 1",[$this->tenant,$r['id']]);
         $out['document']=$doc['external_ref']??null;
         $out['managed_by']=DataSources::managedBy($this->db,$this->tenant,$r['id']);
+        $out['reports_to_user_id']=$r['reports_to_user_id']===null?null:Util::id($r['reports_to_user_id']);
+        $out['monitoring_override']=$r['monitoring_override']; $out['monitoring']=RoleRules::monitoring($this->db,$r);
         return $out;
     }
     private function filterUsers(string $alias='u'): array
@@ -282,13 +285,14 @@ final class AdminApi
                 if (in_array($rid,$b->role_ids,true) && !$role['active']) { throw new ApiError(409,'invalid_transition'); }
                 $this->access->delegate($dto['permissions'],(object)$dto['scope']);
             }
-            $this->db->run('DELETE FROM user_roles WHERE tenant_id=? AND user_id=?',[$this->tenant,$id]);
-            foreach ($b->role_ids as $rid) { $this->db->run('INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)',[$this->tenant,$id,Util::bin($rid)]); }
+            $this->db->run('DELETE FROM user_roles WHERE tenant_id=? AND user_id=? AND rule_id IS NULL',[$this->tenant,$id]);
+            foreach ($b->role_ids as $rid) { $this->db->run('INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?) ON DUPLICATE KEY UPDATE rule_id=NULL',[$this->tenant,$id,Util::bin($rid)]); }
             $this->db->run('UPDATE users SET version=version+1 WHERE tenant_id=? AND id=?',[$this->tenant,$id]); $this->invalidateUser($id);
         } else {
             DataSources::guardWrite($this->db,$this->tenant,'personas','user',$id);
             $values=[]; $fields=get_object_vars($b);
             $document=array_key_exists('document',$fields)?$fields['document']:false; unset($fields['document']);
+            if (array_key_exists('reports_to_user_id',$fields) && $fields['reports_to_user_id']!==null) { $this->managerOk(Util::bin($fields['reports_to_user_id']),$id); }
             if (is_string($document)) { $document=DeviceIntake::document($document); $this->documentFree($document,$id); }
             foreach ($fields as $f=>$value) { $values[$f]=$value!==null && str_ends_with($f,'_id')?Util::bin($value):$value; }
             foreach (['firm','site','area','position'] as $kind) { if (isset($values[$kind.'_id'])) { $this->org($values[$kind.'_id'],$kind); } }
@@ -339,8 +343,18 @@ final class AdminApi
             $this->db->run("DELETE FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source='document'",[$this->tenant,$id]);
             if ($document!==null) { $this->db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,'document',?)",[$this->tenant,$id,$document]); }
         }
+        if ($op!=='setUserRoles') { RoleRules::apply($this->db,$this->tenant); }
         $this->audit('user',$id,array_keys(get_object_vars($b))); $this->dirty($this->userDevices($id));
         return $this->result($this->userDto($this->row('users',$id)),$op==='createUser'?201:200);
+    }
+    /** Jefe valido: persona de la empresa y sin ciclos (A reporta a B que reporta a A). */
+    private function managerOk(string $manager,?string $user): void
+    {
+        if (!$this->db->one("SELECT id FROM users WHERE tenant_id=? AND id=?",[$this->tenant,$manager])) { throw new ApiError(422,'validation_failed',[],'unknown_manager'); }
+        for ($m=$manager,$n=0; $m!==null && $n<50; $n++) {
+            if ($user!==null && $m===$user) { throw new ApiError(422,'validation_failed',[],'hierarchy_cycle'); }
+            $m=$this->db->one('SELECT reports_to_user_id r FROM users WHERE tenant_id=? AND id=?',[$this->tenant,$m])['r']??null;
+        }
     }
     // Una cedula identifica a una sola persona de la empresa (el alta de equipos la usa para asignar el equipo).
     private function documentFree(string $document,?string $user): void
@@ -354,7 +368,7 @@ final class AdminApi
         $permissions=array_column($this->db->run('SELECT permission_code FROM role_permissions WHERE tenant_id=? AND role_id=? ORDER BY permission_code',[$this->tenant,$r['id']])->fetchAll(),'permission_code');
         $ids=[]; $kind=$r['scope_kind'];
         if (in_array($kind,['area','site'],true)) { $ids=array_map([Util::class,'id'],array_column($this->db->run("SELECT {$kind}_id id FROM role_{$kind}_scopes WHERE tenant_id=? AND role_id=? ORDER BY {$kind}_id",[$this->tenant,$r['id']])->fetchAll(),'id')); }
-        return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'name'=>$r['name'],'permissions'=>$permissions,'scope'=>['kind'=>$kind,'resource_ids'=>$ids],'active'=>(bool)$r['active'],'seed_key'=>$r['seed_key'],'version'=>(int)$r['version']];
+        return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'name'=>$r['name'],'permissions'=>$permissions,'scope'=>['kind'=>$kind,'resource_ids'=>$ids],'active'=>(bool)$r['active'],'assignable_by_rule'=>(bool)$r['assignable_by_rule'],'seed_key'=>$r['seed_key'],'version'=>(int)$r['version']];
     }
     private function roles(string $op,?string $id,?object $b): array
     {
@@ -362,17 +376,18 @@ final class AdminApi
         if ($id) { $old=$this->row('roles',$id); $dto=$this->roleDto($old); if (!$this->access->allowsScope((object)$dto['scope'])) { throw new ApiError(404,'resource_not_found'); } if ($op==='getRole') { return $this->result($dto); } $this->match($old); $this->access->delegate($dto['permissions'],(object)$dto['scope']); }
         $this->unique($b->permissions); $this->unique($b->scope->resource_ids);
         $kind=$b->scope->kind;
-        if ((in_array($kind,['tenant','self'],true) && $b->scope->resource_ids) || (in_array($kind,['area','site'],true) && !$b->scope->resource_ids)) { throw new ApiError(422,'validation_failed'); }
+        if ((in_array($kind,['tenant','self','team'],true) && $b->scope->resource_ids) || (in_array($kind,['area','site'],true) && !$b->scope->resource_ids)) { throw new ApiError(422,'validation_failed'); }
         foreach ($b->scope->resource_ids as $rid) { $this->org(Util::bin($rid),$kind); }
         $this->access->delegate($b->permissions,$b->scope);
         if ($id) {
             foreach (['role_area_scopes','role_site_scopes','role_permissions'] as $table) { $this->db->run("DELETE FROM $table WHERE tenant_id=? AND role_id=?",[$this->tenant,$id]); }
-            $this->update('roles',$id,['name'=>$b->name,'scope_kind'=>$kind,'active'=>(int)$b->active]);
-        } else { $id=Util::bin(Util::uuid()); $this->db->run('INSERT INTO roles (tenant_id,id,name,scope_kind,active) VALUES (?,?,?,?,?)',[$this->tenant,$id,$b->name,$kind,(int)$b->active]); }
+            $this->update('roles',$id,['name'=>$b->name,'scope_kind'=>$kind,'active'=>(int)$b->active,'assignable_by_rule'=>(int)($b->assignable_by_rule??$old['assignable_by_rule'])]);
+        } else { $id=Util::bin(Util::uuid()); $this->db->run('INSERT INTO roles (tenant_id,id,name,scope_kind,active,assignable_by_rule) VALUES (?,?,?,?,?,?)',[$this->tenant,$id,$b->name,$kind,(int)$b->active,(int)($b->assignable_by_rule??false)]); }
         foreach ($b->permissions as $permission) { $this->db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)',[$this->tenant,$id,$permission]); }
         foreach ($b->scope->resource_ids as $rid) { $this->db->run("INSERT INTO role_{$kind}_scopes (tenant_id,role_id,{$kind}_id) VALUES (?,?,?)",[$this->tenant,$id,Util::bin($rid)]); }
         foreach ($this->db->run('SELECT user_id FROM user_roles WHERE tenant_id=? AND role_id=?',[$this->tenant,$id])->fetchAll() as $user) { $this->invalidateUser($user['user_id']); }
         $this->db->run('UPDATE tenants SET auth_version=auth_version+1 WHERE tenant_id=?',[$this->tenant]);
+        RoleRules::apply($this->db,$this->tenant);
         $this->audit('role',$id,array_keys(get_object_vars($b))); return $this->result($this->roleDto($this->row('roles',$id)),$op==='createRole'?201:200);
     }
     private function permissionDto(array $r): array { return ['code'=>$r['code'],'label'=>$r['label'],'resource'=>$r['resource'],'action'=>$r['action'],'delegable'=>(bool)$r['delegable'],'platform_only'=>(bool)$r['platform_only'],'version'=>(int)$r['version']]; }

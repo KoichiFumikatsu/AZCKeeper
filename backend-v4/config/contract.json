@@ -1,5 +1,5 @@
 {
-  "source_sha256": "5a887e870b56466c71eae9d1a5fe184eaad843bd2d76ba1712b55667c69f1337",
+  "source_sha256": "3dc01d807c48724742a5ccd56015410d426b4d749ac3a176a766ca0320853e44",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -15279,6 +15279,509 @@
         "x-platform-only": true,
         "x-max-body-bytes": 16384
       }
+    },
+    "/role-rules": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "listRoleRules",
+        "summary": "Asignación automática de roles",
+        "description": "Reglas cargo/jefatura → rol, con cuántas personas cumplen hoy cada una.",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "RoleRule"
+        ],
+        "responses": {
+          "200": {
+            "description": "Asignación automática de roles",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleRuleList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "x-permission": "roles.reglas"
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "createRoleRule",
+        "summary": "Crear regla de rol",
+        "description": "Solo con roles marcados como asignables por regla. Dar permisos de administración a más de 10 personas exige confirm_sensitive.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "RoleRule"
+        ],
+        "responses": {
+          "201": {
+            "description": "Crear regla de rol",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleRule"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleRuleInput"
+              }
+            }
+          }
+        },
+        "x-permission": "roles.reglas",
+        "x-max-body-bytes": 16384
+      }
+    },
+    "/role-rules/{id}": {
+      "patch": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "patchRoleRule",
+        "summary": "Editar regla de rol",
+        "description": "Al guardar se recalculan los roles puestos por reglas.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "RoleRule"
+        ],
+        "responses": {
+          "200": {
+            "description": "Editar regla de rol",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleRule"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleRuleInput"
+              }
+            }
+          }
+        },
+        "x-permission": "roles.reglas",
+        "x-max-body-bytes": 16384
+      }
+    },
+    "/monitoring-exclusions": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "getMonitoringExclusions",
+        "summary": "Cargos que no se monitorean",
+        "description": "Directivos y dueños; la excepción por persona va en la persona.",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "RoleRule"
+        ],
+        "responses": {
+          "200": {
+            "description": "Cargos que no se monitorean",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonitoringExclusions"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "x-permission": "usuarios.ver"
+      },
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "putMonitoringExclusions",
+        "summary": "Cambiar cargos que no se monitorean",
+        "description": "Un equipo a nombre de una persona excluida nunca se aprueba solo en el alta.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "RoleRule"
+        ],
+        "responses": {
+          "200": {
+            "description": "Cambiar cargos que no se monitorean",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonitoringExclusions"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MonitoringExclusions"
+              }
+            }
+          }
+        },
+        "x-permission": "usuarios.editar",
+        "x-max-body-bytes": 16384
+      }
     }
   },
   "parameters": {
@@ -18383,7 +18886,8 @@
               "enum": [
                 "serial_already_enrolled",
                 "duplicate_serial",
-                "document_not_found"
+                "document_not_found",
+                "person_excluded"
               ]
             },
             {
@@ -19992,6 +20496,23 @@
         "expires_at": {
           "type": "string",
           "format": "date-time"
+        }
+      }
+    },
+    "MonitoringExclusions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "position_ids"
+      ],
+      "properties": {
+        "position_ids": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
         }
       }
     },
@@ -21605,6 +22126,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "assignable_by_rule",
         "id",
         "tenant_id",
         "name",
@@ -21615,6 +22137,10 @@
         "version"
       ],
       "properties": {
+        "assignable_by_rule": {
+          "type": "boolean",
+          "description": "Puede asignarlo una regla automática (cargo o jefatura)."
+        },
         "id": {
           "type": "string",
           "format": "uuid"
@@ -21685,6 +22211,9 @@
         "active"
       ],
       "properties": {
+        "assignable_by_rule": {
+          "type": "boolean"
+        },
         "name": {
           "type": "string",
           "maxLength": 120
@@ -21750,6 +22279,148 @@
         }
       }
     },
+    "RoleRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "condition_kind",
+        "position_id",
+        "area_id",
+        "role_id",
+        "active",
+        "matches",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "condition_kind": {
+          "enum": [
+            "position",
+            "manages",
+            "position_in_area"
+          ]
+        },
+        "position_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "area_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "role_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "matches": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "RoleRuleInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "condition_kind",
+        "position_id",
+        "area_id",
+        "role_id",
+        "active"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "condition_kind": {
+          "enum": [
+            "position",
+            "manages",
+            "position_in_area"
+          ]
+        },
+        "position_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "area_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "role_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "confirm_sensitive": {
+          "type": "boolean"
+        }
+      }
+    },
+    "RoleRuleList": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/RoleRule"
+          }
+        }
+      }
+    },
     "RoleScope": {
       "type": "object",
       "additionalProperties": false,
@@ -21764,7 +22435,8 @@
             "tenant",
             "area",
             "site",
-            "self"
+            "self",
+            "team"
           ]
         },
         "resource_ids": {
@@ -23475,6 +24147,31 @@
         "document"
       ],
       "properties": {
+        "reports_to_user_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "monitoring_override": {
+          "enum": [
+            "auto",
+            "monitored",
+            "excluded"
+          ]
+        },
+        "monitoring": {
+          "enum": [
+            "monitored",
+            "excluded"
+          ],
+          "description": "Monitoreo efectivo: la excepción de la persona o, si es automático, su cargo (cargos excluidos)."
+        },
         "id": {
           "type": "string",
           "format": "uuid"
@@ -23590,6 +24287,24 @@
         "schedule_id"
       ],
       "properties": {
+        "reports_to_user_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "monitoring_override": {
+          "enum": [
+            "auto",
+            "monitored",
+            "excluded"
+          ]
+        },
         "firm_id": {
           "type": "string",
           "format": "uuid"
@@ -23740,6 +24455,24 @@
       "additionalProperties": false,
       "required": [],
       "properties": {
+        "reports_to_user_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "monitoring_override": {
+          "enum": [
+            "auto",
+            "monitored",
+            "excluded"
+          ]
+        },
         "firm_id": {
           "type": "string",
           "format": "uuid"

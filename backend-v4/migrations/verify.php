@@ -89,7 +89,7 @@ try {
     $pdo->exec($deviceInsert);
     rejected($pdo, "UPDATE users SET firm_id = NULL WHERE tenant_id = $tenant AND id = $user", 1048, 'mandatory firm');
     rejected($pdo, "UPDATE users SET firm_id = " . seedId(2) . " WHERE tenant_id = $tenant AND id = $user", 1452, 'site cannot masquerade as firm');
-    rejected($pdo, "INSERT INTO user_roles VALUES ($other,$user," . seedId(107) . ')', 1452, 'cross-tenant role binding');
+    rejected($pdo, "INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES ($other,$user," . seedId(107) . ')', 1452, 'cross-tenant role binding');
     rejected($pdo, "INSERT INTO role_permissions VALUES ($tenant," . seedId(104) . ",'empresas.rbac_habilitar')", 1644, 'tenant cannot receive platform permission');
     $pdo->exec("INSERT INTO device_assignments (tenant_id,id,device_id,user_id,starts_at,reason)
         VALUES ($tenant,$deviceAssignment,$device,$user,'2026-01-01','test')");

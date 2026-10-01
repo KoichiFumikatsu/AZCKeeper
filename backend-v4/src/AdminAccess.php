@@ -31,9 +31,26 @@ final class AdminAccess
         $parts=[]; $args=[];
         foreach ($this->grants as $g) {
             if ($g['scope_kind']==='self') { $parts[]="$alias.$userKey=?"; $args[]=$this->c['user_id']; }
+            elseif ($g['scope_kind']==='team') { $team=$this->team(); $parts[]=$team?"$alias.$userKey IN (".implode(',',array_fill(0,count($team),'?')).')':'1=0'; array_push($args,...$team); }
             else { $kind=$g['scope_kind']; $parts[]="$alias.{$kind}_id IN (SELECT {$kind}_id FROM role_{$kind}_scopes WHERE tenant_id=? AND role_id=?)"; array_push($args,$this->c['tenant_id'],$g['id']); }
         }
         return ['(' . implode(' OR ',$parts) . ')',$args];
+    }
+    private ?array $teamIds=null;
+    /** La persona de la cuenta y quienes le reportan, directa o indirectamente (alcance "team", §8.4). */
+    public function team(): array
+    {
+        if ($this->teamIds!==null) { return $this->teamIds; }
+        if (($this->c['user_id']??null)===null) { return $this->teamIds=[]; }
+        $seen=[bin2hex($this->c['user_id'])=>$this->c['user_id']]; $level=[$this->c['user_id']];
+        for ($depth=0; $level && $depth<20; $depth++) {
+            $next=[];
+            foreach ($this->db->run('SELECT id FROM users WHERE tenant_id=? AND reports_to_user_id IN ('.implode(',',array_fill(0,count($level),'?')).')',[$this->c['tenant_id'],...$level])->fetchAll() as $row) {
+                if (!isset($seen[bin2hex($row['id'])])) { $seen[bin2hex($row['id'])]=$row['id']; $next[]=$row['id']; }
+            }
+            $level=$next;
+        }
+        return $this->teamIds=array_values($seen);
     }
     public function user(string $id): array
     {
@@ -44,7 +61,7 @@ final class AdminAccess
     public function allowsScope(object $scope): bool
     {
         if ($this->full()) { return true; }
-        if ($scope->kind==='tenant' || $scope->kind==='self') { return false; }
+        if (in_array($scope->kind,['tenant','self','team'],true)) { return false; }
         $available=[];
         foreach ($this->grants as $g) {
             if ($g['scope_kind']!==$scope->kind) { continue; }

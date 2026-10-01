@@ -80,8 +80,9 @@ final class PanelAccounts
 
     private function setRoles(string $user, array $roles): void
     {
-        $this->db->run('DELETE FROM user_roles WHERE tenant_id=? AND user_id=?', [$this->tenant, $user]);
-        foreach ($roles as $role) { $this->db->run('INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)', [$this->tenant, $user, $role]); }
+        // Solo los roles manuales: los que puso una regla (cargo, jefe) los mantiene la regla.
+        $this->db->run('DELETE FROM user_roles WHERE tenant_id=? AND user_id=? AND rule_id IS NULL', [$this->tenant, $user]);
+        foreach ($roles as $role) { $this->db->run('INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?) ON DUPLICATE KEY UPDATE rule_id=NULL', [$this->tenant, $user, $role]); }
     }
 
     private function create(object $b): array

@@ -17,6 +17,7 @@ const alertNames = {
   serial_already_enrolled: 'Esta serie ya pertenece a un equipo enrolado: puede ser una reinstalación o una suplantación.',
   duplicate_serial: 'Otro equipo ya tomó el equipo esperado con esta serie.',
   document_not_found: 'La cédula escrita no corresponde a ninguna persona.',
+  person_excluded: 'La persona no se monitorea (directivo o dueño): apruébalo solo si es una excepción.',
 };
 const message = error => (error?.problem?.detail && rowErrors[error.problem.detail]) || errorMessage(error);
 

@@ -122,6 +122,10 @@ final class DeviceIntake
                 if ($settings['self_identify_auto_confirm']) { $set += ['status' => 'approved', 'user_id' => $users[0]]; }
             } else { $set['alert'] = 'document_not_found'; }
         }
+        // Directivos y dueños no se monitorean (decision 15): un equipo a su nombre nunca se aprueba solo.
+        if ($set['suggested_user_id'] !== null && ($person = $this->db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$tenant, $set['suggested_user_id']])) && RoleRules::monitoring($this->db, $person) === 'excluded') {
+            unset($set['status'], $set['user_id']); $set['alert'] = 'person_excluded';
+        }
         $fields = implode(',', array_map(static fn ($k) => "$k=?", array_keys($set)));
         $approved = isset($set['status']) ? ',decided_at=UTC_TIMESTAMP(6)' : '';
         $this->db->run("UPDATE enrollment_requests SET $fields$approved WHERE tenant_id=? AND id=?", [...array_values($set), $tenant, $row['id']]);
