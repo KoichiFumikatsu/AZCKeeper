@@ -85,7 +85,7 @@ foreach ([$tenant, $other] as $t) {
     $run("INSERT INTO tenants (tenant_id,name) VALUES (?,'Synthetic')", [$t]);
     foreach (['firm', 'site', 'area', 'position'] as $n => $kind) { $run('INSERT INTO org_units (tenant_id,id,kind,name) VALUES (?,?,?,?)', [$t, str_repeat(chr($n + 1), 16), $kind, $kind]); }
     $run("INSERT INTO schedules (tenant_id,id,name,timezone,start_local,end_local) VALUES (?,?,'Synthetic','America/Bogota','08:00:00','18:00:00')", [$t, str_repeat('s', 16)]);
-    for ($d = 1; $d <= 5; $d++) { $run('INSERT INTO schedule_days VALUES (?,?,?)', [$t, str_repeat('s', 16), $d]); }
+    for ($d = 1; $d <= 5; $d++) { $run('INSERT INTO schedule_days (tenant_id,schedule_id,weekday) VALUES (?,?,?)', [$t, str_repeat('s', 16), $d]); }
     for ($i = 1; $i <= ($t === $tenant ? 160 : 1); $i++) {
         $u = legacyId($t, 'user', $i);
         $a = legacyId($t, 'assignment', $i);

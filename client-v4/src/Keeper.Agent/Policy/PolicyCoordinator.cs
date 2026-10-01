@@ -59,6 +59,17 @@ public sealed class PolicyCoordinator(IPolicyStore store, ModuleHost host, Guid 
                 !TimeOnly.TryParseExact(schedule.StartLocal, "HH:mm", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _) ||
                 !TimeOnly.TryParseExact(schedule.EndLocal, "HH:mm", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _))
                 throw new InvalidDataException("invalid_schedule");
+            // Franjas propias por dia: solo dias laborables del horario, una por dia, horas validas y almuerzo completo.
+            if (schedule.DayHours is { } hours)
+            {
+                static bool Hm(string? v) => v is not null && TimeOnly.TryParseExact(v, "HH:mm", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _);
+                if (hours.Count > 7 || hours.Select(h => h.Weekday).Distinct().Count() != hours.Count ||
+                    hours.Any(h => !schedule.Days.Contains(h.Weekday) || !Hm(h.StartLocal) || !Hm(h.EndLocal) ||
+                        (h.LunchStartLocal is null) != (h.LunchEndLocal is null) ||
+                        (h.LunchStartLocal is not null && (!Hm(h.LunchStartLocal) || !Hm(h.LunchEndLocal) ||
+                            string.CompareOrdinal(h.LunchStartLocal, h.LunchEndLocal) >= 0))))
+                    throw new InvalidDataException("invalid_schedule");
+            }
             try { _ = TimeZoneInfo.FindSystemTimeZoneById(schedule.Timezone); }
             catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException or ArgumentException)
             { throw new InvalidDataException("invalid_schedule_timezone", ex); }

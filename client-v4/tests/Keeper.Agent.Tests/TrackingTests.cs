@@ -74,6 +74,38 @@ public sealed class TrackingTests
         Assert.Equal(expected, schedule.GetTimeCategory(DateTimeOffset.Parse(timestamp)));
     }
 
+    // Horarios con franja propia por dia (4.0.13): sabado 08:00-12:00 sin almuerzo; el resto de dias,
+    // la franja general con su almuerzo.
+    [Theory]
+    [InlineData("2026-09-19T09:00:00Z", TimeCategory.WorkHours)]   // sabado dentro de su franja
+    [InlineData("2026-09-19T12:30:00Z", TimeCategory.AfterHours)]  // sabado despues de las 12
+    [InlineData("2026-09-19T11:59:59Z", TimeCategory.WorkHours)]
+    [InlineData("2026-09-14T12:30:00Z", TimeCategory.LunchTime)]   // lunes: almuerzo general
+    [InlineData("2026-09-14T17:30:00Z", TimeCategory.WorkHours)]   // lunes: franja general hasta las 19
+    public void DayHoursOverrideTheGeneralShift(string instant, TimeCategory expected)
+    {
+        var shift = Shift(lunchStart: "12:00", lunchEnd: "13:00") with
+        {
+            Days = [1, 2, 3, 4, 5, 6],
+            DayHours = [new ScheduleDayHoursItem { Weekday = 6, StartLocal = "08:00", EndLocal = "12:00", LunchStartLocal = null, LunchEndLocal = null }]
+        };
+        var policy = Samples.Policy() with { Schedules = [shift] };
+        Assert.Equal(expected, WorkSchedule.FromPolicy(policy).GetTimeCategory(DateTimeOffset.Parse(instant)));
+    }
+
+    [Fact]
+    public void ShiftStartUsesTheDayHours()
+    {
+        var shift = Shift() with
+        {
+            Days = [1, 2, 3, 4, 5, 6],
+            DayHours = [new ScheduleDayHoursItem { Weekday = 6, StartLocal = "09:30", EndLocal = "12:00", LunchStartLocal = null, LunchEndLocal = null }]
+        };
+        var schedule = new WorkSchedule(TimeZoneInfo.Utc, [shift]);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-19T09:30:00Z"), schedule.ShiftStart(DateTimeOffset.Parse("2026-09-19T15:00:00Z")));
+        Assert.Equal(DateTimeOffset.Parse("2026-09-14T07:00:00Z"), schedule.ShiftStart(DateTimeOffset.Parse("2026-09-14T15:00:00Z")));
+    }
+
     [Fact]
     public void OvernightShiftUsesPreviousWorkingDayAndTimezone()
     {

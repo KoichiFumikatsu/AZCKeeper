@@ -100,7 +100,7 @@ function phaseBTests(Database $db): void
     expect(adminRequest($other,'PUT','/policies/suspicious-apps/'.$app['id'],['app_pattern'=>'test.exe','category'=>'vm','description'=>'Test','active'=>true]),404,'foreign app catalog write');
     expect(adminRequest($admin,'DELETE','/policies/suspicious-apps/'.$app['id']),204,'app catalog delete');
     $db->run('UPDATE user_assignments SET starts_at=UTC_TIMESTAMP()-INTERVAL 15 DAY WHERE tenant_id=? AND user_id=?',[$tenant,$base['id']]);
-    foreach (range(1,7) as $weekday) { $db->run('INSERT INTO schedule_days VALUES (?,?,?)',[$tenant,$base['schedule_id'],$weekday]); }
+    foreach (range(1,7) as $weekday) { $db->run('INSERT INTO schedule_days (tenant_id,schedule_id,weekday) VALUES (?,?,?)',[$tenant,$base['schedule_id'],$weekday]); }
     $device=Util::bin(Util::uuid()); $da=Util::bin(Util::uuid());
     $ua=$db->one('SELECT id FROM user_assignments WHERE tenant_id=? AND user_id=?',[$tenant,$base['id']])['id'];
     $db->run("INSERT INTO devices (tenant_id,id,user_id,hostname,agent_version,os_edition,cpu,ram_bytes,capabilities) VALUES (?,?,?,'Fresh v4','4.0.0','test','test',1,'[]')",[$tenant,$device,$base['id']]);

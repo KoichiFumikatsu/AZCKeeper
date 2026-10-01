@@ -11,7 +11,7 @@ function activityMigrationTests(Database $db): void
     $day=(new DateTimeImmutable('yesterday'))->format('Y-m-d'); $from=(new DateTimeImmutable($day))->modify('-19 days')->format('Y-m-d'); $to=(new DateTimeImmutable($day))->modify('+1 day')->format('Y-m-d');
     $db->pdo->beginTransaction();
     $db->run('UPDATE user_assignments SET starts_at=UTC_TIMESTAMP()-INTERVAL 150 DAY WHERE tenant_id=?',[$tenant]);
-    for ($weekday=1;$weekday<=7;$weekday++) { $db->run('INSERT INTO schedule_days VALUES (?,?,?)',[$tenant,$u['schedule_id'],$weekday]); }
+    for ($weekday=1;$weekday<=7;$weekday++) { $db->run('INSERT INTO schedule_days (tenant_id,schedule_id,weekday) VALUES (?,?,?)',[$tenant,$u['schedule_id'],$weekday]); }
     $users=[$u];
     for ($n=1;$n<238;$n++) {
         $member=adminMember($db,$u); $users[]=$member;
@@ -155,7 +155,7 @@ function activityEdgeTests(Database $db): void
     $db->run('UPDATE device_assignments SET starts_at=UTC_TIMESTAMP()-INTERVAL 10 DAY WHERE tenant_id=?',[$t]);
     $a=$db->one('SELECT id FROM user_assignments WHERE tenant_id=? AND user_id=?',[$t,$u['id']])['id'];
     $da=$db->one('SELECT id FROM device_assignments WHERE tenant_id=? AND device_id=?',[$t,$device])['id'];
-    for ($n=1;$n<=7;$n++) { $db->run('INSERT INTO schedule_days VALUES (?,?,?)',[$t,$u['schedule_id'],$n]); }
+    for ($n=1;$n<=7;$n++) { $db->run('INSERT INTO schedule_days (tenant_id,schedule_id,weekday) VALUES (?,?,?)',[$t,$u['schedule_id'],$n]); }
     foreach (['editor'=>'productive','video'=>'unproductive'] as $app=>$category) { $db->run('INSERT INTO app_classification VALUES (?,?,?,?,1)',[$t,Util::bin(Util::uuid()),$app,$category]); }
     $day=gmdate('Y-m-d',time()-3*86400); $next=(new DateTimeImmutable($day))->modify('+1 day')->format('Y-m-d');
     foreach ([['13:05:00',900,900,0,0,'editor'],['13:20:00',900,900,0,0,'editor'],['13:36:00',60,60,0,0,'video'],['23:59:00',120,100,20,33,'video']] as [$at,$duration,$active,$idle,$calls,$app]) {

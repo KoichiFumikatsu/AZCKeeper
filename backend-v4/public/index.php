@@ -11,7 +11,7 @@ if ($path === '/v1' || str_starts_with($path, '/v1/') || str_starts_with($path, 
 }
 
 $routes = [
-    '/empresas.php'=>'empresas.php','/cuentas.php'=>'cuentas.php','/roles.php'=>'roles.php','/sedes.php'=>'sedes.php','/organizacion.php'=>'organizacion.php','/asignaciones.php'=>'asignaciones.php','/alta.php'=>'alta.php',
+    '/horarios.php'=>'horarios.php','/empresas.php'=>'empresas.php','/cuentas.php'=>'cuentas.php','/roles.php'=>'roles.php','/sedes.php'=>'sedes.php','/organizacion.php'=>'organizacion.php','/asignaciones.php'=>'asignaciones.php','/alta.php'=>'alta.php',
     '/festivos.php'=>'festivos.php','/doble-empleo.php'=>'doble-empleo.php','/apps-sospechosas.php'=>'apps-sospechosas.php','/cobertura.php'=>'cobertura.php',
     '/admin/logs.php'=>'admin/logs.php','/admin/salud.php'=>'admin/salud.php','/admin/ajustes.php'=>'admin/ajustes.php','/admin/festivos.php'=>'admin/festivos.php',
     '/' => 'index.php', '/index.php' => 'index.php', '/login.php' => 'login.php',

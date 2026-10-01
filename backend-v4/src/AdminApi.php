@@ -637,8 +637,12 @@ final class AdminApi
     }
     private function scheduleDto(array $r): array
     {
-        $days=$this->db->run('SELECT weekday FROM schedule_days WHERE tenant_id=? AND schedule_id=? ORDER BY weekday',[$this->tenant,$r['id']])->fetchAll();
-        return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'name'=>$r['name'],'timezone'=>$r['timezone'],'days'=>array_map('intval',array_column($days,'weekday')),'start_local'=>substr($r['start_local'],0,5),'end_local'=>substr($r['end_local'],0,5),'version'=>(int)$r['version']];
+        $days=$this->db->run('SELECT * FROM schedule_days WHERE tenant_id=? AND schedule_id=? ORDER BY weekday',[$this->tenant,$r['id']])->fetchAll();
+        $hm=static fn(?string $v): ?string => $v===null?null:substr($v,0,5);
+        return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'name'=>$r['name'],'timezone'=>$r['timezone'],'days'=>array_map('intval',array_column($days,'weekday')),'start_local'=>$hm($r['start_local']),'end_local'=>$hm($r['end_local']),
+            'lunch_start_local'=>$hm($r['lunch_start_local']),'lunch_end_local'=>$hm($r['lunch_end_local']),
+            'day_hours'=>array_values(array_map(fn($d)=>['weekday'=>(int)$d['weekday'],'start_local'=>$hm($d['start_local']),'end_local'=>$hm($d['end_local']),'lunch_start_local'=>$hm($d['lunch_start_local']),'lunch_end_local'=>$hm($d['lunch_end_local'])],array_filter($days,fn($d)=>$d['start_local']!==null))),
+            'version'=>(int)$r['version']];
     }
     private function schedules(string $op,?string $id,?object $b): array
     {
@@ -646,10 +650,26 @@ final class AdminApi
         if ($op==='listSchedules') { return $this->page('SELECT * FROM schedules WHERE tenant_id=?',[$this->tenant],fn($x)=>$this->scheduleDto($x)); }
         if ($id) { $old=$this->row('schedules',$id); if ($op==='getSchedule') { return $this->result($this->scheduleDto($old)); } $this->match($old); }
         $this->timezone($b->timezone); $this->unique($b->days);
-        $values=['name'=>$b->name,'timezone'=>$b->timezone,'start_local'=>$b->start_local,'end_local'=>$b->end_local];
+        // Almuerzo y franjas por dia son opcionales: si no vienen se conservan (clientes viejos no los conocen).
+        $lunch=property_exists($b,'lunch_start_local')||property_exists($b,'lunch_end_local')
+            ? [$b->lunch_start_local??null,$b->lunch_end_local??null] : [$old['lunch_start_local']??null,$old['lunch_end_local']??null];
+        if (($lunch[0]===null)!==($lunch[1]===null) || ($lunch[0]!==null && substr($lunch[0],0,5)>=substr($lunch[1],0,5))) { throw new ApiError(422,'validation_failed',[],'invalid_lunch'); }
+        $hours=[];
+        if (property_exists($b,'day_hours')) {
+            foreach ($b->day_hours as $h) {
+                if (!in_array($h->weekday,$b->days,true) || isset($hours[$h->weekday])) { throw new ApiError(422,'validation_failed',[],'invalid_day_hours'); }
+                if (($h->lunch_start_local===null)!==($h->lunch_end_local===null) || ($h->lunch_start_local!==null && $h->lunch_start_local>=$h->lunch_end_local)) { throw new ApiError(422,'validation_failed',[],'invalid_lunch'); }
+                $hours[$h->weekday]=[$h->start_local,$h->end_local,$h->lunch_start_local,$h->lunch_end_local];
+            }
+        } elseif ($id) {
+            foreach ($this->db->run('SELECT * FROM schedule_days WHERE tenant_id=? AND schedule_id=? AND start_local IS NOT NULL',[$this->tenant,$id])->fetchAll() as $d) {
+                if (in_array((int)$d['weekday'],$b->days,true)) { $hours[(int)$d['weekday']]=[$d['start_local'],$d['end_local'],$d['lunch_start_local'],$d['lunch_end_local']]; }
+            }
+        }
+        $values=['name'=>$b->name,'timezone'=>$b->timezone,'start_local'=>$b->start_local,'end_local'=>$b->end_local,'lunch_start_local'=>$lunch[0],'lunch_end_local'=>$lunch[1]];
         if ($id) { $this->update('schedules',$id,$values); $this->db->run('DELETE FROM schedule_days WHERE tenant_id=? AND schedule_id=?',[$this->tenant,$id]); }
-        else { $id=Util::bin(Util::uuid()); $this->db->run('INSERT INTO schedules (tenant_id,id,name,timezone,start_local,end_local) VALUES (?,?,?,?,?,?)',[$this->tenant,$id,...array_values($values)]); }
-        foreach ($b->days as $day) { $this->db->run('INSERT INTO schedule_days (tenant_id,schedule_id,weekday) VALUES (?,?,?)',[$this->tenant,$id,$day]); }
+        else { $id=Util::bin(Util::uuid()); $this->db->run('INSERT INTO schedules (tenant_id,id,name,timezone,start_local,end_local,lunch_start_local,lunch_end_local) VALUES (?,?,?,?,?,?,?,?)',[$this->tenant,$id,...array_values($values)]); }
+        foreach ($b->days as $day) { $this->db->run('INSERT INTO schedule_days (tenant_id,schedule_id,weekday,start_local,end_local,lunch_start_local,lunch_end_local) VALUES (?,?,?,?,?,?,?)',[$this->tenant,$id,$day,...($hours[$day]??[null,null,null,null])]); }
         $this->audit('schedule',$id,array_keys(get_object_vars($b))); $this->dirty();
         return $this->result($this->scheduleDto($this->row('schedules',$id)),$op==='createSchedule'?201:200);
     }

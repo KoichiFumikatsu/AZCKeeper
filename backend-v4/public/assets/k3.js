@@ -626,6 +626,86 @@ async function people() {
   render();
 }
 
+// ---- Horarios ---------------------------------------------------------------------------------------------------
+const WEEKDAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+const timeInput = (value = '') => { const i = el('input'); i.type = 'time'; i.step = 60; i.value = value || ''; return i; };
+function scheduleSummary(s) {
+  const own = new Map((s.day_hours || []).map(d => [d.weekday, d]));
+  const general = s.days.filter(d => !own.has(d)).map(d => WEEKDAYS[d - 1].slice(0, 3)).join(', ');
+  const parts = [];
+  if (general) parts.push(`${general}: ${s.start_local}–${s.end_local}`);
+  for (const d of s.day_hours || []) parts.push(`${WEEKDAYS[d.weekday - 1].slice(0, 3)}: ${d.start_local}–${d.end_local}`);
+  return parts.join(' · ') || 'Sin días laborables';
+}
+async function schedulesPage() {
+  const [list0, users] = await Promise.all([allPages('/schedules'), optional(allPages('/users'))]);
+  let list = list0;
+  const people = id => (users || []).filter(u => u.schedule_id === id && u.status === 'active').length;
+  const render = () => {
+    $('page-content').replaceChildren();
+    const s = surface('Horarios de la empresa');
+    s.append(el('p', 'La jornada de cada persona: con ella se calcula la puntualidad, el tiempo esperado y qué actividad es laboral, almuerzo o fuera de horario. Un día puede tener horas propias (por ejemplo, sábado medio día).', 'help'));
+    if (!list.length) { empty(s, 'Aún no hay horarios', 'Crea el primero con "Crear horario".'); return; }
+    table(s, 'Horarios', [['Horario', x => x.name], ['Días y horas', scheduleSummary],
+      ['Almuerzo', x => x.lunch_start_local ? `${x.lunch_start_local}–${x.lunch_end_local}` : 'Sin almuerzo'], ['Zona horaria', x => x.timezone],
+      ['Personas', x => users ? String(people(x.id)) : '—'],
+      ['Acciones', x => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(x)); return b; }]], list);
+  };
+  const editor = x => {
+    const { dialog, body, ok, show } = dialogShell(x ? `Editar ${x.name}` : 'Crear horario');
+    dialog.classList.add('wide-dialog');
+    const name = labeled(body, 'Nombre', el('input')); name.maxLength = 120; name.value = x?.name || '';
+    const tz = labeled(body, 'Zona horaria', el('input'), 'Ejemplo: America/Bogota'); tz.maxLength = 64; tz.value = x?.timezone || 'America/Bogota';
+    const grid = el('div', undefined, 'form-grid'); body.append(grid);
+    const start = labeled(grid, 'Entrada', timeInput(x?.start_local || '08:00')); const end = labeled(grid, 'Salida', timeInput(x?.end_local || '17:00'));
+    const lunchStart = labeled(grid, 'Inicio de almuerzo (opcional)', timeInput(x?.lunch_start_local)); const lunchEnd = labeled(grid, 'Fin de almuerzo (opcional)', timeInput(x?.lunch_end_local));
+    body.append(el('h3', 'Días laborables'));
+    body.append(el('p', 'Marca los días que se trabaja. Si un día tiene horas distintas, actívalo en "Horas propias".', 'help'));
+    const own = new Map((x?.day_hours || []).map(d => [d.weekday, d]));
+    const rows = WEEKDAYS.map((label, i) => {
+      const weekday = i + 1; const row = el('div', undefined, 'day-row'); body.append(row);
+      const works = el('input'); works.type = 'checkbox'; works.checked = x ? x.days.includes(weekday) : weekday <= 5;
+      const wl = el('label', undefined, 'check'); wl.append(works, ` ${label}`); row.append(wl);
+      const special = el('input'); special.type = 'checkbox'; special.checked = own.has(weekday);
+      const sl = el('label', undefined, 'check'); sl.append(special, ' Horas propias'); row.append(sl);
+      const d = own.get(weekday);
+      const box = el('div', undefined, 'day-hours'); row.append(box);
+      const ds = timeInput(d?.start_local || start.value), de = timeInput(d?.end_local || end.value), dls = timeInput(d?.lunch_start_local), dle = timeInput(d?.lunch_end_local);
+      [['Entrada', ds], ['Salida', de], ['Almuerzo desde', dls], ['hasta', dle]].forEach(([t, inp]) => { const l = el('label', t); l.append(inp); box.append(l); });
+      const sync = () => { special.disabled = !works.checked; box.hidden = !(works.checked && special.checked); };
+      works.addEventListener('change', sync); special.addEventListener('change', sync); sync();
+      return { weekday, label, works, special, ds, de, dls, dle };
+    });
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const days = rows.filter(r => r.works.checked).map(r => r.weekday);
+      if (!name.value.trim()) { show('Escribe el nombre del horario.'); return; }
+      if (!start.value || !end.value) { show('Escribe la hora de entrada y de salida.'); return; }
+      if (!!lunchStart.value !== !!lunchEnd.value || (lunchStart.value && lunchStart.value >= lunchEnd.value)) { show('El almuerzo necesita inicio y fin, y el inicio debe ser antes del fin.'); return; }
+      const dayHours = [];
+      for (const r of rows.filter(r => r.works.checked && r.special.checked)) {
+        if (!r.ds.value || !r.de.value) { show(`${r.label}: escribe entrada y salida.`); return; }
+        if (!!r.dls.value !== !!r.dle.value || (r.dls.value && r.dls.value >= r.dle.value)) { show(`${r.label}: el almuerzo necesita inicio y fin, en orden.`); return; }
+        dayHours.push({ weekday: r.weekday, start_local: r.ds.value, end_local: r.de.value, lunch_start_local: r.dls.value || null, lunch_end_local: r.dle.value || null });
+      }
+      ok.disabled = true;
+      const payload = { name: name.value.trim(), timezone: tz.value.trim(), days, start_local: start.value, end_local: end.value,
+        lunch_start_local: lunchStart.value || null, lunch_end_local: lunchEnd.value || null, day_hours: dayHours };
+      try {
+        const saved = x ? await api('PUT', `/schedules/${x.id}`, { body: payload, ifMatch: x.version }) : await api('POST', '/schedules', { body: payload });
+        list = x ? list.map(y => y.id === x.id ? saved : y) : [...list, saved]; dialog.close(); render(); done();
+      } catch (e) {
+        const d = e.problem?.detail;
+        show(d === 'invalid_day_hours' ? 'Las horas propias solo pueden ir en días laborables.' : d === 'invalid_lunch' ? 'Revisa el almuerzo: inicio y fin, en orden.' : e.status === 412 ? 'Alguien más lo cambió: recarga la página.' : e.status === 422 ? 'Revisa la zona horaria (ejemplo: America/Bogota) y las horas.' : e);
+        ok.disabled = false;
+      }
+    });
+    dialog.showModal();
+  };
+  const action = $('page-action'); action.textContent = 'Crear horario'; action.hidden = false; action.addEventListener('click', () => editor(null));
+  render();
+}
+
 // ---- Roles y permisos -------------------------------------------------------------------------------------------
 async function rolesPage() {
   const session = readSession();
@@ -716,6 +796,7 @@ async function start() {
     else if (page === 'accounts') await accounts();
     else if (page === 'roles') await rolesPage();
     else if (page === 'users') await people();
+    else if (page === 'schedules') await schedulesPage();
     else if (page === 'tenants') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await tenantsPage(); }
     done();
   } catch (e) {

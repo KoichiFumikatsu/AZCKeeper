@@ -24,6 +24,9 @@ Este documento define cómo Keeper recibe y entrega datos de otros sistemas (AZC
 12. **Horarios distintos por día existen** (sábados, medio tiempo): Keeper extiende `schedules` para horas por día (§4.3).
 13. **One reactiva el mismo registro al recontratar:** el id externo es estable de por vida.
 14. **Personas previas que One no trae:** nunca se retiran solas; van a revisión (§5.3).
+15. **Directivos y dueños se excluyen del monitoreo por defecto, con excepciones.** Nuevo campo de persona `monitoring` (`monitored` | `excluded`); los cargos marcados como directivos (regla en Keeper, como §8.3) dejan a la persona en `excluded`. Un equipo que intenta enrolarse a nombre de una persona excluida queda pendiente con alerta en Alta de equipos; un administrador puede hacer la excepción por persona.
+16. **Frenos:** se mantienen los umbrales propuestos (5 personas / 5 % por vuelta, lista mínima del 50 %).
+17. **El endpoint de entradas (`check-ins:batch`) se ofrece a cualquier empresa** con su propio sistema de acceso, con su llave de integración.
 
 ---
 
@@ -478,8 +481,11 @@ La carga actual de AZC (K3 o CSV) puede hacerse antes de F2: al conectar One, el
 
 ## 13. Preguntas abiertas
 
-Resueltas el 2026-09-30: persona en dos empresas (§5.6), horarios por día (§4.3), id estable al recontratar (decisión 13), huérfanas de K3/CSV (§5.3), dueños del grupo (§8.5).
+Todas resueltas el 2026-09-30 (decisiones 10 a 17). Se reabren con la primera simulación real contra One.
 
-1. **Umbrales de los frenos** para AZC: se proponen 5 personas / 5 % por vuelta y lista mínima del 50 %. Se ajustan con la primera simulación real.
-2. **Puertas fuera de AZC:** si un cliente tiene otro sistema de acceso, ¿se le ofrece el mismo endpoint `check-ins:batch`? (El contrato ya lo permite.)
-3. **Monitoreo de directivos:** ¿los dueños y directivos tienen el agente en su PC como cualquier persona, o se excluyen?
+## 14. Estado de implementación
+
+| Fase | Estado |
+|---|---|
+| F0 horarios por día | Hecho 2026-09-30: migración 0026, API (`day_hours`, almuerzo), calendario, política (franjas solo a agentes ≥ 4.0.13), agente 4.0.13, pantalla Horarios |
+| F1 en adelante | Pendiente |

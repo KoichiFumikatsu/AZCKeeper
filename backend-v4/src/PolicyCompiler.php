@@ -134,6 +134,8 @@ final class PolicyCompiler
         $platform = Util::bin(self::PLATFORM);
         $rows = $this->db->run("SELECT a.*,v.document FROM policy_assignments a JOIN policy_documents p ON p.tenant_id=a.tenant_id AND p.id=a.policy_id AND p.enabled=TRUE JOIN policy_versions v ON v.tenant_id=a.tenant_id AND v.policy_id=a.policy_id AND v.policy_version=a.policy_version WHERE a.enabled=TRUE AND ((a.tenant_id=? AND a.scope='global') OR (a.tenant_id=? AND (a.scope='tenant' OR (a.scope='area' AND a.area_id=?) OR (a.scope='site' AND a.site_id=?) OR (a.scope='user' AND a.user_id=?) OR (a.scope='device' AND a.device_id=?))))", [$platform, $tenant, $org['area_id'], $org['site_id'], $userId, $device])->fetchAll();
         $assignments = []; $ruleSchedules = [];
+        // Antes de 4.0.13 el agente rechaza campos desconocidos en la politica: no se le envian franjas por dia.
+        $dayHours = $device === null || version_compare((string) ($d['agent_version'] ?? '0'), '4.0.13', '>=');
         foreach ($rows as $row) {
             $document = json_decode($row['document'], false, 64, JSON_THROW_ON_ERROR);
             if (!isset($document->rules) || !is_array($document->rules)) { throw new \RuntimeException('Published policy requires rules'); }
@@ -147,12 +149,12 @@ final class PolicyCompiler
             foreach ($rules as $rule) {
                 if ($rule->schedule_id !== null && in_array(PolicyComposer::RULE_MODULES[$rule->kind], $modules, true)) {
                     $key = ($row['scope'] === 'global' ? 'global/' : 'tenant/') . $rule->schedule_id;
-                    $ruleSchedules[$key] = $this->schedule($row['tenant_id'], Util::bin($rule->schedule_id));
+                    $ruleSchedules[$key] = $this->schedule($row['tenant_id'], Util::bin($rule->schedule_id), $dayHours);
                 }
             }
             $assignments[] = ['id' => Util::id($row['id']), 'scope' => $row['scope'], 'priority' => (int) $row['priority'], 'rules' => $rules, 'management_hosts' => $hosts];
         }
-        return ['tenant_id' => Util::id($tenant), 'device_id' => Util::id($device??$userId), 'reported_version' => (int) $d['policy_version'], 'modules' => $modules, 'assignments' => $assignments, 'work_schedule' => $this->schedule($tenant, $org['schedule_id']), 'rule_schedules' => $ruleSchedules];
+        return ['tenant_id' => Util::id($tenant), 'device_id' => Util::id($device??$userId), 'reported_version' => (int) $d['policy_version'], 'modules' => $modules, 'assignments' => $assignments, 'work_schedule' => $this->schedule($tenant, $org['schedule_id'], $dayHours), 'rule_schedules' => $ruleSchedules];
     }
 
     private function current(string $table, string $owner, string $tenant, string $id, string $at): ?array
@@ -176,13 +178,21 @@ final class PolicyCompiler
         return Util::json($normalized);
     }
 
-    private function schedule(string $tenant, string $id): object
+    private function schedule(string $tenant, string $id, bool $dayHours = true): object
     {
         $s = $this->db->one('SELECT * FROM schedules WHERE tenant_id=? AND id=?', [$tenant, $id]);
         if (!$s) { throw new \RuntimeException('Schedule not found'); }
         if (substr($s['start_local'], 6) !== '00' || substr($s['end_local'], 6) !== '00') { throw new \RuntimeException('OpenAPI schedules require minute precision'); }
         new \DateTimeZone($s['timezone']);
-        $days = $this->db->run('SELECT weekday FROM schedule_days WHERE tenant_id=? AND schedule_id=? ORDER BY weekday', [$tenant, $id])->fetchAll();
-        return (object) ['id' => Util::id($id), 'tenant_id' => Util::id($tenant), 'name' => $s['name'], 'timezone' => $s['timezone'], 'days' => array_map('intval', array_column($days, 'weekday')), 'start_local' => substr($s['start_local'], 0, 5), 'end_local' => substr($s['end_local'], 0, 5), 'version' => (int) $s['version']];
+        $days = $this->db->run('SELECT * FROM schedule_days WHERE tenant_id=? AND schedule_id=? ORDER BY weekday', [$tenant, $id])->fetchAll();
+        $hm = static fn (?string $v): ?string => $v === null ? null : substr($v, 0, 5);
+        $out = ['id' => Util::id($id), 'tenant_id' => Util::id($tenant), 'name' => $s['name'], 'timezone' => $s['timezone'], 'days' => array_map('intval', array_column($days, 'weekday')), 'start_local' => $hm($s['start_local']), 'end_local' => $hm($s['end_local']),
+            'lunch_start_local' => $hm($s['lunch_start_local']), 'lunch_end_local' => $hm($s['lunch_end_local'])];
+        $own = array_values(array_filter($days, static fn ($d) => $d['start_local'] !== null));
+        if ($dayHours && $own) {
+            $out['day_hours'] = array_map(static fn ($d) => (object) ['weekday' => (int) $d['weekday'], 'start_local' => $hm($d['start_local']), 'end_local' => $hm($d['end_local']), 'lunch_start_local' => $hm($d['lunch_start_local']), 'lunch_end_local' => $hm($d['lunch_end_local'])], $own);
+        }
+        $out['version'] = (int) $s['version'];
+        return (object) $out;
     }
 }

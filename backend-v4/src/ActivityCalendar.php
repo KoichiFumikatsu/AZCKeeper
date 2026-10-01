@@ -12,16 +12,21 @@ final class ActivityCalendar
     {
         $db->run('DROP TEMPORARY TABLE IF EXISTS activity_calendar');
         $db->run('CREATE TEMPORARY TABLE activity_calendar (schedule_id BINARY(16),day DATE,timezone VARCHAR(64),starts_at DATETIME(6),ends_at DATETIME(6),work_start DATETIME(6),expected_seconds INT,utc_offset INT,start_local TIME,PRIMARY KEY(schedule_id,day)) ENGINE=InnoDB');
-        $schedules=$db->run('SELECT s.id,s.timezone,s.start_local,s.end_local,GROUP_CONCAT(d.weekday) weekdays FROM schedules s LEFT JOIN schedule_days d ON d.tenant_id=s.tenant_id AND d.schedule_id=s.id WHERE s.tenant_id=? GROUP BY s.id,s.timezone,s.start_local,s.end_local',[$tenant])->fetchAll();
+        $schedules=$db->run('SELECT s.id,s.timezone,s.start_local,s.end_local FROM schedules s WHERE s.tenant_id=?',[$tenant])->fetchAll();
+        $days=[];
+        foreach ($db->run('SELECT schedule_id,weekday,start_local,end_local FROM schedule_days WHERE tenant_id=?',[$tenant])->fetchAll() as $d) { $days[$d['schedule_id']][(int)$d['weekday']]=$d; }
         foreach ($schedules as $s) {
             $zone=new \DateTimeZone($s['timezone']);
             for ($day=new \DateTimeImmutable($from,$zone); $day->format('Y-m-d')<$to; $day=$day->modify('+1 day')) {
-                $start=new \DateTimeImmutable($day->format('Y-m-d').' '.$s['start_local'],$zone);
-                $end=new \DateTimeImmutable($day->format('Y-m-d').' '.$s['end_local'],$zone);
+                // Un dia con franja propia (p. ej. sabado medio dia) usa la suya; los demas, la del horario.
+                $own=$days[$s['id']][(int)$day->format('N')]??null;
+                $startLocal=$own['start_local']??$s['start_local']; $endLocal=$own['end_local']??$s['end_local'];
+                $start=new \DateTimeImmutable($day->format('Y-m-d').' '.$startLocal,$zone);
+                $end=new \DateTimeImmutable($day->format('Y-m-d').' '.$endLocal,$zone);
                 if ($end<=$start) { $end=$end->modify('+1 day'); }
-                $work=in_array($day->format('N'),explode(',',$s['weekdays']??''),true);
+                $work=$own!==null;
                 $sql=static fn(\DateTimeImmutable $d)=>$d->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s.u');
-                $db->run('INSERT INTO activity_calendar VALUES (?,?,?,?,?,?,?,?,?)',[$s['id'],$day->format('Y-m-d'),$s['timezone'],$sql($day),$sql($day->modify('+1 day')),$sql($start),$work?$end->getTimestamp()-$start->getTimestamp():0,$day->getOffset(),$s['start_local']]);
+                $db->run('INSERT INTO activity_calendar VALUES (?,?,?,?,?,?,?,?,?)',[$s['id'],$day->format('Y-m-d'),$s['timezone'],$sql($day),$sql($day->modify('+1 day')),$sql($start),$work?$end->getTimestamp()-$start->getTimestamp():0,$day->getOffset(),$startLocal]);
             }
         }
     }

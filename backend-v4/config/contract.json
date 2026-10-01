@@ -1,5 +1,5 @@
 {
-  "source_sha256": "6bb6f368ebcaf27bee6e8854a29f6a9949fa93929428c5320d690f4b5d3f617b",
+  "source_sha256": "02b71f9fe2e6771eb20cb35f5a704341e2f1cd2c917b5f71470a578e95bb064c",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -19866,6 +19866,59 @@
           ],
           "description": "Fin del almuerzo (K3 `lunch_end_time`). Debe venir junto con lunch_start_local."
         },
+        "day_hours": {
+          "type": "array",
+          "maxItems": 7,
+          "description": "Franja propia de algunos dias (p. ej. sabado 08:00-12:00). Cada dia debe estar en `days`. Su almuerzo manda ese dia (null = sin almuerzo). Los dias sin entrada usan start/end y almuerzo del horario. Solo se envia a agentes 4.0.13 o posteriores.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "weekday",
+              "start_local",
+              "end_local",
+              "lunch_start_local",
+              "lunch_end_local"
+            ],
+            "properties": {
+              "weekday": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 7
+              },
+              "start_local": {
+                "type": "string",
+                "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+              },
+              "end_local": {
+                "type": "string",
+                "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+              },
+              "lunch_start_local": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lunch_end_local": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "version": {
           "type": "integer",
           "minimum": 1
@@ -19907,6 +19960,81 @@
         "end_local": {
           "type": "string",
           "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+        },
+        "lunch_start_local": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lunch_end_local": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "day_hours": {
+          "type": "array",
+          "maxItems": 7,
+          "description": "Franja propia de algunos dias (p. ej. sabado 08:00-12:00). Cada dia debe estar en `days`. Su almuerzo manda ese dia (null = sin almuerzo). Los dias sin entrada usan start/end y almuerzo del horario. Solo se envia a agentes 4.0.13 o posteriores.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "weekday",
+              "start_local",
+              "end_local",
+              "lunch_start_local",
+              "lunch_end_local"
+            ],
+            "properties": {
+              "weekday": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 7
+              },
+              "start_local": {
+                "type": "string",
+                "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+              },
+              "end_local": {
+                "type": "string",
+                "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+              },
+              "lunch_start_local": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lunch_end_local": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
         }
       }
     },

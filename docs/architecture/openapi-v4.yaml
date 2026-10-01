@@ -11176,6 +11176,53 @@ components:
         end_local:
           type: string
           pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+        lunch_start_local:
+          anyOf:
+          - type: string
+            pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+          - type: 'null'
+        lunch_end_local:
+          anyOf:
+          - type: string
+            pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+          - type: 'null'
+        day_hours:
+          type: array
+          maxItems: 7
+          description: >-
+            Franja propia de algunos dias (p. ej. sabado 08:00-12:00). Cada dia debe estar en `days`. Su almuerzo
+            manda ese dia (null = sin almuerzo). Los dias sin entrada usan start/end y almuerzo del horario. Solo se
+            envia a agentes 4.0.13 o posteriores.
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - weekday
+            - start_local
+            - end_local
+            - lunch_start_local
+            - lunch_end_local
+            properties:
+              weekday:
+                type: integer
+                minimum: 1
+                maximum: 7
+              start_local:
+                type: string
+                pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+              end_local:
+                type: string
+                pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+              lunch_start_local:
+                anyOf:
+                - type: string
+                  pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+                - type: 'null'
+              lunch_end_local:
+                anyOf:
+                - type: string
+                  pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+                - type: 'null'
     Schedule:
       type: object
       additionalProperties: false
@@ -11229,6 +11276,43 @@ components:
             pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
           - type: 'null'
           description: Fin del almuerzo (K3 `lunch_end_time`). Debe venir junto con lunch_start_local.
+        day_hours:
+          type: array
+          maxItems: 7
+          description: >-
+            Franja propia de algunos dias (p. ej. sabado 08:00-12:00). Cada dia debe estar en `days`. Su almuerzo
+            manda ese dia (null = sin almuerzo). Los dias sin entrada usan start/end y almuerzo del horario. Solo se
+            envia a agentes 4.0.13 o posteriores.
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - weekday
+            - start_local
+            - end_local
+            - lunch_start_local
+            - lunch_end_local
+            properties:
+              weekday:
+                type: integer
+                minimum: 1
+                maximum: 7
+              start_local:
+                type: string
+                pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+              end_local:
+                type: string
+                pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+              lunch_start_local:
+                anyOf:
+                - type: string
+                  pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+                - type: 'null'
+              lunch_end_local:
+                anyOf:
+                - type: string
+                  pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+                - type: 'null'
         version:
           type: integer
           minimum: 1
