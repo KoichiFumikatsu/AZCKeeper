@@ -10798,6 +10798,48 @@ paths:
       x-permission: empresas.gestionar
       x-platform-only: true
       x-max-body-bytes: 16384
+    delete:
+      tags:
+      - admin
+      operationId: deleteCompanyGroup
+      summary: deleteCompanyGroup
+      description: Elimina el grupo; sus empresas quedan independientes. Se rechaza si hay cuentas de grupo atadas
+        a el (reasignarlas primero en Cuentas).
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Solo plataforma autenticada.
+      x-resources:
+      - CompanyGroup
+      responses:
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '204':
+          description: Eliminado
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/IfMatch'
+      x-permission: empresas.gestionar
+      x-platform-only: true
   /role-rules:
     get:
       tags:

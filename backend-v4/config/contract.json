@@ -1,5 +1,5 @@
 {
-  "source_sha256": "93ab3a38487f970bbf7b2b2f80aa289bc5d5c2187f45c6054ea2dabd444c11df",
+  "source_sha256": "738b864c89700bc87539ac36a91a874ae7f04365ad678e4c343afd42d6180bce",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -15874,6 +15874,72 @@
         "x-permission": "empresas.gestionar",
         "x-platform-only": true,
         "x-max-body-bytes": 16384
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "deleteCompanyGroup",
+        "summary": "deleteCompanyGroup",
+        "description": "Elimina el grupo; sus empresas quedan independientes. Se rechaza si hay cuentas de grupo atadas a el (reasignarlas primero en Cuentas).",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Solo plataforma autenticada.",
+        "x-resources": [
+          "CompanyGroup"
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "204": {
+            "description": "Eliminado"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "x-permission": "empresas.gestionar",
+        "x-platform-only": true
       }
     },
     "/role-rules": {

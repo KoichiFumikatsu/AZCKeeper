@@ -49,5 +49,15 @@ function companyGroupTests(Database $db): void
     expect(adminRequest($inB, 'GET', '/tenants/' . Util::id($tb) . '/devices'), 404, 'access removed with the company');
     check(!$db->one('SELECT 1 FROM admin_account_roles WHERE tenant_id=?', [$tb]), 'group roles there removed');
     expect(adminRequest($owner, 'GET', '/tenants/' . Util::id($ta) . '/devices'), 200, 'home company still works');
+    // Eliminar un grupo: rechazado mientras tenga cuentas de grupo; sin ellas, sus empresas quedan independientes.
+    $g = expect(adminRequest($platform, 'GET', '/company-groups'), 200, 'list groups')['data'];
+    $g = array_values(array_filter($g, fn ($x) => $x['id'] === $group['id']))[0];
+    $busy = adminRequest($platform, 'DELETE', '/company-groups/' . $g['id'], null, ['if-match' => '"' . $g['version'] . '"']);
+    check($busy[0] === 409 && $busy[1]['detail'] === 'group_has_accounts:1', 'group with accounts cannot be deleted');
+    $empty = expect(adminRequest($platform, 'POST', '/company-groups', ['name' => 'Grupo vacío', 'tenant_ids' => [Util::id($c['tenant_id'])]]), 201, 'group without accounts');
+    check(adminRequest($platform, 'DELETE', '/company-groups/' . $empty['id'], null, ['if-match' => '"0"'])[0] === 412, 'delete needs current version');
+    check(adminRequest($platform, 'DELETE', '/company-groups/' . $empty['id'], null, ['if-match' => '"' . $empty['version'] . '"'])[0] === 204, 'delete group');
+    check(!$db->one('SELECT 1 FROM company_group_members WHERE tenant_id=?', [$c['tenant_id']]) && $db->one('SELECT 1 FROM tenants WHERE tenant_id=?', [$c['tenant_id']]), 'its company stays, now independent');
+    check(adminRequest($owner, 'DELETE', '/company-groups/' . $g['id'], null, ['if-match' => '"' . $g['version'] . '"'])[0] === 403, 'only platform deletes groups');
     echo 'PASS company groups (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

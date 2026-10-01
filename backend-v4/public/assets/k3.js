@@ -528,6 +528,20 @@ async function tenantsPage() {
     const items = companies.filter(c => c.id !== PLATFORM_TENANT).map(c => [c.id, c.branding?.display_name || c.name, taken.has(c.id) ? `Ya está en ${taken.get(c.id)}` : null]);
     const boxes = checks(body, items, x?.tenant_ids || []);
     boxes.forEach(b => { if (taken.has(b.value)) b.disabled = true; });
+    if (x) {
+      // Eliminar: sus empresas quedan independientes; con cuentas de grupo atadas se rechaza (reasignarlas en Cuentas).
+      const del = el('button', 'Eliminar grupo'); del.type = 'button'; ok.before(del);
+      del.addEventListener('click', async () => {
+        if (!confirm(`¿Eliminar el grupo "${x.name}"? Sus empresas no se borran: quedan independientes.`)) return;
+        del.disabled = ok.disabled = true;
+        try { await api('DELETE', `/company-groups/${x.id}`, { tenant: PLATFORM_TENANT, ifMatch: x.version }); groups = (await api('GET', '/company-groups', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done(); }
+        catch (e) {
+          const n = (e.problem?.detail || '').match(/^group_has_accounts:(\d+)$/)?.[1];
+          show(n ? `No se puede eliminar: ${n} cuenta(s) de grupo dependen de él. Cámbialas primero en Cuentas (quítales el grupo o asígnales otro).` : e.status === 412 ? 'Alguien más cambió el grupo: recarga la página.' : e);
+          del.disabled = ok.disabled = false;
+        }
+      });
+    }
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
       if (!nm.value.trim()) { show('Escribe el nombre del grupo.'); return; }
@@ -1442,7 +1456,7 @@ const AUDIT_ACTIONS = {
   createSuspiciousApp: 'Agregó una app a vigilar', putSuspiciousApp: 'Editó una app vigilada', deleteSuspiciousApp: 'Dejó de vigilar una app', putInstallCoverage: 'Editó la cobertura de una persona',
   putAppClassification: 'Clasificó una aplicación', createAppClassificationOverride: 'Creó una excepción de clasificación', deleteAppClassificationOverride: 'Quitó una excepción de clasificación', createAppSite: 'Agregó un sitio reconocible',
   createTenant: 'Creó una empresa', patchTenant: 'Editó una empresa', uploadTenantLogo: 'Cambió el logo de la empresa', putPanelSettings: 'Cambió los ajustes del panel',
-  createCompanyGroup: 'Creó un grupo empresarial', patchCompanyGroup: 'Editó un grupo empresarial',
+  createCompanyGroup: 'Creó un grupo empresarial', patchCompanyGroup: 'Editó un grupo empresarial', deleteCompanyGroup: 'Eliminó un grupo empresarial',
   createDataSource: 'Conectó una fuente de datos', patchDataSource: 'Editó una fuente de datos', putDataDomains: 'Cambió quién manda en cada dato', runDataSource: 'Sincronizó una fuente',
   approveSyncRun: 'Aprobó una sincronización bloqueada', resolveSyncItem: 'Resolvió un pendiente de sincronización',
   createIntegration: 'Creó una integración', revokeIntegration: 'Revocó una integración', rotateIntegration: 'Cambió la clave de una integración', issueExternalToken: 'Una integración pidió acceso',

@@ -14,8 +14,22 @@ final class CompanyGroups
             'listCompanyGroups' => AdminApi::response(['data' => array_map(fn ($g) => $this->dto($g), $this->db->run('SELECT * FROM company_groups ORDER BY name')->fetchAll())]),
             'createCompanyGroup' => $this->save(null, $b),
             'patchCompanyGroup' => $this->save($id, $b),
+            'deleteCompanyGroup' => $this->delete($id),
             default => throw new ApiError(404, 'resource_not_found'),
         };
+    }
+    /** Elimina el grupo: sus empresas quedan independientes. Si hay cuentas de grupo atadas, se rechaza (reasignarlas antes). */
+    private function delete(string $id): array
+    {
+        $g = $this->db->one('SELECT * FROM company_groups WHERE id=? FOR UPDATE', [$id]);
+        if (!$g) { throw new ApiError(404, 'resource_not_found'); }
+        if ($this->r->header('if-match') !== '"' . $g['version'] . '"') { throw new ApiError(412, 'version_conflict'); }
+        $accounts = (int) $this->db->one('SELECT COUNT(*) n FROM admin_accounts WHERE group_id=?', [$id])['n'];
+        if ($accounts) { throw new ApiError(409, 'invalid_transition', [], "group_has_accounts:$accounts"); }
+        $this->db->run('DELETE FROM company_group_members WHERE group_id=?', [$id]);
+        $this->db->run('DELETE FROM company_groups WHERE id=?', [$id]);
+        (new Audit($this->db))->record($this->c, $this->r, 'deleteCompanyGroup', 'company_group', $id, ['name']);
+        return ['status' => 204, 'json' => '', 'headers' => []];
     }
     private function dto(array $g): array
     {

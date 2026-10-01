@@ -141,7 +141,7 @@ final class AdminApi
             'listAbsences','createAbsence','patchAbsence'=>(new Absences($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listDoors','createDoor','patchDoor','getDoorQuarantine'=>(new DoorsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
-            'listCompanyGroups','createCompanyGroup','patchCompanyGroup'=>(new CompanyGroups($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
+            'listCompanyGroups','createCompanyGroup','patchCompanyGroup','deleteCompanyGroup'=>(new CompanyGroups($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
             'listDataSources','createDataSource','patchDataSource','getDataDomains','putDataDomains','runDataSource','listSyncRuns','listSyncItems','approveSyncRun','listPendingSyncItems','resolveSyncItem'=>(new DataSources($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getProductivity'=>$this->report(), 'listAudit'=>$this->auditPage(),
             default=>throw new ApiError(404,'resource_not_found')
