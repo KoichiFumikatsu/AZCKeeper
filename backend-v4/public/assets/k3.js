@@ -1270,7 +1270,10 @@ async function policiesPage() {
         const saved = p ? await api('PATCH', `/policies/${p.id}`, { body: payload, ifMatch: p.version }) : await api('POST', '/policies', { body: payload });
         list = p ? list.map(x => x.id === p.id ? saved : x) : [...list, saved]; dialog.close(); render(); done();
       } catch (e) {
-        show(e.code === 'invalid_transition' || e.status === 409 ? 'Choca con otra regla del mismo nivel (una bloquea y otra permite lo mismo). Ponlas en niveles distintos o únelas.' : e.status === 422 ? 'Revisa los sitios: escribe solo dominios y no bloquees el propio panel de Keeper.' : e);
+        const detail = String(e.problem?.detail || ''); const kindName = { web: 'sitios web', download: 'descargas', installation: 'instalaciones', usb: 'USB' };
+        show(e.code === 'invalid_transition' || e.status === 409 ? 'Choca con otra regla del mismo nivel (una bloquea y otra permite lo mismo). Ponlas en niveles distintos o únelas.'
+          : detail.startsWith('invalid_target:') ? `El valor "${detail.split(':').slice(2).join(':')}" no es válido en ${kindName[detail.split(':')[1]] || detail.split(':')[1]}.`
+          : detail.startsWith('blocks_panel:') ? `No puedes bloquear ${detail.slice(13)}: dejaría a los equipos sin acceso al panel de Keeper.` : e);
         ok.disabled = false;
       }
     });

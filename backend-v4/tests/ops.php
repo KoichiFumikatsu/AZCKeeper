@@ -18,5 +18,12 @@ function opsTests(Database $db): void
     check(adminRequest($platform, 'PUT', '/tenants/panel-settings', ['install_coverage_heartbeat_days' => 7, 'raw_days' => 30, 'log_days' => 15])[0] === 200, 'retention saved');
     $cfg = expect(adminRequest($platform, 'GET', '/tenants/panel-settings'), 200, 'read settings');
     check($cfg['raw_days'] === 30 && $cfg['log_days'] === 15 && $cfg['aggregate_months'] === 13, 'retention values returned');
+    // Reglas "todo" en descargas, instalaciones y USB (lo que envia la pantalla Reglas) se aceptan; el panel no se bloquea.
+    $rules = [['id' => Util::uuid(), 'kind' => 'web', 'effect' => 'deny', 'targets' => ['facebook.com', 'instagram.com', 'netflix.com', 'disneyplus.com'], 'schedule_id' => null, 'priority' => 0],
+        ['id' => Util::uuid(), 'kind' => 'download', 'effect' => 'deny', 'targets' => ['*'], 'schedule_id' => null, 'priority' => 0],
+        ['id' => Util::uuid(), 'kind' => 'usb', 'effect' => 'deny', 'targets' => ['write'], 'schedule_id' => null, 'priority' => 0]];
+    expect(adminRequest($platform, 'POST', '/policies', ['name' => 'Bloqueos generales', 'target_type' => 'tenant', 'target_id' => Util::id($tenant), 'enabled' => true, 'rules' => $rules]), 201, 'blanket download and usb rules accepted');
+    $bad = adminRequest($platform, 'POST', '/policies', ['name' => 'Mala', 'target_type' => 'tenant', 'target_id' => Util::id($tenant), 'enabled' => true, 'rules' => [['id' => Util::uuid(), 'kind' => 'installation', 'effect' => 'deny', 'targets' => ['no valido!'], 'schedule_id' => null, 'priority' => 0]]]);
+    check($bad[0] === 422 && $bad[1]['detail'] === 'invalid_target:installation:no valido!', 'validation says which value failed');
     echo 'PASS ops (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

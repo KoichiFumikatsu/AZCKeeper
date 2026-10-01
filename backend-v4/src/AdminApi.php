@@ -526,9 +526,12 @@ final class AdminApi
                     'download'=>'/^\.?[a-z0-9]{1,20}$/iD',
                     default=>'/^[a-z0-9][a-z0-9._:\\-]{0,254}$/iD'
                 };
-                if (!preg_match($pattern,$target)) { throw new ApiError(422,'validation_failed'); }
+                // "*" = todo: es lo que el agente aplica en descargas, instalaciones y USB (bloquear o permitir todo).
+                $blanket=$target==='*' && in_array($rule->kind,['download','installation','usb'],true);
+                // El detalle dice que valor fallo: el panel lo muestra en vez de un error generico.
+                if (!$blanket && !preg_match($pattern,$target)) { throw new ApiError(422,'validation_failed',[],'invalid_target:'.$rule->kind.':'.mb_substr($target,0,80)); }
                 $domain=strtolower(ltrim($target,'*.'));
-                if ($rule->kind==='web' && $rule->effect==='deny' && ($domain===$host || str_ends_with($host,'.'.$domain))) { throw new ApiError(422,'validation_failed'); }
+                if ($rule->kind==='web' && $rule->effect==='deny' && ($domain===$host || str_ends_with($host,'.'.$domain))) { throw new ApiError(422,'validation_failed',[],'blocks_panel:'.$target); }
             }
         }
     }
