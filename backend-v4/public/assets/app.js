@@ -1,5 +1,6 @@
 import { api, ApiError, PLATFORM_TENANT, isUuid, setTenant, saveSession, readSession, refreshCsrf, goToLogin, errorMessage } from './api.js';
 import { coordinator } from './coordinator.js';
+import './tablekit.js';
 import { operations, operationPaths } from './operations.js';
 import { intake, intakeProbe } from './intake.js';
 import './menu.js';
@@ -465,10 +466,10 @@ async function reports() {
   const data = await get(reportPath());
   if (!Array.isArray(data.series)) throw new ApiError(200, { code: 'invalid_response' });
   const panel = node('section', undefined, 'work-surface'); $('content').append(panel);
-  details(panel, [['Período', `${data.from} → ${data.to} (fin excluido)`], ['Zona horaria', data.timezone], ['Cobertura', data.series.length ? `${number.format(data.coverage_percent)} %` : 'Sin datos'], ['Calculado', dateTime(data.calculated_at)], ['Datos hasta', dateTime(data.data_through)]]);
+  details(panel, [['Período', `${data.from} → ${data.to} (fin excluido)`], ['Zona horaria', data.timezone], ['Registro vs. jornada', data.series.length ? `${number.format(data.coverage_percent)} % (tiempo registrado ÷ jornada esperada)` : 'Sin datos'], ['Calculado', dateTime(data.calculated_at)], ['Datos hasta', dateTime(data.data_through)]]);
   if (!data.series.length) { panel.append(node('p', 'No hay datos de productividad para este período en tu alcance.', 'empty-state')); return; }
   const percent = value => value === null ? 'Sin dato' : `${number.format(value)} %`;
-  const columns = [['Día', 'day'], ['Actividad (h)', r => number.format(r.active_seconds / 3600)], ['Inactividad (h)', r => number.format(r.idle_seconds / 3600)], ['Focus / 100', r => r.focus_score === null ? 'Sin dato' : number.format(r.focus_score)], ['Productividad', r => percent(r.productivity_percent)]];
+  const columns = [['Día', 'day'], ['En uso (h)', r => number.format(r.active_seconds / 3600)], ['Encendido sin uso (h)', r => number.format(r.idle_seconds / 3600)], ['Focus / 100', r => r.focus_score === null ? 'Sin dato' : number.format(r.focus_score)], ['Productividad', r => percent(r.productivity_percent)]];
   appendRows(table(panel, 'Productividad por día', columns).body, data.series, columns);
 }
 

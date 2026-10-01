@@ -84,7 +84,8 @@ export async function intake({ tenant, content }) {
   const rerender = () => intake({ tenant, content });
   content.replaceChildren();
   const intro = el('div', undefined, 'notice');
-  intro.append(el('p', 'Instala el mismo paquete de Keeper en todos los equipos. Cada equipo pide alta con su número de serie: si coincide con un equipo esperado se asigna solo a su persona y toma la placa como nombre; si no, aparece aquí para que lo apruebes.'));
+  intro.append(el('strong', '¿Qué es esto?'), el('p', 'Es la puerta de entrada de los computadores a Keeper. Cuando instalas Keeper en un equipo, el equipo pide permiso para empezar a reportar. Aquí decides a qué persona pertenece y lo apruebas.'),
+    el('p', 'Para no aprobar uno por uno: carga antes la lista de "equipos esperados" (persona + placa + número de serie). Si un equipo que se instala coincide con uno esperado, se asigna solo. También puedes dejar que la persona escriba su cédula al instalar.'));
   content.append(intro);
 
   let fullScope = true;

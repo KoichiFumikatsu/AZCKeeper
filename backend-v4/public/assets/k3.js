@@ -1,5 +1,6 @@
 import { api, isUuid, setTenant, readSession, refreshCsrf, goToLogin, errorMessage, PLATFORM_TENANT } from './api.js';
 import './menu.js';
+import './tablekit.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
 // de la API; lo que la cuenta no puede ver se explica en vez de mostrarse vacío.
@@ -83,7 +84,21 @@ async function sites() {
   kpis([['Sedes activas', String(siteList.length)], ['Personas', String(users.filter(u => u.status === 'active').length)],
     ['Equipos en línea', devices ? `${allDevs.filter(online).length} / ${allDevs.length}` : 'Sin acceso', 'Con señal en los últimos 5 minutos'],
     ['Productividad (7 días)', people ? pct(rows.reduce((a, r) => a + (r.productivity ?? 0) * r.hours, 0) / (rows.reduce((a, r) => a + (r.productivity === null ? 0 : r.hours), 0) || NaN)) : 'Sin acceso']]);
-  if (!siteList.length) { empty(surface('Sedes'), 'Aún no hay sedes', 'Crea las sedes en Organización y asígnalas a las personas.'); return; }
+  const action = $('page-action'); action.textContent = 'Crear sede'; action.hidden = false;
+  action.addEventListener('click', () => {
+    const { dialog, body, ok, show } = dialogShell('Crear sede');
+    const name = labeled(body, 'Nombre de la sede', el('input')); name.maxLength = 120;
+    body.append(el('p', 'Después la asignas a las personas en Personas (o llega sola desde AZC One si One manda en las sedes).', 'help'));
+    ok.textContent = 'Crear sede';
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
+      ok.disabled = true;
+      try { await api('POST', '/organization', { body: { kind: 'site', name: name.value.trim(), parent_id: null, active: true } }); dialog.close(); location.reload(); }
+      catch (e) { show(e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  });
+  if (!siteList.length) { empty(surface('Sedes'), 'Aún no hay sedes', 'Crea la primera con "Crear sede".'); return; }
   const cards = el('div', undefined, 'three'); $('page-content').append(cards);
   for (const r of rows) {
     const s = surface(r.site.name, cards); s.append(el('p', 'Operación de sede', 'eyebrow'));
@@ -91,20 +106,22 @@ async function sites() {
     s.append(el('p', `${r.members} personas · productividad ${pct(r.productivity)}`, 'help'));
   }
   table(surface('Detalle por sede'), 'Sedes', [['Sede', r => r.site.name], ['Personas', r => String(r.members)], ['Equipos', r => String(r.devices)],
-    ['En línea', r => devices ? String(r.online) : '—'], ['Horas activas (7 días)', r => people ? r.hours.toFixed(1) : '—'], ['Productividad', r => people ? pct(r.productivity) : '—']], rows);
+    ['En línea', r => devices ? String(r.online) : '—'], ['Uso real, horas (7 días)', r => people ? r.hours.toFixed(1) : '—'], ['Productividad', r => people ? pct(r.productivity) : '—']], rows);
 }
 
 async function organization() {
   let org = await allPages('/organization');
+  const users = (await optional(allPages('/users'))) || [];
+  const usedBy = o => users.filter(u => u.status === 'active' && [u.firm_id, u.site_id, u.area_id, u.position_id].includes(o.id)).length;
   const byId = () => names(org);
   const render = () => {
     $('page-content').replaceChildren();
     const count = k => org.filter(o => o.kind === k && o.active).length;
     kpis([['Firmas', String(count('firm'))], ['Sedes', String(count('site'))], ['Áreas', String(count('area'))], ['Cargos', String(count('position'))]]);
     const s = surface('Unidades de la empresa');
-    s.append(el('p', 'Desactivar una unidad solo es posible si ninguna persona, unidad activa, rol o regla depende de ella.', 'help'));
+    s.append(el('p', 'Las personas apuntan a la unidad, no a su nombre: si renombras un cargo, todas las personas con ese cargo lo ven con el nombre nuevo. Desactivar solo es posible cuando nadie la usa.', 'help'));
     const n = byId();
-    table(s, 'Organización', [['Unidad', o => o.name], ['Tipo', o => kinds[o.kind] || o.kind], ['Depende de', o => o.parent_id ? (n.get(o.parent_id) || '—') : '—'],
+    table(s, 'Organización', [['Unidad', o => o.name], ['Tipo', o => kinds[o.kind] || o.kind], ['Depende de', o => o.parent_id ? (n.get(o.parent_id) || '—') : '—'], ['Personas', o => String(usedBy(o))],
       ['Estado', o => badge(o.active ? 'Activa' : 'Inactiva', o.active ? 'good' : '')], ['Acciones', o => actions(o)]], org,
       { filters: [['Tipo', o => kinds[o.kind]], ['Estado', o => o.active ? 'Activa' : 'Inactiva']] });
   };
@@ -115,10 +132,31 @@ async function organization() {
   };
   const actions = o => {
     const box = el('div', undefined, 'actions no-margin');
-    const rename = el('button', 'Renombrar', 'link-button'); rename.type = 'button';
-    rename.addEventListener('click', async () => { const name = prompt('Nuevo nombre', o.name)?.trim(); if (!name || name === o.name) return; try { await save(o, { name }); } catch (e) { fail(e); } });
+    const rename = el('button', 'Editar', 'link-button'); rename.type = 'button';
+    rename.addEventListener('click', () => {
+      const { dialog, body, ok, show } = dialogShell(`Editar ${o.name}`);
+      const name = labeled(body, 'Nombre', el('input')); name.maxLength = 120; name.value = o.name;
+      const count = usedBy(o); if (count) body.append(el('p', `${count} personas tienen esta unidad: verán el nombre nuevo.`, 'help'));
+      const parent = el('select'); parent.append(new Option('No depende de otra', ''));
+      org.filter(x => x.active && x.id !== o.id).sort((a, b) => a.name.localeCompare(b.name, 'es')).forEach(x => parent.append(new Option(`${x.name} (${kinds[x.kind]})`, x.id)));
+      parent.value = o.parent_id || ''; labeled(body, 'Depende de', parent, 'Por ejemplo, un área que pertenece a una sede, o un cargo que depende de un área.');
+      dialog.querySelector('form').addEventListener('submit', async ev => {
+        ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
+        ok.disabled = true;
+        try { await save(o, { name: name.value.trim(), parent_id: parent.value || null }); dialog.close(); }
+        catch (e) { show(e.status === 422 && !e.problem?.detail ? 'Esa dependencia no es válida (por ejemplo, haría un círculo o la unidad superior está inactiva).' : e); ok.disabled = false; }
+      });
+      dialog.showModal();
+    });
     const toggle = el('button', o.active ? 'Desactivar' : 'Activar', 'link-button'); toggle.type = 'button';
-    toggle.addEventListener('click', async () => { if (o.active && !confirm(`¿Desactivar ${o.name}?`)) return; try { await save(o, { active: !o.active }); } catch (e) { fail(e); } });
+    toggle.addEventListener('click', async () => {
+      if (o.active && !confirm(`¿Desactivar ${o.name}?`)) return;
+      try { await save(o, { active: !o.active }); }
+      catch (e) {
+        const count = usedBy(o);
+        fail(e.code === 'org_unit_in_use' ? new Error(`No se puede desactivar "${o.name}": ${count ? `${count} personas la tienen asignada (cámbialas primero en Personas)` : 'otras unidades activas dependen de ella, o la usa un rol o una política'}.`) : e);
+      }
+    });
     box.append(rename, toggle); return box;
   };
   const action = $('page-action'); action.textContent = 'Crear unidad'; action.hidden = false;

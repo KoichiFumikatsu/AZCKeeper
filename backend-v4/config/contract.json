@@ -1,5 +1,5 @@
 {
-  "source_sha256": "d7b8fbb915796b4b59006eff7d8097291b5d29c5242b62332c7b7244d8e83e93",
+  "source_sha256": "8bfbec6118c488600ae8ac0d63b5b49b1525c0cda9d427f654ea1713c7d401da",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -17556,6 +17556,8 @@
         "process_name",
         "app",
         "total_seconds",
+        "active_seconds",
+        "idle_seconds",
         "sessions",
         "users_count",
         "percent_total"
@@ -17570,6 +17572,16 @@
         "total_seconds": {
           "type": "integer",
           "minimum": 0
+        },
+        "active_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Tiempo con la ventana al frente y uso de teclado o ratón."
+        },
+        "idle_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Tiempo con la ventana al frente pero sin uso (inactivo)."
         },
         "sessions": {
           "type": "integer",

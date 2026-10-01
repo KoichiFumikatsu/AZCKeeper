@@ -8,9 +8,9 @@ $surface ??= 'portal';
 $current = ['member' => 'users', 'device' => 'devices'][$page] ?? $page;
 $portal = [
     'Principal' => [['home', 'Inicio', '/'], ['sites', 'Sedes', '/sedes.php', false], ['users', 'Personas', '/usuarios.php'],
-        ['intake', 'Alta de equipos', '/alta.php'], ['devices', 'Equipos', '/equipos.php'], ['reports', 'Productividad', '/reportes.php']],
+        ['intake', 'Registrar equipos nuevos', '/alta.php'], ['devices', 'Equipos', '/equipos.php'], ['reports', 'Productividad', '/reportes.php']],
     'Gestión avanzada' => [['policies', 'Reglas', '/reglas.php'], ['organization', 'Organización', '/organizacion.php', false],
-        ['assignments', 'Asignaciones', '/asignaciones.php', false], ['accounts', 'Cuentas del panel', '/cuentas.php', false],
+        ['assignments', 'Asignación de equipos', '/asignaciones.php', false], ['accounts', 'Cuentas del panel', '/cuentas.php', false],
         ['roles', 'Roles y permisos', '/roles.php', false], ['sources', 'Fuentes de datos', '/fuentes.php', false], ['schedules', 'Horarios', '/horarios.php', false], ['absences', 'Ausencias', '/ausencias.php', false], ['doors', 'Puertas', '/puertas.php', false], ['holidays', 'Festivos', '/festivos.php'], ['dual-job', 'Doble empleo', '/doble-empleo.php'],
         ['suspicious-apps', 'Apps sospechosas', '/apps-sospechosas.php'], ['coverage', 'Cobertura', '/cobertura.php']],
 ];

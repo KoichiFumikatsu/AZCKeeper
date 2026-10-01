@@ -16989,6 +16989,8 @@ components:
       - process_name
       - app
       - total_seconds
+      - active_seconds
+      - idle_seconds
       - sessions
       - users_count
       - percent_total
@@ -17000,6 +17002,14 @@ components:
         total_seconds:
           type: integer
           minimum: 0
+        active_seconds:
+          type: integer
+          minimum: 0
+          description: Tiempo con la ventana al frente y uso de teclado o ratón.
+        idle_seconds:
+          type: integer
+          minimum: 0
+          description: Tiempo con la ventana al frente pero sin uso (inactivo).
         sessions:
           type: integer
           minimum: 0

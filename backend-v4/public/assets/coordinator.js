@@ -28,7 +28,7 @@ function metrics(parent, fields) {
   fields.forEach(([name, value, note]) => { const r = el('div', undefined, 'metric'); r.append(el('dt', name), el('dd', value)); if (note) r.append(el('p', note, 'help')); d.append(r); }); parent.append(d);
 }
 function cellValue(row, field) { return typeof field === 'function' ? field(row) : row[field]; }
-function pagedTable(parent, title, columns, records, size = 25) {
+function pagedTable(parent, title, columns, records, size = Infinity) {
   if (!records.length) { empty(parent); return; }
   const region = el('div', undefined, 'table-region'); region.tabIndex = 0; region.setAttribute('role', 'region'); region.setAttribute('aria-label', title);
   const table = el('table'); table.append(el('caption', title));
@@ -109,16 +109,20 @@ export async function coordinator(ctx) {
     return Object.fromEntries(['area', 'site'].map(kind => [`${kind}_id`, selector(parent, label(kind), kind, org.data.filter(o => o.kind === kind))]));
   }
   function selected(controls) { return Object.fromEntries(Object.entries(controls).filter(([, v]) => v.value).map(([k, v]) => [k, v.value])); }
-  const productColumns = [['Día', 'day'], ['Activo', r => hours(r.active_seconds)], ['Inactivo', r => hours(r.idle_seconds)], ['Productividad', r => percent(r.productivity_percent)], ['Focus /100', r => numeric(r.focus_score) ? fmt.format(r.focus_score) : 'Sin dato']];
-  const appColumns = [['Aplicación', r => r.app || r.process_name], ['Proceso', 'process_name'], ['Tiempo', r => hours(r.total_seconds)], ['Sesiones', 'sessions'], ['Personas', 'users_count'], ['Del total', r => percent(r.percent_total)]];
+  const productColumns = [['Día', 'day'], ['En uso', r => hours(r.active_seconds)], ['Encendido sin uso', r => hours(r.idle_seconds)], ['Productividad', r => percent(r.productivity_percent)], ['Focus /100', r => numeric(r.focus_score) ? fmt.format(r.focus_score) : 'Sin dato']];
+  const appColumns = [['Aplicación', r => r.app || r.process_name], ['En uso', r => hours(r.active_seconds)], ['Abierta sin uso', r => hours(r.idle_seconds)], ['Veces al frente', 'sessions'], ['Personas', 'users_count'], ['Del tiempo total', r => percent(r.percent_total)]];
   const presenceColumns = [['Persona', r => memberLink(r)], ['Día', 'day'], ['Primera actividad', r => time(r.first_activity)], ['Última actividad', r => time(r.last_activity)], ['Activo', r => hours(r.active_seconds)], ['Retraso (min)', r => numeric(r.late_seconds) ? fmt.format(r.late_seconds / 60) : 'Sin dato'], ['Estado', r => label(r.status)]];
   async function apps(parent, range, filters = {}, exportable = false) {
-    return section(parent, 'Aplicaciones más usadas', async p => { const data = await report('apps', range, { ...filters, limit: exportable ? 100 : 10 }); const list = rows(data); p.append(el('p', `Tiempo total: ${hours(data.total_seconds)}. Incluye actividad e inactividad; porcentajes sobre todas las aplicaciones.`, 'help')); pagedTable(p, exportable ? 'Top 100 aplicaciones' : 'Top 10 aplicaciones', appColumns, list); if (exportable) csvButton(p, `apps-${range.from}-${range.to}`, appColumns, list); });
+    return section(parent, 'Aplicaciones más usadas', async p => { const data = await report('apps', range, { ...filters, limit: exportable ? 100 : 10 }); const list = rows(data); p.append(el('p', `"En uso": la ventana estaba al frente y había teclado o ratón. "Abierta sin uso": al frente pero sin tocar el equipo. "Veces al frente": cuántas veces se pasó a esa aplicación. Ordenado por tiempo en uso.`, 'help')); pagedTable(p, exportable ? 'Top 100 aplicaciones' : 'Top 10 aplicaciones', appColumns, list); if (exportable) csvButton(p, `apps-${range.from}-${range.to}`, appColumns, list); });
   }
   function productivity(p, data) {
     const series = rows(data, 'series');
     const avg = field => { const values = series.filter(r => numeric(r[field])); return values.length ? values.reduce((a, r) => a + r[field], 0) / values.length : null; };
-    metrics(p, [['Horas activas', series.length ? hours(series.reduce((a, r) => a + r.active_seconds, 0)) : 'Sin datos'], ['Productividad media', percent(avg('productivity_percent')), 'Media de los días con medición'], ['Focus promedio', numeric(avg('focus_score')) ? `${fmt.format(avg('focus_score'))} /100` : 'Sin dato'], ['Cobertura', series.length ? percent(data.coverage_percent) : 'Sin datos']]);
+    // Etiquetas con su formula: "horas activas" se leia como "equipo encendido" y la cobertura no se entendia.
+    metrics(p, [['Uso real', series.length ? hours(series.reduce((a, r) => a + r.active_seconds, 0)) : 'Sin datos', `Suma del período: tiempo con teclado o ratón en uso. Equipo encendido y registrando: ${series.length ? hours(series.reduce((a, r) => a + r.active_seconds + r.idle_seconds, 0)) : 'sin datos'}.`],
+      ['Productividad media', percent(avg('productivity_percent')), 'Tiempo en uso en apps clasificadas como productivas ÷ tiempo en uso. Promedio de los días con medición.'],
+      ['Focus promedio', numeric(avg('focus_score')) ? `${fmt.format(avg('focus_score'))} /100` : 'Sin dato', 'Tiempo productivo ÷ tiempo en uso, de 0 a 100. Promedio de los días con medición.'],
+      ['Registro vs. jornada', series.length ? percent(data.coverage_percent) : 'Sin datos', 'Tiempo con el equipo encendido y Keeper registrando ÷ horas de jornada esperadas (horario menos festivos y ausencias). Bajo = equipos apagados o sin reportar.']]);
     p.append(el('p', `${data.from} → ${data.to} (fin excluido) · ${data.timezone} · Datos hasta: ${time(data.data_through)}`, 'help')); chart(p, series);
     return series;
   }
@@ -146,7 +150,7 @@ export async function coordinator(ctx) {
   if (page === 'home') {
     host.append(el('p', 'Últimos 7 días · Información disponible en tu alcance.', 'help'));
     await Promise.all([
-      section(host, 'Pulso de la semana', async p => { const data = await report('productivity', week); productivity(p, data); if (data.series.length && data.coverage_percent < 80) { const a = el('p', undefined, 'notice'); a.append(link(`Cobertura baja (${percent(data.coverage_percent)}). Revisar reportes`, '/reportes.php')); p.append(a); } }),
+      section(host, 'Pulso de la semana', async p => { const data = await report('productivity', week); productivity(p, data); if (data.series.length && data.coverage_percent < 80) { const a = el('p', undefined, 'notice'); a.append(link(`Solo se registró el ${percent(data.coverage_percent)} de la jornada esperada (equipos apagados o sin reportar). Revisar reportes`, '/reportes.php')); p.append(a); } }),
       section(host, 'Equipos y conectividad', async p => {
         const devices = await allPages(devicesPath); const now = Date.now();
         metrics(p, [['En línea / total', `${devices.filter(d => d.status === 'active' && d.last_seen_at && now - Date.parse(d.last_seen_at) <= 300000).length} / ${devices.length}`, 'En línea: equipo activo con señal en los últimos 5 minutos.']]);

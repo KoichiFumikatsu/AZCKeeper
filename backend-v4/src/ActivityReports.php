@@ -114,15 +114,16 @@ final class ActivityReports
     {
         [$scope,$args]=$this->filter(); $zone=new \DateTimeZone($this->c['timezone']);
         $start=Util::sqlTime((new \DateTimeImmutable($from,$zone))->format('c')); $end=Util::sqlTime((new \DateTimeImmutable($to,$zone))->format('c'));
-        $rows=$this->db->run("SELECT process_name,total_seconds,sessions,users_count,SUM(total_seconds) OVER () all_seconds
-            FROM (SELECT e.process_name,SUM(FLOOR((e.active_seconds+e.idle_seconds)*TIMESTAMPDIFF(MICROSECOND,e.started_at,LEAST(e.ended_at,?))/TIMESTAMPDIFF(MICROSECOND,e.started_at,e.ended_at))-
-              FLOOR((e.active_seconds+e.idle_seconds)*TIMESTAMPDIFF(MICROSECOND,e.started_at,GREATEST(e.started_at,?))/TIMESTAMPDIFF(MICROSECOND,e.started_at,e.ended_at))) total_seconds,
+        // Por aplicacion: activo (teclado/raton) e inactivo (ventana al frente sin uso) por separado; orden por uso activo.
+        $part=fn(string $col)=>"SUM(FLOOR(e.$col*TIMESTAMPDIFF(MICROSECOND,e.started_at,LEAST(e.ended_at,?))/TIMESTAMPDIFF(MICROSECOND,e.started_at,e.ended_at))-FLOOR(e.$col*TIMESTAMPDIFF(MICROSECOND,e.started_at,GREATEST(e.started_at,?))/TIMESTAMPDIFF(MICROSECOND,e.started_at,e.ended_at)))";
+        $rows=$this->db->run("SELECT process_name,active_seconds,idle_seconds,active_seconds+idle_seconds total_seconds,sessions,users_count,SUM(active_seconds+idle_seconds) OVER () all_seconds
+            FROM (SELECT e.process_name,{$part('active_seconds')} active_seconds,{$part('idle_seconds')} idle_seconds,
               COUNT(*) sessions,COUNT(DISTINCT e.user_id) users_count
             FROM episodes e JOIN user_assignments a ON a.tenant_id=e.tenant_id AND a.id=e.user_assignment_id AND a.user_id=e.user_id
               JOIN retention_settings r ON r.tenant_id=e.tenant_id
             WHERE e.tenant_id=? AND e.event_date BETWEEN DATE_SUB(DATE(?),INTERVAL 1 DAY) AND DATE(?) AND e.event_date>=UTC_DATE()-INTERVAL r.raw_days DAY
               AND e.started_at<? AND e.ended_at>? AND $scope GROUP BY e.process_name) apps
-            ORDER BY total_seconds DESC,process_name LIMIT ?",[$end,$start,$this->c['tenant_id'],$start,$end,$end,$start,...$args,(int)($_GET['limit']??20)])->fetchAll();
-        return AdminApi::response(['from'=>$from,'to'=>$to,'total_seconds'=>(int)($rows[0]['all_seconds']??0),'data'=>array_map(static fn($r)=>['process_name'=>$r['process_name'],'app'=>$r['process_name'],'total_seconds'=>(int)$r['total_seconds'],'sessions'=>(int)$r['sessions'],'users_count'=>(int)$r['users_count'],'percent_total'=>$r['all_seconds']>0?round(100*$r['total_seconds']/$r['all_seconds'],2):0],$rows)]);
+            ORDER BY active_seconds DESC,total_seconds DESC,process_name LIMIT ?",[$end,$start,$end,$start,$this->c['tenant_id'],$start,$end,$end,$start,...$args,(int)($_GET['limit']??20)])->fetchAll();
+        return AdminApi::response(['from'=>$from,'to'=>$to,'total_seconds'=>(int)($rows[0]['all_seconds']??0),'data'=>array_map(static fn($r)=>['process_name'=>$r['process_name'],'app'=>$r['process_name'],'total_seconds'=>(int)$r['total_seconds'],'active_seconds'=>(int)$r['active_seconds'],'idle_seconds'=>(int)$r['idle_seconds'],'sessions'=>(int)$r['sessions'],'users_count'=>(int)$r['users_count'],'percent_total'=>$r['all_seconds']>0?round(100*$r['total_seconds']/$r['all_seconds'],2):0],$rows)]);
     }
 }
