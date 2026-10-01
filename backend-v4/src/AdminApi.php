@@ -153,7 +153,7 @@ final class AdminApi
         $brand??=['display_name'=>$row['name'],'logo_url'=>null,'primary_color'=>'#3C4082','accent_color'=>'#5A61B3'];
         $brand['display_name']=mb_substr($brand['display_name'],0,100);
         $brand['logo_url']??=rtrim(Config::get('ORIGIN'),'/').'/branding.svg';
-        return ['id'=>Util::id($row['tenant_id']),'name'=>$row['name'],'status'=>$row['status'],'timezone'=>$row['timezone'],'rbac_self_management'=>(bool)$row['rbac_self_management'],'branding'=>$brand,'version'=>(int)$row['version']];
+        return ['id'=>Util::id($row['tenant_id']),'name'=>$row['name'],'status'=>$row['status'],'timezone'=>$row['timezone'],'rbac_self_management'=>(bool)$row['rbac_self_management'],'branding'=>$brand,'version'=>(int)$row['version'],'archived'=>$row['archived_at']!==null];
     }
     private function tenants(string $op,?object $b): array
     {
@@ -164,7 +164,9 @@ final class AdminApi
                 $ids=array_values(array_unique([$this->c['admin_tenant_id'],...array_column($this->db->run('SELECT DISTINCT r.tenant_id FROM admin_account_roles r JOIN company_group_members m ON m.tenant_id=r.tenant_id AND m.group_id=? WHERE r.admin_tenant_id=? AND r.admin_id=?',[$this->c['group_id'],$this->c['admin_tenant_id'],$this->c['admin_id']])->fetchAll(),'tenant_id')]));
                 return $this->page('SELECT t.*,tenant_id id FROM tenants t WHERE tenant_id IN ('.implode(',',array_fill(0,count($ids),'?')).')',$ids,fn($x)=>$this->tenantDto($x));
             }
-            return $this->page('SELECT t.*,tenant_id id FROM tenants t'.($this->c['platform']?'':' WHERE tenant_id=?'),$this->c['platform']?[]:[$this->tenant],fn($x)=>$this->tenantDto($x));
+            // Archivadas: ocultas salvo que superadmin pida verlas (Empresas > "Mostrar archivadas").
+            if ($this->c['platform']) { return $this->page('SELECT t.*,tenant_id id FROM tenants t'.(($_GET['include_archived']??'false')==='true'?'':' WHERE archived_at IS NULL'),[],fn($x)=>$this->tenantDto($x)); }
+            return $this->page('SELECT t.*,tenant_id id FROM tenants t WHERE tenant_id=?',[$this->tenant],fn($x)=>$this->tenantDto($x));
         }
         if ($op==='createTenant') {
             $this->timezone($b->timezone); $id=Util::bin(Util::uuid());
@@ -182,6 +184,16 @@ final class AdminApi
         if ($op==='setRbacGate') { $this->db->run('UPDATE tenants SET rbac_self_management=?,auth_version=auth_version+1,version=version+1 WHERE tenant_id=?',[(int)$b->enabled,$id]); }
         elseif ($op!=='createTenant') {
             if (isset($b->status) && !$this->c['platform']) { throw new ApiError(403,'permission_denied'); }
+            if (isset($b->archived)) {
+                if (!$this->c['platform']) { throw new ApiError(403,'permission_denied'); }
+                if ($id===Util::bin(AdminAuth::PLATFORM)) { throw new ApiError(409,'invalid_transition',[],'platform_cannot_archive'); }
+                if (array_diff(array_keys(get_object_vars($b)),['archived'])) { throw new ApiError(422,'validation_failed',[],'archive_alone'); }
+                if ($b->archived && $row['archived_at']===null) {
+                    // Archivar: suspendida (sus equipos y cuentas dejan de entrar), fuera de su grupo y de solo lectura.
+                    $this->db->run("UPDATE tenants SET archived_at=UTC_TIMESTAMP(6),status='suspended' WHERE tenant_id=?",[$id]);
+                    $this->db->run('DELETE FROM company_group_members WHERE tenant_id=?',[$id]);
+                } elseif (!$b->archived) { $this->db->run('UPDATE tenants SET archived_at=NULL WHERE tenant_id=?',[$id]); }
+            } elseif ($row['archived_at']!==null) { throw new ApiError(409,'invalid_transition',[],'tenant_archived'); }
             if (isset($b->timezone)) { $this->timezone($b->timezone); }
             foreach (['name','timezone','status'] as $field) { if (isset($b->$field)) { $this->db->run("UPDATE tenants SET $field=? WHERE tenant_id=?",[$b->$field,$id]); } }
             $this->db->run('UPDATE tenants SET version=version+1,auth_version=auth_version+1 WHERE tenant_id=?',[$id]); $this->dirty();

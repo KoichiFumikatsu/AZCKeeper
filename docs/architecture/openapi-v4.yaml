@@ -1392,6 +1392,13 @@ paths:
       parameters:
       - $ref: '#/components/parameters/Cursor'
       - $ref: '#/components/parameters/Limit'
+      - name: include_archived
+        in: query
+        required: false
+        description: Solo superadmin. Incluye las empresas archivadas (ocultas por defecto).
+        schema:
+          type: boolean
+          default: false
       x-permission: empresas.ver
     post:
       tags:
@@ -14752,7 +14759,11 @@ components:
       - rbac_self_management
       - branding
       - version
+      - archived
       properties:
+        archived:
+          type: boolean
+          description: Archivada, oculta en listas y selectores y de solo lectura hasta desarchivarla.
         id:
           type: string
           format: uuid
@@ -14796,6 +14807,9 @@ components:
       additionalProperties: false
       required: []
       properties:
+        archived:
+          type: boolean
+          description: Solo superadmin. Archivar suspende la empresa y la saca de su grupo; desarchivar no la reactiva.
         name:
           type: string
           maxLength: 120

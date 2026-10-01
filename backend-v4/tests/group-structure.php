@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-use Keeper\{ActivityCalendar,Database,HolidaySeeds,Util};
+use Keeper\{ActivityCalendar,AdminAuth,Database,HolidaySeeds,Util};
 
 // Grupo con empresas internas, sedes por pais y calendarios de festivos por persona (2026-10-01).
 function groupStructureTests(Database $db): void
@@ -91,4 +91,29 @@ function groupStructureTests(Database $db): void
     $c = $db->one('SELECT version FROM org_units WHERE tenant_id=? AND id=?', [$tenant, Util::bin($bil['id'])]);
     check(adminRequest($platform, 'PATCH', '/organization/' . $bil['id'], ['kind' => 'company', 'name' => 'BilingueLaw', 'parent_id' => null, 'active' => false], ['if-match' => '"' . $c['version'] . '"'])[1]['code'] === 'org_unit_in_use', 'company in use cannot be deactivated');
     echo 'PASS group structure (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}
+
+// Empresas archivadas: ocultas, de solo lectura y solo superadmin las archiva o desarchiva (2026-10-01).
+function tenantArchiveTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tenant = $u['tenant_id']; $tid = Util::id($tenant);
+    $platform = sharedPlatform($db); $mine = $platform; $mine['tenant'] = $tenant;
+    $row = fn () => expect(adminRequest($mine, 'GET', '/tenants/' . $tid), 200, 'read tenant');
+    $t = $row();
+    check($t['archived'] === false, 'tenant not archived');
+    check(adminRequest($mine, 'PATCH', '/tenants/' . $tid, ['archived' => true, 'name' => 'x'], ['if-match' => '"' . $t['version'] . '"'])[1]['detail'] === 'archive_alone', 'archive is its own change');
+    $archived = expect(adminRequest($mine, 'PATCH', '/tenants/' . $tid, ['archived' => true], ['if-match' => '"' . $t['version'] . '"']), 200, 'archive tenant');
+    check($archived['archived'] === true && $archived['status'] === 'suspended', 'archived tenant is suspended');
+    $ids = fn ($q) => array_column(expect(adminRequest($platform, 'GET', '/tenants' . $q), 200, 'list tenants')['data'], 'id');
+    check(!in_array($tid, $ids(''), true) && in_array($tid, $ids('?include_archived=true'), true), 'archived hidden unless asked');
+    check(adminRequest($mine, 'GET', '/users')[0] === 200, 'archived stays readable for superadmin');
+    $w = adminRequest($mine, 'POST', '/organization', ['kind' => 'site', 'name' => 'Nueva', 'parent_id' => null, 'active' => true]);
+    check($w[0] === 409 && $w[1]['detail'] === 'tenant_archived', 'archived tenant is read only');
+    check(adminRequest($mine, 'PATCH', '/tenants/' . $tid, ['name' => 'Otro'], ['if-match' => '"' . $archived['version'] . '"'])[1]['detail'] === 'tenant_archived', 'archived tenant cannot be renamed');
+    check(adminRequest($platform, 'PATCH', '/tenants/' . AdminAuth::PLATFORM, ['archived' => true], ['if-match' => '"' . $row()['version'] . '"'])[0] !== 200, 'platform cannot be archived');
+    $back = expect(adminRequest($mine, 'PATCH', '/tenants/' . $tid, ['archived' => false], ['if-match' => '"' . $archived['version'] . '"']), 200, 'unarchive');
+    check($back['archived'] === false && $back['status'] === 'suspended', 'unarchived stays suspended until activated');
+    check(adminRequest($mine, 'POST', '/organization', ['kind' => 'site', 'name' => 'Nueva', 'parent_id' => null, 'active' => true])[0] === 201, 'writable again');
+    echo 'PASS tenant archive (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

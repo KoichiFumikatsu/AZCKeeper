@@ -461,21 +461,28 @@ function logoImage(company, className = 'company-logo') {
   img.onerror = () => { img.hidden = true; };
   return img;
 }
+let showArchived = false;
 async function tenantsPage() {
   const render = () => {
     $('page-content').replaceChildren();
     const s = surface('Empresas');
     s.append(el('p', `${ownerName()} es la empresa dueña de Keeper: su nombre y logo son los del producto (login y barra lateral). Las demás son empresas cliente; cada una con su marca, sus personas, equipos y cuentas.`, 'help'));
+    // Archivadas: ocultas por defecto en todo el panel y de solo lectura (nadie las modifica hasta desarchivarlas).
+    const toggle = el('label', undefined, 'check'); const box = el('input'); box.type = 'checkbox'; box.checked = showArchived;
+    toggle.append(box, ' Mostrar empresas archivadas'); s.append(toggle);
+    box.addEventListener('change', async () => { showArchived = box.checked; try { await reload(); } catch (e) { fail(e); } });
     table(s, 'Empresas', [
       ['Empresa', c => { const d = el('div', undefined, 'company-cell'); const t = el('div'); t.append(el('strong', c.branding?.display_name || c.name), el('small', c.name)); d.append(logoImage(c), t); return d; }],
       ['Tipo', c => badge(c.id === PLATFORM_TENANT ? 'Dueña de la plataforma' : 'Cliente', c.id === PLATFORM_TENANT ? 'info' : '')],
-      ['Estado', c => badge(c.status === 'active' ? 'Activa' : 'Suspendida', c.status === 'active' ? 'good' : 'bad')],
+      ['Estado', c => c.archived ? badge('Archivada', '') : badge(c.status === 'active' ? 'Activa' : 'Suspendida', c.status === 'active' ? 'good' : 'bad')],
       ['Zona horaria', c => c.timezone],
       ['Roles propios', c => c.id === PLATFORM_TENANT ? '—' : c.rbac_self_management ? 'Los gestiona la empresa' : 'Los gestiona la plataforma'],
       ['Acciones', c => {
         const box = el('div', undefined, 'actions no-margin');
+        if (c.archived) { const u = el('button', 'Desarchivar', 'link-button'); u.type = 'button'; u.addEventListener('click', () => archive(c, false)); box.append(u); return box; }
         const b = el('button', 'Editar y marca', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(c)); box.append(b);
         const a = el('a', 'Cuentas', 'link-button'); a.href = c.id === PLATFORM_TENANT ? '/cuentas.php' : `/cuentas.php?empresa=${encodeURIComponent(c.id)}`; box.append(a);
+        if (c.id !== PLATFORM_TENANT) { const x = el('button', 'Archivar', 'link-button'); x.type = 'button'; x.addEventListener('click', () => archive(c, true)); box.append(x); }
         return box;
       }]], companies);
     renderGroups();
@@ -509,7 +516,23 @@ async function tenantsPage() {
     });
     dialog.showModal();
   };
-  const reload = async () => { companies = sortCompanies(await allPages('/tenants', PLATFORM_TENANT)); render(); done(); };
+  const reload = async () => { companies = sortCompanies(await allPages(showArchived ? '/tenants?include_archived=true' : '/tenants', PLATFORM_TENANT)); render(); done(); };
+  const archive = (c, on) => {
+    const name = c.branding?.display_name || c.name;
+    const { dialog, body, ok, show } = dialogShell(on ? `Archivar ${name}` : `Desarchivar ${name}`);
+    body.append(el('p', on
+      ? 'La empresa queda suspendida: sus equipos dejan de conectarse y sus cuentas del panel dejan de entrar. Sale de su grupo empresarial, se oculta de las listas y selectores y nadie puede modificarla hasta desarchivarla. Sus datos se conservan.'
+      : 'Vuelve a verse en las listas y se puede editar. Sigue suspendida: actívala después en "Editar y marca" si quieres que sus equipos y cuentas vuelvan a entrar, y agrégala de nuevo a su grupo si hace falta.', 'help'));
+    const confirmName = labeled(body, `Escribe el nombre de la empresa para confirmar: ${c.name}`, el('input'));
+    ok.textContent = on ? 'Archivar empresa' : 'Desarchivar';
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); if (confirmName.value.trim() !== c.name) { show('El nombre no coincide.'); return; }
+      ok.disabled = true;
+      try { await api('PATCH', `/tenants/${c.id}`, { tenant: c.id, body: { archived: on }, ifMatch: c.version }); dialog.close(); await reload(); }
+      catch (e) { show(e.status === 412 ? 'Alguien más la modificó: recarga la página.' : e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
   const editor = c => {
     const owner = c.id === PLATFORM_TENANT; const brand = c.branding || {};
     const { dialog, body, ok, show } = dialogShell(owner ? `Marca del producto (${c.name})` : `Editar ${c.branding?.display_name || c.name}`);
@@ -1409,7 +1432,7 @@ const AUDIT_FIELDS = {
   pattern: 'texto a reconocer', app_pattern: 'texto a vigilar', description: 'descripción', day: 'fecha', society_ids: 'sociedades', counts_for_presence: 'cuenta para presencia', source_ref: 'referencia',
   base_url: 'dirección', company: 'empresa en la fuente', token: 'clave', mode: 'modo', interval_minutes: 'frecuencia', domains: 'dominios', approve: 'decisión', rows: 'filas', parent_id: 'depende de',
   note: 'nota', starts_at: 'desde', ends_at: 'hasta', all_day: 'día completo', install_coverage_heartbeat_days: 'días sin conexión', raw_days: 'retención del detalle', aggregate_months: 'retención de resúmenes',
-  log_days: 'retención de registros', country_code: 'país', company_id: 'empresa del grupo', holiday_calendar_id: 'calendario de festivos', calendar_id: 'calendario', is_default: 'por defecto', user_ids: 'personas', tenant_ids: 'empresas', position_ids: 'cargos', condition_kind: 'condición', confirm_sensitive: 'confirmación', assignable_by_rule: 'asignable por regla',
+  log_days: 'retención de registros', archived: 'archivada', country_code: 'país', company_id: 'empresa del grupo', holiday_calendar_id: 'calendario de festivos', calendar_id: 'calendario', is_default: 'por defecto', user_ids: 'personas', tenant_ids: 'empresas', position_ids: 'cargos', condition_kind: 'condición', confirm_sensitive: 'confirmación', assignable_by_rule: 'asignable por regla',
   shared_password: 'contraseña compartida', admin_name: 'usuario administrador', action: 'acción', reason: 'motivo', ring: 'anillo', percentage: 'porcentaje', version: 'versión',
 };
 const auditFields = list => (list || []).map(f => AUDIT_FIELDS[f] || String(f).replace(/^branding\./, 'marca: ').replace(/_/g, ' ')).filter((v, i, a) => a.indexOf(v) === i).join(', ');

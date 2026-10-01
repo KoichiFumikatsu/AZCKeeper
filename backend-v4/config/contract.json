@@ -1,5 +1,5 @@
 {
-  "source_sha256": "2144f0e77f0644528e07ac82c1fe7c882a4a7b8261052b06b3621450afc99682",
+  "source_sha256": "93ab3a38487f970bbf7b2b2f80aa289bc5d5c2187f45c6054ea2dabd444c11df",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -2145,6 +2145,16 @@
           },
           {
             "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "description": "Solo superadmin. Incluye las empresas archivadas (ocultas por defecto).",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         ],
         "x-permission": "empresas.ver"
@@ -26884,9 +26894,14 @@
         "timezone",
         "rbac_self_management",
         "branding",
-        "version"
+        "version",
+        "archived"
       ],
       "properties": {
+        "archived": {
+          "type": "boolean",
+          "description": "Archivada, oculta en listas y selectores y de solo lectura hasta desarchivarla."
+        },
         "id": {
           "type": "string",
           "format": "uuid"
@@ -27014,6 +27029,10 @@
       "additionalProperties": false,
       "required": [],
       "properties": {
+        "archived": {
+          "type": "boolean",
+          "description": "Solo superadmin. Archivar suspende la empresa y la saca de su grupo; desarchivar no la reactiva."
+        },
         "name": {
           "type": "string",
           "maxLength": 120
