@@ -1,5 +1,5 @@
 {
-  "source_sha256": "738b864c89700bc87539ac36a91a874ae7f04365ad678e4c343afd42d6180bce",
+  "source_sha256": "bed71e7d3928de48a3f80b12354d02767093e91b80064e4beebf2a8bb0accdf8",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -27419,12 +27419,10 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "firm_id",
         "display_name",
         "site_id",
         "area_id",
-        "position_id",
-        "schedule_id"
+        "position_id"
       ],
       "properties": {
         "company_id": {
@@ -27470,8 +27468,16 @@
           ]
         },
         "firm_id": {
-          "type": "string",
-          "format": "uuid"
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Vacío o null = \"Sin firma\" (se crea si no existe)."
         },
         "document": {
           "anyOf": [
@@ -27516,8 +27522,16 @@
           "format": "uuid"
         },
         "schedule_id": {
-          "type": "string",
-          "format": "uuid"
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Vacío o null = \"Sin horario\" (sin días laborales), nunca cuenta como ausencia ni tardanza."
         }
       }
     },
@@ -27662,8 +27676,16 @@
           ]
         },
         "firm_id": {
-          "type": "string",
-          "format": "uuid"
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Vacío o null = \"Sin firma\" (se crea si no existe)."
         },
         "document": {
           "anyOf": [
@@ -27708,8 +27730,16 @@
           "format": "uuid"
         },
         "schedule_id": {
-          "type": "string",
-          "format": "uuid"
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Vacío o null = \"Sin horario\" (sin días laborales), nunca cuenta como ausencia ni tardanza."
         },
         "status": {
           "type": "string",

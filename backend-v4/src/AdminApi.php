@@ -316,6 +316,9 @@ final class AdminApi
             if (array_key_exists('reports_to_user_id',$fields) && $fields['reports_to_user_id']!==null) { $this->managerOk(Util::bin($fields['reports_to_user_id']),$id); }
             if (is_string($document)) { $document=DeviceIntake::document($document); $this->documentFree($document,$id); }
             foreach ($fields as $f=>$value) { $values[$f]=$value!==null && str_ends_with($f,'_id')?Util::bin($value):$value; }
+            // Firma u horario vacios (directivos, personas sin jornada): "Sin firma" / "Sin horario"; se editan despues.
+            if (!$id || array_key_exists('firm_id',$values)) { $values['firm_id']??=$this->placeholderFirm(); }
+            if (!$id || array_key_exists('schedule_id',$values)) { $values['schedule_id']??=$this->placeholderSchedule(); }
             foreach (['firm','site','area','position','company'] as $kind) { if (isset($values[$kind.'_id'])) { $this->org($values[$kind.'_id'],$kind); } }
             if (isset($values['schedule_id'])) { $this->row('schedules',$values['schedule_id']); }
             if (isset($values['holiday_calendar_id'])) { $this->row('holiday_calendars',$values['holiday_calendar_id']); }
@@ -369,6 +372,23 @@ final class AdminApi
         if ($op!=='setUserRoles') { RoleRules::apply($this->db,$this->tenant); }
         $this->audit('user',$id,array_keys(get_object_vars($b))); $this->dirty($this->userDevices($id));
         return $this->result($this->userDto($this->row('users',$id)),$op==='createUser'?201:200);
+    }
+    private function placeholderFirm(): string
+    {
+        $row=$this->db->one("SELECT id FROM org_units WHERE tenant_id=? AND kind='firm' AND active=TRUE AND name='Sin firma' LIMIT 1",[$this->tenant]);
+        if ($row) { return $row['id']; }
+        $id=Util::bin(Util::uuid());
+        $this->db->run("INSERT INTO org_units (tenant_id,id,kind,name) VALUES (?,?,'firm','Sin firma')",[$this->tenant,$id]);
+        return $id;
+    }
+    /** Horario sin dias laborales: la jornada esperada es cero, nunca hay ausencia ni tardanza; la actividad si se cuenta. */
+    private function placeholderSchedule(): string
+    {
+        $row=$this->db->one("SELECT s.id FROM schedules s WHERE s.tenant_id=? AND s.name='Sin horario' AND NOT EXISTS (SELECT 1 FROM schedule_days d WHERE d.tenant_id=s.tenant_id AND d.schedule_id=s.id) LIMIT 1",[$this->tenant]);
+        if ($row) { return $row['id']; }
+        $id=Util::bin(Util::uuid());
+        $this->db->run("INSERT INTO schedules (tenant_id,id,name,timezone,start_local,end_local) VALUES (?,?,'Sin horario',?,'00:00:00','00:00:00')",[$this->tenant,$id,$this->c['timezone']]);
+        return $id;
     }
     /** Jefe valido: persona de la empresa y sin ciclos (A reporta a B que reporta a A). */
     private function managerOk(string $manager,?string $user): void

@@ -723,10 +723,10 @@ async function people() {
     const grid = el('div', undefined, 'form-grid'); body.append(grid);
     const selects = {};
     for (const [kind, label] of ORG_FIELDS) {
-      const sel = el('select'); units(kind).forEach(o => sel.append(new Option(o.name, o.id)));
+      const sel = el('select'); if (kind === 'firm') sel.append(new Option('Sin firma (se asigna después)', '')); units(kind).forEach(o => sel.append(new Option(o.name, o.id)));
       sel.value = u?.[`${kind}_id`] || fallback(kind)?.id || ''; labeled(grid, label, sel); selects[kind] = sel;
     }
-    const sched = el('select'); scheduleList.forEach(x => sched.append(new Option(x.name, x.id))); sched.value = u?.schedule_id || defaultSchedule()?.id || '';
+    const sched = el('select'); sched.append(new Option('Sin horario (no se espera jornada)', '')); scheduleList.forEach(x => sched.append(new Option(x.name, x.id))); sched.value = u?.schedule_id || defaultSchedule()?.id || '';
     labeled(grid, 'Horario', sched);
     const company = el('select'); company.append(new Option('Sin empresa (todo el grupo)', '')); units('company').forEach(o => company.append(new Option(o.name, o.id)));
     company.value = u?.company_id || ''; labeled(grid, 'Empresa del grupo', company);
@@ -738,13 +738,15 @@ async function people() {
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
       if (!name.value.trim()) { show('Escribe el nombre.'); return; }
-      if (ORG_FIELDS.some(([k]) => !selects[k].value) || !sched.value) { show('Faltan firma, sede, área, cargo u horario: créalos primero en Organización.'); return; }
+      // Firma y horario pueden ir vacíos ("Sin firma" / "Sin horario"); sede, área y cargo no.
+      const missing = ORG_FIELDS.filter(([k]) => k !== 'firm' && !selects[k].value).map(([, label]) => label.toLowerCase());
+      if (missing.length) { show(`Falta ${missing.join(', ')}: créalo primero en Organización.`); return; }
       if (status?.value === 'inactive' && u.status === 'active' && !confirm(`¿Marcar a ${u.display_name} como inactiva? Sus equipos quedan revocados y dejan de reportar.`)) return;
       ok.disabled = true;
-      const payload = { display_name: name.value.trim(), document: doc.value.trim() || null, email: email.value.trim() || null, schedule_id: sched.value, reports_to_user_id: boss.value || null, monitoring_override: mon.value };
+      const payload = { display_name: name.value.trim(), document: doc.value.trim() || null, email: email.value.trim() || null, schedule_id: sched.value || null, reports_to_user_id: boss.value || null, monitoring_override: mon.value };
       if (!u || (company.value || null) !== (u.company_id || null)) payload.company_id = company.value || null;
       if (calendarPage && (!u || (holidays.value || null) !== (u.holiday_calendar_id || null))) payload.holiday_calendar_id = holidays.value || null;
-      for (const [k] of ORG_FIELDS) payload[`${k}_id`] = selects[k].value;
+      for (const [k] of ORG_FIELDS) payload[`${k}_id`] = selects[k].value || null;
       if (status && status.value !== u.status) payload.status = status.value;
       try {
         const saved = u ? await api('PATCH', `/users/${u.id}`, { body: payload, ifMatch: u.version }) : await api('POST', '/users', { body: payload });
@@ -800,10 +802,10 @@ async function people() {
         if (payload.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(payload.email)) problems.push('correo inválido');
         for (const [kind, label] of ORG_FIELDS) {
           const v = get(kind); const unit = v ? units(kind).find(o => fold(o.name) === fold(v)) : fallback(kind);
-          if (!unit) problems.push(v ? `${label} "${v}" no existe` : `${label} vacía y no hay "Sin …"`); else payload[`${kind}_id`] = unit.id;
+          if (!unit) { if (v || kind !== 'firm') problems.push(v ? `${label} "${v}" no existe` : `${label} vacía y no hay "Sin …"`); } else payload[`${kind}_id`] = unit.id;
         }
         const sv = get('schedule'); const sc = sv ? scheduleList.find(x => fold(x.name) === fold(sv)) : defaultSchedule();
-        if (!sc) problems.push(sv ? `horario "${sv}" no existe` : 'sin horario'); else payload.schedule_id = sc.id;
+        if (!sc) { if (sv) problems.push(`horario "${sv}" no existe`); } else payload.schedule_id = sc.id;
         const cv = get('company'); if (cv) { const co = units('company').find(o => fold(o.name) === fold(cv)); if (!co) problems.push(`empresa "${cv}" no existe`); else payload.company_id = co.id; }
         let skip = null;
         if (payload.document && known.has(payload.document)) skip = 'ya existe';

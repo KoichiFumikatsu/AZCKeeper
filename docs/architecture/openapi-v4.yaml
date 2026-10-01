@@ -15129,12 +15129,10 @@ components:
       type: object
       additionalProperties: false
       required:
-      - firm_id
       - display_name
       - site_id
       - area_id
       - position_id
-      - schedule_id
       properties:
         company_id:
           anyOf:
@@ -15159,8 +15157,11 @@ components:
           - monitored
           - excluded
         firm_id:
-          type: string
-          format: uuid
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: Vacío o null = "Sin firma" (se crea si no existe).
         document:
           anyOf:
           - type: string
@@ -15188,8 +15189,11 @@ components:
           type: string
           format: uuid
         schedule_id:
-          type: string
-          format: uuid
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: Vacío o null = "Sin horario" (sin días laborales), nunca cuenta como ausencia ni tardanza.
     User:
       type: object
       additionalProperties: false
@@ -15329,8 +15333,11 @@ components:
           - monitored
           - excluded
         firm_id:
-          type: string
-          format: uuid
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: Vacío o null = "Sin firma" (se crea si no existe).
         document:
           anyOf:
           - type: string
@@ -15358,8 +15365,11 @@ components:
           type: string
           format: uuid
         schedule_id:
-          type: string
-          format: uuid
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: Vacío o null = "Sin horario" (sin días laborales), nunca cuenta como ausencia ni tardanza.
         status:
           type: string
           enum:

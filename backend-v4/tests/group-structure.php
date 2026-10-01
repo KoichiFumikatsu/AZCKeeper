@@ -90,6 +90,15 @@ function groupStructureTests(Database $db): void
     // No se desactiva una empresa del grupo con personas.
     $c = $db->one('SELECT version FROM org_units WHERE tenant_id=? AND id=?', [$tenant, Util::bin($bil['id'])]);
     check(adminRequest($platform, 'PATCH', '/organization/' . $bil['id'], ['kind' => 'company', 'name' => 'BilingueLaw', 'parent_id' => null, 'active' => false], ['if-match' => '"' . $c['version'] . '"'])[1]['code'] === 'org_unit_in_use', 'company in use cannot be deactivated');
+    // Personas sin firma ni horario (directivos): "Sin firma" y "Sin horario" (sin dias: jornada esperada cero).
+    $boss = expect(adminRequest($platform, 'POST', '/users', ['display_name' => 'Presidente', 'email' => null, 'site_id' => Util::id($u['site_id']), 'area_id' => Util::id($u['area_id']), 'position_id' => Util::id($u['position_id'])]), 201, 'person without firm or schedule');
+    $boss2 = expect(adminRequest($platform, 'POST', '/users', ['display_name' => 'Socio', 'email' => null, 'firm_id' => null, 'schedule_id' => null, 'site_id' => Util::id($u['site_id']), 'area_id' => Util::id($u['area_id']), 'position_id' => Util::id($u['position_id'])]), 201, 'explicit nulls');
+    check($boss['firm_id'] === $boss2['firm_id'] && $boss['schedule_id'] === $boss2['schedule_id'], 'placeholders reused');
+    check($db->one('SELECT name FROM org_units WHERE tenant_id=? AND id=?', [$tenant, Util::bin($boss['firm_id'])])['name'] === 'Sin firma', 'firm placeholder');
+    check($db->one('SELECT name FROM schedules WHERE tenant_id=? AND id=?', [$tenant, Util::bin($boss['schedule_id'])])['name'] === 'Sin horario', 'schedule placeholder');
+    check($expected('2026-10-05', Util::bin($boss['id'])) === 0, 'no schedule means no expected day');
+    $edited = expect(adminRequest($platform, 'PATCH', '/users/' . $boss['id'], ['schedule_id' => Util::id($u['schedule_id'])], ['if-match' => '"' . $boss['version'] . '"']), 200, 'assign schedule later');
+    check($edited['schedule_id'] === Util::id($u['schedule_id']) && $edited['firm_id'] === $boss['firm_id'], 'edit later keeps the rest');
     echo 'PASS group structure (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
 
