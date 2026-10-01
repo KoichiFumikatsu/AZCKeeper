@@ -471,9 +471,11 @@ async function tenantsPage() {
     const toggle = el('label', undefined, 'check'); const box = el('input'); box.type = 'checkbox'; box.checked = showArchived;
     toggle.append(box, ' Mostrar empresas archivadas'); s.append(toggle);
     box.addEventListener('change', async () => { showArchived = box.checked; try { await reload(); } catch (e) { fail(e); } });
+    renderTree();
     table(s, 'Empresas', [
       ['Empresa', c => { const d = el('div', undefined, 'company-cell'); const t = el('div'); t.append(el('strong', c.branding?.display_name || c.name), el('small', c.name)); d.append(logoImage(c), t); return d; }],
       ['Tipo', c => badge(c.id === PLATFORM_TENANT ? 'Dueña de la plataforma' : 'Cliente', c.id === PLATFORM_TENANT ? 'info' : '')],
+      ['Grupo empresarial', c => c.id === PLATFORM_TENANT ? '—' : groupOf(c.id)?.name || 'Independiente'],
       ['Estado', c => c.archived ? badge('Archivada', '') : badge(c.status === 'active' ? 'Activa' : 'Suspendida', c.status === 'active' ? 'good' : 'bad')],
       ['Zona horaria', c => c.timezone],
       ['Roles propios', c => c.id === PLATFORM_TENANT ? '—' : c.rbac_self_management ? 'Los gestiona la empresa' : 'Los gestiona la plataforma'],
@@ -488,6 +490,27 @@ async function tenantsPage() {
     renderGroups();
   };
   let groups = (await optional(api('GET', '/company-groups', { tenant: PLATFORM_TENANT })))?.data || [];
+  const groupOf = id => groups.find(g => g.tenant_ids.includes(id)) || null;
+  // Quien va debajo de quien: plataforma > grupos empresariales > empresas. Dentro de cada empresa, sus empresas
+  // internas (AZC Legal, BilingueLaw...) se editan en Organizacion de esa empresa.
+  const renderTree = () => {
+    const t = surface('Estructura');
+    t.append(el('p', 'Quién va debajo de quién. Para mover una empresa a otro grupo (o dejarla independiente) usa "Editar y marca". Las empresas internas de cada una (por ejemplo AZC Legal o BilingueLaw dentro de Grupo AZC) se editan en Organización, eligiendo esa empresa arriba.', 'help'));
+    const label = c => { const li = el('li'); li.append(el('strong', c.branding?.display_name || c.name)); if (c.archived) li.append(' ', badge('Archivada', '')); else if (c.status !== 'active') li.append(' ', badge('Suspendida', 'bad')); return li; };
+    const root = el('ul', undefined, 'tree'); const owner = companies.find(c => c.id === PLATFORM_TENANT);
+    const top = owner ? label(owner) : el('li', 'Plataforma'); if (owner) top.append(' ', badge('Dueña de la plataforma', 'info'));
+    const level = el('ul'); top.append(level); root.append(top);
+    const clients = companies.filter(c => c.id !== PLATFORM_TENANT);
+    for (const g of groups) {
+      const li = el('li'); li.append(el('strong', g.name), ' ', badge('Grupo empresarial', 'info'));
+      const members = clients.filter(c => g.tenant_ids.includes(c.id)); const ul = el('ul');
+      if (members.length) members.forEach(c => ul.append(label(c))); else ul.append(el('li', 'Sin empresas todavía', 'help'));
+      li.append(ul); level.append(li);
+    }
+    const alone = clients.filter(c => !groupOf(c.id));
+    if (alone.length) { const li = el('li'); li.append(el('strong', 'Empresas independientes')); const ul = el('ul'); alone.forEach(c => ul.append(label(c))); li.append(ul); level.append(li); }
+    t.append(root);
+  };
   const renderGroups = () => {
     const g = surface('Grupos empresariales');
     g.append(el('p', 'Empresas de un mismo dueño. Una cuenta de grupo (por ejemplo, la del presidente) entra a todas las del grupo con un solo usuario; se configura en Cuentas del panel.', 'help'));
@@ -550,12 +573,14 @@ async function tenantsPage() {
     const primary = labeled(colors, 'Color principal', el('input')); primary.type = 'color'; primary.value = /^#[0-9a-f]{6}$/i.test(brand.primary_color) ? brand.primary_color : '#3C4082';
     const accent = labeled(colors, 'Color de acento', el('input')); accent.type = 'color'; accent.value = /^#[0-9a-f]{6}$/i.test(brand.accent_color) ? brand.accent_color : '#5A61B3';
     const tz = labeled(body, 'Zona horaria', el('input'), 'Ejemplo: America/Bogota'); tz.maxLength = 64; tz.value = c.timezone;
-    let status = null, gate = null;
+    let status = null, gate = null, group = null;
     if (!owner) {
       status = el('select'); status.append(new Option('Activa', 'active'), new Option('Suspendida (nadie de la empresa puede entrar)', 'suspended')); status.value = c.status;
       labeled(body, 'Estado', status);
       gate = el('input'); gate.type = 'checkbox'; gate.checked = c.rbac_self_management;
       const gl = el('label', undefined, 'check'); gl.append(gate, ' La empresa gestiona sus propios roles y cuentas'); body.append(gl);
+      group = el('select'); group.append(new Option('Ninguno (empresa independiente)', '')); groups.forEach(g => group.append(new Option(g.name, g.id)));
+      group.value = groupOf(c.id)?.id || ''; labeled(body, 'Pertenece al grupo empresarial', group, 'Las cuentas de grupo (por ejemplo la del presidente) entran a todas las empresas de su grupo. Sacarla de un grupo les quita ese acceso.');
     }
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
@@ -570,6 +595,13 @@ async function tenantsPage() {
         let saved = await api('PATCH', `/tenants/${c.id}`, { tenant: c.id, body: patch, ifMatch: c.version });
         if (f) saved = await api('POST', `/tenants/${c.id}/logo`, { tenant: c.id, body: { content_type: f.type, data: await fileBase64(f) }, ifMatch: saved.version });
         if (gate && gate.checked !== c.rbac_self_management) await api('PATCH', `/tenants/${c.id}/rbac-gate`, { tenant: c.id, body: { enabled: gate.checked }, ifMatch: saved.version });
+        const from = groupOf(c.id)?.id || '';
+        if (group && group.value !== from) {
+          const move = async (g, ids) => api('PATCH', `/company-groups/${g.id}`, { tenant: PLATFORM_TENANT, body: { name: g.name, tenant_ids: ids }, ifMatch: g.version });
+          if (from) { const g = groups.find(x => x.id === from); await move(g, g.tenant_ids.filter(id => id !== c.id)); }
+          if (group.value) { const g = (await api('GET', '/company-groups', { tenant: PLATFORM_TENANT })).data.find(x => x.id === group.value); await move(g, [...g.tenant_ids, c.id]); }
+          groups = (await api('GET', '/company-groups', { tenant: PLATFORM_TENANT })).data;
+        }
         dialog.close();
         if (owner) { location.reload(); return; }
         await reload();
