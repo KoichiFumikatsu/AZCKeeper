@@ -466,6 +466,7 @@ async function tenantsPage() {
   const render = () => {
     $('page-content').replaceChildren();
     const s = surface('Empresas');
+    if (!companies.some(c => c.id !== PLATFORM_TENANT && !c.archived)) s.append(el('p', 'Aún no hay empresas cliente activas. Crea la primera con "Crear empresa" (arriba a la derecha); las demás pantallas (Personas, Organización, Equipos…) trabajan sobre una empresa cliente y se habilitan cuando exista.', 'notice'));
     s.append(el('p', `${ownerName()} es la empresa dueña de Keeper: su nombre y logo son los del producto (login y barra lateral). Las demás son empresas cliente; cada una con su marca, sus personas, equipos y cuentas.`, 'help'));
     // Archivadas: ocultas por defecto en todo el panel y de solo lectura (nadie las modifica hasta desarchivarlas).
     const toggle = el('label', undefined, 'check'); const box = el('input'); box.type = 'checkbox'; box.checked = showArchived;
@@ -1877,6 +1878,8 @@ async function start() {
   try {
     if (session.is_platform_admin) {
       companies = sortCompanies(await allPages('/tenants', PLATFORM_TENANT));
+      // Sin empresas cliente, las pantallas de empresa caerian en la de plataforma (y se crearian personas ahi): a Empresas.
+      if (!globalPage && !companies.some(c => c.id !== PLATFORM_TENANT)) { location.replace('/empresas.php?sin-empresas=1'); return; }
       let selected = null; try { selected = sessionStorage.getItem('keeper.presentation.tenant'); } catch { /* sin almacenamiento */ }
       tenant = globalPage ? PLATFORM_TENANT : (companies.some(c => c.id === selected) ? selected : companies.find(c => c.id !== PLATFORM_TENANT)?.id || PLATFORM_TENANT);
       if (!globalPage) {

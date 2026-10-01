@@ -482,6 +482,8 @@ async function context() {
       if ([403, 404].includes(error.status)) { goToLogin(); return false; }
       throw error;
     }
+    // Sin empresas cliente (todas archivadas o ninguna creada): a Empresas, a crear la primera.
+    if (surface === 'portal' && !tenants.some(t => t.id !== PLATFORM_TENANT)) { location.replace('/empresas.php?sin-empresas=1'); return false; }
     const selected = sessionStorage.getItem('keeper.presentation.tenant');
     tenant = tenants.some(t => t.id === selected) ? selected : (surface === 'portal' ? tenants.find(t => t.id !== PLATFORM_TENANT)?.id : PLATFORM_TENANT);
     if (!tenant || !tenants.some(t => t.id === tenant)) throw new Error('No hay una empresa accesible para esta superficie.');
