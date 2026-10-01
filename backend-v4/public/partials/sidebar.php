@@ -34,6 +34,8 @@ $link = static function (array $l, bool $probeSurface) use ($current, $h): strin
 <?php foreach ($links as $l) { echo $link($l, $surface === 'portal'); } ?>
     </section>
 <?php endforeach; ?>
+    <section class="nav-group" id="group-group" hidden><p class="nav-heading">Grupo empresarial</p>
+<?= $link(['group', 'Tablero del grupo', '/grupo.php', false], false) ?>    </section>
     <section class="nav-group" id="platform-group"<?= $surface === 'admin' ? '' : ' hidden' ?>><p class="nav-heading">Plataforma</p>
 <?php foreach ($platform as $l) { echo $link($l, $surface === 'admin'); } ?>
     </section>

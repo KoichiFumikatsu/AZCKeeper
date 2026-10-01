@@ -227,6 +227,8 @@ const companyName = id => { const c = companies.find(x => x.id === id); return c
 async function accounts() {
   const session = readSession(); const platform = !!session?.is_platform_admin;
   const list = await api('GET', '/panel-accounts');
+  const groups = platform ? ((await optional(api('GET', '/company-groups')))?.data || []) : [];
+  const groupOf = tenantId => groups.find(g => g.tenant_ids.includes(tenantId)) || null;
   // Roles y nombres de sedes/areas por empresa (una cuenta solo tiene roles de su empresa).
   const perCompany = new Map();
   const companyData = async id => {
@@ -239,7 +241,8 @@ async function accounts() {
   const rolesText = a => {
     if (a.kind === 'platform') return 'Todo, en todas las empresas';
     const d = data.get(a.tenant_id); const byId = new Map((d?.roles || []).map(r => [r.id, r]));
-    return a.role_ids.map(id => byId.get(id)).filter(Boolean).map(r => `${r.name} (${scopeText(r, d.n)})`).join(' · ') || 'Sin roles: no verá nada';
+    const own = a.role_ids.map(id => byId.get(id)).filter(Boolean).map(r => `${r.name} (${scopeText(r, d.n)})`).join(' · ') || 'Sin roles: no verá nada';
+    return a.group_id ? `${own} · Grupo ${a.group_name}: también ${a.group_roles.map(g => g.tenant_name).join(', ') || 'ninguna otra empresa aún'}` : own;
   };
   const render = rows => {
     $('page-content').replaceChildren();
@@ -266,6 +269,7 @@ async function accounts() {
     const box = el('div', undefined, 'actions no-margin'); const opts = { tenant: a.tenant_id };
     const button = (text, fn) => { const b = el('button', text, 'link-button'); b.type = 'button'; b.addEventListener('click', fn); box.append(b); };
     if (a.kind === 'company') button('Roles', () => editRoles(a));
+    if (a.kind === 'company' && platform && groupOf(a.tenant_id)) button('Grupo', () => editGroup(a));
     button(a.active ? 'Desactivar' : 'Activar', async () => {
       if (a.active && !confirm(`¿Desactivar la cuenta ${a.email}? Se cierran sus sesiones.`)) return;
       try { await api('PATCH', `/panel-accounts/${a.id}`, { ...opts, body: { active: !a.active, role_ids: a.role_ids } }); await refresh(); } catch (e) { fail(e); }
@@ -285,6 +289,36 @@ async function accounts() {
     return box;
   };
   const roleItems = d => d.roles.filter(r => r.active).map(r => [r.id, r.name, scopeText(r, d.n)]);
+  // Cuenta de grupo (dueños y directivos): roles en las OTRAS empresas del grupo. Su empresa casa usa "Roles".
+  const groupSection = async (parent, home, current) => {
+    const g = groupOf(home); if (!g) return null;
+    const box = el('fieldset', undefined, 'perm-group'); box.append(el('legend', `Grupo empresarial: ${g.name}`)); parent.append(box);
+    const on = el('input'); on.type = 'checkbox'; on.checked = !!current?.group_id;
+    const ol = el('label', undefined, 'check'); ol.append(on, ' Cuenta de grupo: entra también a otras empresas del grupo'); box.append(ol);
+    box.append(el('p', 'Para dueños y directivos. No es superadmin: solo ve las empresas y lo que le des aquí.', 'help'));
+    const inner = el('div'); box.append(inner);
+    const picks = [];
+    for (const tid of g.tenant_ids.filter(t => t !== home)) {
+      const d = await companyData(tid);
+      inner.append(el('h3', companyName(tid)));
+      const given = current?.group_roles?.find(x => x.tenant_id === tid)?.role_ids || [];
+      if (!d.roles.length) inner.append(el('p', 'Esta empresa no tiene roles todavía.', 'help'));
+      picks.push([tid, checks(inner, roleItems(d), given)]);
+    }
+    const sync = () => { inner.hidden = !on.checked; }; on.addEventListener('change', sync); sync();
+    return () => on.checked ? { group_id: g.id, group_roles: picks.map(([tid, boxes]) => ({ tenant_id: tid, role_ids: boxes.filter(b => b.checked).map(b => b.value) })).filter(x => x.role_ids.length) } : { group_id: null, group_roles: [] };
+  };
+  const editGroup = async a => {
+    const { dialog, body, ok, show } = dialogShell(`Grupo de ${a.user_name || a.email}`);
+    dialog.classList.add('wide-dialog');
+    const read = await groupSection(body, a.tenant_id, a);
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); ok.disabled = true;
+      try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, role_ids: a.role_ids, ...read() } }); dialog.close(); await refresh(); }
+      catch (e) { show(e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
   const editRoles = async a => {
     const d = await companyData(a.tenant_id);
     const { dialog, body, ok, show } = dialogShell(`Roles de ${a.user_name || a.email}`);
@@ -312,7 +346,7 @@ async function accounts() {
     const display = labeled(ownerBox, 'Nombre', el('input')); display.maxLength = 160;
     ownerBox.append(el('p', 'Superadmin: entra a todas las empresas, crea empresas y cuentas, y cambia la marca del producto.', 'help'));
     const companyBox = el('div'); body.append(companyBox);
-    let person = null, boxes = [];
+    let person = null, boxes = [], readGroup = null;
     const drawCompany = async id => {
       companyBox.replaceChildren(el('p', 'Cargando personas y roles…', 'help'));
       const [users, d] = await Promise.all([allPages('/users', id), companyData(id)]);
@@ -326,6 +360,7 @@ async function accounts() {
       companyBox.append(el('p', 'Roles: deciden qué puede ver y hacer, y en qué sedes o áreas.', 'help'));
       boxes = checks(companyBox, roleItems(d));
       if (!d.roles.length) companyBox.append(el('p', 'Aún no hay roles en esta empresa: créalos en Roles y permisos. Sin roles la cuenta no verá nada.', 'help'));
+      readGroup = platform ? await groupSection(companyBox, id, null) : null;
     };
     const sync = () => {
       const owner = company.value === PLATFORM_TENANT; ownerBox.hidden = !owner; companyBox.hidden = owner;
@@ -346,7 +381,7 @@ async function accounts() {
         await reauth(pw.value);
         const payload = owner
           ? { kind: 'platform', email: email.value.trim(), display_name: display.value.trim(), user_id: null, role_ids: [] }
-          : { kind: 'company', email: email.value.trim(), display_name: null, user_id: person.value, role_ids: boxes.filter(b => b.checked).map(b => b.value) };
+          : { kind: 'company', email: email.value.trim(), display_name: null, user_id: person.value, role_ids: boxes.filter(b => b.checked).map(b => b.value), ...(readGroup ? readGroup() : {}) };
         const r = await api('POST', '/panel-accounts', { tenant: company.value, body: payload });
         dialog.close(); showSecret(r.account, r.temporary_password); await refresh();
       } catch (e) {
@@ -395,6 +430,36 @@ async function tenantsPage() {
         const a = el('a', 'Cuentas', 'link-button'); a.href = c.id === PLATFORM_TENANT ? '/cuentas.php' : `/cuentas.php?empresa=${encodeURIComponent(c.id)}`; box.append(a);
         return box;
       }]], companies);
+    renderGroups();
+  };
+  let groups = (await optional(api('GET', '/company-groups', { tenant: PLATFORM_TENANT })))?.data || [];
+  const renderGroups = () => {
+    const g = surface('Grupos empresariales');
+    g.append(el('p', 'Empresas de un mismo dueño. Una cuenta de grupo (por ejemplo, la del presidente) entra a todas las del grupo con un solo usuario; se configura en Cuentas del panel.', 'help'));
+    const add = el('button', 'Crear grupo'); add.type = 'button'; add.addEventListener('click', () => groupEditor(null)); g.append(add);
+    if (!groups.length) { g.append(el('p', 'Aún no hay grupos.', 'help')); return; }
+    table(g, 'Grupos', [['Grupo', x => x.name], ['Empresas', x => x.tenant_ids.map(companyName).join(', ')],
+      ['', x => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => groupEditor(x)); return b; }]], groups);
+  };
+  const groupEditor = x => {
+    const { dialog, body, ok, show } = dialogShell(x ? `Editar ${x.name}` : 'Crear grupo empresarial');
+    const nm = labeled(body, 'Nombre del grupo', el('input')); nm.maxLength = 120; nm.value = x?.name || '';
+    body.append(el('p', 'Empresas del grupo (una empresa solo puede estar en un grupo). Sacar una empresa quita el acceso que las cuentas del grupo tenían allí.', 'help'));
+    const taken = new Map(groups.filter(g => g.id !== x?.id).flatMap(g => g.tenant_ids.map(t => [t, g.name])));
+    const items = companies.filter(c => c.id !== PLATFORM_TENANT).map(c => [c.id, c.branding?.display_name || c.name, taken.has(c.id) ? `Ya está en ${taken.get(c.id)}` : null]);
+    const boxes = checks(body, items, x?.tenant_ids || []);
+    boxes.forEach(b => { if (taken.has(b.value)) b.disabled = true; });
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (!nm.value.trim()) { show('Escribe el nombre del grupo.'); return; }
+      ok.disabled = true;
+      const payload = { name: nm.value.trim(), tenant_ids: boxes.filter(b => b.checked).map(b => b.value) };
+      try {
+        if (x) await api('PATCH', `/company-groups/${x.id}`, { tenant: PLATFORM_TENANT, body: payload, ifMatch: x.version }); else await api('POST', '/company-groups', { tenant: PLATFORM_TENANT, body: payload });
+        groups = (await api('GET', '/company-groups', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done();
+      } catch (e) { show(e.problem?.detail === 'company_in_other_group' ? 'Una de las empresas ya está en otro grupo.' : e); ok.disabled = false; }
+    });
+    dialog.showModal();
   };
   const reload = async () => { companies = sortCompanies(await allPages('/tenants', PLATFORM_TENANT)); render(); done(); };
   const editor = c => {
@@ -867,6 +932,26 @@ async function sourcesPage() {
   render();
 }
 
+// ---- Tablero del grupo (cuentas de grupo empresarial) -----------------------------------------------------------
+async function groupPage() {
+  const session = readSession();
+  const companies = session?.group?.tenants || [];
+  if (companies.length < 2) { empty($('page-content'), 'Sin grupo', 'Esta cuenta no es de un grupo empresarial.'); return; }
+  $('tenant-name').textContent = session.group.name; $('tenant-name').nextElementSibling.textContent = 'Grupo empresarial';
+  // Cada empresa se consulta con sus propios permisos: lo que la cuenta no puede ver ahi queda "sin acceso".
+  const rows = await Promise.all(companies.map(async c => {
+    const [users, devices, alerts] = await Promise.all([optional(allPages('/users', c.id)), optional(allPages(`/tenants/${c.id}/devices`, c.id)), optional(api('GET', '/reports/dual-job-alerts', { tenant: c.id }))]);
+    return { ...c, people: users ? users.filter(u => u.status === 'active').length : null, devices: devices ? devices.filter(d => d.status === 'active').length : null,
+      online: devices ? devices.filter(online).length : null, alerts: alerts?.data ? alerts.data.length : null };
+  }));
+  const sum = k => { const v = rows.map(r => r[k]).filter(x => x !== null); return v.length ? String(v.reduce((a, b) => a + b, 0)) : 'Sin acceso'; };
+  kpis([['Empresas', String(rows.length)], ['Personas activas', sum('people')], ['Equipos', sum('devices'), `${sum('online')} en línea ahora`], ['Alertas de doble empleo', sum('alerts')]]);
+  const s = surface('Por empresa');
+  table(s, 'Empresas del grupo', [['Empresa', r => r.name], ['Personas', r => r.people ?? 'Sin acceso'], ['Equipos', r => r.devices ?? 'Sin acceso'], ['En línea', r => r.online ?? 'Sin acceso'],
+    ['Alertas', r => r.alerts ?? 'Sin acceso'],
+    ['', r => { const b = el('button', 'Abrir', 'link-button'); b.type = 'button'; b.addEventListener('click', () => { try { sessionStorage.setItem('keeper.presentation.tenant', r.id); } catch { /* sin almacenamiento */ } location.href = '/'; }); return b; }]], rows);
+}
+
 // ---- Roles y permisos -------------------------------------------------------------------------------------------
 async function rolesPage() {
   const session = readSession();
@@ -944,7 +1029,18 @@ async function start() {
         select.value = tenant; $('tenant-control').hidden = false;
         select.addEventListener('change', () => { try { sessionStorage.setItem('keeper.presentation.tenant', select.value); } catch { /* sin almacenamiento */ } location.reload(); });
       }
+    } else if (session.group?.tenants?.length > 1) {
+      // Cuenta de grupo: selector con las empresas de su grupo (la API valida cada una).
+      let selected = null; try { selected = sessionStorage.getItem('keeper.presentation.tenant'); } catch { /* sin almacenamiento */ }
+      tenant = session.group.tenants.some(c => c.id === selected) ? selected : session.tenant_id;
+      if (page !== 'group') {
+        const select = $('tenant-select');
+        session.group.tenants.forEach(c => select.append(new Option(c.name, c.id)));
+        select.value = tenant; $('tenant-control').hidden = false;
+        select.addEventListener('change', () => { try { sessionStorage.setItem('keeper.presentation.tenant', select.value); } catch { /* sin almacenamiento */ } location.reload(); });
+      }
     } else tenant = session.tenant_id;
+    if ($('group-group')) $('group-group').hidden = !(session.group?.tenants?.length > 1);
   } catch (e) { fail(e); return; }
   if (!isUuid(tenant)) { fail(new Error('La sesión no tiene una empresa válida: vuelve a iniciar sesión.')); return; }
   setTenant(tenant);
@@ -959,6 +1055,7 @@ async function start() {
     else if (page === 'users') await people();
     else if (page === 'schedules') await schedulesPage();
     else if (page === 'sources') await sourcesPage();
+    else if (page === 'group') await groupPage();
     else if (page === 'tenants') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await tenantsPage(); }
     done();
   } catch (e) {

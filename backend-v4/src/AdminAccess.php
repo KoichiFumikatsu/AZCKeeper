@@ -10,6 +10,9 @@ final class AdminAccess
         if ($c['platform']) {
             if (!$db->one('SELECT code FROM permissions WHERE code=?',[$permission])) { throw new ApiError(403,'permission_denied'); }
             $this->grants = [['scope_kind'=>'tenant']];
+        } elseif (($c['group_id'] ?? null) !== null && $c['tenant_id'] !== $c['admin_tenant_id']) {
+            // Cuenta de grupo en otra empresa del grupo: solo los roles que se le dieron en esa empresa.
+            $this->grants=$db->run('SELECT r.id,r.scope_kind FROM admin_account_roles g JOIN roles r ON r.tenant_id=g.tenant_id AND r.id=g.role_id AND r.active=TRUE JOIN role_permissions p ON p.tenant_id=r.tenant_id AND p.role_id=r.id JOIN permissions m ON m.code=p.permission_code AND m.platform_only=FALSE WHERE g.admin_tenant_id=? AND g.admin_id=? AND g.tenant_id=? AND p.permission_code=?',[$c['admin_tenant_id'],$c['admin_id'],$c['tenant_id'],$permission])->fetchAll();
         } else {
             $this->grants=$db->run('SELECT r.id,r.scope_kind FROM user_roles u JOIN roles r ON r.tenant_id=u.tenant_id AND r.id=u.role_id AND r.active=TRUE JOIN role_permissions p ON p.tenant_id=r.tenant_id AND p.role_id=r.id JOIN permissions m ON m.code=p.permission_code AND m.platform_only=FALSE WHERE u.tenant_id=? AND u.user_id=? AND p.permission_code=?',[$c['tenant_id'],$c['user_id'],$permission])->fetchAll();
         }

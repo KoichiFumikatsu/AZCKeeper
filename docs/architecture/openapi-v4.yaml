@@ -10229,8 +10229,287 @@ paths:
               $ref: '#/components/schemas/SyncItemResolve'
       x-permission: integraciones.aprobar
       x-max-body-bytes: 16384
+  /company-groups:
+    get:
+      tags:
+      - admin
+      operationId: listCompanyGroups
+      summary: Grupos empresariales
+      description: Grupos de empresas de un mismo dueño.
+      security:
+      - adminSession: []
+      x-tenant-boundary: Solo plataforma autenticada.
+      x-resources:
+      - CompanyGroup
+      responses:
+        '200':
+          description: Grupos empresariales
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyGroupList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      x-permission: empresas.gestionar
+      x-platform-only: true
+    post:
+      tags:
+      - admin
+      operationId: createCompanyGroup
+      summary: Crear grupo empresarial
+      description: Agrupa empresas; una empresa pertenece a un solo grupo.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Solo plataforma autenticada.
+      x-resources:
+      - CompanyGroup
+      responses:
+        '201':
+          description: Crear grupo empresarial
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyGroup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompanyGroupInput'
+      x-permission: empresas.gestionar
+      x-platform-only: true
+      x-max-body-bytes: 16384
+  /company-groups/{id}:
+    patch:
+      tags:
+      - admin
+      operationId: patchCompanyGroup
+      summary: Editar grupo empresarial
+      description: Nombre y empresas. Sacar una empresa quita los roles que las cuentas del grupo tenían allí.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Solo plataforma autenticada.
+      x-resources:
+      - CompanyGroup
+      responses:
+        '200':
+          description: Editar grupo empresarial
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyGroup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompanyGroupPatch'
+      x-permission: empresas.gestionar
+      x-platform-only: true
+      x-max-body-bytes: 16384
 components:
   schemas:
+    CompanyGroup:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - tenant_ids
+      - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 120
+        tenant_ids:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid
+        version:
+          type: integer
+          minimum: 1
+    CompanyGroupList:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CompanyGroup'
+    CompanyGroupInput:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - tenant_ids
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        tenant_ids:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid
+    CompanyGroupPatch:
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        tenant_ids:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid
+    GroupRoleGrant:
+      type: object
+      additionalProperties: false
+      required:
+      - tenant_id
+      - role_ids
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        role_ids:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid
     DataSource:
       type: object
       additionalProperties: false
@@ -10682,6 +10961,9 @@ components:
       type: object
       additionalProperties: false
       required:
+      - group_roles
+      - group_name
+      - group_id
       - id
       - kind
       - email
@@ -10696,6 +10978,39 @@ components:
       - tenant_id
       - tenant_name
       properties:
+        group_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+        group_name:
+          anyOf:
+          - type: string
+            maxLength: 120
+          - type: 'null'
+        group_roles:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - tenant_id
+            - tenant_name
+            - role_ids
+            properties:
+              tenant_id:
+                type: string
+                format: uuid
+              tenant_name:
+                type: string
+                maxLength: 120
+              role_ids:
+                type: array
+                maxItems: 50
+                items:
+                  type: string
+                  format: uuid
         tenant_id:
           type: string
           format: uuid
@@ -10765,6 +11080,16 @@ components:
       - user_id
       - role_ids
       properties:
+        group_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+        group_roles:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/GroupRoleGrant'
         kind:
           enum:
           - platform
@@ -10797,6 +11122,16 @@ components:
       - active
       - role_ids
       properties:
+        group_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+        group_roles:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/GroupRoleGrant'
         active:
           type: boolean
         role_ids:
@@ -14710,6 +15045,37 @@ components:
       - idle_expires_at
       - csrf_token
       properties:
+        group:
+          description: 'Cuenta de grupo empresarial: empresas a las que puede entrar con el selector.'
+          type: object
+          additionalProperties: false
+          required:
+          - id
+          - name
+          - tenants
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+              maxLength: 120
+            tenants:
+              type: array
+              maxItems: 50
+              items:
+                type: object
+                additionalProperties: false
+                required:
+                - id
+                - name
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  name:
+                    type: string
+                    maxLength: 120
         admin_id:
           type: string
           format: uuid

@@ -137,6 +137,7 @@ final class AdminApi
             'listExpectedDevices','createExpectedDevice','importExpectedDevices','cancelExpectedDevice','listEnrollmentRequests','approveEnrollmentRequest','rejectEnrollmentRequest',
             'getEnrollmentSettings','putEnrollmentSettings','listEnrollmentKeys','createEnrollmentKey','revokeEnrollmentKey'=>(new DeviceIntake($this->db))->admin($op,$id,$b,$this->access,$this->c,$this->r),
             'listPanelAccounts','createPanelAccount','patchPanelAccount','resetPanelAccountPassword'=>(new PanelAccounts($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
+            'listCompanyGroups','createCompanyGroup','patchCompanyGroup'=>(new CompanyGroups($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
             'listDataSources','createDataSource','patchDataSource','getDataDomains','putDataDomains','runDataSource','listSyncRuns','listSyncItems','approveSyncRun','listPendingSyncItems','resolveSyncItem'=>(new DataSources($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getProductivity'=>$this->report(), 'listAudit'=>$this->auditPage(),
             default=>throw new ApiError(404,'resource_not_found')
@@ -153,7 +154,14 @@ final class AdminApi
     private function tenants(string $op,?object $b): array
     {
         $this->access->requireFull();
-        if ($op==='listTenants') { return $this->page('SELECT t.*,tenant_id id FROM tenants t'.($this->c['platform']?'':' WHERE tenant_id=?'),$this->c['platform']?[]:[$this->tenant],fn($x)=>$this->tenantDto($x)); }
+        if ($op==='listTenants') {
+            // Cuenta de grupo: su empresa y las del grupo donde tiene roles (selector de empresa del panel).
+            if (!$this->c['platform'] && ($this->c['group_id']??null)!==null) {
+                $ids=array_values(array_unique([$this->c['admin_tenant_id'],...array_column($this->db->run('SELECT DISTINCT r.tenant_id FROM admin_account_roles r JOIN company_group_members m ON m.tenant_id=r.tenant_id AND m.group_id=? WHERE r.admin_tenant_id=? AND r.admin_id=?',[$this->c['group_id'],$this->c['admin_tenant_id'],$this->c['admin_id']])->fetchAll(),'tenant_id')]));
+                return $this->page('SELECT t.*,tenant_id id FROM tenants t WHERE tenant_id IN ('.implode(',',array_fill(0,count($ids),'?')).')',$ids,fn($x)=>$this->tenantDto($x));
+            }
+            return $this->page('SELECT t.*,tenant_id id FROM tenants t'.($this->c['platform']?'':' WHERE tenant_id=?'),$this->c['platform']?[]:[$this->tenant],fn($x)=>$this->tenantDto($x));
+        }
         if ($op==='createTenant') {
             $this->timezone($b->timezone); $id=Util::bin(Util::uuid());
             $this->db->run('INSERT INTO tenants (tenant_id,name,timezone) VALUES (?,?,?)',[$id,$b->name,$b->timezone]);

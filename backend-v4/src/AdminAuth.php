@@ -19,7 +19,7 @@ final class AdminAuth
     public function identity(Request $r): array
     {
         $cookie = $_COOKIE['__Host-keeper_admin'] ?? '';
-        $rows = $this->db->run('SELECT s.*,a.user_id,a.is_platform_admin,a.active,a.auth_version account_version,a.password_hash,a.must_change_password,a.email FROM admin_sessions s JOIN admin_accounts a ON a.tenant_id=s.tenant_id AND a.id=s.admin_id JOIN tenants t ON t.tenant_id=a.tenant_id WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>UTC_TIMESTAMP(6) AND s.idle_expires_at>UTC_TIMESTAMP(6) AND t.status=\'active\' LIMIT 2 FOR UPDATE', [hash('sha256', $cookie, true)])->fetchAll();
+        $rows = $this->db->run('SELECT s.*,a.user_id,a.group_id,a.is_platform_admin,a.active,a.auth_version account_version,a.password_hash,a.must_change_password,a.email FROM admin_sessions s JOIN admin_accounts a ON a.tenant_id=s.tenant_id AND a.id=s.admin_id JOIN tenants t ON t.tenant_id=a.tenant_id WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>UTC_TIMESTAMP(6) AND s.idle_expires_at>UTC_TIMESTAMP(6) AND t.status=\'active\' LIMIT 2 FOR UPDATE', [hash('sha256', $cookie, true)])->fetchAll();
         if (count($rows) !== 1 || !$rows[0]['active'] || $rows[0]['auth_version'] !== $rows[0]['account_version']) { throw new ApiError(401, 'session_expired'); }
         $s = $rows[0];
         if (!$s['is_platform_admin'] && !$this->db->one("SELECT id FROM users WHERE tenant_id=? AND id=? AND status='active' AND panel_login_enabled=TRUE", [$s['tenant_id'], $s['user_id']])) { throw new ApiError(401, 'session_expired'); }
@@ -34,15 +34,35 @@ final class AdminAuth
         if ($s['must_change_password']) { throw new ApiError(403, 'password_change_required'); }
         $tenantRoute = str_starts_with($r->route, '/tenants/{id}') || str_starts_with($r->route, '/admin/tenants/{id}');
         $tenant = $tenantRoute ? Util::bin($r->resourceId) : ($r->header('x-tenant-id') !== '' ? Util::bin($r->header('x-tenant-id')) : $s['tenant_id']);
-        if (!$s['is_platform_admin'] && $tenant !== $s['tenant_id']) { throw new ApiError(404, 'resource_not_found'); }
+        // Una cuenta de grupo (§8.5) entra tambien a las otras empresas de su grupo donde tiene roles; nunca a otras.
+        $foreign = !$s['is_platform_admin'] && $tenant !== $s['tenant_id'];
+        if ($foreign && !in_array($tenant, $this->groupTenants($s), true)) { throw new ApiError(404, 'resource_not_found'); }
         if ($tenantRoute && $r->header('x-tenant-id') !== '' && Util::bin($r->header('x-tenant-id')) !== $tenant) { throw new ApiError(404, 'resource_not_found'); }
         $t = $this->db->one('SELECT * FROM tenants WHERE tenant_id=? FOR UPDATE', [$tenant]);
         if (!$t) { throw new ApiError(404, 'resource_not_found'); }
         if (!$s['is_platform_admin'] && $t['status'] !== 'active') { throw new ApiError(403, 'permission_denied'); }
         $this->limiter->take([['admin', bin2hex($s['tenant_id'] . $s['admin_id']), Config::number('ADMIN_RATE',120), Config::number('ADMIN_BURST',30)], ['tenant', 'admin:' . bin2hex($tenant), Config::number('ADMIN_TENANT_RATE',600), Config::number('ADMIN_TENANT_BURST',100)]]);
-        $c = ['tenant_id' => $tenant, 'admin_tenant_id' => $s['tenant_id'], 'admin_id' => $s['admin_id'], 'user_id' => $s['user_id'], 'platform' => (bool) $s['is_platform_admin'], 'actor_type' => 'admin', 'timezone' => $t['timezone'], 'gate' => (bool) $t['rbac_self_management'], 'auth_revision' => (int) $t['auth_version'], 'session_id' => $s['id'], 'reauthenticated_at' => $s['reauthenticated_at']];
+        $c = ['tenant_id' => $tenant, 'admin_tenant_id' => $s['tenant_id'], 'admin_id' => $s['admin_id'], 'user_id' => $foreign ? null : $s['user_id'], 'group_id' => $s['group_id'], 'platform' => (bool) $s['is_platform_admin'], 'actor_type' => 'admin', 'timezone' => $t['timezone'], 'gate' => (bool) $t['rbac_self_management'], 'auth_revision' => (int) $t['auth_version'], 'session_id' => $s['id'], 'reauthenticated_at' => $s['reauthenticated_at']];
         $c['principal_id'] = $this->principal($c);
         return $c;
+    }
+    /** Empresas (ids binarios) a las que una cuenta de grupo puede entrar: su casa y las del grupo donde tiene roles. */
+    public function groupTenants(array $a): array
+    {
+        if (($a['group_id'] ?? null) === null) { return []; }
+        $adminId = $a['admin_id'] ?? $a['id'];
+        return array_column($this->db->run('SELECT DISTINCT r.tenant_id FROM admin_account_roles r JOIN company_group_members m ON m.tenant_id=r.tenant_id AND m.group_id=? JOIN tenants t ON t.tenant_id=r.tenant_id AND t.status=\'active\' WHERE r.admin_tenant_id=? AND r.admin_id=? ORDER BY r.tenant_id', [$a['group_id'], $a['tenant_id'], $adminId])->fetchAll(), 'tenant_id');
+    }
+    /** Datos del grupo para la sesion del panel (selector de empresa y tablero consolidado). */
+    private function groupInfo(array $a): array
+    {
+        if (($a['group_id'] ?? null) === null) { return []; }
+        $g = $this->db->one('SELECT name FROM company_groups WHERE id=?', [$a['group_id']]);
+        if (!$g) { return []; }
+        $ids = array_values(array_unique([$a['tenant_id'], ...$this->groupTenants($a)]));
+        // Con nombre: el selector de empresa no depende del permiso empresas.ver.
+        $names = []; foreach ($ids as $t) { $names[] = ['id' => Util::id($t), 'name' => $this->db->one('SELECT COALESCE(b.display_name,t.name) n FROM tenants t LEFT JOIN branding b ON b.tenant_id=t.tenant_id WHERE t.tenant_id=?', [$t])['n']]; }
+        return ['group' => ['id' => Util::id($a['group_id']), 'name' => $g['name'], 'tenants' => $names]];
     }
     public function principal(array $c): string
     {
@@ -82,7 +102,7 @@ final class AdminAuth
                 $s=$this->db->one('SELECT * FROM admin_sessions WHERE tenant_id=? AND id=?',[$a['tenant_id'],$id]);
                 $c=['tenant_id'=>$a['tenant_id'],'admin_tenant_id'=>$a['tenant_id'],'admin_id'=>$a['id'],'actor_type'=>'admin']; $c['principal_id']=$this->principal($c);
                 (new Audit($this->db))->record($c,$r,'admin.login','admin_session',$id,['session']);
-                return AdminApi::response(['admin_id'=>Util::id($a['id']),'tenant_id'=>$a['is_platform_admin']?null:Util::id($a['tenant_id']),'is_platform_admin'=>(bool)$a['is_platform_admin'],'must_change_password'=>(bool)$a['must_change_password'],'expires_at'=>Util::time($s['expires_at']),'idle_expires_at'=>Util::time($s['idle_expires_at']),'csrf_token'=>$csrf],200,['Set-Cookie'=>$this->cookie('__Host-keeper_admin',$token,28800)]);
+                return AdminApi::response(['admin_id'=>Util::id($a['id']),'tenant_id'=>$a['is_platform_admin']?null:Util::id($a['tenant_id']),'is_platform_admin'=>(bool)$a['is_platform_admin'],'must_change_password'=>(bool)$a['must_change_password'],'expires_at'=>Util::time($s['expires_at']),'idle_expires_at'=>Util::time($s['idle_expires_at']),'csrf_token'=>$csrf]+$this->groupInfo($a),200,['Set-Cookie'=>$this->cookie('__Host-keeper_admin',$token,28800)]);
             }
             $s=$this->identity($r);
             $c=['tenant_id'=>$s['tenant_id'],'admin_tenant_id'=>$s['tenant_id'],'admin_id'=>$s['admin_id'],'actor_type'=>'admin']; $c['principal_id']=$this->principal($c);
@@ -102,13 +122,13 @@ final class AdminAuth
                 $this->db->run('UPDATE admin_sessions SET auth_version=?,reauthenticated_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?',[$version,$s['tenant_id'],$s['id']]);
                 (new Audit($this->db))->record($c,$r,'admin.password_changed','admin_account',$s['admin_id'],['password']);
                 $fresh=$this->db->one('SELECT expires_at,idle_expires_at FROM admin_sessions WHERE tenant_id=? AND id=?',[$s['tenant_id'],$s['id']]);
-                return AdminApi::response(['admin_id'=>Util::id($s['admin_id']),'tenant_id'=>$s['is_platform_admin']?null:Util::id($s['tenant_id']),'is_platform_admin'=>(bool)$s['is_platform_admin'],'must_change_password'=>false,'expires_at'=>Util::time($fresh['expires_at']),'idle_expires_at'=>Util::time($fresh['idle_expires_at']),'csrf_token'=>$this->csrf($_COOKIE['__Host-keeper_admin'])],200,['Cache-Control'=>'no-store']);
+                return AdminApi::response(['admin_id'=>Util::id($s['admin_id']),'tenant_id'=>$s['is_platform_admin']?null:Util::id($s['tenant_id']),'is_platform_admin'=>(bool)$s['is_platform_admin'],'must_change_password'=>false,'expires_at'=>Util::time($fresh['expires_at']),'idle_expires_at'=>Util::time($fresh['idle_expires_at']),'csrf_token'=>$this->csrf($_COOKIE['__Host-keeper_admin'])]+$this->groupInfo($s),200,['Cache-Control'=>'no-store']);
             }
             if (!password_verify($r->body->password,$s['password_hash'])) { throw new ApiError(401,'invalid_credentials'); }
             $this->db->run('UPDATE admin_sessions SET reauthenticated_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?',[$s['tenant_id'],$s['id']]);
             (new Audit($this->db))->record($c,$r,'admin.reauthenticated','admin_session',$s['id'],['reauthentication']);
             $fresh=$this->db->one('SELECT expires_at,idle_expires_at FROM admin_sessions WHERE tenant_id=? AND id=?',[$s['tenant_id'],$s['id']]);
-            return AdminApi::response(['admin_id'=>Util::id($s['admin_id']),'tenant_id'=>$s['is_platform_admin']?null:Util::id($s['tenant_id']),'is_platform_admin'=>(bool)$s['is_platform_admin'],'must_change_password'=>(bool)$s['must_change_password'],'expires_at'=>Util::time($fresh['expires_at']),'idle_expires_at'=>Util::time($fresh['idle_expires_at']),'csrf_token'=>$this->csrf($_COOKIE['__Host-keeper_admin'])]);
+            return AdminApi::response(['admin_id'=>Util::id($s['admin_id']),'tenant_id'=>$s['is_platform_admin']?null:Util::id($s['tenant_id']),'is_platform_admin'=>(bool)$s['is_platform_admin'],'must_change_password'=>(bool)$s['must_change_password'],'expires_at'=>Util::time($fresh['expires_at']),'idle_expires_at'=>Util::time($fresh['idle_expires_at']),'csrf_token'=>$this->csrf($_COOKIE['__Host-keeper_admin'])]+$this->groupInfo($s));
         });
     }
 }

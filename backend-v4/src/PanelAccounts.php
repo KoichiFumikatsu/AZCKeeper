@@ -107,11 +107,35 @@ final class PanelAccounts
                 [$this->tenant, $id, $user['id'], $email, $b->display_name, password_hash($temporary, PASSWORD_DEFAULT)]);
             $this->db->run('UPDATE users SET panel_login_enabled=TRUE,version=version+1 WHERE tenant_id=? AND id=?', [$this->tenant, $user['id']]);
             $this->setRoles($user['id'], $roles);
+            if (($b->group_id ?? null) !== null) { $this->setGroup($id, $b->group_id, $b->group_roles ?? []); }
             $tenant = $this->tenant;
         }
         (new Audit($this->db))->record($this->c, $this->r, 'createPanelAccount', 'admin_account', $id, ['kind', 'email', 'user_id', 'role_ids']);
         $a = $this->db->one('SELECT a.*,u.display_name user_name,t.name tenant_name FROM admin_accounts a JOIN tenants t ON t.tenant_id=a.tenant_id LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.user_id WHERE a.tenant_id=? AND a.id=?', [$tenant, $id]);
         return AdminApi::response(['account' => $this->dto($a), 'temporary_password' => $temporary], 201, ['Cache-Control' => 'no-store']);
+    }
+
+    /**
+     * Cuenta de grupo (§8.5): la empresa casa debe ser del grupo; en las demas empresas del grupo recibe solo los
+     * roles indicados. Solo la plataforma lo asigna. null quita el grupo y todos esos roles.
+     */
+    private function setGroup(string $account, ?string $group, array $grants): void
+    {
+        if (!$this->c['platform']) { throw new ApiError(403, 'permission_denied'); }
+        $this->db->run('DELETE FROM admin_account_roles WHERE admin_tenant_id=? AND admin_id=?', [$this->tenant, $account]);
+        if ($group === null) { $this->db->run('UPDATE admin_accounts SET group_id=NULL,group_tenant_id=NULL WHERE tenant_id=? AND id=?', [$this->tenant, $account]); return; }
+        $gid = Util::bin($group);
+        $members = array_column($this->db->run('SELECT tenant_id FROM company_group_members WHERE group_id=?', [$gid])->fetchAll(), 'tenant_id');
+        if (!in_array($this->tenant, $members, true)) { throw new ApiError(422, 'validation_failed', [], 'home_not_in_group'); }
+        foreach ($grants as $g) {
+            $t = Util::bin($g->tenant_id);
+            if ($t === $this->tenant || !in_array($t, $members, true)) { throw new ApiError(422, 'validation_failed', [], 'tenant_not_in_group'); }
+            foreach (array_unique($g->role_ids) as $rid) {
+                if (!$this->db->one('SELECT id FROM roles WHERE tenant_id=? AND id=? AND active=TRUE', [$t, Util::bin($rid)])) { throw new ApiError(422, 'validation_failed', [], 'role_not_found'); }
+                $this->db->run('INSERT INTO admin_account_roles (admin_tenant_id,admin_id,tenant_id,role_id) VALUES (?,?,?,?)', [$this->tenant, $account, $t, Util::bin($rid)]);
+            }
+        }
+        $this->db->run('UPDATE admin_accounts SET group_id=?,group_tenant_id=? WHERE tenant_id=? AND id=?', [$gid, Util::bin(AdminAuth::PLATFORM), $this->tenant, $account]);
     }
 
     private function revokeSessions(array $a): void
@@ -129,6 +153,7 @@ final class PanelAccounts
         } else {
             $this->access->user($a['user_id']);
             $this->setRoles($a['user_id'], $this->validateRoles($b->role_ids));
+            if (property_exists($b, 'group_id')) { $this->setGroup($a['id'], $b->group_id, $b->group_roles ?? []); }
             $this->db->run('UPDATE users SET panel_login_enabled=?,version=version+1 WHERE tenant_id=? AND id=?', [(int) $b->active, $a['tenant_id'], $a['user_id']]);
         }
         if ((bool) $a['active'] !== $b->active) {
@@ -149,12 +174,23 @@ final class PanelAccounts
         return AdminApi::response(['account' => $this->dto($this->find($a['id'])), 'temporary_password' => $temporary], 200, ['Cache-Control' => 'no-store']);
     }
 
+    private function groupDto(array $a): array
+    {
+        if (($a['group_id'] ?? null) === null) { return ['group_id' => null, 'group_name' => null, 'group_roles' => []]; }
+        $grants = [];
+        foreach ($this->db->run('SELECT r.tenant_id,t.name,r.role_id FROM admin_account_roles r JOIN tenants t ON t.tenant_id=r.tenant_id WHERE r.admin_tenant_id=? AND r.admin_id=? ORDER BY t.name,r.role_id', [$a['tenant_id'], $a['id']])->fetchAll() as $r) {
+            $k = Util::id($r['tenant_id']);
+            $grants[$k] ??= ['tenant_id' => $k, 'tenant_name' => $r['name'], 'role_ids' => []];
+            $grants[$k]['role_ids'][] = Util::id($r['role_id']);
+        }
+        return ['group_id' => Util::id($a['group_id']), 'group_name' => $this->db->one('SELECT name FROM company_groups WHERE id=?', [$a['group_id']])['name'] ?? null, 'group_roles' => array_values($grants)];
+    }
     private function dto(array $a): array
     {
         $roles = $a['is_platform_admin'] ? [] : array_map([Util::class, 'id'], array_column($this->db->run('SELECT role_id FROM user_roles WHERE tenant_id=? AND user_id=? ORDER BY role_id', [$a['tenant_id'], $a['user_id']])->fetchAll(), 'role_id'));
         return ['tenant_id' => Util::id($a['tenant_id']), 'tenant_name' => $a['tenant_name'], 'id' => Util::id($a['id']), 'kind' => $a['is_platform_admin'] ? 'platform' : 'company', 'email' => $a['email'], 'display_name' => $a['display_name'],
             'user_id' => $a['user_id'] === null ? null : Util::id($a['user_id']), 'user_name' => $a['user_name'] ?? null, 'role_ids' => $roles,
             'active' => (bool) $a['active'], 'must_change_password' => (bool) $a['must_change_password'], 'created_at' => Util::time($a['created_at']),
-            'last_login_at' => $a['last_login_at'] === null ? null : Util::time($a['last_login_at'])];
+            'last_login_at' => $a['last_login_at'] === null ? null : Util::time($a['last_login_at'])] + $this->groupDto($a);
     }
 }

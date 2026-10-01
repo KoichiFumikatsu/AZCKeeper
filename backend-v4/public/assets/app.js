@@ -488,10 +488,20 @@ async function context() {
     tenants.forEach(company => { const option = node('option', company.name); option.value = company.id; select.append(option); });
     select.value = tenant;
     $('tenant-control').hidden = surface === 'admin' && ['home', 'tenants', 'releases'].includes(page);
+  } else if (session.group?.tenants?.length > 1) {
+    // Cuenta de grupo: cambia entre las empresas de su grupo donde tiene roles.
+    tenants = session.group.tenants;
+    const selected = sessionStorage.getItem('keeper.presentation.tenant');
+    tenant = tenants.some(t => t.id === selected) ? selected : session.tenant_id;
+    const select = $('tenant-select'); select.replaceChildren();
+    tenants.forEach(company => { const option = node('option', company.name); option.value = company.id; select.append(option); });
+    select.value = tenant;
+    $('tenant-control').hidden = false;
   } else {
     tenant = session.tenant_id;
     $('tenant-control').hidden = true;
   }
+  if ($('group-group')) $('group-group').hidden = !(session.group?.tenants?.length > 1);
   setTenant(tenant);
   try {
     const company = await get(`/tenants/${tenant}`);

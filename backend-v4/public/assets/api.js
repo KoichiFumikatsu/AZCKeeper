@@ -32,6 +32,8 @@ export function saveSession(session) {
   // These fields are navigation hints; authorization always belongs to the API.
   sessionStorage.setItem(SESSION_KEY, JSON.stringify({
     tenant_id: session.tenant_id, is_platform_admin: session.is_platform_admin, expires_at: session.expires_at,
+    // Cuenta de grupo empresarial: empresas a las que puede cambiar con el selector (la API autoriza cada una).
+    group: session.group || null,
   }));
 }
 export function readSession() {
