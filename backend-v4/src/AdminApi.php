@@ -137,6 +137,7 @@ final class AdminApi
             'listExpectedDevices','createExpectedDevice','importExpectedDevices','cancelExpectedDevice','listEnrollmentRequests','approveEnrollmentRequest','rejectEnrollmentRequest',
             'getEnrollmentSettings','putEnrollmentSettings','listEnrollmentKeys','createEnrollmentKey','revokeEnrollmentKey'=>(new DeviceIntake($this->db))->admin($op,$id,$b,$this->access,$this->c,$this->r),
             'listPanelAccounts','createPanelAccount','patchPanelAccount','resetPanelAccountPassword'=>(new PanelAccounts($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
+            'listAbsences','createAbsence','patchAbsence'=>(new Absences($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listDoors','createDoor','patchDoor','getDoorQuarantine'=>(new DoorsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listCompanyGroups','createCompanyGroup','patchCompanyGroup'=>(new CompanyGroups($this->db,$this->c,$this->r))->dispatch($op,$id,$b),

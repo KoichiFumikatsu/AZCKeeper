@@ -11,7 +11,7 @@ final class DataSync
 {
     public const SCHEMA = 'keeper.roster.v1';
     private const ORG_DOMAINS = ['firm' => 'firmas', 'site' => 'sedes', 'area' => 'areas', 'position' => 'cargos'];
-    private const ENDPOINTS = ['org-units' => ['firmas', 'sedes', 'areas', 'cargos'], 'schedules' => ['horarios'], 'holidays' => ['festivos'], 'people' => ['personas']];
+    private const ENDPOINTS = ['org-units' => ['firmas', 'sedes', 'areas', 'cargos'], 'schedules' => ['horarios'], 'holidays' => ['festivos'], 'people' => ['personas', 'jerarquia'], 'absences' => ['ausencias']];
     private const MAX_PAGES = 500;
 
     private string $tenant; private string $source; private array $owned = [];
@@ -127,6 +127,39 @@ final class DataSync
         if (isset($data['people']) && in_array('jerarquia', $this->owned, true)) { $this->hierarchy($data['people']); }
         // Cargos y jefes pudieron cambiar: los roles puestos por reglas se recalculan (dentro del mismo SAVEPOINT).
         if (isset($data['people'])) { [$added, $removed] = RoleRules::apply($this->db, $this->tenant); if ($added + $removed) { $this->counts['roles']['update'] = $added + $removed; } }
+        if (isset($data['absences']) && in_array('ausencias', $this->owned, true)) { $this->absences($data['absences']); }
+    }
+
+    // ---- Ausencias de RR. HH. (eventos con id; una cancelada se reenvia con status cancelled) ----------------------------
+    private function absences(array $items): void
+    {
+        $days = [];
+        foreach ($items as $it) {
+            $external = self::ext($it['external_id'] ?? null);
+            $user = is_string($it['person_external_id'] ?? null) ? $this->linked('user', $it['person_external_id']) : null;
+            $kind = in_array($it['kind'] ?? null, Absences::KINDS, true) ? $it['kind'] : null;
+            $status = in_array($it['status'] ?? null, ['approved', 'cancelled'], true) ? $it['status'] : null;
+            try { $from = new \DateTimeImmutable((string) ($it['starts_at'] ?? '')); $to = new \DateTimeImmutable((string) ($it['ends_at'] ?? '')); } catch (\Exception) { $from = $to = null; }
+            if ($external === null || $kind === null || $status === null || $from === null || $to <= $from) { $this->log('ausencias', 'error', $external, null, 'invalid_item'); continue; }
+            if ($user === null) { $this->log('ausencias', 'error', $external, null, 'unknown_reference'); continue; }
+            $utc = new \DateTimeZone('UTC'); $s = $from->setTimezone($utc)->format('Y-m-d H:i:s.u'); $e = $to->setTimezone($utc)->format('Y-m-d H:i:s.u');
+            $id = $this->linked('absence', $external);
+            $label = (string) $this->db->one('SELECT display_name FROM users WHERE tenant_id=? AND id=?', [$this->tenant, $user])['display_name'];
+            if ($id === null) {
+                if ($status === 'cancelled') { continue; }
+                $id = Util::bin(Util::uuid());
+                $this->db->run('INSERT INTO absences (tenant_id,id,user_id,kind,starts_at,ends_at,all_day,status) VALUES (?,?,?,?,?,?,?,?)', [$this->tenant, $id, $user, $kind, $s, $e, (int) (($it['all_day'] ?? true) !== false), $status]);
+                $this->link('absence', $id, $external, 'created'); $this->log('ausencias', 'create', $external, $id, $kind, $label);
+            } else {
+                $old = $this->db->one('SELECT * FROM absences WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
+                if ($old['user_id'] === $user && $old['kind'] === $kind && $old['status'] === $status && substr($old['starts_at'], 0, 19) === substr($s, 0, 19) && substr($old['ends_at'], 0, 19) === substr($e, 0, 19)) { continue; }
+                $days = array_merge($days, Absences::days($this->db, $this->tenant, $old['user_id'], $old['starts_at'], $old['ends_at']));
+                $this->db->run('UPDATE absences SET user_id=?,kind=?,starts_at=?,ends_at=?,status=?,version=version+1 WHERE tenant_id=? AND id=?', [$user, $kind, $s, $e, $status, $this->tenant, $id]);
+                $this->log('ausencias', $status === 'cancelled' ? 'deactivate' : 'update', $external, $id, $kind, $label);
+            }
+            $days = array_merge($days, Absences::days($this->db, $this->tenant, $user, $s, $e));
+        }
+        if ($days) { ActivityCalendar::refresh($this->db, $this->tenant, array_slice(array_values(array_unique($days)), 0, 400)); }
     }
 
     // ---- Jerarquia: a quien reporta cada persona (§2.1) -------------------------------------------------------------

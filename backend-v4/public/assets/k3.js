@@ -1021,6 +1021,62 @@ async function doorsPage() {
   render();
 }
 
+// ---- Ausencias de RR. HH. -------------------------------------------------------------------------------------------
+const ABSENCE_KINDS = { vacaciones: 'Vacaciones', licencia_remunerada: 'Licencia remunerada', licencia_no_remunerada: 'Licencia no remunerada', incapacidad: 'Incapacidad', permiso: 'Permiso', calamidad: 'Calamidad', otro: 'Otro' };
+async function absencesPage() {
+  const day = (offset) => new Date(Date.now() + offset * 864e5).toISOString().slice(0, 10);
+  const [users, domains, sources] = await Promise.all([allPages('/users'), optional(api('GET', '/data-domains')), optional(api('GET', '/data-sources'))]);
+  const ownerId = domains?.data?.find(d => d.domain === 'ausencias')?.source_id || null;
+  const owner = ownerId ? (sources?.data?.find(x => x.id === ownerId)?.name || 'una fuente externa') : null;
+  const who = new Map(users.map(u => [u.id, u.display_name]));
+  let list = (await api('GET', `/absences?from=${day(-60)}&to=${day(180)}`)).data;
+  const fmt = v => new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium' }).format(new Date(v));
+  const range = a => a.all_day ? `${fmt(a.starts_at)} → ${fmt(new Date(Date.parse(a.ends_at) - 1))}` : `${when(a.starts_at)} → ${when(a.ends_at)}`;
+  const render = () => {
+    $('page-content').replaceChildren();
+    const s = surface('Ausencias (últimos 60 días y próximos 6 meses)');
+    s.append(el('p', owner ? `Las ausencias llegan de ${owner}: se registran allá.` : 'Un día cubierto por una ausencia no cuenta como ausencia ni tardanza, y no baja la productividad promedio.', owner ? 'notice' : 'help'));
+    if (!list.length) { empty(s, 'Sin ausencias', owner ? 'Aún no han llegado ausencias.' : 'Registra vacaciones, incapacidades o permisos con "Registrar ausencia".'); return; }
+    table(s, 'Ausencias', [['Persona', a => who.get(a.user_id) || '—'], ['Tipo', a => ABSENCE_KINDS[a.kind] || a.kind], ['Fechas', range],
+      ['Estado', a => badge(a.status === 'approved' ? 'Aprobada' : 'Cancelada', a.status === 'approved' ? 'good' : '')],
+      ['', a => {
+        if (owner || a.status !== 'approved') return '';
+        const b = el('button', 'Cancelar', 'link-button'); b.type = 'button';
+        b.addEventListener('click', async () => {
+          if (!confirm('¿Cancelar esta ausencia? Esos días vuelven a contar como laborales.')) return;
+          try { const r = await api('PATCH', `/absences/${a.id}`, { body: { status: 'cancelled' }, ifMatch: a.version }); list = list.map(x => x.id === a.id ? r : x); render(); done(); } catch (e) { fail(e); }
+        });
+        return b;
+      }]], list, { filters: [['Tipo', a => ABSENCE_KINDS[a.kind] || a.kind], ['Estado', a => a.status === 'approved' ? 'Aprobada' : 'Cancelada']] });
+  };
+  const editor = () => {
+    const { dialog, body, ok, show } = dialogShell('Registrar ausencia');
+    const person = el('select'); person.append(new Option('Elige la persona…', ''));
+    users.filter(u => u.status === 'active').sort((a, b) => a.display_name.localeCompare(b.display_name, 'es')).forEach(u => person.append(new Option(u.display_name, u.id)));
+    labeled(body, 'Persona', person);
+    const kind = el('select'); Object.entries(ABSENCE_KINDS).forEach(([v, t]) => kind.append(new Option(t, v))); labeled(body, 'Tipo', kind);
+    const grid = el('div', undefined, 'form-grid'); body.append(grid);
+    const from = labeled(grid, 'Desde (incluido)', el('input')); from.type = 'date'; from.value = day(0);
+    const to = labeled(grid, 'Hasta (incluido)', el('input')); to.type = 'date'; to.value = day(0);
+    const note = labeled(body, 'Nota (opcional)', el('input')); note.maxLength = 200;
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (!person.value || !from.value || !to.value || to.value < from.value) { show('Elige la persona y unas fechas válidas.'); return; }
+      ok.disabled = true;
+      // Dias completos en la zona horaria del navegador: del inicio de "desde" al inicio del dia siguiente a "hasta".
+      const startsAt = new Date(`${from.value}T00:00:00`).toISOString();
+      const end = new Date(`${to.value}T00:00:00`); end.setDate(end.getDate() + 1);
+      try {
+        const r = await api('POST', '/absences', { body: { user_id: person.value, kind: kind.value, starts_at: startsAt, ends_at: end.toISOString(), all_day: true, note: note.value.trim() || null } });
+        list = [r, ...list]; dialog.close(); render(); done();
+      } catch (e) { show(e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
+  const action = $('page-action'); action.textContent = 'Registrar ausencia'; action.hidden = !!owner; action.addEventListener('click', editor);
+  render();
+}
+
 // ---- Roles y permisos -------------------------------------------------------------------------------------------
 async function rolesPage() {
   const session = readSession();
@@ -1176,6 +1232,7 @@ async function start() {
     else if (page === 'sources') await sourcesPage();
     else if (page === 'group') await groupPage();
     else if (page === 'doors') await doorsPage();
+    else if (page === 'absences') await absencesPage();
     else if (page === 'tenants') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await tenantsPage(); }
     done();
   } catch (e) {
