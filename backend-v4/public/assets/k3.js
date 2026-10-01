@@ -1566,7 +1566,7 @@ async function rolesPage() {
     renderRules();
   };
   // ---- Asignacion automatica (reglas cargo/jefatura -> rol) ----
-  let rules = await optional(allPages('/role-rules'));
+  let rules = (await optional(api('GET', '/role-rules')))?.data ?? null;
   const CONDITIONS = [['position', 'Tiene el cargo…'], ['manages', 'Es jefe (alguien le reporta)'], ['position_in_area', 'Tiene el cargo… en el área…']];
   const unitName = id => n.get(id) || '—';
   const ruleText = x => x.condition_kind === 'manages' ? 'Es jefe de alguien' : x.condition_kind === 'position' ? `Cargo: ${unitName(x.position_id)}` : `Cargo: ${unitName(x.position_id)} en ${unitName(x.area_id)}`;
@@ -1608,7 +1608,7 @@ async function rolesPage() {
           try { await send(true); } catch (e2) { show(e2); ok.disabled = false; return; }
         } else { show(e.problem?.detail === 'role_not_assignable' ? 'Ese rol no está marcado como "se puede dar automáticamente".' : e.problem?.detail === 'condition_incomplete' ? 'Elige el cargo (y el área, si aplica).' : e); ok.disabled = false; return; }
       }
-      rules = await allPages('/role-rules'); dialog.close(); render(); done();
+      rules = (await api('GET', '/role-rules')).data; dialog.close(); render(); done();
     });
     dialog.showModal();
   };
