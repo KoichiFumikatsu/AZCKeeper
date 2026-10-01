@@ -28,6 +28,13 @@ final class ActivityReports
             elseif (!$this->db->one('SELECT id FROM org_units WHERE tenant_id=? AND id=? AND kind=?',[$this->c['tenant_id'],$id,$kind])) { throw new ApiError(404,'resource_not_found'); }
             $sql.=" AND a.{$kind}_id=?"; $args[]=$id;
         }
+        // Empresa del grupo y pais de la sede (sin filtro = todo el grupo).
+        if (isset($_GET['company_id'])) {
+            $id=Util::bin($_GET['company_id']);
+            if (!$this->db->one("SELECT id FROM org_units WHERE tenant_id=? AND id=? AND kind='company'",[$this->c['tenant_id'],$id])) { throw new ApiError(404,'resource_not_found'); }
+            $sql.=' AND a.company_id=?'; $args[]=$id;
+        }
+        if (isset($_GET['country'])) { $sql.=' AND EXISTS (SELECT 1 FROM org_units cs WHERE cs.tenant_id=a.tenant_id AND cs.id=a.site_id AND cs.country_code=?)'; $args[]=$_GET['country']; }
         return [$sql,$args];
     }
     public function dispatch(string $op,?string $user): array

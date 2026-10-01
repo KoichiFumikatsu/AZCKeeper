@@ -501,7 +501,8 @@ final class DataSync
         if ($org) {
             $at = $this->now();
             $this->db->run('UPDATE user_assignments SET ends_at=? WHERE tenant_id=? AND user_id=? AND ends_at IS NULL', [$at, $this->tenant, $id]);
-            $this->db->run('INSERT INTO user_assignments (tenant_id,id,user_id,firm_id,site_id,area_id,position_id,schedule_id,starts_at) VALUES (?,?,?,?,?,?,?,?,?)', [$this->tenant, Util::bin(Util::uuid()), $id, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id'], $at]);
+            // La empresa del grupo se gestiona en Keeper (la fuente no la trae todavia): se conserva.
+            $this->db->run('INSERT INTO user_assignments (tenant_id,id,user_id,firm_id,site_id,area_id,position_id,schedule_id,company_id,starts_at) VALUES (?,?,?,?,?,?,?,?,?,?)', [$this->tenant, Util::bin(Util::uuid()), $id, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id'], $u['company_id'], $at]);
         }
         $this->log('personas', 'update', $external, $id, null, $name, array_map(static fn ($c) => $c === true ? 'organización' : $c, $changes));
     }

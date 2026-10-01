@@ -70,6 +70,7 @@ function chart(parent, series) {
   const frame = el('div', undefined, 'chart-frame'); frame.tabIndex = 0; frame.setAttribute('role', 'region'); frame.setAttribute('aria-label', 'Gráfico de tendencia; desplazable en pantallas pequeñas'); frame.append(svg);
   parent.append(frame, el('p', 'Línea continua azul: productividad (%) · Línea discontinua roja: focus (/100).', 'help'));
 }
+const COUNTRY_NAMES = { CO: 'Colombia', US: 'Estados Unidos', HN: 'Honduras', MX: 'México', PE: 'Perú', EC: 'Ecuador', PA: 'Panamá', CR: 'Costa Rica', GT: 'Guatemala', SV: 'El Salvador', ES: 'España' };
 async function pool(items, task, alive = () => true) {
   let index = 0;
   await Promise.all(Array.from({ length: Math.min(4, items.length) }, async () => { while (index < items.length && alive()) { const i = index++; await task(items[i], i); } }));
@@ -87,7 +88,7 @@ export async function coordinator(ctx) {
   const report = (kind, range, filters = {}) => get(query(`/reports/${kind}`, { ...range, ...filters }));
   const activity = (id, range) => get(query(`/users/${id}/activity`, range));
   // Totales de todas las personas en UNA consulta: antes era una por persona (~240) y agotaba el limite de la API.
-  const people = async range => new Map(rows(await report('people', range)).map(r => [r.user_id, r]));
+  const people = async (range, filters = {}) => new Map(rows(await report('people', range, filters)).map(r => [r.user_id, r]));
   async function optional(path, paginated = true) {
     try { return { data: await (paginated ? allPages(path) : get(path)) }; }
     catch (e) { return { error: e }; }
@@ -104,9 +105,16 @@ export async function coordinator(ctx) {
     const box = el('div'); const id = `filter-${key}`; const lbl = el('label', title); lbl.htmlFor = id; const select = el('select'); select.id = id; select.name = key; const any = el('option', 'Todos'); any.value = ''; select.append(any);
     records.forEach(r => { const o = el('option', r[textField]); o.value = r.id; select.append(o); }); box.append(lbl, select); parent.append(box); return select;
   }
-  function orgFilters(parent, org) {
+  // Filtros del grupo: empresa del grupo y pais (si existen), luego sede y area. Sin filtro = todo el grupo.
+  function orgFilters(parent, org, kinds = ['area', 'site']) {
     if (!org.data) return {};
-    return Object.fromEntries(['area', 'site'].map(kind => [`${kind}_id`, selector(parent, label(kind), kind, org.data.filter(o => o.kind === kind))]));
+    const out = {};
+    const companies = org.data.filter(o => o.kind === 'company' && o.active);
+    if (companies.length) out.company_id = selector(parent, 'Empresa', 'company', companies);
+    const countries = [...new Set(org.data.filter(o => o.kind === 'site' && o.country_code).map(o => o.country_code))].sort();
+    if (countries.length) out.country = selector(parent, 'País', 'country', countries.map(c => ({ id: c, name: COUNTRY_NAMES[c] || c })));
+    for (const kind of kinds) out[`${kind}_id`] = selector(parent, label(kind), kind, org.data.filter(o => o.kind === kind));
+    return out;
   }
   function selected(controls) { return Object.fromEntries(Object.entries(controls).filter(([, v]) => v.value).map(([k, v]) => [k, v.value])); }
   const productColumns = [['Día', 'day'], ['En uso', r => hours(r.active_seconds)], ['Encendido sin uso', r => hours(r.idle_seconds)], ['Productividad', r => percent(r.productivity_percent)], ['Focus /100', r => numeric(r.focus_score) ? fmt.format(r.focus_score) : 'Sin dato']];
@@ -151,25 +159,28 @@ export async function coordinator(ctx) {
     more.onclick = batch; await batch();
   }
   if (page === 'home') {
-    host.append(el('p', 'Últimos 7 días · Información disponible en tu alcance.', 'help'));
-    await Promise.all([
-      section(host, 'Pulso de la semana', async p => { const data = await report('productivity', week); productivity(p, data); if (data.series.length && data.coverage_percent < 80) { const a = el('p', undefined, 'notice'); a.append(link(`Solo se registró el ${percent(data.coverage_percent)} de la jornada esperada (equipos apagados o sin reportar). Revisar reportes`, '/reportes.php')); p.append(a); } }),
-      section(host, 'Equipos y conectividad', async p => {
-        const devices = await allPages(devicesPath); const now = Date.now();
+    host.append(el('p', 'Últimos 7 días · Información disponible en tu alcance. Sin filtros ves todo el grupo; elige una empresa, un país o una sede para ver solo esa parte.', 'help'));
+    const homeOrg = await optional('/organization');
+    const bar = el('form', undefined, 'toolbar'); bar.onsubmit = e => e.preventDefault(); const controls = orgFilters(bar, homeOrg, ['site']);
+    const body = el('div'); if (Object.keys(controls).length) host.append(bar); host.append(body);
+    const draw = async () => { body.replaceChildren(); const f = selected(controls); await Promise.all([
+      section(body, 'Pulso de la semana', async p => { const data = await report('productivity', week, f); productivity(p, data); if (data.series.length && data.coverage_percent < 80) { const a = el('p', undefined, 'notice'); a.append(link(`Solo se registró el ${percent(data.coverage_percent)} de la jornada esperada (equipos apagados o sin reportar). Revisar reportes`, '/reportes.php')); p.append(a); } }),
+      section(body, 'Equipos y conectividad', async p => {
+        const devices = await allPages(query(devicesPath, f)); const now = Date.now();
         metrics(p, [['En línea / total', `${devices.filter(d => d.status === 'active' && d.last_seen_at && now - Date.parse(d.last_seen_at) <= 300000).length} / ${devices.length}`, 'En línea: equipo activo con señal en los últimos 5 minutos.']]);
         const stale = devices.filter(d => d.status === 'active' && (!d.last_seen_at || now - Date.parse(d.last_seen_at) >= 3 * 86400000));
         pagedTable(p, 'Alerta: sin conectar durante 3 días o sin registro', [['Equipo', 'hostname'], ['Última conexión', d => time(d.last_seen_at)], ['Acción', d => link('Revisar ficha', `/miembro.php?id=${encodeURIComponent(d.user_id)}#equipos`)]], stale);
-        await migration(host, devices.filter(d => d.status === 'active'));
+        await migration(body, devices.filter(d => d.status === 'active'));
       }),
-      apps(host, week),
-      section(host, 'Ranking de personas', async p => {
+      apps(body, week, f),
+      section(body, 'Ranking de personas', async p => {
         if (reportsDenied) throw ctx.permissions.get('reports');
-        const users = await allPages('/users');
+        const users = await allPages(query('/users', f));
         if (!users.length) { empty(p, 'No hay personas en tu alcance.'); return; }
         const status = el('p', 'Preparando ranking…', 'help'); status.setAttribute('role', 'status'); p.append(status);
         p.hidden = false;
         let totals;
-        try { totals = await people(week); }
+        try { totals = await people(week, f); }
         catch (e) { if (e.status === 403) { p.remove(); return; } throw e; }
         const ranked = users.filter(u => totals.has(u.id)).map(u => ({ ...u, ...totals.get(u.id).totals }));
         const failures = 0, denied = 0;
@@ -177,7 +188,8 @@ export async function coordinator(ctx) {
         status.textContent = `${measured.length} con medición · ${ranked.length - measured.length} sin medición · ${failures} consultas fallidas${denied ? ` · ${denied} fuera de alcance` : ''}. ${failures || denied ? 'Ranking parcial.' : 'Últimos 7 días; totales ponderados por persona.'}`;
         pagedTable(p, 'Personas por productividad', [['Persona', memberLink], ['Productividad', r => percent(r.productivity_percent)], ['Focus /100', r => numeric(r.focus_score) ? fmt.format(r.focus_score) : 'Sin dato'], ['Activo', r => hours(r.active_seconds)]], measured, 10);
       }),
-    ]);
+    ]); };
+    Object.values(controls).forEach(c => { c.onchange = () => draw(); }); await draw();
   } else if (page === 'users') {
     const [users, org, devices] = await Promise.all([allPages('/users'), optional('/organization'), optional(devicesPath)]);
     const p = panel(host, 'Personas de la empresa'); dependency(p, org, 'Organización no disponible'); dependency(p, devices, 'Equipos no disponibles');
@@ -187,7 +199,8 @@ export async function coordinator(ctx) {
     const view = el('div'); p.append(view); let offset = 0, version = 0;
     async function render() {
       const current = ++version; const f = selected(controls), term = search.value.trim().toLocaleLowerCase('es');
-      const matches = users.filter(u => Object.entries(f).every(([k, v]) => u[k] === v) && `${u.display_name} ${u.email || ''}`.toLocaleLowerCase('es').includes(term));
+      const siteCountry = u => org.data?.find(o => o.id === u.site_id)?.country_code;
+      const matches = users.filter(u => Object.entries(f).every(([k, v]) => k === 'country' ? siteCountry(u) === v : u[k] === v) && `${u.display_name} ${u.email || ''}`.toLocaleLowerCase('es').includes(term));
       view.replaceChildren(); const data = matches.slice(offset, offset + 25); if (!data.length) { empty(view, 'No hay personas que coincidan con los filtros.'); return; }
       const grid = el('div'); view.append(grid); const prev = el('button', 'Anterior'), next = el('button', 'Siguiente'); prev.type = next.type = 'button'; prev.disabled = !offset; next.disabled = offset + 25 >= matches.length;
       const pager = el('div', undefined, 'pager'); const state = el('p', `${offset + 1}–${Math.min(offset + 25, matches.length)} de ${matches.length}`, 'help'); state.setAttribute('role', 'status'); pager.append(prev, state, next); view.append(pager);

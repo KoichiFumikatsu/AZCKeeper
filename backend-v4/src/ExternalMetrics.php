@@ -10,7 +10,7 @@ final class ExternalMetrics
     {
         $column = match ($group) { 'day'=>'x.day', 'user'=>'x.user_id', 'area'=>'a.area_id', 'total'=>"'total'" };
         $where=''; $args=[];
-        foreach ($this->filters as $field=>$id) { $where.=" AND a.$field=?"; $args[]=$id; }
+        foreach ($this->filters as $field=>$id) { $where.=ExternalApi::filterSql('a',$field); $args[]=$id; }
         if ($members!==null) {
             if (!$members) { return []; }
             $where.=' AND x.user_id IN ('.implode(',',array_fill(0,count($members),'?')).')'; array_push($args,...$members);

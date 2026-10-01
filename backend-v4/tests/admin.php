@@ -7,7 +7,9 @@ function adminRequest(array $a,string $method,string $path,mixed $body=null,arra
     $r=request($method,$path,$body,null,null,null,null,$headers+['cookie'=>'__Host-keeper_admin='.$a['cookie'],'x-csrf-token'=>$a['csrf'],'origin'=>Config::get('ORIGIN'),'x-tenant-id'=>Util::id($a['tenant'])]);
     if ($r[0]<300 && $r[0]!==204) {
         $route=explode('?',$path)[0]; $v=new Validator();
-        foreach ($v->contract['paths'] as $template=>$ops) {
+        // La ruta literal gana a la plantilla (/schedules/holiday-calendars no es /schedules/{id}), como en el router.
+        $paths=$v->contract['paths']; uksort($paths,static fn($x,$y)=>(int)str_contains($x,'{')<=>(int)str_contains($y,'{'));
+        foreach ($paths as $template=>$ops) {
             $pattern=str_replace(['\{id\}','\{code\}'],'[^/]+',preg_quote($template,'~'));
             if (preg_match('~^'.$pattern.'$~D',$route) && isset($ops[strtolower($method)])) {
                 $schema=$ops[strtolower($method)]['responses'][(string)$r[0]]['content']['application/json']['schema']??null;

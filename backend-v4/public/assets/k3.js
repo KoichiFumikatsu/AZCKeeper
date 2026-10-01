@@ -9,7 +9,11 @@ const page = document.body.dataset.page;
 const el = (tag, text, className) => { const n = document.createElement(tag); if (text !== undefined && text !== null) n.textContent = text; if (className) n.className = className; return n; };
 const when = v => v ? new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(v)) : 'Sin registro';
 const pct = v => v === null || v === undefined || Number.isNaN(v) ? 'Sin dato' : `${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1 }).format(v)} %`;
-const kinds = { firm: 'Firma', site: 'Sede', area: 'Área', position: 'Cargo' };
+const kinds = { firm: 'Firma', company: 'Empresa del grupo', site: 'Sede', area: 'Área', position: 'Cargo' };
+// Paises de las sedes (las remotas son "Remoto - <pais>"): de ahi sale el calendario de festivos de cada persona.
+const COUNTRIES = [['CO', 'Colombia'], ['US', 'Estados Unidos'], ['HN', 'Honduras'], ['MX', 'México'], ['PE', 'Perú'], ['EC', 'Ecuador'], ['PA', 'Panamá'], ['CR', 'Costa Rica'], ['GT', 'Guatemala'], ['SV', 'El Salvador'], ['ES', 'España']];
+const countryName = code => code ? (COUNTRIES.find(([c]) => c === code)?.[1] || code) : '—';
+function countrySelect(value, empty = 'Sin país') { const s = document.createElement('select'); s.append(new Option(empty, '')); COUNTRIES.forEach(([c, n]) => s.append(new Option(n, c))); s.value = value || ''; return s; }
 const online = d => d.status === 'active' && d.last_seen_at && Date.now() - Date.parse(d.last_seen_at) <= 5 * 60 * 1000;
 let tenant;
 
@@ -88,12 +92,13 @@ async function sites() {
   action.addEventListener('click', () => {
     const { dialog, body, ok, show } = dialogShell('Crear sede');
     const name = labeled(body, 'Nombre de la sede', el('input')); name.maxLength = 120;
+    const country = labeled(body, 'País', countrySelect('CO'), 'Las personas de esta sede usan los festivos de este país (salvo que se les asigne otro calendario). Para quien trabaja desde casa crea una sede "Remoto – <país>".');
     body.append(el('p', 'Después la asignas a las personas en Personas (o llega sola desde AZC One si One manda en las sedes).', 'help'));
     ok.textContent = 'Crear sede';
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
       ok.disabled = true;
-      try { await api('POST', '/organization', { body: { kind: 'site', name: name.value.trim(), parent_id: null, active: true } }); dialog.close(); location.reload(); }
+      try { await api('POST', '/organization', { body: { kind: 'site', name: name.value.trim(), parent_id: null, active: true, country_code: country.value || null } }); dialog.close(); location.reload(); }
       catch (e) { show(e); ok.disabled = false; }
     });
     dialog.showModal();
@@ -103,25 +108,26 @@ async function sites() {
   for (const r of rows) {
     const s = surface(r.site.name, cards); s.append(el('p', 'Operación de sede', 'eyebrow'));
     const big = el('p', devices ? `${r.online} ` : '—', 'kpi-inline'); big.append(el('small', devices ? `en línea / ${r.devices}` : 'sin acceso a equipos')); s.append(big);
-    s.append(el('p', `${r.members} personas · productividad ${pct(r.productivity)}`, 'help'));
+    s.append(el('p', `${countryName(r.site.country_code)} · ${r.members} personas · productividad ${pct(r.productivity)}`, 'help'));
   }
-  table(surface('Detalle por sede'), 'Sedes', [['Sede', r => r.site.name], ['Personas', r => String(r.members)], ['Equipos', r => String(r.devices)],
+  table(surface('Detalle por sede'), 'Sedes', [['Sede', r => r.site.name], ['País', r => countryName(r.site.country_code)], ['Personas', r => String(r.members)], ['Equipos', r => String(r.devices)],
     ['En línea', r => devices ? String(r.online) : '—'], ['Uso real, horas (7 días)', r => people ? r.hours.toFixed(1) : '—'], ['Productividad', r => people ? pct(r.productivity) : '—']], rows);
 }
 
 async function organization() {
   let org = await allPages('/organization');
   const users = (await optional(allPages('/users'))) || [];
-  const usedBy = o => users.filter(u => u.status === 'active' && [u.firm_id, u.site_id, u.area_id, u.position_id].includes(o.id)).length;
+  const usedBy = o => users.filter(u => u.status === 'active' && [u.firm_id, u.company_id, u.site_id, u.area_id, u.position_id].includes(o.id)).length;
   const byId = () => names(org);
   const render = () => {
     $('page-content').replaceChildren();
     const count = k => org.filter(o => o.kind === k && o.active).length;
-    kpis([['Firmas', String(count('firm'))], ['Sedes', String(count('site'))], ['Áreas', String(count('area'))], ['Cargos', String(count('position'))]]);
+    kpis([['Empresas del grupo', String(count('company')), 'AZC Legal, BilingueLaw…: quién emplea a cada persona'], ['Sedes', String(count('site'))], ['Áreas', String(count('area'))], ['Cargos', String(count('position'))]]);
     const s = surface('Unidades de la empresa');
     s.append(el('p', 'Las personas apuntan a la unidad, no a su nombre: si renombras un cargo, todas las personas con ese cargo lo ven con el nombre nuevo. Desactivar solo es posible cuando nadie la usa.', 'help'));
+    s.append(el('p', 'Empresas del grupo: las empresas que emplean a las personas (pueden compartir sedes). En Inicio y Reportes, sin filtro se ve todo el grupo; con filtro, solo una empresa, un país o una sede.', 'help'));
     const n = byId();
-    table(s, 'Organización', [['Unidad', o => o.name], ['Tipo', o => kinds[o.kind] || o.kind], ['Depende de', o => o.parent_id ? (n.get(o.parent_id) || '—') : '—'], ['Personas', o => String(usedBy(o))],
+    table(s, 'Organización', [['Unidad', o => o.name], ['Tipo', o => kinds[o.kind] || o.kind], ['País', o => o.kind === 'site' ? countryName(o.country_code) : '—'], ['Depende de', o => o.parent_id ? (n.get(o.parent_id) || '—') : '—'], ['Personas', o => String(usedBy(o))],
       ['Estado', o => badge(o.active ? 'Activa' : 'Inactiva', o.active ? 'good' : '')], ['Acciones', o => actions(o)]], org,
       { filters: [['Tipo', o => kinds[o.kind]], ['Estado', o => o.active ? 'Activa' : 'Inactiva']] });
   };
@@ -140,10 +146,11 @@ async function organization() {
       const parent = el('select'); parent.append(new Option('No depende de otra', ''));
       org.filter(x => x.active && x.id !== o.id).sort((a, b) => a.name.localeCompare(b.name, 'es')).forEach(x => parent.append(new Option(`${x.name} (${kinds[x.kind]})`, x.id)));
       parent.value = o.parent_id || ''; labeled(body, 'Depende de', parent, 'Por ejemplo, un área que pertenece a una sede, o un cargo que depende de un área.');
+      const country = o.kind === 'site' ? labeled(body, 'País', countrySelect(o.country_code), 'Define los festivos de quienes trabajan en esta sede.') : null;
       dialog.querySelector('form').addEventListener('submit', async ev => {
         ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
         ok.disabled = true;
-        try { await save(o, { name: name.value.trim(), parent_id: parent.value || null }); dialog.close(); }
+        try { await save(o, { name: name.value.trim(), parent_id: parent.value || null, ...(country ? { country_code: country.value || null } : {}) }); dialog.close(); }
         catch (e) { show(e.status === 422 && !e.problem?.detail ? 'Esa dependencia no es válida (por ejemplo, haría un círculo o la unidad superior está inactiva).' : e); ok.disabled = false; }
       });
       dialog.showModal();
@@ -166,7 +173,10 @@ async function organization() {
     const kind = el('select'); Object.entries(kinds).forEach(([k, v]) => kind.append(new Option(v, k))); kind.value = 'site';
     const name = el('input'); name.required = true; name.maxLength = 160;
     const parent = el('select'); parent.append(new Option('Sin unidad superior', '')); org.filter(o => o.active).forEach(o => parent.append(new Option(`${o.name} (${kinds[o.kind]})`, o.id)));
-    for (const [label, input] of [['Tipo', kind], ['Nombre', name], ['Depende de', parent]]) { const l = el('label', label); l.append(input); form.append(l); }
+    const country = countrySelect('CO');
+    const labels = [];
+    for (const [label, input] of [['Tipo', kind], ['Nombre', name], ['Depende de', parent], ['País (solo sedes)', country]]) { const l = el('label', label); l.append(input); form.append(l); labels.push(l); }
+    const syncKind = () => { labels[3].hidden = kind.value !== 'site'; }; kind.addEventListener('change', syncKind); syncKind();
     const error = el('p', '', 'error-text'); error.hidden = true;
     const footer = el('div', undefined, 'dialog-footer'); const cancel = el('button', 'Cancelar'); cancel.type = 'button'; const ok = el('button', 'Crear', 'primary'); ok.type = 'submit';
     footer.append(cancel, ok); form.append(error, footer); dialog.append(form); document.body.append(dialog);
@@ -174,7 +184,7 @@ async function organization() {
     form.addEventListener('submit', async ev => {
       ev.preventDefault(); if (!name.value.trim()) { error.textContent = 'Escribe el nombre.'; error.hidden = false; return; }
       ok.disabled = true;
-      try { const created = await api('POST', '/organization', { body: { kind: kind.value, name: name.value.trim(), parent_id: parent.value || null, active: true } }); org = [...org, created]; dialog.close(); render(); }
+      try { const created = await api('POST', '/organization', { body: { kind: kind.value, name: name.value.trim(), parent_id: parent.value || null, active: true, ...(kind.value === 'site' ? { country_code: country.value || null } : {}) } }); org = [...org, created]; dialog.close(); render(); }
       catch (e) { error.textContent = errorMessage(e); error.hidden = false; ok.disabled = false; }
     });
     dialog.showModal();
@@ -597,8 +607,10 @@ async function patient(fn) {
   }
 }
 async function people() {
-  const [users, org, schedules, domains, sources] = await Promise.all([allPages('/users'), allPages('/organization'), optional(allPages('/schedules')), optional(api('GET', '/data-domains')), optional(api('GET', '/data-sources'))]);
+  const [users, org, schedules, domains, sources, calendarPage] = await Promise.all([allPages('/users'), allPages('/organization'), optional(allPages('/schedules')), optional(api('GET', '/data-domains')), optional(api('GET', '/data-sources')), optional(api('GET', '/schedules/holiday-calendars?limit=100'))]);
   let list = users; const n = names(org);
+  const calendars = (calendarPage?.data || []).filter(c => c.active);
+  const siteCountry = u => org.find(o => o.id === u.site_id)?.country_code || null;
   // Si una fuente (p. ej. AZC One) manda en "personas", aqui no se crean ni editan: se cambian en la fuente.
   const ownerId = domains?.data?.find(d => d.domain === 'personas')?.source_id || null;
   const owner = ownerId ? (sources?.data?.find(x => x.id === ownerId)?.name || 'una fuente externa') : null;
@@ -623,10 +635,10 @@ async function people() {
     if (!list.length) { empty(s, 'Aún no hay personas', 'Créalas una a una con "Crear persona" o impórtalas desde un CSV (descarga la plantilla).'); return; }
     table(s, 'Personas', [
       ['Nombre', u => { const a = el('a', u.display_name); a.href = `/miembro.php?id=${encodeURIComponent(u.id)}`; const d = el('div'); d.append(a); if (u.email) d.append(el('small', u.email)); return d; }],
-      ['Cédula', u => u.document || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'],
+      ['Cédula', u => u.document || '—'], ['Empresa', u => n.get(u.company_id) || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'],
       ['Estado', u => { const d = el('div'); d.append(badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : '')); if (u.monitoring === 'excluded') d.append(' ', badge('No se monitorea', 'info')); return d; }],
       ['Acciones', u => { if (u.managed_by) return el('small', `Gestionada por ${u.managed_by}`); const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(u)); return b; }]],
-      list, { filters: [['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']] });
+      list, { filters: [['Empresa', u => n.get(u.company_id) || 'Sin empresa'], ['País', u => countryName(siteCountry(u))], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']] });
   };
   const editor = u => {
     const { dialog, body, ok, show } = dialogShell(u ? `Editar ${u.display_name}` : 'Crear persona');
@@ -646,6 +658,10 @@ async function people() {
     }
     const sched = el('select'); scheduleList.forEach(x => sched.append(new Option(x.name, x.id))); sched.value = u?.schedule_id || defaultSchedule()?.id || '';
     labeled(grid, 'Horario', sched);
+    const company = el('select'); company.append(new Option('Sin empresa (todo el grupo)', '')); units('company').forEach(o => company.append(new Option(o.name, o.id)));
+    company.value = u?.company_id || ''; labeled(grid, 'Empresa del grupo', company);
+    const holidays = el('select'); holidays.append(new Option('Automático (festivos del país de su sede)', '')); calendars.forEach(c => holidays.append(new Option(c.name, c.id)));
+    holidays.value = u?.holiday_calendar_id || ''; labeled(grid, 'Festivos', holidays);
     let status = null;
     if (u) { status = el('select'); status.append(new Option('Activa', 'active'), new Option('Inactiva (retirada)', 'inactive')); status.value = u.status; labeled(body, 'Estado', status); }
     ok.textContent = u ? 'Guardar' : 'Crear persona';
@@ -656,6 +672,8 @@ async function people() {
       if (status?.value === 'inactive' && u.status === 'active' && !confirm(`¿Marcar a ${u.display_name} como inactiva? Sus equipos quedan revocados y dejan de reportar.`)) return;
       ok.disabled = true;
       const payload = { display_name: name.value.trim(), document: doc.value.trim() || null, email: email.value.trim() || null, schedule_id: sched.value, reports_to_user_id: boss.value || null, monitoring_override: mon.value };
+      if (!u || (company.value || null) !== (u.company_id || null)) payload.company_id = company.value || null;
+      if (calendarPage && (!u || (holidays.value || null) !== (u.holiday_calendar_id || null))) payload.holiday_calendar_id = holidays.value || null;
       for (const [k] of ORG_FIELDS) payload[`${k}_id`] = selects[k].value;
       if (status && status.value !== u.status) payload.status = status.value;
       try {
@@ -683,7 +701,7 @@ async function people() {
   };
   const template = () => {
     const ex = k => fallback(k)?.name || units(k)[0]?.name || '';
-    const csv = 'nombre;cedula;correo;firma;sede;area;cargo;horario\r\n' + `Ana María Pérez;1234567890;ana.perez@empresa.com;${ex('firm')};${ex('site')};${ex('area')};${ex('position')};${defaultSchedule()?.name || ''}\r\n`;
+    const csv = 'nombre;cedula;correo;firma;sede;area;cargo;horario;empresa\r\n' + `Ana María Pérez;1234567890;ana.perez@empresa.com;${ex('firm')};${ex('site')};${ex('area')};${ex('position')};${defaultSchedule()?.name || ''};${units('company')[0]?.name || ''}\r\n`;
     const a = el('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })); a.download = 'plantilla-personas.csv'; a.click();
   };
   const importer = () => {
@@ -701,7 +719,7 @@ async function people() {
       const head = rows[0].map(fold);
       const col = (...keys) => head.findIndex(h => keys.includes(h));
       const idx = { name: col('nombre', 'name', 'nombre completo'), doc: col('cedula', 'documento', 'cc'), email: col('correo', 'email', 'e-mail'),
-        firm: col('firma'), site: col('sede'), area: col('area'), position: col('cargo'), schedule: col('horario') };
+        firm: col('firma'), site: col('sede'), area: col('area'), position: col('cargo'), schedule: col('horario'), company: col('empresa', 'empresa del grupo') };
       if (idx.name < 0) { show('Falta la columna "nombre".'); return; }
       const known = new Set(list.map(u => u.document).filter(Boolean));
       const seen = new Set(); const results = [];
@@ -716,6 +734,7 @@ async function people() {
         }
         const sv = get('schedule'); const sc = sv ? scheduleList.find(x => fold(x.name) === fold(sv)) : defaultSchedule();
         if (!sc) problems.push(sv ? `horario "${sv}" no existe` : 'sin horario'); else payload.schedule_id = sc.id;
+        const cv = get('company'); if (cv) { const co = units('company').find(o => fold(o.name) === fold(cv)); if (!co) problems.push(`empresa "${cv}" no existe`); else payload.company_id = co.id; }
         let skip = null;
         if (payload.document && known.has(payload.document)) skip = 'ya existe';
         else if (payload.document && seen.has(payload.document)) skip = 'cédula repetida en el archivo';
@@ -1361,7 +1380,7 @@ const AUDIT_ACTIONS = {
   createRole: 'Creó un rol', patchRole: 'Editó un rol', patchPermission: 'Editó un permiso', setRbacGate: 'Cambió quién gestiona los roles de la empresa',
   createRoleRule: 'Creó una asignación automática', patchRoleRule: 'Editó una asignación automática', putMonitoringExclusions: 'Cambió los cargos que no se monitorean',
   createOrgUnit: 'Creó una unidad', patchOrgUnit: 'Editó una unidad', createSchedule: 'Creó un horario', putSchedule: 'Editó un horario',
-  createHoliday: 'Agregó un festivo', putHoliday: 'Editó un festivo', deleteHoliday: 'Quitó un festivo', createHolidaySociety: 'Creó una sociedad', putHolidaySociety: 'Editó una sociedad', deleteHolidaySociety: 'Quitó una sociedad',
+  createHoliday: 'Agregó un festivo', createHolidayCalendar: 'Creó un calendario de festivos', putHolidayCalendar: 'Editó un calendario de festivos', assignHolidayCalendar: 'Asignó un calendario de festivos a personas', putHoliday: 'Editó un festivo', deleteHoliday: 'Quitó un festivo', createHolidaySociety: 'Creó una sociedad', putHolidaySociety: 'Editó una sociedad', deleteHolidaySociety: 'Quitó una sociedad',
   createAbsence: 'Registró una ausencia', patchAbsence: 'Editó una ausencia', createDoor: 'Registró una puerta', patchDoor: 'Editó una puerta',
   createPolicy: 'Creó una regla de equipos', patchPolicy: 'Editó una regla de equipos', createTier: 'Creó un plan', patchTier: 'Editó un plan',
   createSuspiciousApp: 'Agregó una app a vigilar', putSuspiciousApp: 'Editó una app vigilada', deleteSuspiciousApp: 'Dejó de vigilar una app', putInstallCoverage: 'Editó la cobertura de una persona',
@@ -1390,7 +1409,7 @@ const AUDIT_FIELDS = {
   pattern: 'texto a reconocer', app_pattern: 'texto a vigilar', description: 'descripción', day: 'fecha', society_ids: 'sociedades', counts_for_presence: 'cuenta para presencia', source_ref: 'referencia',
   base_url: 'dirección', company: 'empresa en la fuente', token: 'clave', mode: 'modo', interval_minutes: 'frecuencia', domains: 'dominios', approve: 'decisión', rows: 'filas', parent_id: 'depende de',
   note: 'nota', starts_at: 'desde', ends_at: 'hasta', all_day: 'día completo', install_coverage_heartbeat_days: 'días sin conexión', raw_days: 'retención del detalle', aggregate_months: 'retención de resúmenes',
-  log_days: 'retención de registros', tenant_ids: 'empresas', position_ids: 'cargos', condition_kind: 'condición', confirm_sensitive: 'confirmación', assignable_by_rule: 'asignable por regla',
+  log_days: 'retención de registros', country_code: 'país', company_id: 'empresa del grupo', holiday_calendar_id: 'calendario de festivos', calendar_id: 'calendario', is_default: 'por defecto', user_ids: 'personas', tenant_ids: 'empresas', position_ids: 'cargos', condition_kind: 'condición', confirm_sensitive: 'confirmación', assignable_by_rule: 'asignable por regla',
   shared_password: 'contraseña compartida', admin_name: 'usuario administrador', action: 'acción', reason: 'motivo', ring: 'anillo', percentage: 'porcentaje', version: 'versión',
 };
 const auditFields = list => (list || []).map(f => AUDIT_FIELDS[f] || String(f).replace(/^branding\./, 'marca: ').replace(/_/g, ' ')).filter((v, i, a) => a.indexOf(v) === i).join(', ');
@@ -1506,46 +1525,137 @@ async function settingsPage() {
 }
 
 // ---- Festivos -------------------------------------------------------------------------------------------------------
+// Festivos por calendario (uno por país o los que se quieran). Cada persona usa el calendario que se le asigne; si no
+// tiene, el del país de su sede; si su sede no tiene país, el calendario por defecto (mismo orden que el servidor).
 async function holidaysPage() {
   const [domains, sources] = await Promise.all([optional(api('GET', '/data-domains')), optional(api('GET', '/data-sources'))]);
   const ownerId = domains?.data?.find(d => d.domain === 'festivos')?.source_id || null;
   const owner = ownerId ? (sources?.data?.find(x => x.id === ownerId)?.name || 'una fuente externa') : null;
   const pageAll = async path => { const out = []; let next = 0; while (next !== null) { const r = await api('GET', `${path}${path.includes('?') ? '&' : '?'}limit=100&offset=${next}`); out.push(...r.data); next = r.next_offset; } return out; };
-  let list = await pageAll('/schedules/holidays');
-  const societies = (await optional(pageAll('/schedules/holiday-societies'))) || [];
-  const sname = new Map(societies.map(s => [s.id, s.name]));
+  let [calendars, list, users, org] = await Promise.all([pageAll('/schedules/holiday-calendars'), pageAll('/schedules/holidays'), optional(allPages('/users')), optional(allPages('/organization'))]);
+  const n = names(org || []);
+  const cname = id => calendars.find(c => c.id === id)?.name || 'Sin calendario';
   const fmt = d => new Intl.DateTimeFormat('es-CO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${d}T00:00:00Z`));
   const today = new Date().toISOString().slice(0, 10);
+  const siteCountry = u => org?.find(o => o.id === u.site_id)?.country_code || null;
+  const effective = u => {
+    const active = calendars.filter(c => c.active);
+    const own = active.find(c => c.id === u.holiday_calendar_id); if (own) return [own, 'asignado'];
+    const country = siteCountry(u);
+    const byCountry = country && active.filter(c => c.country_code === country).sort((a, b) => (b.is_default - a.is_default) || a.name.localeCompare(b.name, 'es'))[0];
+    if (byCountry) return [byCountry, 'por el país de su sede'];
+    const fallback = active.find(c => c.is_default); return fallback ? [fallback, 'por defecto'] : [null, 'sin festivos'];
+  };
+  const reload = async () => { [calendars, list, users] = await Promise.all([pageAll('/schedules/holiday-calendars'), pageAll('/schedules/holidays'), optional(allPages('/users'))]); render(); done(); };
+  const link = (text, fn) => { const b = el('button', text, 'link-button'); b.type = 'button'; b.addEventListener('click', fn); return b; };
   const render = () => {
     $('page-content').replaceChildren();
     const upcoming = list.filter(h => h.day >= today).sort((a, b) => a.day.localeCompare(b.day));
-    kpis([['Festivos registrados', String(list.length)], ['Próximo', upcoming[0] ? `${upcoming[0].name}` : 'Ninguno', upcoming[0] ? fmt(upcoming[0].day) : ''], ['Este año', String(list.filter(h => h.day.slice(0, 4) === today.slice(0, 4)).length)]]);
+    kpis([['Calendarios', String(calendars.filter(c => c.active).length)], ['Festivos este año', String(list.filter(h => h.day.startsWith(today.slice(0, 4))).length)],
+      ['Próximo festivo', upcoming[0] ? upcoming[0].name : 'Ninguno', upcoming[0] ? `${fmt(upcoming[0].day)} · ${cname(upcoming[0].calendar_id)}` : '']]);
+    const c = surface('Calendarios');
+    c.append(el('p', 'Cada persona usa el calendario que se le asigne aquí (o en su ficha de Personas). Si no tiene uno, usa el del país de su sede; si su sede no tiene país, el calendario por defecto. En un festivo la persona no tiene jornada: no cuenta como ausencia ni tardanza.', 'help'));
+    if (owner) c.append(el('p', `Los festivos llegan de ${owner}.`, 'notice'));
+    else { const tools = el('div', undefined, 'actions no-margin'); const add = el('button', 'Crear calendario'); add.type = 'button'; add.addEventListener('click', () => calendarEditor(null)); tools.append(add); c.append(tools); }
+    if (!calendars.length) empty(c, 'Sin calendarios', 'Crea uno por país (Colombia, Estados Unidos, Honduras…) con "Crear calendario" y agrégale sus festivos.');
+    else table(c, 'Calendarios', [['Calendario', x => x.name], ['País', x => countryName(x.country_code)], ['Festivos', x => String(x.holidays)],
+      ['Personas que lo usan', x => users ? String(users.filter(u => u.status === 'active' && effective(u)[0]?.id === x.id).length) : '—'], ['Asignadas a mano', x => String(x.people)],
+      ['Estado', x => { const d = el('div'); d.append(badge(x.active ? 'Activo' : 'Inactivo', x.active ? 'good' : '')); if (x.is_default) d.append(' ', badge('Por defecto', 'info')); return d; }],
+      ['Acciones', x => { if (owner) return ''; const box = el('div', undefined, 'actions no-margin'); box.append(link('Editar', () => calendarEditor(x))); if (users && x.active) box.append(link('Asignar a personas', () => assign(x))); return box; }]], calendars);
     const s = surface('Festivos');
-    s.append(el('p', owner ? `Los festivos llegan de ${owner}.` : 'En un festivo nadie tiene jornada: no cuenta como ausencia ni tardanza. Puede aplicar a toda la empresa o solo a algunas sociedades.', owner ? 'notice' : 'help'));
-    if (!list.length) { empty(s, 'Sin festivos', 'Agrega los festivos del año con "Agregar festivo".'); return; }
-    table(s, 'Festivos', [['Fecha', h => h.day], ['Día', h => fmt(h.day)], ['Festivo', h => h.name], ['Aplica a', h => h.society_ids.length ? h.society_ids.map(id => sname.get(id) || '—').join(', ') : 'Toda la empresa'],
+    if (!list.length) { empty(s, 'Sin festivos', 'Agrega los festivos con "Agregar festivo".'); return; }
+    table(s, 'Festivos', [['Fecha', h => h.day], ['Día', h => fmt(h.day)], ['Festivo', h => h.name], ['Calendario', h => cname(h.calendar_id)],
       ['', h => {
         if (owner) return '';
         const box = el('div', undefined, 'actions no-margin');
-        const e = el('button', 'Editar', 'link-button'); e.type = 'button'; e.addEventListener('click', () => editor(h));
-        const d = el('button', 'Quitar', 'link-button'); d.type = 'button'; d.addEventListener('click', async () => { if (!confirm(`¿Quitar ${h.name}?`)) return; try { await api('DELETE', `/schedules/holidays/${h.id}`); list = list.filter(x => x.id !== h.id); render(); done(); } catch (er) { fail(er); } });
-        box.append(e, d); return box;
-      }]], list, { filters: [['Año', h => h.day.slice(0, 4)]] });
+        box.append(link('Editar', () => editor(h)), link('Quitar', async () => { if (!confirm(`¿Quitar ${h.name} (${cname(h.calendar_id)})?`)) return; try { await api('DELETE', `/schedules/holidays/${h.id}`); list = list.filter(x => x.id !== h.id); render(); done(); } catch (er) { fail(er); } }));
+        return box;
+      }]], list, { filters: [['Calendario', h => cname(h.calendar_id)], ['Año', h => h.day.slice(0, 4)]] });
   };
   const editor = h => {
+    if (!calendars.length) { fail(new Error('Primero crea un calendario (por ejemplo "Colombia").')); return; }
     const { dialog, body, ok, show } = dialogShell(h ? `Editar ${h.name}` : 'Agregar festivo');
     const name = labeled(body, 'Nombre', el('input')); name.maxLength = 160; name.value = h?.name || '';
     const dayIn = labeled(body, 'Fecha', el('input')); dayIn.type = 'date'; dayIn.value = h?.day || '';
-    let boxes = [];
-    if (societies.length) { body.append(el('p', 'Si no marcas ninguna sociedad, aplica a toda la empresa.', 'help')); boxes = checks(body, societies.map(s => [s.id, s.name]), h?.society_ids || []); }
+    const cal = el('select'); calendars.filter(x => x.active || x.id === h?.calendar_id).forEach(x => cal.append(new Option(x.name, x.id)));
+    cal.value = h?.calendar_id || calendars.find(x => x.is_default)?.id || calendars[0].id; labeled(body, 'Calendario', cal, 'El festivo aplica a las personas que usan este calendario.');
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault(); if (!name.value.trim() || !dayIn.value) { show('Escribe el nombre y la fecha.'); return; }
       ok.disabled = true;
-      const body2 = { name: name.value.trim(), day: dayIn.value, society_ids: boxes.filter(b => b.checked).map(b => b.value) };
-      try { const saved = h ? await api('PUT', `/schedules/holidays/${h.id}`, { body: body2 }) : await api('POST', '/schedules/holidays', { body: body2 }); list = h ? list.map(x => x.id === h.id ? saved : x) : [...list, saved]; dialog.close(); render(); done(); }
+      const payload = { name: name.value.trim(), day: dayIn.value, calendar_id: cal.value, society_ids: [] };
+      try { h ? await api('PUT', `/schedules/holidays/${h.id}`, { body: payload }) : await api('POST', '/schedules/holidays', { body: payload }); dialog.close(); await reload(); }
       catch (e) { show(e); ok.disabled = false; }
     });
     dialog.showModal();
+  };
+  const calendarEditor = x => {
+    const { dialog, body, ok, show } = dialogShell(x ? `Editar ${x.name}` : 'Crear calendario');
+    const name = labeled(body, 'Nombre', el('input')); name.maxLength = 120; name.value = x?.name || '';
+    const country = labeled(body, 'País', countrySelect(x ? x.country_code : 'CO', 'Ninguno (calendario especial)'), 'Las personas sin calendario propio usan el del país de su sede.');
+    const [isDefault] = checks(body, [['default', 'Calendario por defecto', 'Lo usan quienes no tienen calendario propio ni sede con país.']], x?.is_default ? ['default'] : []);
+    const state = el('select'); state.append(new Option('Activo', '1'), new Option('Inactivo (no se aplica)', '0')); state.value = x && !x.active ? '0' : '1'; labeled(body, 'Estado', state);
+    ok.textContent = x ? 'Guardar' : 'Crear calendario';
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
+      if (isDefault.checked && state.value === '0') { show('El calendario por defecto debe estar activo.'); return; }
+      ok.disabled = true;
+      const payload = { name: name.value.trim(), country_code: country.value || null, is_default: isDefault.checked, active: state.value === '1' };
+      try { x ? await api('PUT', `/schedules/holiday-calendars/${x.id}`, { body: payload }) : await api('POST', '/schedules/holiday-calendars', { body: payload }); dialog.close(); await reload(); }
+      catch (e) { show(e.problem?.detail === 'duplicate_name' ? 'Ya hay un calendario con ese nombre.' : e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
+  // Asignar en grupo, como los horarios: se filtra por empresa, país, sede o área y se marcan las personas.
+  const assign = x => {
+    const { dialog, body, ok, show } = dialogShell(`Asignar "${x.name}" a personas`);
+    dialog.classList.add('wide-dialog');
+    body.append(el('p', 'Filtra y marca a quiénes aplica este calendario. Reemplaza el que tenían asignado. "Volver a automático" les quita el calendario propio y vuelven a usar el del país de su sede.', 'help'));
+    const bar = el('div', undefined, 'form-grid'); body.append(bar);
+    const active = (users || []).filter(u => u.status === 'active').sort((a, b) => a.display_name.localeCompare(b.display_name, 'es'));
+    const pick = (label, values) => { const sel = el('select'); sel.append(new Option('Todas', '')); values.forEach(([v, t]) => sel.append(new Option(t, v))); labeled(bar, label, sel); return sel; };
+    const unitsOf = kind => (org || []).filter(o => o.kind === kind && o.active).sort((a, b) => a.name.localeCompare(b.name, 'es')).map(o => [o.id, o.name]);
+    const fCompany = pick('Empresa', unitsOf('company'));
+    const fCountry = pick('País', [...new Set(active.map(siteCountry).filter(Boolean))].map(c => [c, countryName(c)]));
+    const fSite = pick('Sede', unitsOf('site')); const fArea = pick('Área', unitsOf('area'));
+    const search = labeled(bar, 'Buscar nombre', el('input')); search.type = 'search';
+    const marks = el('div', undefined, 'actions no-margin'); const all = el('button', 'Marcar las mostradas'); all.type = 'button'; const none = el('button', 'Desmarcar todas'); none.type = 'button'; marks.append(all, none); body.append(marks);
+    const status = el('p', '', 'help'); status.setAttribute('role', 'status'); body.append(status);
+    const box = el('div', undefined, 'check-list'); body.append(box);
+    const chosen = new Set(active.filter(u => u.holiday_calendar_id === x.id).map(u => u.id));
+    const shown = () => active.filter(u => (!fCompany.value || u.company_id === fCompany.value) && (!fCountry.value || siteCountry(u) === fCountry.value) && (!fSite.value || u.site_id === fSite.value) && (!fArea.value || u.area_id === fArea.value)
+      && (!search.value.trim() || fold(u.display_name).includes(fold(search.value))));
+    const draw = () => {
+      box.replaceChildren(); const rows = shown();
+      for (const u of rows) {
+        const l = el('label', undefined, 'check'); const c = el('input'); c.type = 'checkbox'; c.checked = chosen.has(u.id);
+        c.addEventListener('change', () => { c.checked ? chosen.add(u.id) : chosen.delete(u.id); count(); });
+        const [cal, why] = effective(u);
+        l.append(c, ` ${u.display_name}`, el('small', `${[n.get(u.company_id), n.get(u.site_id)].filter(Boolean).join(' · ') || 'Sin empresa ni sede'} — hoy: ${cal ? cal.name : 'sin festivos'} (${why})`)); box.append(l);
+      }
+      if (!rows.length) box.append(el('p', 'Nadie coincide con los filtros.', 'help'));
+      count();
+    };
+    const count = () => { status.textContent = `${chosen.size} personas marcadas · ${shown().length} mostradas.`; ok.disabled = !chosen.size; };
+    [fCompany, fCountry, fSite, fArea].forEach(f => f.addEventListener('change', draw)); search.addEventListener('input', draw);
+    all.addEventListener('click', () => { shown().forEach(u => chosen.add(u.id)); draw(); });
+    none.addEventListener('click', () => { chosen.clear(); draw(); });
+    const reset = el('button', 'Volver a automático'); reset.type = 'button'; ok.before(reset);
+    reset.addEventListener('click', async () => {
+      const target = active.filter(u => chosen.has(u.id) && u.holiday_calendar_id);
+      if (!target.length) { show('Ninguna de las marcadas tiene calendario propio.'); return; }
+      if (!confirm(`¿Quitar el calendario propio a ${target.length} personas? Usarán el del país de su sede.`)) return;
+      reset.disabled = ok.disabled = true;
+      try { for (const u of target) await patient(() => api('PATCH', `/users/${u.id}`, { body: { holiday_calendar_id: null }, ifMatch: u.version })); dialog.close(); await reload(); }
+      catch (e) { show(e.status === 412 ? 'Alguien modificó a una de estas personas: recarga la página.' : e); reset.disabled = ok.disabled = false; }
+    });
+    ok.textContent = 'Asignar calendario';
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); if (!chosen.size) return;
+      ok.disabled = true;
+      try { await api('POST', `/schedules/holiday-calendars/${x.id}/people`, { body: { user_ids: [...chosen] } }); dialog.close(); await reload(); }
+      catch (e) { show(e); ok.disabled = false; }
+    });
+    draw(); dialog.showModal();
   };
   const action = $('page-action'); action.textContent = 'Agregar festivo'; action.hidden = !!owner; action.addEventListener('click', () => editor(null));
   render();

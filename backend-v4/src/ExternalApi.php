@@ -29,7 +29,8 @@ final class ExternalApi
             return $result;
         }
         if ($this->r->method!=='GET') { throw new ApiError(404,'resource_not_found'); }
-        foreach (['area_id','site_id','user_id'] as $field) {
+        if (isset($_GET['country'])) { $this->filters['country']=$_GET['country']; }
+        foreach (['area_id','site_id','user_id','company_id'] as $field) {
             if (!isset($_GET[$field])) { continue; }
             $id=Util::bin($_GET[$field]); $row=$this->row($field==='user_id'?'users':'org_units',$id);
             if ($field!=='user_id' && $row['kind']!==substr($field,0,-3)) { throw new ApiError(404,'resource_not_found'); }
@@ -72,10 +73,15 @@ final class ExternalApi
         if ($more) { $last=end($rows); $page['keys']=[$last[$at],...array_map(fn($k)=>Util::id($last[$k]),$ids)]; $next=$resources->encodeCursor($page); }
         return ['data'=>$map($rows),'next_cursor'=>$next,'generated_at'=>Util::now(),'data_through'=>Util::time($page['snapshot'])];
     }
+    /** Filtro por columna de la persona; el pais sale de la sede. */
+    public static function filterSql(string $alias,string $field): string
+    {
+        return $field==='country'?" AND EXISTS (SELECT 1 FROM org_units cs WHERE cs.tenant_id=$alias.tenant_id AND cs.id=$alias.site_id AND cs.country_code=?)":" AND $alias.$field=?";
+    }
     private function userQuery(): array
     {
         $where='u.tenant_id=?'; $args=[$this->tenant];
-        foreach ($this->filters as $field=>$id) { $where.=" AND u.$field=?"; $args[]=$id; }
+        foreach ($this->filters as $field=>$id) { $where.=self::filterSql('u',$field); $args[]=$id; }
         return ["SELECT u.id,u.display_name,u.firm_id,u.site_id,u.area_id,u.created_at,
             (SELECT MAX(d.last_seen_at) FROM devices d WHERE d.tenant_id=u.tenant_id AND d.user_id=u.id AND d.status='active') last_seen_at,
             (SELECT s.tier_id FROM subscriptions s WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id AND s.status IN ('active','scheduled') AND s.starts_at<=UTC_TIMESTAMP(6) AND (s.ends_at IS NULL OR s.ends_at>UTC_TIMESTAMP(6)) ORDER BY s.starts_at DESC LIMIT 1) tier_id
@@ -166,7 +172,7 @@ final class ExternalApi
     }
     private function organization(): array
     {
-        return $this->page('SELECT id,tenant_id,kind,name,parent_id,active,version,created_at FROM org_units WHERE tenant_id=?',[$this->tenant],static fn($rows)=>array_map(static fn($r)=>['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'kind'=>$r['kind'],'name'=>$r['name'],'parent_id'=>$r['parent_id']===null?null:Util::id($r['parent_id']),'active'=>(bool)$r['active'],'version'=>(int)$r['version']],$rows));
+        return $this->page('SELECT id,tenant_id,kind,name,parent_id,active,version,created_at,country_code FROM org_units WHERE tenant_id=?',[$this->tenant],static fn($rows)=>array_map(static fn($r)=>['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'kind'=>$r['kind'],'name'=>$r['name'],'parent_id'=>$r['parent_id']===null?null:Util::id($r['parent_id']),'active'=>(bool)$r['active'],'version'=>(int)$r['version'],'country_code'=>$r['country_code']],$rows));
     }
     private function notifications(): array
     {

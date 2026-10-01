@@ -6,7 +6,9 @@ final class ActivityCalendar
 {
     public static function expected(string $assignment='a', string $calendar='c'): string
     {
-        return "IF(EXISTS (SELECT 1 FROM holidays h WHERE h.tenant_id=$assignment.tenant_id AND h.day=$calendar.day AND (NOT EXISTS (SELECT 1 FROM holiday_society_links hl WHERE hl.tenant_id=h.tenant_id AND hl.holiday_id=h.id) OR EXISTS (SELECT 1 FROM holiday_society_links hl WHERE hl.tenant_id=h.tenant_id AND hl.holiday_id=h.id AND hl.society_id=$assignment.sociedad_id)))"
+        // Festivo: del calendario efectivo de la persona (el suyo, el del pais de su sede o el por defecto); los festivos
+        // viejos sin calendario siguen la regla anterior (toda la empresa o las sociedades marcadas).
+        return "IF(EXISTS (SELECT 1 FROM holidays h WHERE h.tenant_id=$assignment.tenant_id AND h.day=$calendar.day AND (h.calendar_id=".HolidayCalendars::effective($assignment)." OR h.calendar_id IS NULL AND (NOT EXISTS (SELECT 1 FROM holiday_society_links hl WHERE hl.tenant_id=h.tenant_id AND hl.holiday_id=h.id) OR EXISTS (SELECT 1 FROM holiday_society_links hl WHERE hl.tenant_id=h.tenant_id AND hl.holiday_id=h.id AND hl.society_id=$assignment.sociedad_id))))"
             // Ausencia aprobada (vacaciones, incapacidad...) que cubre la jornada: el dia no se espera trabajo.
             ." OR EXISTS (SELECT 1 FROM absences ab WHERE ab.tenant_id=$assignment.tenant_id AND ab.user_id=$assignment.user_id AND ab.status='approved' AND ab.starts_at<=$calendar.work_start AND ab.ends_at>=$calendar.work_start+INTERVAL $calendar.expected_seconds SECOND),0,$calendar.expected_seconds)";
     }

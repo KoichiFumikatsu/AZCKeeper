@@ -1584,6 +1584,8 @@ paths:
       - $ref: '#/components/parameters/Limit'
       - $ref: '#/components/parameters/Area'
       - $ref: '#/components/parameters/Site'
+      - $ref: '#/components/parameters/Company'
+      - $ref: '#/components/parameters/Country'
       - $ref: '#/components/parameters/Status'
       x-permission: usuarios.ver
     post:
@@ -1708,6 +1710,8 @@ paths:
       - $ref: '#/components/parameters/To'
       - $ref: '#/components/parameters/Area'
       - $ref: '#/components/parameters/Site'
+      - $ref: '#/components/parameters/Company'
+      - $ref: '#/components/parameters/Country'
       x-permission: reportes.ver
   /organization:
     get:
@@ -2289,6 +2293,8 @@ paths:
       - $ref: '#/components/parameters/To'
       - $ref: '#/components/parameters/Area'
       - $ref: '#/components/parameters/Site'
+      - $ref: '#/components/parameters/Company'
+      - $ref: '#/components/parameters/Country'
       - $ref: '#/components/parameters/User'
       x-permission: reportes.ver
   /tiers:
@@ -2965,6 +2971,8 @@ paths:
       - $ref: '#/components/parameters/To'
       - $ref: '#/components/parameters/Area'
       - $ref: '#/components/parameters/Site'
+      - $ref: '#/components/parameters/Company'
+      - $ref: '#/components/parameters/Country'
       responses:
         '200':
           description: KPIs, gráficas y roster preview
@@ -3031,6 +3039,8 @@ paths:
       - $ref: '#/components/parameters/To'
       - $ref: '#/components/parameters/Area'
       - $ref: '#/components/parameters/Site'
+      - $ref: '#/components/parameters/Company'
+      - $ref: '#/components/parameters/Country'
       responses:
         '200':
           description: Lista y ranking con tier/rol/métricas
@@ -3153,6 +3163,8 @@ paths:
       - $ref: '#/components/parameters/To'
       - $ref: '#/components/parameters/Area'
       - $ref: '#/components/parameters/Site'
+      - $ref: '#/components/parameters/Company'
+      - $ref: '#/components/parameters/Country'
       - $ref: '#/components/parameters/User'
       responses:
         '200':
@@ -3364,6 +3376,8 @@ paths:
           $ref: '#/components/responses/Conflict'
       parameters:
       - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/Company'
+      - $ref: '#/components/parameters/Country'
       - name: from
         in: query
         required: true
@@ -3479,6 +3493,8 @@ paths:
           $ref: '#/components/responses/Conflict'
       parameters:
       - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/Company'
+      - $ref: '#/components/parameters/Country'
       - name: day
         in: query
         required: false
@@ -4996,6 +5012,8 @@ paths:
       - $ref: '#/components/parameters/Limit'
       - $ref: '#/components/parameters/Area'
       - $ref: '#/components/parameters/Site'
+      - $ref: '#/components/parameters/Company'
+      - $ref: '#/components/parameters/Country'
       - $ref: '#/components/parameters/User'
       x-permission: equipos.ver
   /devices/{id}:
@@ -7955,6 +7973,326 @@ paths:
           type: string
           format: uuid
       x-permission: festivos.editar
+  /schedules/holiday-calendars:
+    get:
+      tags:
+      - admin
+      operationId: listHolidayCalendars
+      summary: listHolidayCalendars
+      description: Tenant y alcance RBAC obligatorios. Identificador ajeno devuelve 404. Catálogos y ajustes requieren
+        alcance tenant.
+      security:
+      - adminSession: []
+      x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
+      x-resources:
+      - HolidayCalendarList
+      responses:
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '200':
+          description: Calendario de festivos
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HolidayCalendarList'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+      x-permission: festivos.ver
+    post:
+      tags:
+      - admin
+      operationId: createHolidayCalendar
+      summary: createHolidayCalendar
+      description: Tenant y alcance RBAC obligatorios. Identificador ajeno devuelve 404. Catálogos y ajustes requieren
+        alcance tenant.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
+      x-resources:
+      - HolidayCalendar
+      responses:
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '201':
+          description: Calendario de festivos
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HolidayCalendar'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HolidayCalendarInput'
+      x-permission: festivos.editar
+      x-max-body-bytes: 65536
+  /schedules/holiday-calendars/{id}:
+    get:
+      tags:
+      - admin
+      operationId: getHolidayCalendar
+      summary: getHolidayCalendar
+      description: Tenant y alcance RBAC obligatorios. Identificador ajeno devuelve 404. Catálogos y ajustes requieren
+        alcance tenant.
+      security:
+      - adminSession: []
+      x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
+      x-resources:
+      - HolidayCalendar
+      responses:
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '200':
+          description: Calendario de festivos
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HolidayCalendar'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      x-permission: festivos.ver
+    put:
+      tags:
+      - admin
+      operationId: putHolidayCalendar
+      summary: putHolidayCalendar
+      description: Tenant y alcance RBAC obligatorios. Identificador ajeno devuelve 404. Catálogos y ajustes requieren
+        alcance tenant.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
+      x-resources:
+      - HolidayCalendar
+      responses:
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '200':
+          description: Calendario de festivos
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HolidayCalendar'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HolidayCalendarInput'
+      x-permission: festivos.editar
+      x-max-body-bytes: 65536
+  /schedules/holiday-calendars/{id}/people:
+    post:
+      tags:
+      - admin
+      operationId: assignHolidayCalendar
+      summary: assignHolidayCalendar
+      description: Tenant y alcance RBAC obligatorios. Identificador ajeno devuelve 404. Catálogos y ajustes requieren
+        alcance tenant.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
+      x-resources:
+      - HolidayCalendar
+      responses:
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '200':
+          description: Calendario de festivos
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HolidayCalendar'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HolidayCalendarPeople'
+      x-permission: festivos.editar
+      x-max-body-bytes: 65536
   /policies/suspicious-apps/{id}:
     get:
       tags:
@@ -9139,6 +9477,8 @@ paths:
           $ref: '#/components/responses/Conflict'
       parameters:
       - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/Company'
+      - $ref: '#/components/parameters/Country'
       - name: from
         in: query
         required: true
@@ -13689,8 +14029,12 @@ components:
       required:
       - day
       - name
-      - society_ids
       properties:
+        calendar_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
         day:
           type: string
           format: date
@@ -13712,7 +14056,13 @@ components:
       - day
       - name
       - society_ids
+      - calendar_id
       properties:
+        calendar_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
         id:
           type: string
           format: uuid
@@ -14112,6 +14462,99 @@ components:
           - type: integer
             minimum: 0
           - type: 'null'
+    HolidayCalendarInput:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - country_code
+      - is_default
+      - active
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        country_code:
+          anyOf:
+          - type: string
+            pattern: ^[A-Z]{2}$
+          - type: 'null'
+          description: País del calendario (CO, US, HN...). Una persona sin calendario propio usa el del país de su sede.
+        is_default:
+          type: boolean
+          description: Calendario de quien no tiene uno propio ni sede con país.
+        active:
+          type: boolean
+    HolidayCalendar:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - country_code
+      - is_default
+      - active
+      - people
+      - holidays
+      - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 120
+        country_code:
+          anyOf:
+          - type: string
+            pattern: ^[A-Z]{2}$
+          - type: 'null'
+        is_default:
+          type: boolean
+        active:
+          type: boolean
+        people:
+          type: integer
+          minimum: 0
+          description: Personas que tienen este calendario asignado a mano.
+        holidays:
+          type: integer
+          minimum: 0
+        version:
+          type: integer
+          minimum: 1
+    HolidayCalendarPeople:
+      type: object
+      additionalProperties: false
+      required:
+      - user_ids
+      properties:
+        user_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          uniqueItems: true
+          minItems: 1
+          maxItems: 2000
+          description: Personas a las que se asigna este calendario (reemplaza el que tenían).
+    HolidayCalendarList:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - next_offset
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/HolidayCalendar'
+        next_offset:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
     HolidaySocietyList:
       type: object
       additionalProperties: false
@@ -14389,7 +14832,14 @@ components:
       - parent_id
       - active
       - version
+      - country_code
       properties:
+        country_code:
+          anyOf:
+          - type: string
+            pattern: ^[A-Z]{2}$
+          - type: 'null'
+          description: País de la sede (CO, US, HN...). Solo sedes.
         id:
           type: string
           format: uuid
@@ -14403,6 +14853,7 @@ components:
           - site
           - area
           - position
+          - company
         name:
           type: string
           maxLength: 120
@@ -14425,6 +14876,12 @@ components:
       - parent_id
       - active
       properties:
+        country_code:
+          anyOf:
+          - type: string
+            pattern: ^[A-Z]{2}$
+          - type: 'null'
+          description: País de la sede (CO, US, HN...). Solo sedes.
         kind:
           type: string
           enum:
@@ -14432,6 +14889,7 @@ components:
           - site
           - area
           - position
+          - company
         name:
           type: string
           maxLength: 120
@@ -14622,6 +15080,18 @@ components:
       - position_id
       - schedule_id
       properties:
+        company_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: Empresa del grupo que la emplea (AZC Legal, BilingueLaw...).
+        holiday_calendar_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: Calendario de festivos propio. Vacío = el del país de su sede.
         reports_to_user_id:
           anyOf:
           - type: string
@@ -14684,6 +15154,18 @@ components:
       - version
       - document
       properties:
+        company_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: Empresa del grupo que la emplea (AZC Legal, BilingueLaw...).
+        holiday_calendar_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: Calendario de festivos propio. Vacío = el del país de su sede.
         reports_to_user_id:
           anyOf:
           - type: string
@@ -14768,6 +15250,18 @@ components:
       additionalProperties: false
       required: []
       properties:
+        company_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: Empresa del grupo que la emplea (AZC Legal, BilingueLaw...).
+        holiday_calendar_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: Calendario de festivos propio. Vacío = el del país de su sede.
         reports_to_user_id:
           anyOf:
           - type: string
@@ -18436,6 +18930,22 @@ components:
       schema:
         type: string
         format: uuid
+    Company:
+      name: company_id
+      in: query
+      required: false
+      description: Empresa del grupo (sin filtro = todo el grupo).
+      schema:
+        type: string
+        format: uuid
+    Country:
+      name: country
+      in: query
+      required: false
+      description: País de la sede (CO, US, HN...).
+      schema:
+        type: string
+        pattern: ^[A-Z]{2}$
     User:
       name: user_id
       in: query

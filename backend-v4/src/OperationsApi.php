@@ -20,6 +20,7 @@ final class OperationsApi
     }
     public function dispatch(string $op,?string $id,?object $b): array
     {
+        if (str_contains($op,'HolidayCalendar')) { return (new HolidayCalendars($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b); }
         if (str_contains($op,'Holiday') || in_array($op,['listSuspiciousApps','getSuspiciousApp','createSuspiciousApp','putSuspiciousApp','deleteSuspiciousApp'],true)) { return $this->catalog($op,$id,$b); }
         if ($op==='listComplianceSignals') {
             $rows=[]; foreach (ComplianceWorker::SIGNALS as $code=>$description) { $rows[]=['code'=>$code,'description'=>$description]; }
@@ -64,7 +65,7 @@ final class OperationsApi
             if ($table==='suspicious_apps') { return $out+['app_pattern'=>$r['app_pattern'],'category'=>$r['category'],'description'=>$r['description'],'active'=>(bool)$r['active']]; }
             $out['name']=$r['name'];
             if ($table==='sociedades') { $out['firm_id']=Util::id($r['firm_id']); }
-            if ($table==='holidays') { $out['day']=$r['day']; $out['society_ids']=array_map(fn($x)=>Util::id($x['society_id']),$this->db->run('SELECT society_id FROM holiday_society_links WHERE tenant_id=? AND holiday_id=? ORDER BY society_id',[$this->tenant,$r['id']])->fetchAll()); }
+            if ($table==='holidays') { $out['day']=$r['day']; $out['calendar_id']=$r['calendar_id']===null?null:Util::id($r['calendar_id']); $out['society_ids']=array_map(fn($x)=>Util::id($x['society_id']),$this->db->run('SELECT society_id FROM holiday_society_links WHERE tenant_id=? AND holiday_id=? ORDER BY society_id',[$this->tenant,$r['id']])->fetchAll()); }
             return $out;
         };
         if (str_starts_with($op,'list')) { return $this->page("SELECT * FROM $table WHERE tenant_id=? ORDER BY id",[$this->tenant],$dto); }
@@ -79,10 +80,12 @@ final class OperationsApi
             return ['status'=>204,'json'=>'','headers'=>[]];
         }
         if ($table==='holidays') {
-            foreach ($b->society_ids as $society) { $this->row('sociedades',Util::bin($society)); }
-            $this->db->run('INSERT INTO holidays (tenant_id,id,day,name) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE day=VALUES(day),name=VALUES(name)',[$this->tenant,$id,$b->day,$b->name]);
+            $societies=$b->society_ids??[]; $calendar=isset($b->calendar_id)?Util::bin($b->calendar_id):null;
+            foreach ($societies as $society) { $this->row('sociedades',Util::bin($society)); }
+            if ($calendar!==null) { $this->row('holiday_calendars',$calendar); }
+            $this->db->run('INSERT INTO holidays (tenant_id,id,day,name,calendar_id) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE day=VALUES(day),name=VALUES(name),calendar_id=VALUES(calendar_id)',[$this->tenant,$id,$b->day,$b->name,$calendar]);
             $this->db->run('DELETE FROM holiday_society_links WHERE tenant_id=? AND holiday_id=?',[$this->tenant,$id]);
-            foreach ($b->society_ids as $society) { $this->db->run('INSERT INTO holiday_society_links VALUES (?,?,?)',[$this->tenant,$id,Util::bin($society)]); }
+            foreach ($societies as $society) { $this->db->run('INSERT INTO holiday_society_links VALUES (?,?,?)',[$this->tenant,$id,Util::bin($society)]); }
         } elseif ($table==='sociedades') {
             $firm=$this->row('org_units',Util::bin($b->firm_id));
             if ($firm['kind']!=='firm') { throw new ApiError(422,'validation_failed'); }
