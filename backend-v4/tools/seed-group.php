@@ -9,7 +9,9 @@ require dirname(__DIR__) . '/config/bootstrap.php';
 
 $tenant = $argv[1] ?? '';
 if (!preg_match('/^[0-9a-f-]{36}$/i', $tenant)) { fwrite(STDERR, "Uso: php tools/seed-group.php <tenant-uuid> [--companies=A,B] [--countries=CO,US,HN] [--years=2026,2027]\n"); exit(2); }
-$opt = getopt('', ['companies::', 'countries::', 'years::']);
+// getopt() deja de leer en el primer argumento posicional (el tenant): las opciones se leen a mano.
+$opt = [];
+foreach (array_slice($argv, 2) as $arg) { if (preg_match('/^--(companies|countries|years)=(.*)$/s', $arg, $m)) { $opt[$m[1]] = $m[2]; } else { fwrite(STDERR, "Opción no reconocida: $arg\n"); exit(2); } }
 $list = static fn (?string $v, array $default) => $v === null || $v === '' ? $default : array_values(array_filter(array_map('trim', explode(',', $v))));
 $companies = $list($opt['companies'] ?? null, []);
 $countries = $list($opt['countries'] ?? null, array_keys(HolidaySeeds::COUNTRIES));
