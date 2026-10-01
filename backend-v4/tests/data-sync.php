@@ -7,7 +7,7 @@ function dataSyncTests(Database $db): void
 {
     $before = $GLOBALS['checks'];
     $u = secondTenant($db); $tenant = $u['tenant_id']; $tid = Util::id($tenant);
-    $platform = adminFixture($db, [], [], true); $platform['tenant'] = $tenant;
+    $platform = sharedPlatform($db); $platform['tenant'] = $tenant;
     // Persona previa (como si viniera de K3) con cedula 9990001: One la trae y debe vincularse, no duplicarse.
     $db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,'k3:cc','9990001')", [$tenant, $u['id']]);
     $local = $db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$tenant, $u['id']]);

@@ -8,7 +8,7 @@ function companyGroupTests(Database $db): void
     $before = $GLOBALS['checks'];
     $a = secondTenant($db); $b = secondTenant($db); $c = secondTenant($db);
     $ta = $a['tenant_id']; $tb = $b['tenant_id'];
-    $platform = adminFixture($db, [], [], true); $platform['tenant'] = $ta;
+    $platform = sharedPlatform($db); $platform['tenant'] = $ta;
     $role = function (string $tenant, string $permission) use ($db): string {
         $id = Util::bin(Util::uuid());
         $db->run("INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,'Directivo','tenant')", [$tenant, $id]);

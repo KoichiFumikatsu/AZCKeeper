@@ -7,7 +7,7 @@ function scheduleDayHoursTests(Database $db): void
 {
     $before = $GLOBALS['checks'];
     $u = secondTenant($db); $tenant = $u['tenant_id']; $uid = Util::id($u['id']);
-    $platform = adminFixture($db, [], [], true); $platform['tenant'] = $tenant;
+    $platform = sharedPlatform($db); $platform['tenant'] = $tenant;
     $body = ['name' => 'L-V 8-5 y sábado 8-12', 'timezone' => 'America/Bogota', 'days' => [1, 2, 3, 4, 5, 6], 'start_local' => '08:00', 'end_local' => '17:00',
         'lunch_start_local' => '12:00', 'lunch_end_local' => '13:00',
         'day_hours' => [['weekday' => 6, 'start_local' => '08:00', 'end_local' => '12:00', 'lunch_start_local' => null, 'lunch_end_local' => null]]];

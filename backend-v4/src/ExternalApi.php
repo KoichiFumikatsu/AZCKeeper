@@ -23,6 +23,11 @@ final class ExternalApi
             (new Audit($this->db))->record($this->c,$this->r,'externalImportExpectedDevices','expected_device',$this->tenant,['rows','created:'.$result['created']]);
             return $result;
         }
+        if ($this->r->operation['operationId']==='externalCheckInsBatch') {
+            $result=(new DoorEvents($this->db))->ingest($this->tenant,$this->c['integration_id'],$this->r->body->events);
+            (new Audit($this->db))->record($this->c,$this->r,'externalCheckInsBatch','check_in',$this->tenant,['events','accepted:'.$result['accepted']]);
+            return $result;
+        }
         if ($this->r->method!=='GET') { throw new ApiError(404,'resource_not_found'); }
         foreach (['area_id','site_id','user_id'] as $field) {
             if (!isset($_GET[$field])) { continue; }

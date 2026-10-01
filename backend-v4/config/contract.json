@@ -1,5 +1,5 @@
 {
-  "source_sha256": "3dc01d807c48724742a5ccd56015410d426b4d749ac3a176a766ca0320853e44",
+  "source_sha256": "38f5472e7e144157234e82d5424a780a12338c3eab7d1dc663c03e9ee3d227e7",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -15782,6 +15782,497 @@
         "x-permission": "usuarios.editar",
         "x-max-body-bytes": 16384
       }
+    },
+    "/doors": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "listDoors",
+        "summary": "Puertas",
+        "description": "Puertas del sistema de acceso asociadas a sedes.",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "Door"
+        ],
+        "responses": {
+          "200": {
+            "description": "Puertas",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoorList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "x-permission": "organizacion.ver"
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "createDoor",
+        "summary": "Registrar puerta",
+        "description": "Asocia la referencia del sistema de acceso a una sede. Las entradas que la esperaban se emparejan.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "Door"
+        ],
+        "responses": {
+          "201": {
+            "description": "Registrar puerta",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Door"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DoorInput"
+              }
+            }
+          }
+        },
+        "x-permission": "organizacion.editar",
+        "x-max-body-bytes": 16384
+      }
+    },
+    "/doors/{id}": {
+      "patch": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "patchDoor",
+        "summary": "Editar puerta",
+        "description": "Nombre, sede, activa y si cuenta para la presencia.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "Door"
+        ],
+        "responses": {
+          "200": {
+            "description": "Editar puerta",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Door"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DoorPatch"
+              }
+            }
+          }
+        },
+        "x-permission": "organizacion.editar",
+        "x-max-body-bytes": 16384
+      }
+    },
+    "/doors/quarantine": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "getDoorQuarantine",
+        "summary": "Entradas sin emparejar",
+        "description": "Puertas desconocidas y cédulas que aún no existen en Keeper (30 días).",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "Door"
+        ],
+        "responses": {
+          "200": {
+            "description": "Entradas sin emparejar",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoorQuarantine"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "x-permission": "organizacion.ver"
+      }
+    },
+    "/ext/v1/check-ins:batch": {
+      "servers": [
+        {
+          "url": "/",
+          "description": "Override: path contiene /ext/v1; no concatenar /v1/ext/v1."
+        }
+      ],
+      "post": {
+        "tags": [
+          "external"
+        ],
+        "operationId": "externalCheckInsBatch",
+        "summary": "Enviar entradas por puerta",
+        "description": "Para el sistema de control de acceso: hasta 500 eventos keeper.checkins.v1. Idempotente por event_id. Persona por cédula, puerta por referencia; lo desconocido queda en cuarentena 30 días.",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "oauth2": [
+              "check-ins:write"
+            ]
+          }
+        ],
+        "x-required-scopes": [
+          "check-ins:write"
+        ],
+        "x-tenant-boundary": "Tenant derivado solo de credencial.",
+        "x-resources": [
+          "CheckIn"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckInBatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resultado por evento",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store"
+                },
+                "description": "Escritura; no almacenar."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckInBatchResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "x-max-body-bytes": 524288
+      }
     }
   },
   "parameters": {
@@ -16922,6 +17413,145 @@
         "location": {
           "$ref": "#/components/schemas/Location",
           "description": "Se omite de lectura salvo include_location=true y scope/permiso adicional."
+        }
+      }
+    },
+    "CheckInBatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "events"
+      ],
+      "properties": {
+        "schema": {
+          "const": "keeper.checkins.v1"
+        },
+        "events": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 500,
+          "items": {
+            "$ref": "#/components/schemas/CheckInEvent"
+          }
+        }
+      }
+    },
+    "CheckInBatchResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "results",
+        "accepted",
+        "duplicate",
+        "quarantined",
+        "rejected",
+        "ignored"
+      ],
+      "properties": {
+        "results": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "event_id",
+              "status",
+              "reason"
+            ],
+            "properties": {
+              "event_id": {
+                "type": "string",
+                "maxLength": 160
+              },
+              "status": {
+                "enum": [
+                  "accepted",
+                  "duplicate",
+                  "quarantined",
+                  "rejected",
+                  "ignored"
+                ]
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "accepted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duplicate": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quarantined": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rejected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ignored": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "CheckInEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "door_ref",
+        "document",
+        "direction",
+        "occurred_at",
+        "granted"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[\\x21-\\x7E]+$"
+        },
+        "door_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[\\x21-\\x7E]+$"
+        },
+        "document": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 40,
+          "pattern": "^[0-9A-Za-z .\\-]+$"
+        },
+        "direction": {
+          "enum": [
+            "in",
+            "out"
+          ]
+        },
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "granted": {
+          "type": "boolean"
         }
       }
     },
@@ -18469,6 +19099,170 @@
         "tenant_id": {
           "type": "string",
           "format": "uuid"
+        }
+      }
+    },
+    "Door": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "source_ref",
+        "site_id",
+        "active",
+        "counts_for_presence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "source_ref": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "site_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "counts_for_presence": {
+          "type": "boolean"
+        }
+      }
+    },
+    "DoorInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "source_ref",
+        "site_id"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[\\x21-\\x7E]+$"
+        },
+        "site_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "counts_for_presence": {
+          "type": "boolean"
+        }
+      }
+    },
+    "DoorList": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Door"
+          }
+        }
+      }
+    },
+    "DoorPatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "site_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "counts_for_presence": {
+          "type": "boolean"
+        }
+      }
+    },
+    "DoorQuarantine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unknown_doors",
+        "unknown_people"
+      ],
+      "properties": {
+        "unknown_doors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "door_ref",
+              "events",
+              "last_at"
+            ],
+            "properties": {
+              "door_ref": {
+                "type": "string",
+                "maxLength": 160
+              },
+              "events": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "last_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        },
+        "unknown_people": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "document_hint",
+              "events",
+              "last_at"
+            ],
+            "properties": {
+              "document_hint": {
+                "type": "string",
+                "maxLength": 8
+              },
+              "events": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "last_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
         }
       }
     },

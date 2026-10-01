@@ -353,7 +353,7 @@ Keeper nunca escribe en la BD ni en la API de otro sistema para "empujar" un dom
 - Hasta 500 eventos por llamada. Respuesta por evento: `accepted`, `duplicate` o `rejected` (con motivo).
 - Idempotente por `(fuente, event_id)`: reenviar es seguro.
 - Persona por `document`. Si la cédula no existe en Keeper, el evento va a **cuarentena** (`unmatched_check_ins`, 30 días) y se re-empareja cuando la persona aparezca (por ejemplo, después de la siguiente vuelta de One).
-- Puerta por `door_ref`. Una puerta desconocida se registra en `doors` como inactiva y pendiente de asignar sede (se gestiona en el panel); sus eventos quedan en cuarentena hasta entonces.
+- Puerta por `door_ref`. Una puerta desconocida no se crea sola (una puerta exige sede): sus eventos quedan en cuarentena y la pantalla Puertas la muestra en "Entradas esperando" para registrarla; al registrarla se emparejan.
 - Solo las puertas con `counts_for_presence` alimentan la presencia.
 
 ### 7.2 Lado del sistema de puertas
@@ -491,4 +491,5 @@ Todas resueltas el 2026-09-30 (decisiones 10 a 17). Se reabren con la primera si
 | F1 motor + fuentes | Hecho 2026-09-30: migración 0027 (`data_sources`, `data_domain_owners`, `entity_links`, `sync_runs`, `sync_items`), motor `DataSync` (REST canónico, simulación por SAVEPOINT, frenos, pendientes que recuerdan la respuesta), API `/data-sources`, `/data-domains`, `/sync-runs`, `/sync-items`, bloqueo `managed_by_source`, cron `config/sync-cron.php`, pantalla Fuentes de datos |
 | F5b grupos empresariales | Hecho 2026-09-30: migración 0028 (`company_groups`, `company_group_members`, `admin_account_roles`, `admin_accounts.group_id`; se quita el CHECK de `principals` que impedía actuar en otra empresa, la validación pasa a `AdminAuth::context`), API `/company-groups`, cuentas de grupo en `/panel-accounts` (`group_id`, `group_roles`), sesión con `group.tenants`, selector de empresa y Tablero del grupo |
 | F5 jerarquía, reglas y directivos | Hecho 2026-09-30: migración 0029 (`users.reports_to_user_id`, `users.monitoring_override`, alcance `team`, `roles.assignable_by_rule`, `panel_role_rules`, `user_roles.rule_id`, `monitoring_excluded_positions`, permiso `roles.reglas`), `RoleRules` (recalcula al cambiar personas, roles, reglas o tras sincronizar), jerarquía desde One, alta con alerta `person_excluded`, pantallas Roles (Asignación automática) y Personas (jefe, monitoreo, cargos excluidos) |
+| F3 puertas (lado Keeper) | Hecho 2026-09-30: migración 0030 (`doors.counts_for_presence`, `unmatched_check_ins`, scope `check-ins:write`), `POST /ext/v1/check-ins:batch`, `DoorEvents` (idempotente, cuarentena 30 días, re-emparejamiento en el cron y al registrar puertas), API `/doors`, pantalla Puertas. **Falta el envío desde el servidor de puertas** (otro sistema; se despliega con autorización) |
 | F2 en adelante | Pendiente (F2 = conectar One cuando exista su API; el conector ya existe) |

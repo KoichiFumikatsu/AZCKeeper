@@ -7,7 +7,7 @@ function roleRulesTests(Database $db): void
 {
     $before = $GLOBALS['checks'];
     $u = secondTenant($db); $tenant = $u['tenant_id']; $boss = Util::id($u['id']);
-    $platform = adminFixture($db, [], [], true); $platform['tenant'] = $tenant;
+    $platform = sharedPlatform($db); $platform['tenant'] = $tenant;
     $org = fn (string $col) => Util::id($u[$col]);
     $person = function (string $name, ?string $reportsTo) use ($platform, $org): array {
         return expect(adminRequest($platform, 'POST', '/users', ['display_name' => $name, 'email' => null, 'firm_id' => $org('firm_id'), 'site_id' => $org('site_id'),

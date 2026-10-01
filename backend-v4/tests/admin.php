@@ -18,6 +18,11 @@ function adminRequest(array $a,string $method,string $path,mixed $body=null,arra
     }
     return $r;
 }
+// Sesion de plataforma compartida por las pruebas de fases nuevas: el login tiene limite anti fuerza bruta (20 por clave).
+function sharedPlatform(Database $db): array
+{
+    return $GLOBALS['sharedPlatform'] ??= adminFixture($db, [], [], true);
+}
 function adminFixture(Database $db,array $u,array $permissions,bool $platform=false,string $scope='tenant',array $scopeIds=[]): array
 {
     $tenant=$platform?Util::bin(AdminAuth::PLATFORM):$u['tenant_id']; $admin=Util::bin(Util::uuid()); $role=Util::bin(Util::uuid()); $password=Util::b64(random_bytes(20)); $email=Util::uuid().'@example.test';

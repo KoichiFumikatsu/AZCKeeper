@@ -970,6 +970,57 @@ async function groupPage() {
     ['', r => { const b = el('button', 'Abrir', 'link-button'); b.type = 'button'; b.addEventListener('click', () => { try { sessionStorage.setItem('keeper.presentation.tenant', r.id); } catch { /* sin almacenamiento */ } location.href = '/'; }); return b; }]], rows);
 }
 
+// ---- Puertas (entradas del sistema de acceso) -----------------------------------------------------------------------
+async function doorsPage() {
+  const [org] = await Promise.all([allPages('/organization')]);
+  let doors = (await api('GET', '/doors')).data, quarantine = await optional(api('GET', '/doors/quarantine'));
+  const sites = org.filter(o => o.kind === 'site' && o.active).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  const n = names(org);
+  const reload = async () => { doors = (await api('GET', '/doors')).data; quarantine = await optional(api('GET', '/doors/quarantine')); render(); done(); };
+  const editor = (d, presetRef) => {
+    const { dialog, body, ok, show } = dialogShell(d ? `Editar ${d.name}` : 'Registrar puerta');
+    body.append(el('p', 'La referencia es el identificador de la puerta en el sistema de acceso (en uhppoted, su OID, por ejemplo 0.3.1).'));
+    const nm = labeled(body, 'Nombre', el('input')); nm.maxLength = 120; nm.value = d?.name || '';
+    const ref = labeled(body, 'Referencia en el sistema de acceso', el('input')); ref.maxLength = 160; ref.value = d?.source_ref || presetRef || ''; ref.disabled = !!d;
+    const site = el('select'); sites.forEach(s => site.append(new Option(s.name, s.id))); site.value = d?.site_id || site.value; labeled(body, 'Sede', site);
+    const counts = el('input'); counts.type = 'checkbox'; counts.checked = d ? d.counts_for_presence : true;
+    const cl = el('label', undefined, 'check'); cl.append(counts, ' Es una entrada al edificio (cuenta para la presencia)'); body.append(cl);
+    body.append(el('p', 'Desmárcalo para puertas internas (salas, archivo): su paso no marca llegada ni salida.', 'help'));
+    let active = null;
+    if (d) { active = el('input'); active.type = 'checkbox'; active.checked = d.active; const al = el('label', undefined, 'check'); al.append(active, ' Activa'); body.append(al); }
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (!nm.value.trim() || !ref.value.trim() || !site.value) { show('Escribe nombre, referencia y sede.'); return; }
+      ok.disabled = true;
+      try {
+        if (d) await api('PATCH', `/doors/${d.id}`, { body: { name: nm.value.trim(), site_id: site.value, counts_for_presence: counts.checked, active: active.checked } });
+        else await api('POST', '/doors', { body: { name: nm.value.trim(), source_ref: ref.value.trim(), site_id: site.value, counts_for_presence: counts.checked } });
+        dialog.close(); await reload();
+      } catch (e) { show(e.problem?.detail === 'door_exists' ? 'Esa referencia ya está registrada.' : e.problem?.detail === 'door_has_history' ? 'La puerta ya tiene entradas: no se puede cambiar de sede (crea otra).' : e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
+  const render = () => {
+    $('page-content').replaceChildren();
+    if (quarantine && (quarantine.unknown_doors.length || quarantine.unknown_people.length)) {
+      const q = surface('Entradas esperando');
+      q.append(el('p', 'Llegaron del sistema de acceso pero aún no se pueden asignar. Se guardan 30 días y se asignan solas cuando registras la puerta o cuando la persona existe en Keeper.', 'help'));
+      if (quarantine.unknown_doors.length) table(q, 'Puertas sin registrar', [['Referencia', x => x.door_ref], ['Entradas', x => String(x.events)], ['Última', x => when(x.last_at)],
+        ['', x => { const b = el('button', 'Registrar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(null, x.door_ref)); return b; }]], quarantine.unknown_doors);
+      if (quarantine.unknown_people.length) table(q, 'Cédulas que no están en Keeper', [['Cédula', x => x.document_hint], ['Entradas', x => String(x.events)], ['Última', x => when(x.last_at)]], quarantine.unknown_people);
+    }
+    const s = surface('Puertas registradas');
+    s.append(el('p', 'El sistema de acceso envía cada paso de tarjeta con la cédula de la persona. Solo las entradas al edificio cuentan para la presencia.', 'help'));
+    if (!doors.length) { empty(s, 'Aún no hay puertas', 'Registra las puertas de acceso, o espera a que lleguen entradas y regístralas desde "Entradas esperando".'); return; }
+    table(s, 'Puertas', [['Puerta', d => d.name], ['Referencia', d => d.source_ref], ['Sede', d => n.get(d.site_id) || '—'],
+      ['Presencia', d => badge(d.counts_for_presence ? 'Entrada al edificio' : 'Interna', d.counts_for_presence ? 'good' : '')],
+      ['Estado', d => badge(d.active ? 'Activa' : 'Inactiva', d.active ? 'good' : '')],
+      ['', d => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(d)); return b; }]], doors);
+  };
+  const action = $('page-action'); action.textContent = 'Registrar puerta'; action.hidden = false; action.addEventListener('click', () => editor(null));
+  render();
+}
+
 // ---- Roles y permisos -------------------------------------------------------------------------------------------
 async function rolesPage() {
   const session = readSession();
@@ -1124,6 +1175,7 @@ async function start() {
     else if (page === 'schedules') await schedulesPage();
     else if (page === 'sources') await sourcesPage();
     else if (page === 'group') await groupPage();
+    else if (page === 'doors') await doorsPage();
     else if (page === 'tenants') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await tenantsPage(); }
     done();
   } catch (e) {

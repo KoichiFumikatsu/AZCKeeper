@@ -15,6 +15,7 @@ require __DIR__ . '/schedules.php';
 require __DIR__ . '/data-sync.php';
 require __DIR__ . '/company-groups.php';
 require __DIR__ . '/role-rules.php';
+require __DIR__ . '/doors.php';
 
 use Keeper\{Config, Database, Util, Validator};
 
@@ -354,6 +355,7 @@ try {
     dataSyncTests($db);
     companyGroupTests($db);
     roleRulesTests($db);
+    doorEventTests($db);
     echo "SMOKE PASS: $checks assertions\n";
 } catch (Throwable $e) {
     fwrite(STDERR, $e instanceof PDOException ? 'Database fixture failure SQLSTATE=' . $e->getCode() . ' driver=' . ($e->errorInfo[1]??0) . "\n" : $e->getMessage() . "\n");
