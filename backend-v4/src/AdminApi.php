@@ -137,6 +137,7 @@ final class AdminApi
             'listExpectedDevices','createExpectedDevice','importExpectedDevices','cancelExpectedDevice','listEnrollmentRequests','approveEnrollmentRequest','rejectEnrollmentRequest',
             'getEnrollmentSettings','putEnrollmentSettings','listEnrollmentKeys','createEnrollmentKey','revokeEnrollmentKey'=>(new DeviceIntake($this->db))->admin($op,$id,$b,$this->access,$this->c,$this->r),
             'listPanelAccounts','createPanelAccount','patchPanelAccount','resetPanelAccountPassword'=>(new PanelAccounts($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
+            'getAppClassification','putAppClassification','createAppClassificationOverride','deleteAppClassificationOverride','createAppSite'=>(new AppClassification($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listAbsences','createAbsence','patchAbsence'=>(new Absences($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listDoors','createDoor','patchDoor','getDoorQuarantine'=>(new DoorsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
@@ -639,7 +640,7 @@ final class AdminApi
         }
         $base="FROM %s x JOIN user_assignments a ON a.tenant_id=x.tenant_id AND a.id=x.user_assignment_id AND a.user_id=x.user_id JOIN users u ON u.tenant_id=x.tenant_id AND u.id=x.user_id WHERE x.tenant_id=? AND x.day>=? AND x.day<? AND $scope$filters";
         $params=[$this->tenant,$from,$to,...$args,...$fargs];
-        $summary=$this->db->run('SELECT x.day,SUM(x.active_seconds) active_seconds,SUM(x.idle_seconds) idle_seconds,SUM(x.productive_seconds) productive_seconds,SUM(x.expected_seconds) expected_seconds,MIN(x.calculated_at) calculated_at,MIN(x.data_through) data_through,GROUP_CONCAT(DISTINCT x.calculation_version) calculation_version '.sprintf($base,'day_summary').' GROUP BY x.day ORDER BY x.day',$params)->fetchAll();
+        $summary=$this->db->run('SELECT x.day,SUM(x.active_seconds) active_seconds,SUM(x.idle_seconds) idle_seconds,SUM(x.productive_seconds) productive_seconds,SUM(COALESCE(x.window_active_seconds,x.active_seconds)) window_active_seconds,SUM(COALESCE(x.unproductive_seconds,0)) unproductive_seconds,SUM(x.unclassified_seconds) unclassified_seconds,SUM(x.expected_seconds) expected_seconds,MIN(x.calculated_at) calculated_at,MIN(x.data_through) data_through,GROUP_CONCAT(DISTINCT x.calculation_version) calculation_version '.sprintf($base,'day_summary').' GROUP BY x.day ORDER BY x.day',$params)->fetchAll();
         $episodes=$this->db->run("SELECT x.day,SUM(x.active_seconds) active_seconds,SUM(x.idle_seconds) idle_seconds,SUM(IF(x.category='productive',x.active_seconds,0)) productive_seconds,MIN(x.calculated_at) calculated_at,MIN(x.data_through) data_through,GROUP_CONCAT(DISTINCT x.calculation_version) calculation_version ".sprintf($base,'episode_daily').' GROUP BY x.day ORDER BY x.day',$params)->fetchAll();
         $focus=$this->db->run('SELECT x.day,AVG(x.focus_score) score,MIN(x.calculated_at) calculated_at,MIN(x.data_through) data_through '.sprintf($base,'focus_daily').' GROUP BY x.day',$params)->fetchAll();
         $rows=[]; foreach ($episodes as $row) { $rows[$row['day']]=$row; } foreach ($summary as $row) { $rows[$row['day']]=$row; } ksort($rows);
@@ -647,7 +648,11 @@ final class AdminApi
         foreach ($rows as $day=>$row) {
             $a=(int)$row['active_seconds']; $i=(int)$row['idle_seconds'];
             if (isset($row['expected_seconds'])) { $active+=$a; $expected+=(int)$row['expected_seconds']; }
-            $series[]=['day'=>$day,'active_seconds'=>$a,'idle_seconds'=>$i,'focus_score'=>isset($scores[$day])?(float)$scores[$day]:null,'productivity_percent'=>$a>0?min(100,round(100*(int)$row['productive_seconds']/$a,2)):null];
+            // Productividad y distraccion sobre el uso medido en ventanas (misma medicion que el numerador).
+            $w=(int)($row['window_active_seconds']??$a);
+            $series[]=['day'=>$day,'active_seconds'=>$a,'idle_seconds'=>$i,'focus_score'=>isset($scores[$day])?(float)$scores[$day]:null,'productivity_percent'=>$w>0?min(100,round(100*(int)$row['productive_seconds']/$w,2)):null,
+                'distraction_percent'=>$w>0&&isset($row['unproductive_seconds'])?min(100,round(100*(int)$row['unproductive_seconds']/$w,2)):null,
+                'unclassified_percent'=>$w>0&&isset($row['unclassified_seconds'])&&$row['unclassified_seconds']!==null?min(100,round(100*(int)$row['unclassified_seconds']/$w,2)):null];
             $calculated=$calculated===null?$row['calculated_at']:min($calculated,$row['calculated_at']); $through=$through===null?$row['data_through']:min($through,$row['data_through']);
             foreach (explode(',',$row['calculation_version']) as $version) { $versions[$version]=true; }
         }

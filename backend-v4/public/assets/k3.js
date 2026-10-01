@@ -1115,6 +1115,81 @@ async function absencesPage() {
   render();
 }
 
+// ---- Clasificacion de aplicaciones y sitios ------------------------------------------------------------------------
+const CATEGORY = { productive: ['Productiva', 'good'], neutral: ['Neutra', ''], unproductive: ['Poco productiva', 'bad'], unclassified: ['Sin clasificar', 'warn'] };
+async function classificationPage() {
+  const org = (await optional(allPages('/organization'))) || [];
+  const n = names(org);
+  let data = await api('GET', '/app-classification');
+  const appName = a => a.label || (a.key.startsWith('site:') ? `${a.key.slice(5)} (sitio web)` : a.key);
+  const effective = a => a.company_category || a.base_category || 'unclassified';
+  const render = () => {
+    $('page-content').replaceChildren();
+    const apps = data.apps;
+    const used = apps.filter(a => a.active_seconds_30d > 0);
+    const totalUse = used.reduce((s, a) => s + a.active_seconds_30d, 0);
+    const unclassUse = used.filter(a => effective(a) === 'unclassified').reduce((s, a) => s + a.active_seconds_30d, 0);
+    kpis([['Apps y sitios usados (30 días)', String(used.length)], ['Sin clasificar', String(used.filter(a => effective(a) === 'unclassified').length), 'Lo que no está clasificado no cuenta como productivo ni como distracción'],
+      ['Tiempo sin clasificar', totalUse ? pct(100 * unclassUse / totalUse) : 'Sin uso', 'Más de 20 % = indicadores poco confiables'], ['Excepciones por área o cargo', String(apps.reduce((s, a) => s + a.overrides.length, 0))]]);
+    const s = surface('Clasificación');
+    s.append(el('p', 'Productiva suma a productividad y focus; poco productiva suma a distracción; neutra (explorador, configuración) no suma a ninguna. La base la pone Keeper; la empresa la cambia aquí, y un área o cargo puede tener su excepción (por ejemplo, Facebook productivo para Mercadeo). Los cambios recalculan los últimos 30 días.', 'help'));
+    table(s, 'Aplicaciones y sitios', [
+      ['Aplicación o sitio', a => appName(a)],
+      ['Uso (30 días)', a => a.active_seconds_30d ? `${(a.active_seconds_30d / 3600).toFixed(1)} h · ${a.people_30d} personas` : '—'],
+      ['Base de Keeper', a => a.base_category ? CATEGORY[a.base_category][0] : '—'],
+      ['En la empresa', a => {
+        const sel = el('select'); [['', `Usar la base${a.base_category ? ` (${CATEGORY[a.base_category][0]})` : ''}`], ['productive', 'Productiva'], ['neutral', 'Neutra'], ['unproductive', 'Poco productiva']].forEach(([v, t]) => sel.append(new Option(t, v)));
+        sel.value = a.company_category && a.company_category !== 'unclassified' ? a.company_category : '';
+        sel.addEventListener('change', async () => { sel.disabled = true; try { data = await api('PUT', '/app-classification', { body: { key: a.key, category: sel.value || 'unclassified' } }); render(); done(); } catch (e) { fail(e); sel.disabled = false; } });
+        return sel;
+      }],
+      ['Resultado', a => { const [t, tone] = CATEGORY[effective(a)]; return badge(t, tone); }],
+      ['Excepciones', a => {
+        const box = el('div');
+        a.overrides.forEach(o => {
+          const line = el('div', `${o.area_id ? `Área ${n.get(o.area_id) || '—'}` : `Cargo ${n.get(o.position_id) || '—'}`}: ${CATEGORY[o.category][0]} `);
+          const rm = el('button', 'quitar', 'link-button'); rm.type = 'button';
+          rm.addEventListener('click', async () => { try { data = await api('DELETE', `/app-classification/overrides/${o.id}`); render(); done(); } catch (e) { fail(e); } });
+          line.append(rm); box.append(line);
+        });
+        const add = el('button', 'Agregar excepción', 'link-button'); add.type = 'button'; add.addEventListener('click', () => exception(a)); box.append(add);
+        return box;
+      }]], apps, { filters: [['Resultado', a => CATEGORY[effective(a)][0]], ['Tipo', a => a.key.startsWith('site:') ? 'Sitio web' : 'Aplicación']] });
+    const w = surface('Sitios reconocidos en el navegador');
+    w.append(el('p', 'Keeper reconoce el sitio por el título de la ventana del navegador y guarda solo el nombre del sitio, nunca el título. Funciona desde que se agrega; el historial anterior queda como "navegador".', 'help'));
+    table(w, 'Sitios', [['Sitio', x => x.name], ['Se reconoce si el título contiene', x => x.pattern], ['Origen', x => x.origin === 'base' ? 'Base de Keeper' : 'Empresa']], data.sites);
+    const addSite = el('button', 'Agregar sitio'); addSite.type = 'button'; addSite.addEventListener('click', siteEditor); w.append(addSite);
+  };
+  const exception = a => {
+    const { dialog, body, ok, show } = dialogShell(`Excepción para ${appName(a)}`);
+    const kind = el('select'); kind.append(new Option('Para un área', 'area'), new Option('Para un cargo', 'position')); labeled(body, '¿Para quién?', kind);
+    const unit = el('select'); const fill = () => { unit.replaceChildren(); org.filter(o => o.kind === kind.value && o.active).sort((x, y) => x.name.localeCompare(y.name, 'es')).forEach(o => unit.append(new Option(o.name, o.id))); };
+    fill(); kind.addEventListener('change', fill); labeled(body, 'Área o cargo', unit);
+    const cat = el('select'); [['productive', 'Productiva'], ['neutral', 'Neutra'], ['unproductive', 'Poco productiva']].forEach(([v, t]) => cat.append(new Option(t, v))); labeled(body, 'Para ellos es', cat);
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); if (!unit.value) { show('Elige el área o cargo.'); return; }
+      ok.disabled = true;
+      try { data = await api('POST', '/app-classification/overrides', { body: { key: a.key, category: cat.value, area_id: kind.value === 'area' ? unit.value : null, position_id: kind.value === 'position' ? unit.value : null } }); dialog.close(); render(); done(); }
+      catch (e) { show(e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
+  const siteEditor = () => {
+    const { dialog, body, ok, show } = dialogShell('Agregar sitio');
+    const nm = labeled(body, 'Nombre del sitio', el('input'), 'Ej.: Sistema de casos'); nm.maxLength = 80;
+    const pat = labeled(body, 'El título de la ventana contiene', el('input'), 'Ej.: Casos - AZC. Sin distinguir mayúsculas.'); pat.maxLength = 120;
+    const cat = el('select'); [['productive', 'Productiva'], ['neutral', 'Neutra'], ['unproductive', 'Poco productiva']].forEach(([v, t]) => cat.append(new Option(t, v))); labeled(body, 'Clasificación', cat);
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); if (nm.value.trim().length < 1 || pat.value.trim().length < 2) { show('Escribe el nombre y el texto a reconocer.'); return; }
+      ok.disabled = true;
+      try { data = await api('POST', '/app-sites', { body: { name: nm.value.trim(), pattern: pat.value.trim(), category: cat.value } }); dialog.close(); render(); done(); }
+      catch (e) { show(e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
+  render();
+}
+
 // ---- Roles y permisos -------------------------------------------------------------------------------------------
 async function rolesPage() {
   const session = readSession();
@@ -1271,6 +1346,7 @@ async function start() {
     else if (page === 'group') await groupPage();
     else if (page === 'doors') await doorsPage();
     else if (page === 'absences') await absencesPage();
+    else if (page === 'classification') await classificationPage();
     else if (page === 'tenants') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await tenantsPage(); }
     done();
   } catch (e) {

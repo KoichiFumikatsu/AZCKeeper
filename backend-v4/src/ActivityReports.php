@@ -58,6 +58,7 @@ final class ActivityReports
             $this->db->run("CREATE TEMPORARY TABLE activity_report_data ENGINE=InnoDB AS SELECT c.day,a.user_id,u.display_name,
                 COALESCE(d.active_seconds,ed.active_seconds,0) active_seconds,COALESCE(d.idle_seconds,0) idle_seconds,
                 COALESCE(d.call_seconds,0) call_seconds,COALESCE(d.productive_seconds,0) productive_seconds,
+                COALESCE(d.window_active_seconds,d.active_seconds,ed.active_seconds,0) window_active_seconds,COALESCE(d.unclassified_seconds,0) unclassified_seconds,
                 COALESCE(f.focus_seconds,0) focus_seconds,COALESCE(f.context_switches,0) context_switches,
                 COALESCE(f.deep_work_seconds,0) deep_work_seconds,COALESCE(f.distraction_seconds,0) distraction_seconds,
                 $expected expected_seconds,$first first_activity,$last last_activity,
@@ -66,6 +67,7 @@ final class ActivityReports
                 COALESCE(f.longest_focus_streak_seconds,0) longest_focus_streak_seconds $base",$queryArgs);
             $rows=$this->db->run('SELECT day,user_id,display_name,SUM(active_seconds) active_seconds,SUM(idle_seconds) idle_seconds,
                 SUM(call_seconds) call_seconds,SUM(productive_seconds) productive_seconds,SUM(focus_seconds) focus_seconds,
+                SUM(window_active_seconds) window_active_seconds,SUM(unclassified_seconds) unclassified_seconds,
                 SUM(context_switches) context_switches,SUM(deep_work_seconds) deep_work_seconds,SUM(distraction_seconds) distraction_seconds,
                 MAX(expected_seconds) expected_seconds,MIN(first_activity) first_activity,MAX(last_activity) last_activity,
                 MIN(scheduled_start) scheduled_start,MIN(first_activity_time) first_activity_time,AVG(productivity_pct) productivity_pct,AVG(constancy_pct) constancy_pct,
@@ -81,23 +83,29 @@ final class ActivityReports
                 foreach ($rows as $row) {
                     $key=$row['user_id'];
                     $people[$key]??=['user_id'=>Util::id($key),'display_name'=>$row['display_name'],'last'=>null,'sums'=>[]];
-                    foreach (['active_seconds','idle_seconds','call_seconds','productive_seconds','focus_seconds','context_switches','deep_work_seconds','distraction_seconds'] as $field) { $people[$key]['sums'][$field]=($people[$key]['sums'][$field]??0)+(int)$row[$field]; }
+                    foreach (['active_seconds','idle_seconds','call_seconds','productive_seconds','focus_seconds','context_switches','deep_work_seconds','distraction_seconds','window_active_seconds','unclassified_seconds'] as $field) { $people[$key]['sums'][$field]=($people[$key]['sums'][$field]??0)+(int)$row[$field]; }
                     if ($row['last_activity']!==null && ($people[$key]['last']===null || $row['last_activity']>$people[$key]['last'])) { $people[$key]['last']=$row['last_activity']; }
                 }
                 usort($people,static fn($a,$b)=>strcmp($a['display_name'],$b['display_name']) ?: strcmp($a['user_id'],$b['user_id']));
                 return AdminApi::response(['from'=>$from,'to'=>$to,'data'=>array_map(fn($p)=>['user_id'=>$p['user_id'],'display_name'=>$p['display_name'],'last_activity'=>$p['last']===null?null:Util::time($p['last']),'totals'=>$this->metrics($p['sums'])],array_values($people))]);
             }
             $sums=[];
-            foreach (['active_seconds','idle_seconds','call_seconds','productive_seconds','focus_seconds','context_switches','deep_work_seconds','distraction_seconds'] as $field) { $sums[$field]=array_sum(array_column($rows,$field)); }
+            foreach (['active_seconds','idle_seconds','call_seconds','productive_seconds','focus_seconds','context_switches','deep_work_seconds','distraction_seconds','window_active_seconds','unclassified_seconds'] as $field) { $sums[$field]=array_sum(array_column($rows,$field)); }
             return AdminApi::response(['user_id'=>Util::id($user),'from'=>$from,'to'=>$to,'data'=>$data,'totals'=>$this->metrics($sums)]);
         } finally { $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_report_data'); $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_calendar'); }
     }
     private function metrics(array $r): array
     {
         $out=[];
-        foreach (['active_seconds','idle_seconds','call_seconds','productive_seconds','focus_seconds','context_switches','deep_work_seconds','distraction_seconds'] as $field) { $out[$field]=(int)($r[$field]??0); }
-        $out['productivity_percent']=$out['active_seconds']>0?round(100*$out['productive_seconds']/$out['active_seconds'],2):null;
-        $out['focus_score']=$out['active_seconds']>0?round(100*$out['focus_seconds']/$out['active_seconds'],2):null;
+        foreach (['active_seconds','idle_seconds','call_seconds','productive_seconds','focus_seconds','context_switches','deep_work_seconds','distraction_seconds','window_active_seconds','unclassified_seconds'] as $field) { $out[$field]=(int)($r[$field]??0); }
+        // Formulas (decision 2026-10-01). Base = uso medido en ventanas (misma medicion que el numerador); los dias
+        // importados de K3 no la tienen y usan el uso total.
+        $base=$out['window_active_seconds']>0?$out['window_active_seconds']:$out['active_seconds'];
+        $out['productivity_percent']=$base>0?round(min(100,100*$out['productive_seconds']/$base),2):null;
+        $out['distraction_percent']=$base>0?round(min(100,100*$out['distraction_seconds']/$base),2):null;
+        $out['unclassified_percent']=$out['window_active_seconds']>0?round(min(100,100*$out['unclassified_seconds']/$out['window_active_seconds']),2):null;
+        // Focus = tiempo productivo en bloques de 25 min o mas / tiempo productivo.
+        $out['focus_score']=$out['productive_seconds']>0?round(min(100,100*$out['focus_seconds']/$out['productive_seconds']),2):null;
         return $out;
     }
     private function day(array $r,bool $presence): array

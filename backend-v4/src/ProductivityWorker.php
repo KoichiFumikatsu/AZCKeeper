@@ -47,26 +47,32 @@ final class ProductivityWorker
                       FLOOR(idle_seconds*b/duration)-FLOOR(idle_seconds*a/duration) idle,
                       COALESCE(FLOOR(call_seconds*FLOOR(active_seconds*b/duration)/NULLIF(active_seconds,0))-FLOOR(call_seconds*FLOOR(active_seconds*a/duration)/NULLIF(active_seconds,0)),0) calls
                     FROM (SELECT e.user_id,e.user_assignment_id,e.device_id,e.event_id,e.process_name,
-                      COALESCE(k.category,'unclassified') category,e.active_seconds,e.idle_seconds,e.call_seconds,
+                      COALESCE(op.category,oa.category,NULLIF(kt.category,'unclassified'),NULLIF(kp.category,'unclassified'),
+                        IF(e.site IS NULL,NULL,COALESCE(NULLIF(bt.category,'unclassified'),NULLIF(bp.category,'unclassified'))),'unclassified') category,e.active_seconds,e.idle_seconds,e.call_seconds,
                       GREATEST(e.started_at,c.starts_at) first_at,LEAST(e.ended_at,c.ends_at) last_at,
                       TIMESTAMPDIFF(MICROSECOND,e.started_at,e.ended_at) duration,
                       TIMESTAMPDIFF(MICROSECOND,e.started_at,GREATEST(e.started_at,c.starts_at)) a,
                       TIMESTAMPDIFF(MICROSECOND,e.started_at,LEAST(e.ended_at,c.ends_at)) b
                     FROM episodes e FORCE INDEX (episode_rollup_day) JOIN user_assignments u ON u.tenant_id=e.tenant_id AND u.id=e.user_assignment_id
                     JOIN activity_calendar c ON c.schedule_id=u.schedule_id
-                    LEFT JOIN app_classification k ON k.tenant_id=e.tenant_id AND k.process_name=e.process_name
+                    LEFT JOIN app_classification_overrides op ON op.tenant_id=e.tenant_id AND op.position_id=u.position_id AND op.process_name=IF(e.site IS NULL,e.process_name,CONCAT('site:',e.site))
+                    LEFT JOIN app_classification_overrides oa ON oa.tenant_id=e.tenant_id AND oa.area_id=u.area_id AND oa.process_name=IF(e.site IS NULL,e.process_name,CONCAT('site:',e.site))
+                    LEFT JOIN app_classification kt ON kt.tenant_id=e.tenant_id AND kt.process_name=IF(e.site IS NULL,e.process_name,CONCAT('site:',e.site))
+                    LEFT JOIN app_classification kp ON kp.tenant_id=0x00000000000040008000000000000001 AND kp.process_name=IF(e.site IS NULL,e.process_name,CONCAT('site:',e.site))
+                    LEFT JOIN app_classification bt ON bt.tenant_id=e.tenant_id AND bt.process_name=e.process_name
+                    LEFT JOIN app_classification bp ON bp.tenant_id=0x00000000000040008000000000000001 AND bp.process_name=e.process_name
                     WHERE e.tenant_id=? AND e.event_date BETWEEN DATE_SUB(?,INTERVAL 2 DAY) AND DATE_ADD(?,INTERVAL 1 DAY)
                       AND e.started_at<c.ends_at AND e.ended_at>c.starts_at) x",[$tenant,$day,$day]);
                 $this->db->run("CREATE TEMPORARY TABLE activity_runs ENGINE=InnoDB AS
                     SELECT z.*,SUM(new_run) OVER (PARTITION BY user_id,user_assignment_id,device_id ORDER BY first_at,event_id ROWS UNBOUNDED PRECEDING) run_id
-                    FROM (SELECT y.*,IF(previous_process IS NULL OR previous_process<>process_name OR previous_end<first_at-INTERVAL 60 SECOND OR idle>0 OR COALESCE(previous_idle,0)>0,1,0) new_run,
+                    FROM (SELECT y.*,IF(previous_category IS NULL OR previous_category<>'productive' OR category<>'productive' OR previous_end<first_at-INTERVAL 120 SECOND OR idle>120 OR COALESCE(previous_idle,0)>120,1,0) new_run,
                     IF(previous_process IS NOT NULL AND previous_process<>process_name,1,0) switched
-                    FROM (SELECT s.*,LAG(process_name) OVER w previous_process,LAG(last_at) OVER w previous_end,LAG(idle) OVER w previous_idle
+                    FROM (SELECT s.*,LAG(process_name) OVER w previous_process,LAG(category) OVER w previous_category,LAG(last_at) OVER w previous_end,LAG(idle) OVER w previous_idle
                       FROM activity_segments s WINDOW w AS (PARTITION BY user_id,user_assignment_id,device_id ORDER BY first_at,event_id)) y) z");
                 $this->db->run("CREATE TEMPORARY TABLE activity_focus ENGINE=InnoDB AS
-                    SELECT user_id,user_assignment_id,SUM(productive) focus_seconds,SUM(switched) context_switches,
-                      SUM(IF(productive>=1500 AND idle=0,productive,0)) deep_work_seconds,SUM(distraction) distraction_seconds,
-                      SUM(IF(productive>=1500 AND idle=0,1,0)) deep_work_sessions,MAX(IF(idle=0,productive,0)) longest_focus_streak_seconds
+                    SELECT user_id,user_assignment_id,SUM(IF(productive>=1500,productive,0)) focus_seconds,SUM(switched) context_switches,
+                      SUM(IF(productive>=1500,productive,0)) deep_work_seconds,SUM(distraction) distraction_seconds,
+                      SUM(IF(productive>=1500,1,0)) deep_work_sessions,MAX(productive) longest_focus_streak_seconds
                     FROM (SELECT user_id,user_assignment_id,device_id,run_id,SUM(IF(category='productive',active,0)) productive,
                       SUM(idle) idle,SUM(switched) switched,SUM(IF(category='unproductive',active,0)) distraction
                       FROM activity_runs GROUP BY user_id,user_assignment_id,device_id,run_id) r GROUP BY user_id,user_assignment_id");
@@ -82,14 +88,18 @@ final class ProductivityWorker
                 // Totales y desglose se toman de la MISMA fuente para que el reparto no pueda
                 // sumar mas que su total.
                 $this->db->run("INSERT INTO day_summary (tenant_id,day,user_id,user_assignment_id,active_seconds,idle_seconds,call_seconds,productive_seconds,expected_seconds,coverage_percent,productivity_percent,calculation_version,timezone,calculated_at,data_through,first_activity,last_activity,late_seconds,
-                      work_hours_active_seconds,work_hours_idle_seconds,lunch_active_seconds,lunch_idle_seconds,after_hours_active_seconds,after_hours_idle_seconds,sample_count,utc_offset_minutes)
+                      work_hours_active_seconds,work_hours_idle_seconds,lunch_active_seconds,lunch_idle_seconds,after_hours_active_seconds,after_hours_idle_seconds,sample_count,utc_offset_minutes,
+                      window_active_seconds,unproductive_seconds,unclassified_seconds,focus_block_seconds)
                     SELECT ?,?,u.user_id,u.id,COALESCE(s.active,e.active,0),COALESCE(s.idle,e.idle,0),COALESCE(s.calls,e.calls,0),COALESCE(e.productive,0),$expected,
-                    IF($expected=0,0,LEAST(100,100*COALESCE(s.active+s.idle,e.active+e.idle,0)/NULLIF($expected,0))),100*e.productive/NULLIF(COALESCE(s.active,e.active),0),?,c.timezone,UTC_TIMESTAMP(6),?,
+                    IF($expected=0,0,LEAST(100,100*COALESCE(s.active+s.idle,e.active+e.idle,0)/NULLIF($expected,0))),100*e.productive/NULLIF(e.active,0),?,c.timezone,UTC_TIMESTAMP(6),?,
                     COALESCE(s.first_at,e.first_at),COALESCE(s.last_at,e.last_at),
                     IF($expected=0 OR COALESCE(s.first_at,e.first_at) IS NULL,NULL,GREATEST(0,TIMESTAMPDIFF(SECOND,c.work_start,COALESCE(s.first_at,e.first_at)))),
-                    s.work_active,s.work_idle,s.lunch_active,s.lunch_idle,s.after_active,s.after_idle,s.samples,s.utc_offset
+                    s.work_active,s.work_idle,s.lunch_active,s.lunch_idle,s.after_active,s.after_idle,s.samples,s.utc_offset,
+                    e.active,e.unproductive,e.unclassified,COALESCE(fb.blocks,0)
                     FROM user_assignments u JOIN activity_calendar c ON c.schedule_id=u.schedule_id
+                    LEFT JOIN (SELECT user_id,SUM(focus_seconds) blocks FROM activity_focus GROUP BY user_id) fb ON fb.user_id=u.user_id
                     LEFT JOIN (SELECT user_id,SUM(active) active,SUM(idle) idle,SUM(calls) calls,SUM(IF(category='productive',active,0)) productive,
+                      SUM(IF(category='unproductive',active,0)) unproductive,SUM(IF(category='unclassified',active,0)) unclassified,
                       MIN(IF(active>0,first_at,NULL)) first_at,MAX(IF(active>0,last_at,NULL)) last_at FROM activity_segments GROUP BY user_id) e ON e.user_id=u.user_id
                     LEFT JOIN (SELECT user_id,SUM(active_seconds) active,SUM(idle_seconds) idle,SUM(call_seconds) calls,
                       MIN(first_activity_at) first_at,MAX(last_activity_at) last_at,SUM(sample_count) samples,MIN(utc_offset_minutes) utc_offset,
@@ -108,9 +118,9 @@ final class ProductivityWorker
                       AND NOT EXISTS (SELECT 1 FROM user_assignments later WHERE later.tenant_id=u.tenant_id AND later.user_id=u.user_id AND later.starts_at>u.starts_at AND later.starts_at<c.ends_at)
                       AND NOT EXISTS (SELECT 1 FROM day_summary old WHERE old.tenant_id=u.tenant_id AND old.day=c.day AND old.user_id=u.user_id)",[$tenant,$day,self::VERSION,$through,$tenant,$day,$tenant]);
                 $this->db->run('INSERT INTO focus_daily (tenant_id,day,user_id,user_assignment_id,focus_seconds,focus_score,context_switches,deep_work_seconds,distraction_seconds,calculation_version,calculated_at,data_through,first_activity_time,scheduled_start,punctuality_minutes,productivity_pct,constancy_pct,deep_work_sessions,longest_focus_streak_seconds)
-                    SELECT d.tenant_id,d.day,d.user_id,d.user_assignment_id,COALESCE(f.focus_seconds,0),100*f.focus_seconds/NULLIF(d.active_seconds,0),COALESCE(f.context_switches,0),COALESCE(f.deep_work_seconds,0),COALESCE(f.distraction_seconds,0),?,UTC_TIMESTAMP(6),?,
+                    SELECT d.tenant_id,d.day,d.user_id,d.user_assignment_id,COALESCE(f.focus_seconds,0),100*COALESCE(f.focus_seconds,0)/NULLIF(d.productive_seconds,0),COALESCE(f.context_switches,0),COALESCE(f.deep_work_seconds,0),COALESCE(f.distraction_seconds,0),?,UTC_TIMESTAMP(6),?,
                       TIME(d.first_activity+INTERVAL c.utc_offset SECOND),c.start_local,IF(d.expected_seconds=0,NULL,TIMESTAMPDIFF(MINUTE,d.first_activity,c.work_start)),
-                      100*d.productive_seconds/NULLIF(d.active_seconds+d.idle_seconds,0),NULL,COALESCE(f.deep_work_sessions,0),COALESCE(f.longest_focus_streak_seconds,0)
+                      100*d.productive_seconds/NULLIF(d.window_active_seconds,0),NULL,COALESCE(f.deep_work_sessions,0),COALESCE(f.longest_focus_streak_seconds,0)
                     FROM day_summary d JOIN user_assignments u ON u.tenant_id=d.tenant_id AND u.id=d.user_assignment_id JOIN activity_calendar c ON c.schedule_id=u.schedule_id
                     LEFT JOIN (SELECT user_id,SUM(focus_seconds) focus_seconds,SUM(context_switches) context_switches,SUM(deep_work_seconds) deep_work_seconds,SUM(distraction_seconds) distraction_seconds,
                       SUM(deep_work_sessions) deep_work_sessions,MAX(longest_focus_streak_seconds) longest_focus_streak_seconds FROM activity_focus GROUP BY user_id) f ON f.user_id=d.user_id WHERE d.tenant_id=? AND d.day=?

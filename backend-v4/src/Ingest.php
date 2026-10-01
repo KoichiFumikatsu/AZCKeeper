@@ -61,6 +61,19 @@ final class Ingest
             $a = $a->modify('+1 day');
         } while ($a->format('Y-m-d') <= $b);
     }
+    private const BROWSERS = ['chrome', 'msedge', 'firefox', 'brave', 'opera', 'vivaldi', 'iexplore'];
+    private ?array $sites = null;
+    /**
+     * Sitio del navegador reconocido por el titulo de la ventana (p. ej. "Facebook"). El titulo nunca se guarda: solo la
+     * etiqueta del sitio, para clasificar productividad (decision 2026-10-01). Patrones mas largos primero.
+     */
+    private function site(string $process, ?string $title): ?string
+    {
+        if ($title === null || $title === '' || !in_array(strtolower(preg_replace('/\.exe$/i', '', $process)), self::BROWSERS, true)) { return null; }
+        $this->sites ??= $this->db->run('SELECT name,pattern FROM app_sites WHERE active=TRUE AND tenant_id IN (?,?) ORDER BY tenant_id=? DESC,CHAR_LENGTH(pattern) DESC', [$this->c['tenant_id'], Util::bin('00000000-0000-4000-8000-000000000001'), $this->c['tenant_id']])->fetchAll();
+        foreach ($this->sites as $site) { if (mb_stripos($title, $site['pattern']) !== false) { return $site['name']; } }
+        return null;
+    }
     public function episode(object $e): array
     {
         if ($ack = $this->duplicate('episode_ingest_keys', $e)) { return $ack; }
@@ -76,7 +89,7 @@ final class Ingest
         $assignment = $this->db->one('SELECT a.id,s.timezone FROM user_assignments a JOIN schedules s ON s.tenant_id=a.tenant_id AND s.id=a.schedule_id WHERE a.tenant_id=? AND a.user_id=? AND a.starts_at<=? AND (a.ends_at IS NULL OR a.ends_at>=?) LOCK IN SHARE MODE', [$this->c['tenant_id'], $this->c['user_id'], $start, $end]);
         if (!$assignment) { throw new ApiError(422, 'assignment_conflict'); }
         // The episode trigger writes the global dedupe ledger atomically with the raw event.
-        $this->write('INSERT INTO episodes (tenant_id,device_id,event_id,user_id,device_assignment_id,user_assignment_id,event_date,started_at,ended_at,process_name,window_title,active_seconds,idle_seconds,call_seconds,time_category,body_hash) VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?)', [...$this->args($e->event_id), $this->c['user_id'], $this->c['assignment_id'], $assignment['id'], substr($start, 0, 10), $start, $end, $e->process_name, $e->active_seconds, $e->idle_seconds, $e->call_seconds??0, $e->time_category??null, Util::hash($e)]);
+        $this->write('INSERT INTO episodes (tenant_id,device_id,event_id,user_id,device_assignment_id,user_assignment_id,event_date,started_at,ended_at,process_name,site,window_title,active_seconds,idle_seconds,call_seconds,time_category,body_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?)', [...$this->args($e->event_id), $this->c['user_id'], $this->c['assignment_id'], $assignment['id'], substr($start, 0, 10), $start, $end, $e->process_name, $this->site($e->process_name, $e->window_title ?? null), $e->active_seconds, $e->idle_seconds, $e->call_seconds??0, $e->time_category??null, Util::hash($e)]);
         $this->c['timezone']=$assignment['timezone'];
         $this->markDays($e->started_at, $e->ended_at);
         return self::ack($e->event_id);

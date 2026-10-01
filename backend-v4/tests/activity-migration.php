@@ -51,7 +51,8 @@ function activityMigrationTests(Database $db): void
     $sum=$db->one('SELECT SUM(active_seconds) a,SUM(idle_seconds) i,SUM(call_seconds) c,SUM(productive_seconds) p FROM day_summary WHERE tenant_id=? AND day>=? AND day<?',[$tenant,$from,$to]);
     check((int)$sum['a']===43969*50 && (int)$sum['i']===43969*10 && (int)$sum['c']===43969*5 && (int)$sum['p']===14657*50,'SQL aggregation matches independent expected sums');
     $sumFocus=$db->one('SELECT SUM(focus_seconds) f,SUM(distraction_seconds) d,SUM(deep_work_seconds) w FROM focus_daily WHERE tenant_id=? AND day>=? AND day<?',[$tenant,$from,$to]);
-    check((int)$sumFocus['f']===14657*50 && (int)$sumFocus['d']===14656*50 && (int)$sumFocus['w']===0,'focus classification and no false deep work');
+    // Focus (2026-10-01) = solo bloques productivos de 25 min o mas: episodios de 50 s alternando apps productivas y no productivas no forman ninguno.
+    check((int)$sumFocus['f']===0 && (int)$sumFocus['d']===14656*50 && (int)$sumFocus['w']===0,'focus classification and no false deep work');
     $snapshot=$db->one('SELECT COUNT(*) n,SUM(active_seconds) s FROM episode_daily WHERE tenant_id=?',[$tenant]);
     check($worker->run($tid,30,300)['days']===0,'clean checkpoint noop');
     $process=proc_open([PHP_BINARY,dirname(__DIR__).'/config/productivity-cron.php','--tenant='.$tid,'--max-days=1','--budget-seconds=20'],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes);
@@ -156,7 +157,7 @@ function activityEdgeTests(Database $db): void
     $a=$db->one('SELECT id FROM user_assignments WHERE tenant_id=? AND user_id=?',[$t,$u['id']])['id'];
     $da=$db->one('SELECT id FROM device_assignments WHERE tenant_id=? AND device_id=?',[$t,$device])['id'];
     for ($n=1;$n<=7;$n++) { $db->run('INSERT INTO schedule_days (tenant_id,schedule_id,weekday) VALUES (?,?,?)',[$t,$u['schedule_id'],$n]); }
-    foreach (['editor'=>'productive','video'=>'unproductive'] as $app=>$category) { $db->run('INSERT INTO app_classification VALUES (?,?,?,?,1)',[$t,Util::bin(Util::uuid()),$app,$category]); }
+    foreach (['editor'=>'productive','video'=>'unproductive'] as $app=>$category) { $db->run('INSERT INTO app_classification (tenant_id,id,process_name,category,version) VALUES (?,?,?,?,1)',[$t,Util::bin(Util::uuid()),$app,$category]); }
     $day=gmdate('Y-m-d',time()-3*86400); $next=(new DateTimeImmutable($day))->modify('+1 day')->format('Y-m-d');
     foreach ([['13:05:00',900,900,0,0,'editor'],['13:20:00',900,900,0,0,'editor'],['13:36:00',60,60,0,0,'video'],['23:59:00',120,100,20,33,'video']] as [$at,$duration,$active,$idle,$calls,$app]) {
         $start=new DateTimeImmutable($day.' '.$at,new DateTimeZone($at==='23:59:00'?'America/Bogota':'UTC')); $end=$start->modify('+'.$duration.' seconds');

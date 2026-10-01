@@ -1,5 +1,5 @@
 {
-  "source_sha256": "8bfbec6118c488600ae8ac0d63b5b49b1525c0cda9d427f654ea1713c7d401da",
+  "source_sha256": "14a955e652d3f8bdd79fa4d5c3e0b677bb0c0bb2db167668e0f5277d52abcebc",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -16607,6 +16607,480 @@
         "x-permission": "usuarios.editar",
         "x-max-body-bytes": 8192
       }
+    },
+    "/app-classification": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "getAppClassification",
+        "summary": "Clasificación de aplicaciones",
+        "description": "Base de la plataforma, clasificación de la empresa, excepciones por área o cargo y uso de los últimos 30 días.",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "AppClassification"
+        ],
+        "responses": {
+          "200": {
+            "description": "Clasificación de aplicaciones",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppClassificationOverview"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "x-permission": "reportes.ver"
+      },
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "putAppClassification",
+        "summary": "Clasificar aplicación o sitio",
+        "description": "Clasificación de la empresa; \"unclassified\" vuelve a la base. Recalcula los últimos 30 días.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "AppClassification"
+        ],
+        "responses": {
+          "200": {
+            "description": "Clasificar aplicación o sitio",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppClassificationOverview"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppClassificationInput"
+              }
+            }
+          }
+        },
+        "x-permission": "actividad.clasificar",
+        "x-max-body-bytes": 8192
+      }
+    },
+    "/app-classification/overrides": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "createAppClassificationOverride",
+        "summary": "Excepción por área o cargo",
+        "description": "Ej.: Facebook productivo para el área de Mercadeo. Manda sobre la clasificación de la empresa.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "AppClassification"
+        ],
+        "responses": {
+          "200": {
+            "description": "Excepción por área o cargo",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppClassificationOverview"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppClassificationOverrideInput"
+              }
+            }
+          }
+        },
+        "x-permission": "actividad.clasificar",
+        "x-max-body-bytes": 8192
+      }
+    },
+    "/app-classification/overrides/{id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "deleteAppClassificationOverride",
+        "summary": "Quitar excepción",
+        "description": "Vuelve a la clasificación de la empresa.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "AppClassification"
+        ],
+        "responses": {
+          "200": {
+            "description": "Quitar excepción",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppClassificationOverview"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "x-permission": "actividad.clasificar",
+        "x-max-body-bytes": 8192
+      }
+    },
+    "/app-sites": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "createAppSite",
+        "summary": "Agregar sitio",
+        "description": "Sitio reconocido en el navegador por el título de la ventana (el título no se guarda).",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "AppClassification"
+        ],
+        "responses": {
+          "200": {
+            "description": "Agregar sitio",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppClassificationOverview"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppSiteInput"
+              }
+            }
+          }
+        },
+        "x-permission": "actividad.clasificar",
+        "x-max-body-bytes": 8192
+      }
     }
   },
   "parameters": {
@@ -17072,6 +17546,41 @@
           "type": "integer",
           "minimum": 0
         },
+        "window_active_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Tiempo en uso medido en ventanas (base de productividad y distracción)."
+        },
+        "unclassified_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "distraction_percent": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Uso en apps poco productivas ÷ uso."
+        },
+        "unclassified_percent": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Uso en apps sin clasificar ÷ uso. Más de 20 % = dato poco confiable."
+        },
         "productivity_percent": {
           "anyOf": [
             {
@@ -17286,6 +17795,41 @@
             "productive_seconds": {
               "type": "integer",
               "minimum": 0
+            },
+            "window_active_seconds": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Tiempo en uso medido en ventanas (base de productividad y distracción)."
+            },
+            "unclassified_seconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "distraction_percent": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Uso en apps poco productivas ÷ uso."
+            },
+            "unclassified_percent": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Uso en apps sin clasificar ÷ uso. Más de 20 % = dato poco confiable."
             },
             "productivity_percent": {
               "anyOf": [
@@ -17546,6 +18090,271 @@
         "csrf_token": {
           "type": "string",
           "maxLength": 256
+        }
+      }
+    },
+    "AppClassificationInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "category"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "category": {
+          "enum": [
+            "productive",
+            "neutral",
+            "unproductive",
+            "unclassified"
+          ]
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 120
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "AppClassificationOverrideInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "category",
+        "area_id",
+        "position_id"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "category": {
+          "enum": [
+            "productive",
+            "neutral",
+            "unproductive"
+          ]
+        },
+        "area_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "position_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "AppClassificationOverview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "apps",
+        "sites"
+      ],
+      "properties": {
+        "apps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "label",
+              "base_category",
+              "company_category",
+              "active_seconds_30d",
+              "people_30d",
+              "overrides"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "maxLength": 160
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "base_category": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "productive",
+                      "neutral",
+                      "unproductive",
+                      "unclassified"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "company_category": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "productive",
+                      "neutral",
+                      "unproductive",
+                      "unclassified"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "active_seconds_30d": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "people_30d": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "overrides": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "category",
+                    "area_id",
+                    "position_id"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "category": {
+                      "enum": [
+                        "productive",
+                        "neutral",
+                        "unproductive"
+                      ]
+                    },
+                    "area_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "position_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "sites": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "pattern",
+              "origin"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "pattern": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "origin": {
+                "enum": [
+                  "base",
+                  "company"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "AppSiteInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "pattern"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "pattern": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "category": {
+          "enum": [
+            "productive",
+            "neutral",
+            "unproductive",
+            "unclassified"
+          ]
         }
       }
     },
@@ -22522,6 +23331,41 @@
               "type": "integer",
               "minimum": 0
             },
+            "window_active_seconds": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Tiempo en uso medido en ventanas (base de productividad y distracción)."
+            },
+            "unclassified_seconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "distraction_percent": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Uso en apps poco productivas ÷ uso."
+            },
+            "unclassified_percent": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Uso en apps sin clasificar ÷ uso. Más de 20 % = dato poco confiable."
+            },
             "productivity_percent": {
               "anyOf": [
                 {
@@ -23069,6 +23913,41 @@
               "type": "null"
             }
           ]
+        },
+        "window_active_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Tiempo en uso medido en ventanas (base de productividad y distracción)."
+        },
+        "unclassified_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "distraction_percent": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Uso en apps poco productivas ÷ uso."
+        },
+        "unclassified_percent": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Uso en apps sin clasificar ÷ uso. Más de 20 % = dato poco confiable."
         },
         "productivity_percent": {
           "anyOf": [
