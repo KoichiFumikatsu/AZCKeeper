@@ -273,7 +273,7 @@ final class DataSync
         if ($id === null) {
             if (!$it['active']) { return 'done'; }
             $candidate = null;
-            foreach ($this->db->run('SELECT o.id,o.name FROM org_units o WHERE o.tenant_id=? AND o.kind=? AND NOT EXISTS (SELECT 1 FROM entity_links l WHERE l.tenant_id=o.tenant_id AND l.entity_type=\'org_unit\' AND l.entity_id=o.id AND l.source_id=?)', [$this->tenant, $kind, $this->source])->fetchAll() as $o) {
+            foreach ($this->db->run('SELECT o.id,o.name FROM org_units o WHERE o.tenant_id=? AND o.kind=? AND o.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM entity_links l WHERE l.tenant_id=o.tenant_id AND l.entity_type=\'org_unit\' AND l.entity_id=o.id AND l.source_id=?)', [$this->tenant, $kind, $this->source])->fetchAll() as $o) {
                 if (self::fold($o['name']) === self::fold($name) && $this->asked('matched_name', $o['id'], $external) !== 'rejected') { $candidate = $o['id']; break; }
             }
             if ($candidate !== null) {

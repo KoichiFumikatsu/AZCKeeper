@@ -165,7 +165,17 @@ async function organization() {
         fail(e.code === 'org_unit_in_use' ? new Error(`No se puede desactivar "${o.name}": ${count ? `${count} personas la tienen asignada (cámbialas primero en Personas)` : 'otras unidades activas dependen de ella, o la usa un rol o una política'}.`) : e);
       }
     });
-    box.append(rename, toggle); return box;
+    // Eliminar: desaparece del panel; si el historial la menciona se conserva como eliminada para ese historial.
+    const remove = el('button', 'Eliminar', 'link-button'); remove.type = 'button';
+    remove.addEventListener('click', async () => {
+      if (!confirm(`¿Eliminar "${o.name}"? Desaparece de Organización y de las listas. El historial de quien la tuvo se conserva.`)) return;
+      try { await api('DELETE', `/organization/${o.id}`, { ifMatch: o.version }); org = org.filter(x => x.id !== o.id); render(); done(); }
+      catch (e) {
+        const uses = (e.problem?.detail || '').match(/^org_unit_in_use:(.+)$/)?.[1];
+        fail(uses ? new Error(`No se puede eliminar "${o.name}": la usan ${uses}. Cámbialos primero y vuelve a intentar.`) : e.problem?.detail === 'managed_by_source' ? new Error(`"${o.name}" viene de una fuente externa: elimínala allá.`) : e);
+      }
+    });
+    box.append(rename, toggle, remove); return box;
   };
   const action = $('page-action'); action.textContent = 'Crear unidad'; action.hidden = false;
   action.addEventListener('click', () => {
@@ -1484,7 +1494,7 @@ const AUDIT_ACTIONS = {
   createPanelAccount: 'Creó una cuenta del panel', patchPanelAccount: 'Cambió una cuenta del panel', resetPanelAccountPassword: 'Restableció una contraseña',
   createRole: 'Creó un rol', patchRole: 'Editó un rol', patchPermission: 'Editó un permiso', setRbacGate: 'Cambió quién gestiona los roles de la empresa',
   createRoleRule: 'Creó una asignación automática', patchRoleRule: 'Editó una asignación automática', putMonitoringExclusions: 'Cambió los cargos que no se monitorean',
-  createOrgUnit: 'Creó una unidad', patchOrgUnit: 'Editó una unidad', createSchedule: 'Creó un horario', putSchedule: 'Editó un horario',
+  createOrgUnit: 'Creó una unidad', patchOrgUnit: 'Editó una unidad', deleteOrgUnit: 'Eliminó una unidad', createSchedule: 'Creó un horario', putSchedule: 'Editó un horario',
   createHoliday: 'Agregó un festivo', createHolidayCalendar: 'Creó un calendario de festivos', putHolidayCalendar: 'Editó un calendario de festivos', assignHolidayCalendar: 'Asignó un calendario de festivos a personas', putHoliday: 'Editó un festivo', deleteHoliday: 'Quitó un festivo', createHolidaySociety: 'Creó una sociedad', putHolidaySociety: 'Editó una sociedad', deleteHolidaySociety: 'Quitó una sociedad',
   createAbsence: 'Registró una ausencia', patchAbsence: 'Editó una ausencia', createDoor: 'Registró una puerta', patchDoor: 'Editó una puerta',
   createPolicy: 'Creó una regla de equipos', patchPolicy: 'Editó una regla de equipos', createTier: 'Creó un plan', patchTier: 'Editó un plan',

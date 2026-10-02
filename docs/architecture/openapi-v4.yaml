@@ -6041,6 +6041,47 @@ paths:
               $ref: '#/components/schemas/OrgUnitInput'
       x-permission: organizacion.editar
       x-max-body-bytes: 65536
+    delete:
+      tags:
+      - admin
+      operationId: deleteOrgUnit
+      summary: Eliminar unidad
+      description: Elimina una unidad que nada usa hoy (personas activas, unidades hijas, roles, reglas, puertas,
+        asignaciones automaticas). Si el historial la menciona queda como eliminada (invisible); si no, se borra.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
+      x-resources:
+      - OrgUnit
+      responses:
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '204':
+          description: Eliminada
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/IfMatch'
+      x-permission: organizacion.editar
   /schedules/{id}:
     get:
       tags:

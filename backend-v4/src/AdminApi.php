@@ -126,7 +126,7 @@ final class AdminApi
             'getAppsReport','getPresenceReport','getUserActivity','getUserPolicies','getPeopleReport'=>(new ActivityReports($this->db,$this->c,$this->access))->dispatch($op,$id),
             'issueMigrationAuthorization','validateMigrationAuthorization','getEscrowKey','persistDeviceEscrow','verifyDeviceEscrow','recoverDeviceEscrow','getDeviceMigration','setDeviceMigration'=>(new MigrationApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listTenants','createTenant','getTenant','patchTenant','setRbacGate'=>$this->tenants($op,$b), 'uploadTenantLogo'=>$this->tenantLogo($b),
-            'listOrganization','createOrgUnit','getOrgUnit','patchOrgUnit'=>$this->organization($op,$id,$b),
+            'listOrganization','createOrgUnit','getOrgUnit','patchOrgUnit','deleteOrgUnit'=>$this->organization($op,$id,$b),
             'listSchedules','createSchedule','getSchedule','putSchedule'=>$this->schedules($op,$id,$b),
             'listUsers','createUser','getUser','patchUser','setUserRoles'=>$this->users($op,$id,$b),
             'listTenantDevices','getDevice','getDeviceSecurity','patchDevice','assignDevice','createDeviceCommand','listAdminCommands','createEnrollment'=>$this->devices($op,$id,$b),
@@ -228,12 +228,42 @@ final class AdminApi
         $this->audit('tenant',$this->tenant,['branding.logo_url']);
         return $this->result($this->tenantDto($this->row('tenants',$this->tenant,'tenant_id')));
     }
+    /** Eliminar unidad: bloqueada si algo la usa hoy; si solo la menciona el historial, queda como eliminada. */
+    private function deleteOrgUnit(array $old): array
+    {
+        $this->match($old); $id=$old['id'];
+        DataSources::guardWrite($this->db,$this->tenant,['firm'=>'firmas','company'=>'firmas','site'=>'sedes','area'=>'areas','position'=>'cargos'][$old['kind']]??'areas','org_unit',$id);
+        $uses=[
+            'personas activas'=>["SELECT COUNT(*) n FROM users WHERE tenant_id=? AND status='active' AND ? IN (firm_id,site_id,area_id,position_id,company_id)",[$this->tenant,$id]],
+            'unidades que dependen de ella'=>['SELECT COUNT(*) n FROM org_units WHERE tenant_id=? AND parent_id=? AND deleted_at IS NULL',[$this->tenant,$id]],
+            'roles'=>['SELECT (SELECT COUNT(*) FROM role_area_scopes WHERE tenant_id=? AND area_id=?)+(SELECT COUNT(*) FROM role_site_scopes WHERE tenant_id=? AND site_id=?) n',[$this->tenant,$id,$this->tenant,$id]],
+            'reglas de los equipos'=>['SELECT COUNT(*) n FROM policy_assignments WHERE tenant_id=? AND (area_id=? OR site_id=?)',[$this->tenant,$id,$id]],
+            'puertas'=>['SELECT COUNT(*) n FROM doors WHERE tenant_id=? AND site_id=?',[$this->tenant,$id]],
+            'asignaciones automáticas de roles'=>['SELECT COUNT(*) n FROM panel_role_rules WHERE tenant_id=? AND (area_id=? OR position_id=?)',[$this->tenant,$id,$id]],
+            'cargos que no se monitorean'=>['SELECT COUNT(*) n FROM monitoring_excluded_positions WHERE tenant_id=? AND position_id=?',[$this->tenant,$id]],
+            'excepciones de clasificación'=>['SELECT COUNT(*) n FROM app_classification_overrides WHERE tenant_id=? AND (area_id=? OR position_id=?)',[$this->tenant,$id,$id]],
+            'sociedades'=>['SELECT (SELECT COUNT(*) FROM sociedades WHERE tenant_id=? AND firm_id=?)+(SELECT COUNT(*) FROM firma_module_override WHERE tenant_id=? AND firm_id=?) n',[$this->tenant,$id,$this->tenant,$id]],
+        ];
+        $busy=[]; foreach ($uses as $what=>[$sql,$args]) { if ((int)$this->db->one($sql,$args)['n']>0) { $busy[]=$what; } }
+        if ($busy) { throw new ApiError(409,'invalid_transition',[],'org_unit_in_use:'.implode(', ',$busy)); }
+        $this->db->run("DELETE FROM entity_links WHERE tenant_id=? AND entity_type='org_unit' AND entity_id=?",[$this->tenant,$id]);
+        // Nunca usada: se borra. Mencionada por el historial: queda como eliminada (el historial sigue valido).
+        $this->db->run('SAVEPOINT org_delete');
+        try { $this->db->run('DELETE FROM org_units WHERE tenant_id=? AND id=?',[$this->tenant,$id]); }
+        catch (\PDOException $e) {
+            if (($e->errorInfo[1]??0)!==1451) { throw $e; }
+            $this->db->run('ROLLBACK TO SAVEPOINT org_delete');
+            $this->db->run('UPDATE org_units SET deleted_at=UTC_TIMESTAMP(6),active=FALSE,version=version+1 WHERE tenant_id=? AND id=?',[$this->tenant,$id]);
+        }
+        $this->audit('org_unit',$id,['name']); $this->dirty();
+        return ['status'=>204,'json'=>'','headers'=>[]];
+    }
     private function orgDto(array $r): array { return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'kind'=>$r['kind'],'name'=>$r['name'],'parent_id'=>$r['parent_id']===null?null:Util::id($r['parent_id']),'active'=>(bool)$r['active'],'version'=>(int)$r['version'],'country_code'=>$r['country_code']]; }
     private function organization(string $op,?string $id,?object $b): array
     {
         $this->access->requireFull();
-        if ($op==='listOrganization') { return $this->page('SELECT * FROM org_units WHERE tenant_id=?',[$this->tenant],fn($x)=>$this->orgDto($x)); }
-        if ($id) { $old=$this->row('org_units',$id); if ($op==='getOrgUnit') { return $this->result($this->orgDto($old)); } $this->match($old); if ($old['kind']!==$b->kind) { throw new ApiError(409,'invalid_transition'); } }
+        if ($op==='listOrganization') { return $this->page('SELECT * FROM org_units WHERE tenant_id=? AND deleted_at IS NULL',[$this->tenant],fn($x)=>$this->orgDto($x)); }
+        if ($id) { $old=$this->row('org_units',$id); if ($old['deleted_at']!==null) { throw new ApiError(404,'resource_not_found'); } if ($op==='deleteOrgUnit') { return $this->deleteOrgUnit($old); } if ($op==='getOrgUnit') { return $this->result($this->orgDto($old)); } $this->match($old); if ($old['kind']!==$b->kind) { throw new ApiError(409,'invalid_transition'); } }
         $parent=$b->parent_id===null?null:Util::bin($b->parent_id);
         $requiresActiveParent=!$id || (!$old['active'] && $b->active) || $parent!==$old['parent_id'];
         $seen=[$id]; $p=$parent;

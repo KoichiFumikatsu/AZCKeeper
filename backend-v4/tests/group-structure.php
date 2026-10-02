@@ -182,3 +182,33 @@ function tenantPurgeTests(Database $db): void
     catch (PDOException $e) { check((int) ($e->errorInfo[1] ?? 0) === 1644, 'audit still protected'); }
     echo 'PASS tenant purge (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+// Eliminar unidades (2026-10-02): nunca usada se borra; solo en historial queda como eliminada; en uso, bloqueada.
+function orgUnitDeleteTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tenant = $u['tenant_id'];
+    $platform = sharedPlatform($db); $platform['tenant'] = $tenant;
+    $del = fn (array $o) => adminRequest($platform, 'DELETE', '/organization/' . $o['id'], null, ['if-match' => '"' . $o['version'] . '"']);
+    $ids = fn () => array_column(expect(adminRequest($platform, 'GET', '/organization'), 200, 'list org')['data'], 'id');
+    // Nunca usada: se borra de verdad.
+    $typo = expect(adminRequest($platform, 'POST', '/organization', ['kind' => 'site', 'name' => 'Sede mal escrita', 'parent_id' => null, 'active' => true]), 201, 'unit created by mistake');
+    check($del($typo)[0] === 204 && !$db->one('SELECT 1 x FROM org_units WHERE tenant_id=? AND id=?', [$tenant, Util::bin($typo['id'])]), 'unused unit really deleted');
+    // En uso por una persona activa: bloqueada, diciendo por que.
+    $site = expect(adminRequest($platform, 'GET', '/organization/' . Util::id($u['site_id'])), 200, 'current site');
+    $busy = $del($site);
+    check($busy[0] === 409 && str_starts_with($busy[1]['detail'], 'org_unit_in_use:') && str_contains($busy[1]['detail'], 'personas activas'), 'unit in use explains why');
+    // La persona se muda: la sede vieja solo queda en su historial -> se elimina pero se conserva para el historial.
+    $new = expect(adminRequest($platform, 'POST', '/organization', ['kind' => 'site', 'name' => 'Sede nueva', 'parent_id' => null, 'active' => true]), 201, 'new site');
+    $person = expect(adminRequest($platform, 'GET', '/users/' . Util::id($u['id'])), 200, 'person');
+    expect(adminRequest($platform, 'PATCH', '/users/' . $person['id'], ['site_id' => $new['id']], ['if-match' => '"' . $person['version'] . '"']), 200, 'person moves');
+    $site = expect(adminRequest($platform, 'GET', '/organization/' . Util::id($u['site_id'])), 200, 'old site');
+    check($del($site)[0] === 204, 'history-only unit deleted');
+    check((bool) $db->one('SELECT 1 x FROM org_units WHERE tenant_id=? AND id=? AND deleted_at IS NOT NULL AND active=FALSE', [$tenant, $u['site_id']]), 'kept as deleted for history');
+    check((bool) $db->one('SELECT 1 x FROM user_assignments WHERE tenant_id=? AND user_id=? AND site_id=?', [$tenant, $u['id'], $u['site_id']]), 'history still points to it');
+    check(!in_array(Util::id($u['site_id']), $ids(), true), 'deleted unit hidden');
+    check(adminRequest($platform, 'GET', '/organization/' . Util::id($u['site_id']))[0] === 404, 'deleted unit unreachable');
+    $back = adminRequest($platform, 'PATCH', '/users/' . $person['id'], ['site_id' => Util::id($u['site_id'])], ['if-match' => '"' . expect(adminRequest($platform, 'GET', '/users/' . $person['id']), 200, 'p')['version'] . '"']);
+    check($back[0] === 422, 'nobody can be assigned to a deleted unit');
+    echo 'PASS org unit delete (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}
