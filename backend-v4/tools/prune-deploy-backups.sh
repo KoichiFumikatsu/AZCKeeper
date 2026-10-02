@@ -7,6 +7,7 @@ DAYS="${1:-14}"
 [[ "$DAYS" =~ ^[0-9]+$ ]] && [ "$DAYS" -ge 3 ] || { echo "dias invalidos (minimo 3): $DAYS" >&2; exit 2; }
 DIR=/home/keeper/deploy-backups
 [ -d "$DIR" ] || exit 0
+cd "$DIR"
 COUNT=$(find "$DIR" -mindepth 1 -maxdepth 1 -mtime +"$DAYS" | wc -l)
 find "$DIR" -mindepth 1 -maxdepth 1 -mtime +"$DAYS" -exec rm -rf -- {} +
 echo "$(date -u +%FT%TZ) borrados $COUNT respaldos de mas de $DAYS dias"
