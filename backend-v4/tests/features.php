@@ -35,3 +35,16 @@ function featureCatalogTests(Database $db): void
     check(Features::forRuleKind('usb') === 'usb' && Features::forRuleKind('download') === 'descargas' && Features::forRuleKind('installation') === 'instalaciones' && Features::forRuleKind('web') === 'web', 'rule kinds');
     echo 'PASS feature catalog (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+function featureStorageTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tenant = $u['tenant_id'];
+    // Los clientes de las pruebas (como los existentes al migrar) tienen todas las funciones.
+    check(Features::enabled($db, $tenant) === (function () { $c = Features::codes(); sort($c); return $c; })(), 'fixture tenant has every function');
+    check(Features::has($db, $tenant, 'usb') && !Features::has($db, $tenant, 'inexistente'), 'has()');
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='usb'", [$tenant]);
+    check(!Features::has($db, $tenant, 'usb'), 'function can be turned off');
+    echo 'PASS feature storage (' . ($GLOBALS['checks'] - $before) . " assertions)
+";
+}

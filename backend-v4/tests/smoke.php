@@ -127,6 +127,8 @@ function secondTenant(Database $db): array
     $db->run('INSERT INTO user_assignments (tenant_id,id,user_id,firm_id,site_id,area_id,position_id,schedule_id,starts_at) VALUES (?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6)-INTERVAL 2 DAY)', [$tenant, Util::bin(Util::uuid()), $user, $ids['firm'], $ids['site'], $ids['area'], $ids['position'], $schedule]);
     $db->run('INSERT INTO retention_settings (tenant_id) VALUES (?)', [$tenant]);
     $db->run("INSERT INTO principals (tenant_id,id,kind) VALUES (?,?,'system')", [$tenant, Util::bin(Util::uuid())]);
+    // Clientes de prueba con todas las funciones (como los clientes existentes al migrar 0040).
+    foreach (Keeper\Features::codes() as $code) { $db->run('INSERT INTO tenant_features (tenant_id,feature_code) VALUES (?,?)', [$tenant, $code]); }
     return $db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$tenant, $user]);
 }
 
@@ -378,6 +380,7 @@ try {
     orgUnitDeleteTests($db);
     siteCityTests($db);
     featureCatalogTests($db);
+    featureStorageTests($db);
     echo "SMOKE PASS: $checks assertions\n";
 } catch (Throwable $e) {
     fwrite(STDERR, $e instanceof PDOException ? 'Database fixture failure SQLSTATE=' . $e->getCode() . ' driver=' . ($e->errorInfo[1]??0) . "\n" : $e->getMessage() . "\n");
