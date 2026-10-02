@@ -485,6 +485,8 @@ function logoImage(company, className = 'company-logo') {
 }
 let showArchived = false;
 async function tenantsPage() {
+  const catalog = (await api('GET', '/features', { tenant: PLATFORM_TENANT })).data;
+  let packages = (await api('GET', '/feature-packages', { tenant: PLATFORM_TENANT })).data;
   const render = () => {
     $('page-content').replaceChildren();
     const s = surface('Empresas');
@@ -511,10 +513,12 @@ async function tenantsPage() {
         }
         const b = el('button', 'Editar y marca', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(c)); box.append(b);
         const a = el('a', 'Cuentas', 'link-button'); a.href = c.id === PLATFORM_TENANT ? '/cuentas.php' : `/cuentas.php?empresa=${encodeURIComponent(c.id)}`; box.append(a);
+        if (c.id !== PLATFORM_TENANT) { const fb = el('button', 'Funciones', 'link-button'); fb.type = 'button'; fb.addEventListener('click', () => featuresEditor(c)); box.append(fb); }
         if (c.id !== PLATFORM_TENANT) { const x = el('button', 'Archivar', 'link-button'); x.type = 'button'; x.addEventListener('click', () => archive(c, true)); box.append(x); }
         return box;
       }]], companies);
     renderGroups();
+    renderPackages();
   };
   let groups = (await optional(api('GET', '/company-groups', { tenant: PLATFORM_TENANT })))?.data || [];
   const groupOf = id => groups.find(g => g.tenant_ids.includes(id)) || null;
@@ -577,6 +581,55 @@ async function tenantsPage() {
         if (x) await api('PATCH', `/company-groups/${x.id}`, { tenant: PLATFORM_TENANT, body: payload, ifMatch: x.version }); else await api('POST', '/company-groups', { tenant: PLATFORM_TENANT, body: payload });
         groups = (await api('GET', '/company-groups', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done();
       } catch (e) { show(e.problem?.detail === 'company_in_other_group' ? 'Una de las empresas ya está en otro grupo.' : e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
+  // Funciones contratadas del cliente: paquete de origen + ajustes de la venta (docs/architecture/v4-clientes-funciones-accesos.md).
+  const featureChecks = (parent, selected) => {
+    const boxes = [];
+    for (const group of [...new Set(catalog.map(f => f.group))]) {
+      const fs = el('fieldset', undefined, 'perm-group'); fs.append(el('legend', group)); parent.append(fs);
+      boxes.push(...checks(fs, catalog.filter(f => f.group === group).map(f => [f.code, f.name, `${f.level === 'person' ? 'Por persona' : 'Del cliente'}${f.pending ? ' · aún sin pantalla' : ''}`]), selected));
+    }
+    return boxes;
+  };
+  const featuresEditor = async c => {
+    const current = await api('GET', `/tenants/${c.id}/features`, { tenant: c.id });
+    const { dialog, body, ok, show } = dialogShell(`Funciones de ${c.branding?.display_name || c.name}`);
+    dialog.classList.add('wide-dialog');
+    body.append(el('p', 'Lo que el cliente compró. Lo que no esté marcado desaparece de su panel y la API lo rechaza; apagar no borra datos. El núcleo (organización, horarios, personas, equipos) siempre está incluido.', 'help'));
+    const pkg = el('select'); pkg.append(new Option('Sin paquete (a medida)', '')); packages.forEach(p => pkg.append(new Option(p.name, p.id))); pkg.value = current.package_id || '';
+    labeled(body, 'Paquete de origen', pkg, 'Al elegir un paquete se marcan sus funciones; después puedes ajustar las de esta venta.');
+    const boxes = featureChecks(body, current.features);
+    pkg.addEventListener('change', () => { const p = packages.find(x => x.id === pkg.value); if (p) boxes.forEach(b => { b.checked = p.features.includes(b.value); }); });
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); ok.disabled = true;
+      try { await api('PUT', `/tenants/${c.id}/features`, { tenant: c.id, body: { package_id: pkg.value || null, features: boxes.filter(b => b.checked).map(b => b.value) } }); dialog.close(); done(); }
+      catch (e) { show(e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
+  const renderPackages = () => {
+    const s = surface('Paquetes de funciones');
+    s.append(el('p', 'Atajos para vender: un paquete marca funciones de una vez. Cambiar un paquete no cambia a los clientes que ya lo usan.', 'help'));
+    const add = el('button', 'Crear paquete'); add.type = 'button'; add.addEventListener('click', () => packageEditor(null)); s.append(add);
+    if (!packages.length) { s.append(el('p', 'Aún no hay paquetes.', 'help')); return; }
+    table(s, 'Paquetes', [['Paquete', p => p.name], ['Funciones', p => String(p.features.length)], ['Clientes', p => String(p.tenants)],
+      ['', p => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => packageEditor(p)); return b; }]], packages);
+  };
+  const packageEditor = p => {
+    const { dialog, body, ok, show } = dialogShell(p ? `Editar ${p.name}` : 'Crear paquete');
+    dialog.classList.add('wide-dialog');
+    const name = labeled(body, 'Nombre', el('input')); name.maxLength = 80; name.value = p?.name || '';
+    const boxes = featureChecks(body, p?.features || []);
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
+      ok.disabled = true;
+      const payload = { name: name.value.trim(), features: boxes.filter(b => b.checked).map(b => b.value) };
+      try {
+        if (p) await api('PATCH', `/feature-packages/${p.id}`, { tenant: PLATFORM_TENANT, body: payload, ifMatch: p.version }); else await api('POST', '/feature-packages', { tenant: PLATFORM_TENANT, body: payload });
+        packages = (await api('GET', '/feature-packages', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done();
+      } catch (e) { show(e.problem?.detail === 'duplicate_name' ? 'Ya hay un paquete con ese nombre.' : e); ok.disabled = false; }
     });
     dialog.showModal();
   };
@@ -687,13 +740,15 @@ async function tenantsPage() {
     body.append(el('p', 'Después de crearla, agrega sus personas y crea su primera cuenta (por ejemplo, su administrador).'));
     const name = labeled(body, 'Nombre de la empresa', el('input')); name.maxLength = 100;
     const tz = labeled(body, 'Zona horaria', el('input'), 'Ejemplo: America/Bogota'); tz.maxLength = 64; tz.value = 'America/Bogota';
+    const pkg = el('select'); pkg.append(new Option('Sin paquete (solo el núcleo)', '')); packages.forEach(p => pkg.append(new Option(p.name, p.id)));
+    labeled(body, 'Paquete', pkg, 'Define las funciones que compra. Se pueden ajustar después en "Funciones".');
     ok.textContent = 'Crear empresa';
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
       if (!name.value.trim()) { show('Escribe el nombre de la empresa.'); return; }
       ok.disabled = true;
       try {
-        const created = await api('POST', '/tenants', { tenant: PLATFORM_TENANT, body: { name: name.value.trim(), timezone: tz.value.trim(),
+        const created = await api('POST', '/tenants', { tenant: PLATFORM_TENANT, body: { name: name.value.trim(), timezone: tz.value.trim(), package_id: pkg.value || null,
           branding: { display_name: name.value.trim(), logo_url: `${location.origin}/branding.svg`, primary_color: '#3C4082', accent_color: '#5A61B3' } } });
         dialog.close(); await reload();
         if (confirm(`${created.name} quedó creada. ¿Crear ahora su primera cuenta?`)) location.href = `/cuentas.php?empresa=${encodeURIComponent(created.id)}`;
