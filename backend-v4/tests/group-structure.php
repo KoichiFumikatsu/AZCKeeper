@@ -144,6 +144,9 @@ function myAccessTests(Database $db): void
     preg_match_all("/'?([a-z-]+)'?: \['([a-z_.]+)', (true|false)\]/", $js, $m, PREG_SET_ORDER);
     $rules = []; foreach ($m as $x) { $rules[$x[1]] = $x[2]; }
     foreach ($rules as $key => $code) { check((bool) $db->one('SELECT code FROM permissions WHERE code=?', [$code]), "menu $key uses existing permission $code"); }
+    preg_match_all("/([a-z-]+): '([a-z_]+)'/", substr($js, (int) strpos($js, 'const FEATURE_OF'), 400), $fo, PREG_SET_ORDER);
+    check(count($fo) === 5, 'FEATURE_OF parsed');
+    foreach ($fo as $x) { check(isset(\Keeper\Features::CATALOG[$x[2]]), "menu {$x[1]} function {$x[2]} exists"); }
     preg_match_all("/\['([a-z-]+)', '[^']+', '\/[^']*'/", file_get_contents(dirname(__DIR__) . '/public/partials/sidebar.php'), $s);
     $platformKeys = ['platform-home', 'tenants', 'releases', 'server-health', 'group', 'home'];
     foreach (array_diff($s[1], $platformKeys) as $key) { check(isset($rules[$key]), "menu item $key has a permission rule"); }

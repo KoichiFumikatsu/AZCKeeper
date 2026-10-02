@@ -12,9 +12,13 @@ const NEEDS = {
   audit: ['auditoria.ver', true], 'client-logs': ['operacion.logs', false], 'panel-settings': ['operacion.ajustes_ver', true],
 };
 
+// Pantallas cuya funcion contratada es distinta a la de su permiso (la API las resuelve por operacion): sin la funcion se ocultan.
+const FEATURE_OF = { doors: 'puertas', absences: 'ausencias', classification: 'clasificacion', accounts: 'autogestion_accesos', roles: 'autogestion_accesos' };
+
 export function allowed(access, key) {
   const need = NEEDS[key];
   if (!need || access.platform) return true;
+  if (FEATURE_OF[key] && !(access.features || []).includes(FEATURE_OF[key])) return false;
   const grant = access.permissions.find(p => p.code === need[0]);
   return !!grant && (!need[1] || grant.scopes.includes('tenant'));
 }

@@ -45,8 +45,7 @@ function featureStorageTests(Database $db): void
     check(Features::has($db, $tenant, 'usb') && !Features::has($db, $tenant, 'inexistente'), 'has()');
     $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='usb'", [$tenant]);
     check(!Features::has($db, $tenant, 'usb'), 'function can be turned off');
-    echo 'PASS feature storage (' . ($GLOBALS['checks'] - $before) . " assertions)
-";
+    echo 'PASS feature storage (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
 
 function featureEnforcementTests(Database $db): void
@@ -67,8 +66,7 @@ function featureEnforcementTests(Database $db): void
     check($usb[0] === 403 && $usb[1]['detail'] === 'feature_not_contracted:usb', 'rule kind needs its function');
     $web = ['id' => Util::uuid(), 'kind' => 'web', 'effect' => 'deny', 'targets' => ['facebook.com'], 'schedule_id' => null, 'priority' => 0];
     check(adminRequest($admin, 'POST', '/policies', ['name' => 'Web', 'target_type' => 'tenant', 'target_id' => Util::id($tenant), 'enabled' => true, 'rules' => [$web]])[0] === 201, 'other rule kinds still allowed');
-    echo 'PASS feature enforcement (' . ($GLOBALS['checks'] - $before) . " assertions)
-";
+    echo 'PASS feature enforcement (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
 
 function featureExternalAndCommandTests(Database $db): void
@@ -134,12 +132,11 @@ function featureMenuTests(Database $db): void
 {
     $before = $GLOBALS['checks'];
     $u = secondTenant($db); $tenant = $u['tenant_id'];
-    $admin = adminFixture($db, $u, ['festivos.ver', 'usuarios.ver'], false);
+    $admin = adminFixture($db, $u, ['festivos.ver', 'festivos.editar', 'usuarios.ver'], false);
     $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='festivos'", [$tenant]);
     $mine = expect(adminRequest($admin, 'GET', '/me/access'), 200, 'my access');
     $codes = array_column($mine['permissions'], 'code');
-    check(!in_array('festivos.ver', $codes, true) && in_array('usuarios.ver', $codes, true), 'menu loses uncontracted function');
+    check(!in_array('festivos.ver', $codes, true) && !in_array('festivos.editar', $codes, true) && in_array('usuarios.ver', $codes, true), 'menu loses uncontracted function');
     check(!in_array('festivos', $mine['features'], true) && in_array('usb', $mine['features'], true), 'features listed');
-    echo 'PASS feature menu (' . ($GLOBALS['checks'] - $before) . " assertions)
-";
+    echo 'PASS feature menu (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
