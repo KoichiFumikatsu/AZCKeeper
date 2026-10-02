@@ -70,3 +70,37 @@ function featureEnforcementTests(Database $db): void
     echo 'PASS feature enforcement (' . ($GLOBALS['checks'] - $before) . " assertions)
 ";
 }
+
+function featureExternalAndCommandTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tenant = $u['tenant_id']; $uid = Util::id($u['id']);
+    $data = externalData($db, $u, 120); adminMember($db, $u);
+    $key = externalCredential($db, $u, 'api_key', Keeper\ExternalAuth::SCOPES);
+    $range = '?from=2026-09-10&to=2026-09-12';
+    $activity = '/ext/v1/members/' . $uid . '/activity' . $range;
+    check(externalRequest('/ext/v1/tiers', $key['headers'])[0] === 200, 'external API works while contracted');
+    check(externalRequest($activity . '&include_titles=true', $key['headers'])[0] === 200, 'titles served while contracted');
+    check(externalRequest('/ext/v1/members/' . $uid . '/check-ins' . $range . '&include_location=true', $key['headers'])[0] === 200, 'location served while contracted');
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code IN ('titulos','ubicacion','borrado')", [$tenant]);
+    $titles = externalRequest($activity . '&include_titles=true', $key['headers']);
+    check($titles[0] === 403 && $titles[1]['detail'] === 'feature_not_contracted:titulos', 'titles need the titulos function');
+    check(externalRequest($activity, $key['headers'])[0] === 200, 'activity without titles still works');
+    $loc = externalRequest('/ext/v1/members/' . $uid . '/check-ins' . $range . '&include_location=true', $key['headers']);
+    check($loc[0] === 403 && $loc[1]['detail'] === 'feature_not_contracted:ubicacion', 'location needs the ubicacion function');
+    check(externalRequest('/ext/v1/members/' . $uid . '/check-ins' . $range, $key['headers'])[0] === 200, 'check-ins without location still work');
+    // Ordenes remotas: el borrado depende de su funcion; bloquear no.
+    $admin = adminFixture($db, $u, ['equipos.ver', 'equipos.borrar', 'equipos.bloquear'], false);
+    $device = Util::id($data['device']);
+    check(adminRequest($admin, 'POST', '/auth/reauth', ['password' => $admin['password']])[0] === 200, 'reauth for wipe');
+    $base = ['reason' => 'Feature test', 'expires_at' => gmdate('Y-m-d\TH:i:s\Z', time() + 600)];
+    $wipe = adminRequest($admin, 'POST', '/devices/' . $device . '/commands', $base + ['type' => 'wipe', 'confirmation' => 'external-device'], ['idempotency-key' => Util::uuid()]);
+    check($wipe[0] === 403 && $wipe[1]['detail'] === 'feature_not_contracted:borrado', 'wipe needs the borrado function');
+    $lock = adminRequest($admin, 'POST', '/devices/' . $device . '/commands', $base + ['type' => 'lock'], ['idempotency-key' => Util::uuid()]);
+    check($lock[0] === 202, 'lock unaffected by borrado being off');
+    // La funcion 'api' apagada corta la API externa completa.
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='api'", [$tenant]);
+    $off = externalRequest('/ext/v1/tiers', $key['headers']);
+    check($off[0] === 403 && $off[1]['detail'] === 'feature_not_contracted:api', 'external API needs the api function');
+    echo 'PASS feature external and commands (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}
