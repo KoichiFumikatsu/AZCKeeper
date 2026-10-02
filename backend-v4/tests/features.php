@@ -48,3 +48,25 @@ function featureStorageTests(Database $db): void
     echo 'PASS feature storage (' . ($GLOBALS['checks'] - $before) . " assertions)
 ";
 }
+
+function featureEnforcementTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tenant = $u['tenant_id'];
+    $admin = adminFixture($db, $u, ['festivos.ver', 'organizacion.ver', 'reglas.editar', 'reglas.ver'], false);
+    $platform = sharedPlatform($db); $platform['tenant'] = $tenant;
+    check(adminRequest($admin, 'GET', '/schedules/holidays')[0] === 200, 'contracted function works');
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code IN ('festivos','puertas','usb')", [$tenant]);
+    $off = adminRequest($admin, 'GET', '/schedules/holidays');
+    check($off[0] === 403 && $off[1]['detail'] === 'feature_not_contracted:festivos', 'function off is refused even with permission');
+    check(adminRequest($admin, 'GET', '/doors')[1]['detail'] === 'feature_not_contracted:puertas', 'shared permission resolved by operation');
+    check(adminRequest($admin, 'GET', '/organization')[0] === 200, 'core keeps working');
+    check(adminRequest($platform, 'GET', '/schedules/holidays')[0] === 200, 'superadmin never blocked');
+    $rule = ['id' => Util::uuid(), 'kind' => 'usb', 'effect' => 'deny', 'targets' => ['*'], 'schedule_id' => null, 'priority' => 0];
+    $usb = adminRequest($admin, 'POST', '/policies', ['name' => 'USB', 'target_type' => 'tenant', 'target_id' => Util::id($tenant), 'enabled' => true, 'rules' => [$rule]]);
+    check($usb[0] === 403 && $usb[1]['detail'] === 'feature_not_contracted:usb', 'rule kind needs its function');
+    $web = ['id' => Util::uuid(), 'kind' => 'web', 'effect' => 'deny', 'targets' => ['facebook.com'], 'schedule_id' => null, 'priority' => 0];
+    check(adminRequest($admin, 'POST', '/policies', ['name' => 'Web', 'target_type' => 'tenant', 'target_id' => Util::id($tenant), 'enabled' => true, 'rules' => [$web]])[0] === 201, 'other rule kinds still allowed');
+    echo 'PASS feature enforcement (' . ($GLOBALS['checks'] - $before) . " assertions)
+";
+}

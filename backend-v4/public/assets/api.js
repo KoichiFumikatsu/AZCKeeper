@@ -101,6 +101,8 @@ export function errorMessage(error) {
   let message = messages[error.code];
   // Dato gestionado por una fuente externa (One, BD de cliente): se cambia en la fuente, no en Keeper.
   if (error.problem?.detail === 'managed_by_source') message = 'Esto lo gestiona una fuente externa (ver Fuentes de datos): cámbialo en la fuente y se actualizará aquí.';
+  const feature = (error?.problem?.detail || '').match(/^feature_not_contracted:(.+)$/)?.[1];
+  if (feature) message = `La empresa no tiene contratada esta función (${feature}). Pídela a AZC Keeper.`;
   if (!message) {
     if (error.status === 401) message = 'Tu sesión venció. Inicia sesión de nuevo.';
     else if (error.status === 403) message = 'No tienes permiso para consultar esta información.';

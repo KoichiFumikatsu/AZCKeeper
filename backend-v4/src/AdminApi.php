@@ -18,7 +18,7 @@ final class AdminApi
         if ($r->operation['operationId']==='createDeviceCommand') {
             $permission=match($r->body->type) { 'lock'=>'equipos.bloquear','unlock'=>'equipos.desbloquear','restart'=>'equipos.reiniciar','shutdown'=>'equipos.apagar','wipe'=>'equipos.borrar','refresh_policy'=>'reglas.aplicar','rename_computer'=>'equipos.editar',default=>throw new ApiError(422,'validation_failed') };
         }
-        $this->access=new AdminAccess($db,$c,$permission);
+        $this->access=new AdminAccess($db,$c,$permission,$r->operation['operationId']);
         if ($permission==='roles.gestionar') { $this->access->rolesGate(); }
         if (in_array($r->operation['operationId'],['createDeviceCommand','createHardeningCommand','assignDevice'],true)) { $this->authorizedDevice=$this->row('devices',Util::bin($r->resourceId)); $this->deviceUser=$this->access->user($this->authorizedDevice['user_id']); }
         if ($r->operation['operationId']==='deployRelease') { $this->access->requireFull(); }
@@ -627,6 +627,9 @@ final class AdminApi
         $this->unique(array_map(static fn($x)=>$x->id,$rules));
         $host=strtolower(parse_url(Config::get('ORIGIN'),PHP_URL_HOST));
         foreach ($rules as $rule) {
+            // Cada tipo de regla del agente es una funcion vendible (web, usb, descargas, instalaciones).
+            $feature=Features::forRuleKind($rule->kind);
+            if ($feature!==null && !$this->c['platform'] && !Features::has($this->db,$this->tenant,$feature)) { throw new ApiError(403,'permission_denied',[],"feature_not_contracted:$feature"); }
             if ($rule->schedule_id!==null) { $this->row('schedules',Util::bin($rule->schedule_id)); }
             $this->unique($rule->targets);
             foreach ($rule->targets as $target) {

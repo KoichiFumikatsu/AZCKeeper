@@ -104,6 +104,9 @@ final class ExternalAuth
         $required=$r->operation['x-required-scopes']??[];
         foreach ($r->operation['x-conditional-scopes']??[] as $flag=>$scopes) { if (($_GET[$flag]??'false')==='true') { $required=array_merge($required,$scopes); } }
         if (array_diff($required,$c['scopes'])) { throw new ApiError(403,'insufficient_scope'); }
+        // API externa: funcion "api"; las entradas por puerta, funcion "puertas".
+        $feature=($r->operation['operationId']??'')==='externalCheckInsBatch'?'puertas':'api';
+        if (!Features::has($this->db,$c['tenant_id'],$feature)) { throw new ApiError(403,'insufficient_scope',[],"feature_not_contracted:$feature"); }
         return $c;
     }
 }

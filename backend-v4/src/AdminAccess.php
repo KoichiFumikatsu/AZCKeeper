@@ -5,7 +5,7 @@ namespace Keeper;
 final class AdminAccess
 {
     private array $grants = [];
-    public function __construct(private Database $db, public readonly array $c, public readonly string $permission)
+    public function __construct(private Database $db, public readonly array $c, public readonly string $permission, ?string $operation = null)
     {
         if ($c['platform']) {
             if (!$db->one('SELECT code FROM permissions WHERE code=?',[$permission])) { throw new ApiError(403,'permission_denied'); }
@@ -17,6 +17,11 @@ final class AdminAccess
             $this->grants=$db->run('SELECT r.id,r.scope_kind FROM user_roles u JOIN roles r ON r.tenant_id=u.tenant_id AND r.id=u.role_id AND r.active=TRUE JOIN role_permissions p ON p.tenant_id=r.tenant_id AND p.role_id=r.id JOIN permissions m ON m.code=p.permission_code AND m.platform_only=FALSE WHERE u.tenant_id=? AND u.user_id=? AND p.permission_code=?',[$c['tenant_id'],$c['user_id'],$permission])->fetchAll();
         }
         if (!$this->grants) { throw new ApiError(403,'permission_denied'); }
+        // Funcion no contratada por el cliente: aunque el rol tenga el permiso (superadmin nunca queda bloqueado).
+        if (!$c['platform']) {
+            $feature=Features::forOperation($operation??'',$permission);
+            if ($feature!==null && !Features::has($db,$c['tenant_id'],$feature)) { throw new ApiError(403,'permission_denied',[],"feature_not_contracted:$feature"); }
+        }
     }
     public function full(): bool { return in_array('tenant',array_column($this->grants,'scope_kind'),true); }
     public function hasScopeKind(string $kind): bool { return in_array($kind,array_column($this->grants,'scope_kind'),true); }
