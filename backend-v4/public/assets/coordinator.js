@@ -113,6 +113,8 @@ export async function coordinator(ctx) {
     if (companies.length) out.company_id = selector(parent, 'Empresa', 'company', companies);
     const countries = [...new Set(org.data.filter(o => o.kind === 'site' && o.country_code).map(o => o.country_code))].sort();
     if (countries.length) out.country = selector(parent, 'País', 'country', countries.map(c => ({ id: c, name: COUNTRY_NAMES[c] || c })));
+    const cities = [...new Set(org.data.filter(o => o.kind === 'site' && o.city).map(o => o.city))].sort((a, b) => a.localeCompare(b, 'es'));
+    if (cities.length) out.city = selector(parent, 'Ciudad', 'city', cities.map(c => ({ id: c, name: c })));
     for (const kind of kinds) out[`${kind}_id`] = selector(parent, label(kind), kind, org.data.filter(o => o.kind === kind));
     return out;
   }
@@ -199,8 +201,9 @@ export async function coordinator(ctx) {
     const view = el('div'); p.append(view); let offset = 0, version = 0;
     async function render() {
       const current = ++version; const f = selected(controls), term = search.value.trim().toLocaleLowerCase('es');
-      const siteCountry = u => org.data?.find(o => o.id === u.site_id)?.country_code;
-      const matches = users.filter(u => Object.entries(f).every(([k, v]) => k === 'country' ? siteCountry(u) === v : u[k] === v) && `${u.display_name} ${u.email || ''}`.toLocaleLowerCase('es').includes(term));
+      const siteOf = u => org.data?.find(o => o.id === u.site_id);
+      const fold = v => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const matches = users.filter(u => Object.entries(f).every(([k, v]) => k === 'country' ? siteOf(u)?.country_code === v : k === 'city' ? fold(siteOf(u)?.city) === fold(v) : u[k] === v) && `${u.display_name} ${u.email || ''}`.toLocaleLowerCase('es').includes(term));
       view.replaceChildren(); const data = matches.slice(offset, offset + 25); if (!data.length) { empty(view, 'No hay personas que coincidan con los filtros.'); return; }
       const grid = el('div'); view.append(grid); const prev = el('button', 'Anterior'), next = el('button', 'Siguiente'); prev.type = next.type = 'button'; prev.disabled = !offset; next.disabled = offset + 25 >= matches.length;
       const pager = el('div', undefined, 'pager'); const state = el('p', `${offset + 1}–${Math.min(offset + 25, matches.length)} de ${matches.length}`, 'help'); state.setAttribute('role', 'status'); pager.append(prev, state, next); view.append(pager);

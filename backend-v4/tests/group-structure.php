@@ -212,3 +212,25 @@ function orgUnitDeleteTests(Database $db): void
     check($back[0] === 422, 'nobody can be assigned to a deleted unit');
     echo 'PASS org unit delete (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+// Ciudad de la sede (2026-10-02): pais > ciudad > sede para segmentar personas.
+function siteCityTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tenant = $u['tenant_id']; $uid = Util::id($u['id']);
+    $platform = sharedPlatform($db); $platform['tenant'] = $tenant;
+    $site = expect(adminRequest($platform, 'GET', '/organization/' . Util::id($u['site_id'])), 200, 'site');
+    $saved = expect(adminRequest($platform, 'PATCH', '/organization/' . $site['id'], ['kind' => 'site', 'name' => 'Tequendama', 'parent_id' => null, 'active' => true, 'country_code' => 'CO', 'city' => '  Medellín   Norte '], ['if-match' => '"' . $site['version'] . '"']), 200, 'site with city');
+    check($saved['city'] === 'Medellín Norte' && $saved['country_code'] === 'CO', 'city stored clean');
+    $kept = expect(adminRequest($platform, 'PATCH', '/organization/' . $site['id'], ['kind' => 'site', 'name' => 'Tequendama Casa 1', 'parent_id' => null, 'active' => true], ['if-match' => '"' . $saved['version'] . '"']), 200, 'rename');
+    check($kept['city'] === 'Medellín Norte', 'city kept when not sent');
+    check(adminRequest($platform, 'POST', '/organization', ['kind' => 'area', 'name' => 'X', 'parent_id' => null, 'active' => true, 'city' => 'Cali'])[1]['detail'] === 'city_only_for_sites', 'city only on sites');
+    $other = expect(adminRequest($platform, 'POST', '/organization', ['kind' => 'site', 'name' => 'Palmetto', 'parent_id' => null, 'active' => true, 'country_code' => 'CO', 'city' => 'Cali']), 201, 'site in Cali');
+    $p2 = expect(adminRequest($platform, 'POST', '/users', ['display_name' => 'Persona de Cali', 'email' => null, 'site_id' => $other['id'], 'area_id' => Util::id($u['area_id']), 'position_id' => Util::id($u['position_id'])]), 201, 'person in Cali');
+    $ids = fn ($q) => array_column(expect(adminRequest($platform, 'GET', '/users' . $q), 200, "users $q")['data'], 'id');
+    check($ids('?city=CALI') === [$p2['id']], 'filter by city ignores case');
+    check($ids('?city=' . rawurlencode('medellin norte')) === [$uid], 'filter by city ignores accents');
+    check(adminRequest($platform, 'GET', '/reports/productivity?from=2026-09-01&to=2026-09-08&city=Cali')[0] === 200, 'reports accept city');
+    check(adminRequest($platform, 'GET', '/reports/people?from=2026-09-01&to=2026-09-08&city=Cali')[0] === 200, 'people report accepts city');
+    echo 'PASS site city (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}

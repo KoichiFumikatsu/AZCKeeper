@@ -375,6 +375,7 @@ try {
     myAccessTests($db);
     tenantPurgeTests($db);
     orgUnitDeleteTests($db);
+    siteCityTests($db);
     echo "SMOKE PASS: $checks assertions\n";
 } catch (Throwable $e) {
     fwrite(STDERR, $e instanceof PDOException ? 'Database fixture failure SQLSTATE=' . $e->getCode() . ' driver=' . ($e->errorInfo[1]??0) . "\n" : $e->getMessage() . "\n");

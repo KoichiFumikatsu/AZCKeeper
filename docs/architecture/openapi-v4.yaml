@@ -1593,6 +1593,7 @@ paths:
       - $ref: '#/components/parameters/Site'
       - $ref: '#/components/parameters/Company'
       - $ref: '#/components/parameters/Country'
+      - $ref: '#/components/parameters/City'
       - $ref: '#/components/parameters/Status'
       x-permission: usuarios.ver
     post:
@@ -1719,6 +1720,7 @@ paths:
       - $ref: '#/components/parameters/Site'
       - $ref: '#/components/parameters/Company'
       - $ref: '#/components/parameters/Country'
+      - $ref: '#/components/parameters/City'
       x-permission: reportes.ver
   /me/access:
     get:
@@ -2339,6 +2341,7 @@ paths:
       - $ref: '#/components/parameters/Site'
       - $ref: '#/components/parameters/Company'
       - $ref: '#/components/parameters/Country'
+      - $ref: '#/components/parameters/City'
       - $ref: '#/components/parameters/User'
       x-permission: reportes.ver
   /tiers:
@@ -3017,6 +3020,7 @@ paths:
       - $ref: '#/components/parameters/Site'
       - $ref: '#/components/parameters/Company'
       - $ref: '#/components/parameters/Country'
+      - $ref: '#/components/parameters/City'
       responses:
         '200':
           description: KPIs, gráficas y roster preview
@@ -3085,6 +3089,7 @@ paths:
       - $ref: '#/components/parameters/Site'
       - $ref: '#/components/parameters/Company'
       - $ref: '#/components/parameters/Country'
+      - $ref: '#/components/parameters/City'
       responses:
         '200':
           description: Lista y ranking con tier/rol/métricas
@@ -3209,6 +3214,7 @@ paths:
       - $ref: '#/components/parameters/Site'
       - $ref: '#/components/parameters/Company'
       - $ref: '#/components/parameters/Country'
+      - $ref: '#/components/parameters/City'
       - $ref: '#/components/parameters/User'
       responses:
         '200':
@@ -3422,6 +3428,7 @@ paths:
       - $ref: '#/components/parameters/Tenant'
       - $ref: '#/components/parameters/Company'
       - $ref: '#/components/parameters/Country'
+      - $ref: '#/components/parameters/City'
       - name: from
         in: query
         required: true
@@ -3539,6 +3546,7 @@ paths:
       - $ref: '#/components/parameters/Tenant'
       - $ref: '#/components/parameters/Company'
       - $ref: '#/components/parameters/Country'
+      - $ref: '#/components/parameters/City'
       - name: day
         in: query
         required: false
@@ -5058,6 +5066,7 @@ paths:
       - $ref: '#/components/parameters/Site'
       - $ref: '#/components/parameters/Company'
       - $ref: '#/components/parameters/Country'
+      - $ref: '#/components/parameters/City'
       - $ref: '#/components/parameters/User'
       x-permission: equipos.ver
   /devices/{id}:
@@ -9564,6 +9573,7 @@ paths:
       - $ref: '#/components/parameters/Tenant'
       - $ref: '#/components/parameters/Company'
       - $ref: '#/components/parameters/Country'
+      - $ref: '#/components/parameters/City'
       - name: from
         in: query
         required: true
@@ -15066,7 +15076,15 @@ components:
       - active
       - version
       - country_code
+      - city
       properties:
+        city:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 80
+          - type: 'null'
+          description: Ciudad de la sede (Cali, Medellín, Tegucigalpa...). Solo sedes.
         country_code:
           anyOf:
           - type: string
@@ -15109,6 +15127,13 @@ components:
       - parent_id
       - active
       properties:
+        city:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 80
+          - type: 'null'
+          description: Ciudad de la sede (Cali, Medellín, Tegucigalpa...). Solo sedes.
         country_code:
           anyOf:
           - type: string
@@ -19189,6 +19214,15 @@ components:
       schema:
         type: string
         pattern: ^[A-Z]{2}$
+    City:
+      name: city
+      in: query
+      required: false
+      description: Ciudad de la sede (sin distinguir mayúsculas ni tildes).
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 80
     User:
       name: user_id
       in: query

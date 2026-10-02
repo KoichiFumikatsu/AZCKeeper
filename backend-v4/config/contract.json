@@ -1,5 +1,5 @@
 {
-  "source_sha256": "cbf15cb41000ca95edd14f878c28e25a54c5fe4a142f5a55db0458b62caad978",
+  "source_sha256": "3b59c86c039668704aa1d1323099cc127c35a9864d4ad7f8edf6aaf9127d2f4f",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -2461,6 +2461,9 @@
             "$ref": "#/components/parameters/Country"
           },
           {
+            "$ref": "#/components/parameters/City"
+          },
+          {
             "$ref": "#/components/parameters/Status"
           }
         ],
@@ -3561,6 +3564,9 @@
             "$ref": "#/components/parameters/Country"
           },
           {
+            "$ref": "#/components/parameters/City"
+          },
+          {
             "$ref": "#/components/parameters/User"
           }
         ],
@@ -4190,6 +4196,9 @@
           },
           {
             "$ref": "#/components/parameters/Country"
+          },
+          {
+            "$ref": "#/components/parameters/City"
           }
         ],
         "responses": {
@@ -4310,6 +4319,9 @@
           },
           {
             "$ref": "#/components/parameters/Country"
+          },
+          {
+            "$ref": "#/components/parameters/City"
           }
         ],
         "responses": {
@@ -4522,6 +4534,9 @@
           },
           {
             "$ref": "#/components/parameters/Country"
+          },
+          {
+            "$ref": "#/components/parameters/City"
           },
           {
             "$ref": "#/components/parameters/User"
@@ -4872,6 +4887,9 @@
             "$ref": "#/components/parameters/Country"
           },
           {
+            "$ref": "#/components/parameters/City"
+          },
+          {
             "name": "from",
             "in": "query",
             "required": true,
@@ -5048,6 +5066,9 @@
           },
           {
             "$ref": "#/components/parameters/Country"
+          },
+          {
+            "$ref": "#/components/parameters/City"
           },
           {
             "name": "day",
@@ -7410,6 +7431,9 @@
           },
           {
             "$ref": "#/components/parameters/Country"
+          },
+          {
+            "$ref": "#/components/parameters/City"
           },
           {
             "$ref": "#/components/parameters/User"
@@ -13936,6 +13960,9 @@
             "$ref": "#/components/parameters/Country"
           },
           {
+            "$ref": "#/components/parameters/City"
+          },
+          {
             "name": "from",
             "in": "query",
             "required": true,
@@ -18053,6 +18080,17 @@
       "schema": {
         "type": "string",
         "pattern": "^[A-Z]{2}$"
+      }
+    },
+    "City": {
+      "name": "city",
+      "in": "query",
+      "required": false,
+      "description": "Ciudad de la sede (sin distinguir mayúsculas ni tildes).",
+      "schema": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
       }
     },
     "User": {
@@ -23889,9 +23927,23 @@
         "parent_id",
         "active",
         "version",
-        "country_code"
+        "country_code",
+        "city"
       ],
       "properties": {
+        "city": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Ciudad de la sede (Cali, Medellín, Tegucigalpa...). Solo sedes."
+        },
         "country_code": {
           "anyOf": [
             {
@@ -23956,6 +24008,19 @@
         "active"
       ],
       "properties": {
+        "city": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Ciudad de la sede (Cali, Medellín, Tegucigalpa...). Solo sedes."
+        },
         "country_code": {
           "anyOf": [
             {

@@ -30,6 +30,7 @@ final class ExternalApi
         }
         if ($this->r->method!=='GET') { throw new ApiError(404,'resource_not_found'); }
         if (isset($_GET['country'])) { $this->filters['country']=$_GET['country']; }
+        if (isset($_GET['city'])) { $this->filters['city']=trim($_GET['city']); }
         foreach (['area_id','site_id','user_id','company_id'] as $field) {
             if (!isset($_GET[$field])) { continue; }
             $id=Util::bin($_GET[$field]); $row=$this->row($field==='user_id'?'users':'org_units',$id);
@@ -76,7 +77,11 @@ final class ExternalApi
     /** Filtro por columna de la persona; el pais sale de la sede. */
     public static function filterSql(string $alias,string $field): string
     {
-        return $field==='country'?" AND EXISTS (SELECT 1 FROM org_units cs WHERE cs.tenant_id=$alias.tenant_id AND cs.id=$alias.site_id AND cs.country_code=?)":" AND $alias.$field=?";
+        return match ($field) {
+            'country'=>" AND EXISTS (SELECT 1 FROM org_units cs WHERE cs.tenant_id=$alias.tenant_id AND cs.id=$alias.site_id AND cs.country_code=?)",
+            'city'=>" AND EXISTS (SELECT 1 FROM org_units cy WHERE cy.tenant_id=$alias.tenant_id AND cy.id=$alias.site_id AND cy.city=?)",
+            default=>" AND $alias.$field=?",
+        };
     }
     private function userQuery(): array
     {
@@ -172,7 +177,7 @@ final class ExternalApi
     }
     private function organization(): array
     {
-        return $this->page('SELECT id,tenant_id,kind,name,parent_id,active,version,created_at,country_code FROM org_units WHERE tenant_id=?',[$this->tenant],static fn($rows)=>array_map(static fn($r)=>['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'kind'=>$r['kind'],'name'=>$r['name'],'parent_id'=>$r['parent_id']===null?null:Util::id($r['parent_id']),'active'=>(bool)$r['active'],'version'=>(int)$r['version'],'country_code'=>$r['country_code']],$rows));
+        return $this->page('SELECT id,tenant_id,kind,name,parent_id,active,version,created_at,country_code,city FROM org_units WHERE tenant_id=? AND deleted_at IS NULL',[$this->tenant],static fn($rows)=>array_map(static fn($r)=>['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'kind'=>$r['kind'],'name'=>$r['name'],'parent_id'=>$r['parent_id']===null?null:Util::id($r['parent_id']),'active'=>(bool)$r['active'],'version'=>(int)$r['version'],'country_code'=>$r['country_code'],'city'=>$r['city']],$rows));
     }
     private function notifications(): array
     {

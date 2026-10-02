@@ -35,6 +35,7 @@ final class ActivityReports
             $sql.=' AND a.company_id=?'; $args[]=$id;
         }
         if (isset($_GET['country'])) { $sql.=' AND EXISTS (SELECT 1 FROM org_units cs WHERE cs.tenant_id=a.tenant_id AND cs.id=a.site_id AND cs.country_code=?)'; $args[]=$_GET['country']; }
+        if (isset($_GET['city'])) { $sql.=' AND EXISTS (SELECT 1 FROM org_units cy WHERE cy.tenant_id=a.tenant_id AND cy.id=a.site_id AND cy.city=?)'; $args[]=trim($_GET['city']); }
         return [$sql,$args];
     }
     public function dispatch(string $op,?string $user): array

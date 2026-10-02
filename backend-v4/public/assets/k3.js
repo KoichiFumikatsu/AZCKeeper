@@ -14,6 +14,15 @@ const kinds = { firm: 'Firma', company: 'Empresa del grupo', site: 'Sede', area:
 // Paises de las sedes (las remotas son "Remoto - <pais>"): de ahi sale el calendario de festivos de cada persona.
 const COUNTRIES = [['CO', 'Colombia'], ['US', 'Estados Unidos'], ['HN', 'Honduras'], ['MX', 'México'], ['PE', 'Perú'], ['EC', 'Ecuador'], ['PA', 'Panamá'], ['CR', 'Costa Rica'], ['GT', 'Guatemala'], ['SV', 'El Salvador'], ['ES', 'España']];
 const countryName = code => code ? (COUNTRIES.find(([c]) => c === code)?.[1] || code) : '—';
+// Ciudad de la sede: texto con sugerencias de las ya usadas (la base compara sin mayusculas ni tildes).
+function cityInput(value, org) {
+  const i = document.createElement('input'); i.maxLength = 80; i.value = value || ''; i.placeholder = 'Ej.: Cali';
+  const list = document.createElement('datalist'); list.id = `cities-${Math.random().toString(36).slice(2)}`;
+  [...new Set((org || []).filter(o => o.kind === 'site' && o.city).map(o => o.city))].sort((a, b) => a.localeCompare(b, 'es')).forEach(c => list.append(new Option(c)));
+  i.setAttribute('list', list.id); document.body.append(list);
+  return i;
+}
+const placeOf = site => site ? [site.city, site.country_code ? countryName(site.country_code) : null].filter(Boolean).join(', ') || '—' : '—';
 function countrySelect(value, empty = 'Sin país') { const s = document.createElement('select'); s.append(new Option(empty, '')); COUNTRIES.forEach(([c, n]) => s.append(new Option(n, c))); s.value = value || ''; return s; }
 const online = d => d.status === 'active' && d.last_seen_at && Date.now() - Date.parse(d.last_seen_at) <= 5 * 60 * 1000;
 let tenant;
@@ -94,12 +103,13 @@ async function sites() {
     const { dialog, body, ok, show } = dialogShell('Crear sede');
     const name = labeled(body, 'Nombre de la sede', el('input')); name.maxLength = 120;
     const country = labeled(body, 'País', countrySelect('CO'), 'Las personas de esta sede usan los festivos de este país (salvo que se les asigne otro calendario). Para quien trabaja desde casa crea una sede "Remoto – <país>".');
+    const city = labeled(body, 'Ciudad', cityInput('', org), 'Por ejemplo Cali para las sedes de Tequendama. Sirve para ver y filtrar personas por ciudad.');
     body.append(el('p', 'Después la asignas a las personas en Personas (o llega sola desde AZC One si One manda en las sedes).', 'help'));
     ok.textContent = 'Crear sede';
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
       ok.disabled = true;
-      try { await api('POST', '/organization', { body: { kind: 'site', name: name.value.trim(), parent_id: null, active: true, country_code: country.value || null } }); dialog.close(); location.reload(); }
+      try { await api('POST', '/organization', { body: { kind: 'site', name: name.value.trim(), parent_id: null, active: true, country_code: country.value || null, city: city.value.trim() || null } }); dialog.close(); location.reload(); }
       catch (e) { show(e); ok.disabled = false; }
     });
     dialog.showModal();
@@ -109,9 +119,9 @@ async function sites() {
   for (const r of rows) {
     const s = surface(r.site.name, cards); s.append(el('p', 'Operación de sede', 'eyebrow'));
     const big = el('p', devices ? `${r.online} ` : '—', 'kpi-inline'); big.append(el('small', devices ? `en línea / ${r.devices}` : 'sin acceso a equipos')); s.append(big);
-    s.append(el('p', `${countryName(r.site.country_code)} · ${r.members} personas · productividad ${pct(r.productivity)}`, 'help'));
+    s.append(el('p', `${placeOf(r.site)} · ${r.members} personas · productividad ${pct(r.productivity)}`, 'help'));
   }
-  table(surface('Detalle por sede'), 'Sedes', [['Sede', r => r.site.name], ['País', r => countryName(r.site.country_code)], ['Personas', r => String(r.members)], ['Equipos', r => String(r.devices)],
+  table(surface('Detalle por sede'), 'Sedes', [['Sede', r => r.site.name], ['Ciudad', r => r.site.city || '—'], ['País', r => countryName(r.site.country_code)], ['Personas', r => String(r.members)], ['Equipos', r => String(r.devices)],
     ['En línea', r => devices ? String(r.online) : '—'], ['Uso real, horas (7 días)', r => people ? r.hours.toFixed(1) : '—'], ['Productividad', r => people ? pct(r.productivity) : '—']], rows);
 }
 
@@ -128,7 +138,7 @@ async function organization() {
     s.append(el('p', 'Las personas apuntan a la unidad, no a su nombre: si renombras un cargo, todas las personas con ese cargo lo ven con el nombre nuevo. Desactivar solo es posible cuando nadie la usa.', 'help'));
     s.append(el('p', 'Empresas del grupo: las empresas que emplean a las personas (pueden compartir sedes). En Inicio y Reportes, sin filtro se ve todo el grupo; con filtro, solo una empresa, un país o una sede.', 'help'));
     const n = byId();
-    table(s, 'Organización', [['Unidad', o => o.name], ['Tipo', o => kinds[o.kind] || o.kind], ['País', o => o.kind === 'site' ? countryName(o.country_code) : '—'], ['Depende de', o => o.parent_id ? (n.get(o.parent_id) || '—') : '—'], ['Personas', o => String(usedBy(o))],
+    table(s, 'Organización', [['Unidad', o => o.name], ['Tipo', o => kinds[o.kind] || o.kind], ['Ubicación', o => o.kind === 'site' ? placeOf(o) : '—'], ['Depende de', o => o.parent_id ? (n.get(o.parent_id) || '—') : '—'], ['Personas', o => String(usedBy(o))],
       ['Estado', o => badge(o.active ? 'Activa' : 'Inactiva', o.active ? 'good' : '')], ['Acciones', o => actions(o)]], org,
       { filters: [['Tipo', o => kinds[o.kind]], ['Estado', o => o.active ? 'Activa' : 'Inactiva']] });
   };
@@ -148,10 +158,11 @@ async function organization() {
       org.filter(x => x.active && x.id !== o.id).sort((a, b) => a.name.localeCompare(b.name, 'es')).forEach(x => parent.append(new Option(`${x.name} (${kinds[x.kind]})`, x.id)));
       parent.value = o.parent_id || ''; labeled(body, 'Depende de', parent, 'Por ejemplo, un área que pertenece a una sede, o un cargo que depende de un área.');
       const country = o.kind === 'site' ? labeled(body, 'País', countrySelect(o.country_code), 'Define los festivos de quienes trabajan en esta sede.') : null;
+      const city = o.kind === 'site' ? labeled(body, 'Ciudad', cityInput(o.city, org)) : null;
       dialog.querySelector('form').addEventListener('submit', async ev => {
         ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
         ok.disabled = true;
-        try { await save(o, { name: name.value.trim(), parent_id: parent.value || null, ...(country ? { country_code: country.value || null } : {}) }); dialog.close(); }
+        try { await save(o, { name: name.value.trim(), parent_id: parent.value || null, ...(country ? { country_code: country.value || null, city: city.value.trim() || null } : {}) }); dialog.close(); }
         catch (e) { show(e.status === 422 && !e.problem?.detail ? 'Esa dependencia no es válida (por ejemplo, haría un círculo o la unidad superior está inactiva).' : e); ok.disabled = false; }
       });
       dialog.showModal();
@@ -184,10 +195,10 @@ async function organization() {
     const kind = el('select'); Object.entries(kinds).forEach(([k, v]) => kind.append(new Option(v, k))); kind.value = 'site';
     const name = el('input'); name.required = true; name.maxLength = 160;
     const parent = el('select'); parent.append(new Option('Sin unidad superior', '')); org.filter(o => o.active).forEach(o => parent.append(new Option(`${o.name} (${kinds[o.kind]})`, o.id)));
-    const country = countrySelect('CO');
+    const country = countrySelect('CO'); const city = cityInput('', org);
     const labels = [];
-    for (const [label, input] of [['Tipo', kind], ['Nombre', name], ['Depende de', parent], ['País (solo sedes)', country]]) { const l = el('label', label); l.append(input); form.append(l); labels.push(l); }
-    const syncKind = () => { labels[3].hidden = kind.value !== 'site'; }; kind.addEventListener('change', syncKind); syncKind();
+    for (const [label, input] of [['Tipo', kind], ['Nombre', name], ['Depende de', parent], ['País (solo sedes)', country], ['Ciudad (solo sedes)', city]]) { const l = el('label', label); l.append(input); form.append(l); labels.push(l); }
+    const syncKind = () => { labels[3].hidden = labels[4].hidden = kind.value !== 'site'; }; kind.addEventListener('change', syncKind); syncKind();
     const error = el('p', '', 'error-text'); error.hidden = true;
     const footer = el('div', undefined, 'dialog-footer'); const cancel = el('button', 'Cancelar'); cancel.type = 'button'; const ok = el('button', 'Crear', 'primary'); ok.type = 'submit';
     footer.append(cancel, ok); form.append(error, footer); dialog.append(form); document.body.append(dialog);
@@ -195,7 +206,7 @@ async function organization() {
     form.addEventListener('submit', async ev => {
       ev.preventDefault(); if (!name.value.trim()) { error.textContent = 'Escribe el nombre.'; error.hidden = false; return; }
       ok.disabled = true;
-      try { const created = await api('POST', '/organization', { body: { kind: kind.value, name: name.value.trim(), parent_id: parent.value || null, active: true, ...(kind.value === 'site' ? { country_code: country.value || null } : {}) } }); org = [...org, created]; dialog.close(); render(); }
+      try { const created = await api('POST', '/organization', { body: { kind: kind.value, name: name.value.trim(), parent_id: parent.value || null, active: true, ...(kind.value === 'site' ? { country_code: country.value || null, city: city.value.trim() || null } : {}) } }); org = [...org, created]; dialog.close(); render(); }
       catch (e) { error.textContent = errorMessage(e); error.hidden = false; ok.disabled = false; }
     });
     dialog.showModal();
@@ -751,7 +762,7 @@ async function people() {
       ['Cédula', u => u.document || '—'], ['Empresa', u => n.get(u.company_id) || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'],
       ['Estado', u => { const d = el('div'); d.append(badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : '')); if (u.monitoring === 'excluded') d.append(' ', badge('No se monitorea', 'info')); return d; }],
       ['Acciones', u => { if (u.managed_by) return el('small', `Gestionada por ${u.managed_by}`); const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(u)); return b; }]],
-      list, { filters: [['Empresa', u => n.get(u.company_id) || 'Sin empresa'], ['País', u => countryName(siteCountry(u))], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']] });
+      list, { filters: [['Empresa', u => n.get(u.company_id) || 'Sin empresa'], ['País', u => countryName(siteCountry(u))], ['Ciudad', u => org.find(o => o.id === u.site_id)?.city || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']] });
   };
   const editor = u => {
     const { dialog, body, ok, show } = dialogShell(u ? `Editar ${u.display_name}` : 'Crear persona');
@@ -1731,13 +1742,15 @@ async function holidaysPage() {
     const unitsOf = kind => (org || []).filter(o => o.kind === kind && o.active).sort((a, b) => a.name.localeCompare(b.name, 'es')).map(o => [o.id, o.name]);
     const fCompany = pick('Empresa', unitsOf('company'));
     const fCountry = pick('País', [...new Set(active.map(siteCountry).filter(Boolean))].map(c => [c, countryName(c)]));
+    const siteCity = u => org?.find(o => o.id === u.site_id)?.city || null;
+    const fCity = pick('Ciudad', [...new Set(active.map(siteCity).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es')).map(c => [c, c]));
     const fSite = pick('Sede', unitsOf('site')); const fArea = pick('Área', unitsOf('area'));
     const search = labeled(bar, 'Buscar nombre', el('input')); search.type = 'search';
     const marks = el('div', undefined, 'actions no-margin'); const all = el('button', 'Marcar las mostradas'); all.type = 'button'; const none = el('button', 'Desmarcar todas'); none.type = 'button'; marks.append(all, none); body.append(marks);
     const status = el('p', '', 'help'); status.setAttribute('role', 'status'); body.append(status);
     const box = el('div', undefined, 'check-list'); body.append(box);
     const chosen = new Set(active.filter(u => u.holiday_calendar_id === x.id).map(u => u.id));
-    const shown = () => active.filter(u => (!fCompany.value || u.company_id === fCompany.value) && (!fCountry.value || siteCountry(u) === fCountry.value) && (!fSite.value || u.site_id === fSite.value) && (!fArea.value || u.area_id === fArea.value)
+    const shown = () => active.filter(u => (!fCompany.value || u.company_id === fCompany.value) && (!fCountry.value || siteCountry(u) === fCountry.value) && (!fCity.value || siteCity(u) === fCity.value) && (!fSite.value || u.site_id === fSite.value) && (!fArea.value || u.area_id === fArea.value)
       && (!search.value.trim() || fold(u.display_name).includes(fold(search.value))));
     const draw = () => {
       box.replaceChildren(); const rows = shown();
@@ -1751,7 +1764,7 @@ async function holidaysPage() {
       count();
     };
     const count = () => { status.textContent = `${chosen.size} personas marcadas · ${shown().length} mostradas.`; ok.disabled = !chosen.size; };
-    [fCompany, fCountry, fSite, fArea].forEach(f => f.addEventListener('change', draw)); search.addEventListener('input', draw);
+    [fCompany, fCountry, fCity, fSite, fArea].forEach(f => f.addEventListener('change', draw)); search.addEventListener('input', draw);
     all.addEventListener('click', () => { shown().forEach(u => chosen.add(u.id)); draw(); });
     none.addEventListener('click', () => { chosen.clear(); draw(); });
     const reset = el('button', 'Volver a automático'); reset.type = 'button'; ok.before(reset);

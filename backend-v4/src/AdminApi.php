@@ -258,7 +258,7 @@ final class AdminApi
         $this->audit('org_unit',$id,['name']); $this->dirty();
         return ['status'=>204,'json'=>'','headers'=>[]];
     }
-    private function orgDto(array $r): array { return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'kind'=>$r['kind'],'name'=>$r['name'],'parent_id'=>$r['parent_id']===null?null:Util::id($r['parent_id']),'active'=>(bool)$r['active'],'version'=>(int)$r['version'],'country_code'=>$r['country_code']]; }
+    private function orgDto(array $r): array { return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'kind'=>$r['kind'],'name'=>$r['name'],'parent_id'=>$r['parent_id']===null?null:Util::id($r['parent_id']),'active'=>(bool)$r['active'],'version'=>(int)$r['version'],'country_code'=>$r['country_code'],'city'=>$r['city']]; }
     private function organization(string $op,?string $id,?object $b): array
     {
         $this->access->requireFull();
@@ -278,9 +278,12 @@ final class AdminApi
         // Pais: solo las sedes lo tienen (las remotas son "Remoto - <pais>"); de el sale el calendario de festivos por defecto.
         $country=property_exists($b,'country_code')?$b->country_code:($id?$old['country_code']:null);
         if ($country!==null && $b->kind!=='site') { throw new ApiError(422,'validation_failed',[],'country_only_for_sites'); }
-        $values=['kind'=>$b->kind,'name'=>$b->name,'parent_id'=>$parent,'active'=>(int)$b->active,'country_code'=>$country];
+        // Ciudad (solo sedes): se guarda limpia (sin espacios de mas) para que los filtros agrupen bien.
+        $city=property_exists($b,'city')?($b->city===null?null:(preg_replace('/\s+/u',' ',trim($b->city))?:null)):($id?$old['city']:null);
+        if ($city!==null && $b->kind!=='site') { throw new ApiError(422,'validation_failed',[],'city_only_for_sites'); }
+        $values=['kind'=>$b->kind,'name'=>$b->name,'parent_id'=>$parent,'active'=>(int)$b->active,'country_code'=>$country,'city'=>$city];
         DataSources::guardWrite($this->db,$this->tenant,['firm'=>'firmas','company'=>'firmas','site'=>'sedes','area'=>'areas','position'=>'cargos'][$b->kind]??'areas','org_unit',$id);
-        if ($id) { $this->update('org_units',$id,$values); } else { $id=Util::bin(Util::uuid()); $this->db->run('INSERT INTO org_units (tenant_id,id,kind,name,parent_id,active,country_code) VALUES (?,?,?,?,?,?,?)',[$this->tenant,$id,...array_values($values)]); }
+        if ($id) { $this->update('org_units',$id,$values); } else { $id=Util::bin(Util::uuid()); $this->db->run('INSERT INTO org_units (tenant_id,id,kind,name,parent_id,active,country_code,city) VALUES (?,?,?,?,?,?,?,?)',[$this->tenant,$id,...array_values($values)]); }
         if (isset($old) && $b->kind==='site' && $old['country_code']!==$country) { (new HolidayCalendars($this->db,$this->c,$this->access,$this->r))->recompute(array_column($this->db->run('SELECT id FROM holiday_calendars WHERE tenant_id=?',[$this->tenant])->fetchAll(),'id')); }
         $this->audit('org_unit',$id,array_keys($values)); $this->dirty();
         return $this->result($this->orgDto($this->row('org_units',$id)),$op==='createOrgUnit'?201:200);
@@ -304,6 +307,7 @@ final class AdminApi
         [$where,$args]=$this->access->usersSql($alias);
         if (isset($_GET['company_id'])) { $this->org(Util::bin($_GET['company_id']),'company'); $where.=" AND $alias.company_id=?"; $args[]=Util::bin($_GET['company_id']); }
         if (isset($_GET['country'])) { $where.=" AND EXISTS (SELECT 1 FROM org_units cs WHERE cs.tenant_id=$alias.tenant_id AND cs.id=$alias.site_id AND cs.country_code=?)"; $args[]=$_GET['country']; }
+        if (isset($_GET['city'])) { $where.=" AND EXISTS (SELECT 1 FROM org_units cy WHERE cy.tenant_id=$alias.tenant_id AND cy.id=$alias.site_id AND cy.city=?)"; $args[]=trim($_GET['city']); }
         foreach (['area_id','site_id','user_id','status'] as $f) {
             if (!isset($_GET[$f])) { continue; }
             $column=$f==='user_id'?'id':$f;
@@ -749,6 +753,7 @@ final class AdminApi
         // Empresa del grupo y pais de la sede (sin filtro = todo el grupo).
         if (isset($_GET['company_id'])) { $id=Util::bin($_GET['company_id']); $this->org($id,'company'); $filters.=' AND a.company_id=?'; $fargs[]=$id; }
         if (isset($_GET['country'])) { $filters.=' AND EXISTS (SELECT 1 FROM org_units cs WHERE cs.tenant_id=a.tenant_id AND cs.id=a.site_id AND cs.country_code=?)'; $fargs[]=$_GET['country']; }
+        if (isset($_GET['city'])) { $filters.=' AND EXISTS (SELECT 1 FROM org_units cy WHERE cy.tenant_id=a.tenant_id AND cy.id=a.site_id AND cy.city=?)'; $fargs[]=trim($_GET['city']); }
         $base="FROM %s x JOIN user_assignments a ON a.tenant_id=x.tenant_id AND a.id=x.user_assignment_id AND a.user_id=x.user_id JOIN users u ON u.tenant_id=x.tenant_id AND u.id=x.user_id WHERE x.tenant_id=? AND x.day>=? AND x.day<? AND $scope$filters";
         $params=[$this->tenant,$from,$to,...$args,...$fargs];
         $summary=$this->db->run('SELECT x.day,SUM(x.active_seconds) active_seconds,SUM(x.idle_seconds) idle_seconds,SUM(x.productive_seconds) productive_seconds,SUM(COALESCE(x.window_active_seconds,x.active_seconds)) window_active_seconds,SUM(COALESCE(x.unproductive_seconds,0)) unproductive_seconds,SUM(x.unclassified_seconds) unclassified_seconds,SUM(x.expected_seconds) expected_seconds,MIN(x.calculated_at) calculated_at,MIN(x.data_through) data_through,GROUP_CONCAT(DISTINCT x.calculation_version) calculation_version '.sprintf($base,'day_summary').' GROUP BY x.day ORDER BY x.day',$params)->fetchAll();
