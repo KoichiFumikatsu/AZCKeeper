@@ -382,6 +382,7 @@ try {
     featureCatalogTests($db);
     featureStorageTests($db);
     featureEnforcementTests($db);
+    featureAdminTests($db);
     featureExternalAndCommandTests($db);
     echo "SMOKE PASS: $checks assertions\n";
 } catch (Throwable $e) {

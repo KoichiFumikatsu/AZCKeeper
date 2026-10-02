@@ -9,7 +9,7 @@ backend = Path(__file__).resolve().parents[1]
 source = backend.parent / "docs/architecture/openapi-v4.yaml"
 raw = source.read_bytes()
 contract = yaml.safe_load(raw)
-admin_roots = {"auth", "me", "tenants", "organization", "schedules", "users", "devices", "policies", "roles", "permissions", "reports", "tiers", "releases", "release-deployments", "audit", "enrollments", "migration", "panel-accounts", "data-sources", "data-domains", "sync-runs", "sync-items", "company-groups", "role-rules", "monitoring-exclusions", "doors", "absences", "app-classification", "app-sites"}
+admin_roots = {"auth", "me", "tenants", "organization", "schedules", "users", "devices", "policies", "roles", "permissions", "reports", "tiers", "releases", "release-deployments", "audit", "enrollments", "migration", "panel-accounts", "data-sources", "data-domains", "sync-runs", "sync-items", "company-groups", "role-rules", "monitoring-exclusions", "doors", "absences", "app-classification", "app-sites", "features", "feature-packages"}
 excluded = {"/devices/{id}/transfer", "/users/{id}/dashboard", "/users/{id}/check-ins"}
 paths = {key: value for key, value in contract["paths"].items()
          if key.startswith(("/client/", "/admin/", "/ext/v1/")) or key == "/oauth/token" or (key.split("/")[1] in admin_roots and key not in excluded)}

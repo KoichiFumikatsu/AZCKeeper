@@ -1759,6 +1759,263 @@ paths:
       parameters:
       - $ref: '#/components/parameters/Tenant'
       x-permission: sesion
+  /features:
+    get:
+      tags:
+      - admin
+      operationId: listFeatures
+      summary: Catalogo de funciones
+      description: Funciones vendibles de la plataforma, en el orden del catalogo.
+      security:
+      - adminSession: []
+      x-tenant-boundary: Solo plataforma autenticada.
+      x-resources:
+      - Feature
+      responses:
+        '200':
+          description: Catalogo de funciones
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      x-permission: empresas.gestionar
+      x-platform-only: true
+  /feature-packages:
+    get:
+      tags:
+      - admin
+      operationId: listFeaturePackages
+      summary: Paquetes de funciones
+      description: Paquetes de funciones con el numero de clientes que los usan.
+      security:
+      - adminSession: []
+      x-tenant-boundary: Solo plataforma autenticada.
+      x-resources:
+      - FeaturePackage
+      responses:
+        '200':
+          description: Paquetes de funciones
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeaturePackageList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      x-permission: empresas.gestionar
+      x-platform-only: true
+    post:
+      tags:
+      - admin
+      operationId: createFeaturePackage
+      summary: Crear paquete de funciones
+      description: Nombre y funciones del paquete.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Solo plataforma autenticada.
+      x-resources:
+      - FeaturePackage
+      responses:
+        '201':
+          description: Crear paquete de funciones
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeaturePackage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeaturePackageInput'
+      x-permission: empresas.gestionar
+      x-platform-only: true
+      x-max-body-bytes: 16384
+  /feature-packages/{id}:
+    patch:
+      tags:
+      - admin
+      operationId: patchFeaturePackage
+      summary: Editar paquete de funciones
+      description: Editar un paquete no cambia las funciones de los clientes que ya lo tienen.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Solo plataforma autenticada.
+      x-resources:
+      - FeaturePackage
+      responses:
+        '200':
+          description: Editar paquete de funciones
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeaturePackage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeaturePackageInput'
+      x-permission: empresas.gestionar
+      x-platform-only: true
+      x-max-body-bytes: 16384
   /organization:
     get:
       tags:
@@ -9965,6 +10222,135 @@ paths:
       x-permission: empresas.gestionar
       x-platform-only: true
       x-max-body-bytes: 4096
+  /tenants/{id}/features:
+    get:
+      tags:
+      - admin
+      operationId: getTenantFeatures
+      summary: Funciones del cliente
+      description: Paquete de origen y funciones contratadas por el cliente.
+      security:
+      - adminSession: []
+      x-tenant-boundary: Solo plataforma autenticada.
+      x-resources:
+      - TenantFeatures
+      responses:
+        '200':
+          description: Funciones del cliente
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantFeatures'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/Id'
+      x-permission: empresas.gestionar
+      x-platform-only: true
+    put:
+      tags:
+      - admin
+      operationId: putTenantFeatures
+      summary: Cambiar funciones del cliente
+      description: Paquete de origen mas ajustes de la venta. Apagar una funcion no borra datos.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Solo plataforma autenticada.
+      x-resources:
+      - TenantFeatures
+      responses:
+        '200':
+          description: Cambiar funciones del cliente
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantFeatures'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantFeaturesInput'
+      x-permission: empresas.gestionar
+      x-platform-only: true
+      x-max-body-bytes: 16384
   /tenants/{id}/logo:
     post:
       tags:
@@ -14984,6 +15370,11 @@ components:
           maxLength: 64
         branding:
           $ref: '#/components/schemas/Branding'
+        package_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
     TenantPurge:
       type: object
       additionalProperties: false
@@ -15064,6 +15455,60 @@ components:
                   - site
                   - self
                   - team
+    Feature:
+      type: object
+      additionalProperties: false
+      required: [code, name, group, level, pending]
+      properties:
+        code: {type: string, maxLength: 40}
+        name: {type: string, maxLength: 120}
+        group: {type: string, maxLength: 80}
+        level: {type: string, enum: [client, person]}
+        pending: {type: boolean, description: Sin endpoints todavia; se puede vender pero aun no se aplica.}
+    FeatureList:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/Feature'}}
+    FeaturePackageInput:
+      type: object
+      additionalProperties: false
+      required: [name, features]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 80}
+        features: {type: array, maxItems: 100, uniqueItems: true, items: {type: string, maxLength: 40}}
+    FeaturePackage:
+      type: object
+      additionalProperties: false
+      required: [id, name, features, tenants, version]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string, maxLength: 80}
+        features: {type: array, maxItems: 100, items: {type: string, maxLength: 40}}
+        tenants: {type: integer, minimum: 0}
+        version: {type: integer, minimum: 1}
+    FeaturePackageList:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: {type: array, maxItems: 500, items: {$ref: '#/components/schemas/FeaturePackage'}}
+    TenantFeaturesInput:
+      type: object
+      additionalProperties: false
+      required: [package_id, features]
+      properties:
+        package_id: {anyOf: [{type: string, format: uuid}, {type: 'null'}]}
+        features: {type: array, maxItems: 100, uniqueItems: true, items: {type: string, maxLength: 40}}
+    TenantFeatures:
+      type: object
+      additionalProperties: false
+      required: [package_id, package_name, features]
+      properties:
+        package_id: {anyOf: [{type: string, format: uuid}, {type: 'null'}]}
+        package_name: {anyOf: [{type: string, maxLength: 80}, {type: 'null'}]}
+        features: {type: array, maxItems: 100, items: {type: string, maxLength: 40}}
     OrgUnit:
       type: object
       additionalProperties: false

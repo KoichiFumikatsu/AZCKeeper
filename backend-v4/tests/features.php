@@ -104,3 +104,28 @@ function featureExternalAndCommandTests(Database $db): void
     check($off[0] === 403 && $off[1]['detail'] === 'feature_not_contracted:api', 'external API needs the api function');
     echo 'PASS feature external and commands (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+function featureAdminTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tid = Util::id($u['tenant_id']);
+    $platform = sharedPlatform($db); $platform['tenant'] = $u['tenant_id'];
+    $catalog = expect(adminRequest($platform, 'GET', '/features'), 200, 'catalog')['data'];
+    check(count($catalog) === 23 && $catalog[0]['code'] === 'productividad', 'catalog listed in order');
+    $basic = expect(adminRequest($platform, 'POST', '/feature-packages', ['name' => 'Básico ' . substr(Util::uuid(), 0, 6), 'features' => ['productividad', 'presencia']]), 201, 'create package');
+    check($basic['features'] === ['presencia', 'productividad'] && $basic['tenants'] === 0, 'package stored');
+    check(adminRequest($platform, 'POST', '/feature-packages', ['name' => 'Malo', 'features' => ['inventada']])[1]['detail'] === 'unknown_feature:inventada', 'unknown function rejected');
+    $set = expect(adminRequest($platform, 'PUT', '/tenants/' . $tid . '/features', ['package_id' => $basic['id'], 'features' => ['productividad', 'presencia', 'usb']]), 200, 'set client functions');
+    check($set['package_id'] === $basic['id'] && $set['features'] === ['presencia', 'productividad', 'usb'], 'package plus sale adjustments');
+    check(Features::enabled($db, $u['tenant_id']) === ['presencia', 'productividad', 'usb'], 'stored for the client');
+    $pk = expect(adminRequest($platform, 'GET', '/feature-packages'), 200, 'list packages')['data'];
+    check(array_values(array_filter($pk, fn ($p) => $p['id'] === $basic['id']))[0]['tenants'] === 1, 'package usage counted');
+    $edited = expect(adminRequest($platform, 'PATCH', '/feature-packages/' . $basic['id'], ['name' => $basic['name'], 'features' => ['productividad']], ['if-match' => '"' . $basic['version'] . '"']), 200, 'edit package');
+    check($edited['features'] === ['productividad'] && Features::enabled($db, $u['tenant_id']) === ['presencia', 'productividad', 'usb'], 'editing a package does not change existing clients');
+    $created = expect(adminRequest($platform, 'POST', '/tenants', ['name' => 'Cliente X ' . substr(Util::uuid(), 0, 6), 'timezone' => 'America/Bogota', 'package_id' => $basic['id'],
+        'branding' => ['display_name' => 'Cliente X', 'logo_url' => 'https://example.test/logo.svg', 'primary_color' => '#3C4082', 'accent_color' => '#5A61B3']]), 201, 'create client from package');
+    check(Features::enabled($db, Util::bin($created['id'])) === ['productividad'], 'new client gets package functions');
+    $admin = adminFixture($db, $u, ['festivos.ver'], false);
+    check(adminRequest($admin, 'GET', '/features')[0] === 403, 'only platform manages functions');
+    echo 'PASS feature admin (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}

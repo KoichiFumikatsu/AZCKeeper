@@ -144,6 +144,7 @@ final class AdminApi
             'listDoors','createDoor','patchDoor','getDoorQuarantine'=>(new DoorsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getMyAccess'=>$this->myAccess(),
+            'listFeatures','listFeaturePackages','createFeaturePackage','patchFeaturePackage','getTenantFeatures','putTenantFeatures'=>(new FeatureAdmin($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
             'purgeTenant'=>$this->purgeTenant($b),
             'listCompanyGroups','createCompanyGroup','patchCompanyGroup','deleteCompanyGroup'=>(new CompanyGroups($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
             'listDataSources','createDataSource','patchDataSource','getDataDomains','putDataDomains','runDataSource','listSyncRuns','listSyncItems','approveSyncRun','listPendingSyncItems','resolveSyncItem'=>(new DataSources($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
@@ -183,6 +184,12 @@ final class AdminApi
                 $role=Util::bin(Util::uuid());
                 $this->db->run('INSERT INTO roles (tenant_id,id,name,seed_key,seed_version,scope_kind) VALUES (?,?,?,?,?,?)',[$id,$role,$template['name'],$template['seed_key'],$template['version'],$template['scope_kind']]);
                 $this->db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) SELECT ?,?,permission_code FROM role_template_permissions WHERE seed_key=?',[$id,$role,$template['seed_key']]);
+            }
+            // Funciones del cliente nuevo: las de su paquete (sin paquete, solo el nucleo).
+            if (isset($b->package_id)) {
+                $pkg=Util::bin($b->package_id);
+                $codes=array_column($this->db->run('SELECT feature_code FROM feature_package_items WHERE tenant_id=? AND package_id=?',[Util::bin(AdminAuth::PLATFORM),$pkg])->fetchAll(),'feature_code');
+                (new FeatureAdmin($this->db,$this->c,$this->r))->apply($id,$pkg,$codes);
             }
         } else { $id=$this->tenant; $row=$this->row('tenants',$id,'tenant_id'); if ($op==='getTenant') { return $this->result($this->tenantDto($row)); } $this->match($row); }
         if ($op==='setRbacGate') { $this->db->run('UPDATE tenants SET rbac_self_management=?,auth_version=auth_version+1,version=version+1 WHERE tenant_id=?',[(int)$b->enabled,$id]); }
