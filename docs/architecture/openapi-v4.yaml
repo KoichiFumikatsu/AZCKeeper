@@ -15428,9 +15428,16 @@ components:
       required:
       - platform
       - permissions
+      - features
       properties:
         platform:
           type: boolean
+        features:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            maxLength: 40
         permissions:
           type: array
           maxItems: 500

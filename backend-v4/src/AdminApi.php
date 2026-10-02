@@ -438,7 +438,7 @@ final class AdminApi
     {
         if ($this->c['platform']) {
             $rows=array_map(fn($x)=>['code'=>$x['code'],'scopes'=>['tenant']],$this->db->run('SELECT code FROM permissions ORDER BY code')->fetchAll());
-            return self::response(['platform'=>true,'permissions'=>$rows]);
+            return self::response(['platform'=>true,'features'=>Features::enabled($this->db,$this->tenant),'permissions'=>$rows]);
         }
         if (($this->c['group_id']??null)!==null && $this->c['tenant_id']!==$this->c['admin_tenant_id']) {
             $grants=$this->db->run('SELECT p.permission_code code,r.scope_kind FROM admin_account_roles g JOIN roles r ON r.tenant_id=g.tenant_id AND r.id=g.role_id AND r.active=TRUE JOIN role_permissions p ON p.tenant_id=r.tenant_id AND p.role_id=r.id JOIN permissions m ON m.code=p.permission_code AND m.platform_only=FALSE WHERE g.admin_tenant_id=? AND g.admin_id=? AND g.tenant_id=?',[$this->c['admin_tenant_id'],$this->c['admin_id'],$this->tenant])->fetchAll();
@@ -447,7 +447,9 @@ final class AdminApi
         }
         $by=[]; foreach ($grants as $g) { $by[$g['code']][$g['scope_kind']]=true; }
         ksort($by);
-        return self::response(['platform'=>false,'permissions'=>array_map(fn($code)=>['code'=>$code,'scopes'=>array_keys($by[$code])],array_keys($by))]);
+        $features=Features::enabled($this->db,$this->tenant);
+        $codes=array_values(array_filter(array_keys($by),function ($code) use ($features) { $f=Features::forOperation('',$code); return $f===null || in_array($f,$features,true); }));
+        return self::response(['platform'=>false,'features'=>$features,'permissions'=>array_map(fn($code)=>['code'=>$code,'scopes'=>array_keys($by[$code])],$codes)]);
     }
     private function placeholderFirm(): string
     {

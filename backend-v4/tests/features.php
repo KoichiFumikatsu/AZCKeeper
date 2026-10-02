@@ -129,3 +129,17 @@ function featureAdminTests(Database $db): void
     check(adminRequest($admin, 'GET', '/features')[0] === 403, 'only platform manages functions');
     echo 'PASS feature admin (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+function featureMenuTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tenant = $u['tenant_id'];
+    $admin = adminFixture($db, $u, ['festivos.ver', 'usuarios.ver'], false);
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='festivos'", [$tenant]);
+    $mine = expect(adminRequest($admin, 'GET', '/me/access'), 200, 'my access');
+    $codes = array_column($mine['permissions'], 'code');
+    check(!in_array('festivos.ver', $codes, true) && in_array('usuarios.ver', $codes, true), 'menu loses uncontracted function');
+    check(!in_array('festivos', $mine['features'], true) && in_array('usb', $mine['features'], true), 'features listed');
+    echo 'PASS feature menu (' . ($GLOBALS['checks'] - $before) . " assertions)
+";
+}
