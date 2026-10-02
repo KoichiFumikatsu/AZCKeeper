@@ -39,10 +39,11 @@ final class AdminAuth
         if ($foreign && !in_array($tenant, $this->groupTenants($s), true)) { throw new ApiError(404, 'resource_not_found'); }
         if ($tenantRoute && $r->header('x-tenant-id') !== '' && Util::bin($r->header('x-tenant-id')) !== $tenant) { throw new ApiError(404, 'resource_not_found'); }
         $t = $this->db->one('SELECT * FROM tenants WHERE tenant_id=? FOR UPDATE', [$tenant]);
-        if (!$t) { throw new ApiError(404, 'resource_not_found'); }
+        // Empresa eliminada: solo queda su registro minimo para la auditoria; para el panel no existe.
+        if (!$t || $t['deleted_at'] !== null) { throw new ApiError(404, 'resource_not_found'); }
         if (!$s['is_platform_admin'] && $t['status'] !== 'active') { throw new ApiError(403, 'permission_denied'); }
-        // Empresa archivada: solo lectura para superadmin; lo unico que se le puede hacer es desarchivarla (PATCH /tenants/{id}).
-        if ($t['archived_at'] !== null && $r->method !== 'GET' && !($r->method === 'PATCH' && $r->route === '/tenants/{id}')) { throw new ApiError(409, 'invalid_transition', [], 'tenant_archived'); }
+        // Empresa archivada: solo lectura para superadmin; lo unico que se le puede hacer es desarchivarla o eliminarla.
+        if ($t['archived_at'] !== null && $r->method !== 'GET' && !($r->method === 'PATCH' && $r->route === '/tenants/{id}') && $r->route !== '/tenants/{id}/purge') { throw new ApiError(409, 'invalid_transition', [], 'tenant_archived'); }
         $this->limiter->take([['admin', bin2hex($s['tenant_id'] . $s['admin_id']), Config::number('ADMIN_RATE',120), Config::number('ADMIN_BURST',30)], ['tenant', 'admin:' . bin2hex($tenant), Config::number('ADMIN_TENANT_RATE',600), Config::number('ADMIN_TENANT_BURST',100)]]);
         $c = ['tenant_id' => $tenant, 'admin_tenant_id' => $s['tenant_id'], 'admin_id' => $s['admin_id'], 'user_id' => $foreign ? null : $s['user_id'], 'group_id' => $s['group_id'], 'platform' => (bool) $s['is_platform_admin'], 'actor_type' => 'admin', 'timezone' => $t['timezone'], 'gate' => (bool) $t['rbac_self_management'], 'auth_revision' => (int) $t['auth_version'], 'session_id' => $s['id'], 'reauthenticated_at' => $s['reauthenticated_at']];
         $c['principal_id'] = $this->principal($c);

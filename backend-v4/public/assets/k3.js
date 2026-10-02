@@ -483,7 +483,11 @@ async function tenantsPage() {
       ['Roles propios', c => c.id === PLATFORM_TENANT ? '—' : c.rbac_self_management ? 'Los gestiona la empresa' : 'Los gestiona la plataforma'],
       ['Acciones', c => {
         const box = el('div', undefined, 'actions no-margin');
-        if (c.archived) { const u = el('button', 'Desarchivar', 'link-button'); u.type = 'button'; u.addEventListener('click', () => archive(c, false)); box.append(u); return box; }
+        if (c.archived) {
+          const u = el('button', 'Desarchivar', 'link-button'); u.type = 'button'; u.addEventListener('click', () => archive(c, false));
+          const d = el('button', 'Eliminar definitivamente', 'link-button danger'); d.type = 'button'; d.addEventListener('click', () => purge(c));
+          box.append(u, d); return box;
+        }
         const b = el('button', 'Editar y marca', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(c)); box.append(b);
         const a = el('a', 'Cuentas', 'link-button'); a.href = c.id === PLATFORM_TENANT ? '/cuentas.php' : `/cuentas.php?empresa=${encodeURIComponent(c.id)}`; box.append(a);
         if (c.id !== PLATFORM_TENANT) { const x = el('button', 'Archivar', 'link-button'); x.type = 'button'; x.addEventListener('click', () => archive(c, true)); box.append(x); }
@@ -556,6 +560,34 @@ async function tenantsPage() {
     dialog.showModal();
   };
   const reload = async () => { companies = sortCompanies(await allPages(showArchived ? '/tenants?include_archived=true' : '/tenants', PLATFORM_TENANT)); render(); done(); };
+  // Eliminar una empresa archivada: se borra todo lo suyo salvo la auditoria. Pide contrasena y el nombre exacto.
+  const purge = c => {
+    const { dialog, body, ok, show } = dialogShell(`Eliminar ${c.branding?.display_name || c.name}`);
+    body.append(el('p', 'Se borran definitivamente sus personas, equipos, actividad, organización, horarios, festivos, reglas, planes y cuentas del panel. No se puede deshacer. Solo se conserva su auditoría (quién hizo qué), que no se muestra en el panel.', 'notice'));
+    const password = labeled(body, 'Tu contraseña', el('input')); password.type = 'password'; password.autocomplete = 'current-password';
+    const confirmName = labeled(body, `Escribe el nombre exacto de la empresa: ${c.name}`, el('input'));
+    let accept = null;
+    ok.textContent = 'Eliminar definitivamente';
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (confirmName.value.trim() !== c.name) { show('El nombre no coincide.'); return; }
+      if (!password.value) { show('Escribe tu contraseña.'); return; }
+      ok.disabled = true;
+      try {
+        await reauth(password.value);
+        await api('POST', `/tenants/${c.id}/purge`, { tenant: c.id, body: { confirm_name: c.name, accept_hardening_loss: !!accept?.checked } });
+        dialog.close(); await reload();
+      } catch (e) {
+        const n = (e.problem?.detail || '').match(/^hardened_devices:(\d+)$/)?.[1];
+        if (n && !accept) {
+          [accept] = checks(body, [['ok', `Acepto perder la clave de administrador local de ${n} equipo(s) endurecido(s) de esta empresa`]]);
+          show(`Tiene ${n} equipo(s) endurecido(s): su administrador local usa una clave que se perderá. Marca la casilla para continuar.`);
+        } else show(e.status === 401 ? 'La contraseña no es correcta.' : e);
+        ok.disabled = false;
+      }
+    });
+    dialog.showModal();
+  };
   const archive = (c, on) => {
     const name = c.branding?.display_name || c.name;
     const { dialog, body, ok, show } = dialogShell(on ? `Archivar ${name}` : `Desarchivar ${name}`);
@@ -1458,7 +1490,7 @@ const AUDIT_ACTIONS = {
   createPolicy: 'Creó una regla de equipos', patchPolicy: 'Editó una regla de equipos', createTier: 'Creó un plan', patchTier: 'Editó un plan',
   createSuspiciousApp: 'Agregó una app a vigilar', putSuspiciousApp: 'Editó una app vigilada', deleteSuspiciousApp: 'Dejó de vigilar una app', putInstallCoverage: 'Editó la cobertura de una persona',
   putAppClassification: 'Clasificó una aplicación', createAppClassificationOverride: 'Creó una excepción de clasificación', deleteAppClassificationOverride: 'Quitó una excepción de clasificación', createAppSite: 'Agregó un sitio reconocible',
-  createTenant: 'Creó una empresa', patchTenant: 'Editó una empresa', uploadTenantLogo: 'Cambió el logo de la empresa', putPanelSettings: 'Cambió los ajustes del panel',
+  createTenant: 'Creó una empresa', patchTenant: 'Editó una empresa', purgeTenant: 'Eliminó una empresa definitivamente', uploadTenantLogo: 'Cambió el logo de la empresa', putPanelSettings: 'Cambió los ajustes del panel',
   createCompanyGroup: 'Creó un grupo empresarial', patchCompanyGroup: 'Editó un grupo empresarial', deleteCompanyGroup: 'Eliminó un grupo empresarial',
   createDataSource: 'Conectó una fuente de datos', patchDataSource: 'Editó una fuente de datos', putDataDomains: 'Cambió quién manda en cada dato', runDataSource: 'Sincronizó una fuente',
   approveSyncRun: 'Aprobó una sincronización bloqueada', resolveSyncItem: 'Resolvió un pendiente de sincronización',

@@ -144,6 +144,7 @@ final class AdminApi
             'listDoors','createDoor','patchDoor','getDoorQuarantine'=>(new DoorsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getMyAccess'=>$this->myAccess(),
+            'purgeTenant'=>$this->purgeTenant($b),
             'listCompanyGroups','createCompanyGroup','patchCompanyGroup','deleteCompanyGroup'=>(new CompanyGroups($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
             'listDataSources','createDataSource','patchDataSource','getDataDomains','putDataDomains','runDataSource','listSyncRuns','listSyncItems','approveSyncRun','listPendingSyncItems','resolveSyncItem'=>(new DataSources($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getProductivity'=>$this->report(), 'listAudit'=>$this->auditPage(),
@@ -168,7 +169,7 @@ final class AdminApi
                 return $this->page('SELECT t.*,tenant_id id FROM tenants t WHERE tenant_id IN ('.implode(',',array_fill(0,count($ids),'?')).')',$ids,fn($x)=>$this->tenantDto($x));
             }
             // Archivadas: ocultas salvo que superadmin pida verlas (Empresas > "Mostrar archivadas").
-            if ($this->c['platform']) { return $this->page('SELECT t.*,tenant_id id FROM tenants t'.(($_GET['include_archived']??'false')==='true'?'':' WHERE archived_at IS NULL'),[],fn($x)=>$this->tenantDto($x)); }
+            if ($this->c['platform']) { return $this->page('SELECT t.*,tenant_id id FROM tenants t WHERE deleted_at IS NULL'.(($_GET['include_archived']??'false')==='true'?'':' AND archived_at IS NULL'),[],fn($x)=>$this->tenantDto($x)); }
             return $this->page('SELECT t.*,tenant_id id FROM tenants t WHERE tenant_id=?',[$this->tenant],fn($x)=>$this->tenantDto($x));
         }
         if ($op==='createTenant') {
@@ -375,6 +376,21 @@ final class AdminApi
         if ($op!=='setUserRoles') { RoleRules::apply($this->db,$this->tenant); }
         $this->audit('user',$id,array_keys(get_object_vars($b))); $this->dirty($this->userDevices($id));
         return $this->result($this->userDto($this->row('users',$id)),$op==='createUser'?201:200);
+    }
+    /** Eliminar una empresa archivada: confirma contrasena y nombre; la auditoria se conserva (TenantPurge). */
+    private function purgeTenant(object $b): array
+    {
+        $this->reauth();
+        $row=$this->row('tenants',$this->tenant,'tenant_id');
+        if ($b->confirm_name!==$row['name']) { throw new ApiError(422,'validation_failed',[],'confirm_name_mismatch'); }
+        $purge=new TenantPurge($this->db);
+        $hardened=$purge->hardened($this->tenant);
+        if ($hardened && !$b->accept_hardening_loss) { throw new ApiError(409,'invalid_transition',[],"hardened_devices:$hardened"); }
+        $purge->purge($this->tenant);
+        // En la auditoria de la plataforma: quien elimino que empresa y cuando.
+        $c=$this->c; $c['tenant_id']=Util::bin(AdminAuth::PLATFORM); $c['principal_id']=(new AdminAuth($this->db,new RateLimiter()))->principal($c);
+        (new Audit($this->db))->record($c,$this->r,'purgeTenant','tenant',$this->tenant,['name']);
+        return ['status'=>204,'json'=>'','headers'=>[]];
     }
     /** Permisos efectivos y sus alcances, con las mismas reglas que AdminAccess (roles de la persona o roles de grupo). */
     private function myAccess(): array

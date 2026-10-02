@@ -87,7 +87,7 @@ final class PolicyCompiler
     public function recompileAll(): array
     {
         $results = [];
-        foreach ($this->db->run('SELECT tenant_id FROM tenants ORDER BY tenant_id')->fetchAll() as $row) {
+        foreach ($this->db->run('SELECT tenant_id FROM tenants WHERE deleted_at IS NULL ORDER BY tenant_id')->fetchAll() as $row) {
             array_push($results, ...$this->recompileForTenant(Util::id($row['tenant_id'])));
         }
         return $results;

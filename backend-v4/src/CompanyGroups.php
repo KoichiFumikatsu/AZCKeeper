@@ -45,7 +45,7 @@ final class CompanyGroups
         }
         $tenants = array_map([Util::class, 'bin'], array_values(array_unique($b->tenant_ids ?? [])));
         foreach ($tenants as $t) {
-            if ($t === Util::bin(AdminAuth::PLATFORM) || !$this->db->one('SELECT tenant_id FROM tenants WHERE tenant_id=?', [$t])) { throw new ApiError(422, 'validation_failed', [], 'unknown_company'); }
+            if ($t === Util::bin(AdminAuth::PLATFORM) || !$this->db->one('SELECT tenant_id FROM tenants WHERE tenant_id=? AND deleted_at IS NULL', [$t])) { throw new ApiError(422, 'validation_failed', [], 'unknown_company'); }
             $other = $this->db->one('SELECT group_id FROM company_group_members WHERE tenant_id=?', [$t]);
             if ($other && $other['group_id'] !== $id) { throw new ApiError(409, 'invalid_transition', [], 'company_in_other_group'); }
         }

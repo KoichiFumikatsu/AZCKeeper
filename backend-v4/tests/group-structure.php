@@ -149,3 +149,36 @@ function myAccessTests(Database $db): void
     foreach (array_diff($s[1], $platformKeys) as $key) { check(isset($rules[$key]), "menu item $key has a permission rule"); }
     echo 'PASS my access (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+// Eliminar empresas (2026-10-02): solo archivadas, con contrasena y nombre exacto; se borra todo salvo su auditoria.
+function tenantPurgeTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tenant = $u['tenant_id']; $tid = Util::id($tenant);
+    $platform = sharedPlatform($db); $mine = $platform; $mine['tenant'] = $tenant;
+    expect(adminRequest($mine, 'POST', '/organization', ['kind' => 'site', 'name' => 'Sede a borrar', 'parent_id' => null, 'active' => true]), 201, 'data with audit');
+    $audit = (int) $db->one('SELECT COUNT(*) n FROM audit_log WHERE tenant_id=?', [$tenant])['n'];
+    check($audit > 0, 'tenant has audit');
+    $t = expect(adminRequest($mine, 'GET', '/tenants/' . $tid), 200, 'read tenant');
+    $body = ['confirm_name' => $t['name'], 'accept_hardening_loss' => false];
+    // La contrasena (reauth de 5 minutos) es el mismo mecanismo que prueban las cuentas del panel.
+    expect(adminRequest($platform, 'POST', '/auth/reauth', ['password' => $platform['password']]), 200, 'reauth');
+    check(adminRequest($mine, 'POST', '/tenants/' . $tid . '/purge', $body)[1]['detail'] === 'archive_first', 'only archived companies');
+    $archived = expect(adminRequest($mine, 'PATCH', '/tenants/' . $tid, ['archived' => true], ['if-match' => '"' . $t['version'] . '"']), 200, 'archive');
+    check(adminRequest($mine, 'POST', '/tenants/' . $tid . '/purge', ['confirm_name' => 'otra', 'accept_hardening_loss' => false])[1]['detail'] === 'confirm_name_mismatch', 'exact name required');
+    check(adminRequest($mine, 'POST', '/tenants/' . $tid . '/purge', $body)[0] === 204, 'purge');
+    foreach (['users', 'org_units', 'user_assignments', 'schedules', 'roles', 'retention_settings'] as $table) {
+        check((int) $db->one("SELECT COUNT(*) n FROM `$table` WHERE tenant_id=?", [$tenant])['n'] === 0, "$table emptied");
+    }
+    check((int) $db->one('SELECT COUNT(*) n FROM audit_log WHERE tenant_id=?', [$tenant])['n'] >= $audit, 'audit kept');
+    check((bool) $db->one('SELECT 1 x FROM tenants WHERE tenant_id=? AND deleted_at IS NOT NULL', [$tenant]), 'minimal record kept');
+    check(!(bool) $db->one('SELECT 1 x FROM principals WHERE tenant_id=? AND detached=FALSE AND kind<>\'system\'', [$tenant]), 'identities detached');
+    $ids = array_column(expect(adminRequest($platform, 'GET', '/tenants?include_archived=true'), 200, 'list')['data'], 'id');
+    check(!in_array($tid, $ids, true), 'deleted company never listed');
+    check(adminRequest($mine, 'GET', '/tenants/' . $tid)[0] === 404, 'deleted company unreachable');
+    check((bool) $db->one("SELECT 1 x FROM audit_log WHERE tenant_id=0x00000000000040008000000000000001 AND action='purgeTenant' AND resource_id=?", [$tenant]), 'platform audit records the deletion');
+    check(adminRequest($platform, 'POST', '/tenants/' . AdminAuth::PLATFORM . '/purge', ['confirm_name' => 'AZC Keeper', 'accept_hardening_loss' => true])[0] >= 400, 'platform cannot be deleted');
+    try { $db->run('DELETE FROM audit_log WHERE tenant_id=? LIMIT 1', [$tenant]); check(false, 'audit still protected'); }
+    catch (PDOException $e) { check((int) ($e->errorInfo[1] ?? 0) === 1644, 'audit still protected'); }
+    echo 'PASS tenant purge (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}

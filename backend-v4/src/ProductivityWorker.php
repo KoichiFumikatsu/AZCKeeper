@@ -11,7 +11,7 @@ final class ProductivityWorker
     {
         if ($maxDays<1 || $maxDays>366 || $seconds<1 || $seconds>300) { throw new \InvalidArgumentException('Invalid work budget'); }
         $start=microtime(true); $done=0;
-        $tenants=array_column($this->db->run('SELECT tenant_id FROM tenants'.($tenant===null?'':' WHERE tenant_id=?'),$tenant===null?[]:[Util::bin($tenant)])->fetchAll(),'tenant_id');
+        $tenants=array_column($this->db->run('SELECT tenant_id FROM tenants WHERE deleted_at IS NULL'.($tenant===null?'':' AND tenant_id=?'),$tenant===null?[]:[Util::bin($tenant)])->fetchAll(),'tenant_id');
         foreach ($tenants as $t) { $this->db->run("INSERT INTO productivity_cron_status (tenant_id,last_run,status) VALUES (?,UTC_TIMESTAMP(6),'running') ON DUPLICATE KEY UPDATE last_run=VALUES(last_run),status='running'",[$t]); }
         $this->db->run('SET SESSION innodb_lock_wait_timeout=2');
         try {

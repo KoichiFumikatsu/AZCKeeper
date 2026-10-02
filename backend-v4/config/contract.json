@@ -1,5 +1,5 @@
 {
-  "source_sha256": "4b83d79349326310b026818012aad8f855efba63fd89f207cf85528dcdc209d2",
+  "source_sha256": "33dd8eda8f24154743e972c9888a2a0e8f190fb9e89f88863ef59b7a5896f8bf",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -14400,6 +14400,85 @@
         "x-max-body-bytes": 4096
       }
     },
+    "/tenants/{id}/purge": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "purgeTenant",
+        "summary": "purgeTenant",
+        "description": "Elimina una empresa archivada. Borra personas, equipos, actividad, organizacion, horarios y reglas; conserva su auditoria y un registro minimo invisible en el panel. Exige confirmar la contrasena y el nombre exacto, y aceptar perder la clave de administrador local si tiene equipos endurecidos.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Solo plataforma autenticada.",
+        "x-resources": [
+          "Tenant"
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "204": {
+            "description": "Eliminada"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TenantPurge"
+              }
+            }
+          }
+        },
+        "x-permission": "empresas.gestionar",
+        "x-platform-only": true,
+        "x-max-body-bytes": 4096
+      }
+    },
     "/tenants/{id}/logo": {
       "post": {
         "tags": [
@@ -27219,6 +27298,25 @@
             "active",
             "suspended"
           ]
+        }
+      }
+    },
+    "TenantPurge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "confirm_name",
+        "accept_hardening_loss"
+      ],
+      "properties": {
+        "confirm_name": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Nombre exacto de la empresa."
+        },
+        "accept_hardening_loss": {
+          "type": "boolean",
+          "description": "Acepta perder la clave de administrador local de sus equipos endurecidos."
         }
       }
     },
