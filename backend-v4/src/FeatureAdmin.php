@@ -40,7 +40,9 @@ final class FeatureAdmin
     {
         $features = array_column($this->db->run('SELECT feature_code FROM person_plan_items WHERE tenant_id=? AND plan_id=? ORDER BY feature_code', [$this->platform, $p['id']])->fetchAll(), 'feature_code');
         $people = (int) $this->db->one("SELECT COUNT(*) n FROM users u JOIN tenants t ON t.tenant_id=u.tenant_id AND t.deleted_at IS NULL
-            WHERE u.status='active' AND COALESCE(u.plan_id, t.default_plan_id)=?", [$p['id']])['n'];
+            LEFT JOIN person_plans op ON op.tenant_id=u.plan_tenant_id AND op.id=u.plan_id AND op.active=TRUE
+            LEFT JOIN person_plans dp ON dp.tenant_id=t.default_plan_tenant_id AND dp.id=t.default_plan_id AND dp.active=TRUE
+            WHERE u.status='active' AND COALESCE(op.id, dp.id)=?", [$p['id']])['n'];
         return ['id' => Util::id($p['id']), 'name' => $p['name'], 'badge_label' => $p['badge_label'], 'features' => $features, 'active' => (bool) $p['active'], 'people' => $people, 'version' => (int) $p['version']];
     }
     private function savePlan(?string $id, object $b): array
@@ -71,7 +73,9 @@ final class FeatureAdmin
     private function usage(string $tenant): array
     {
         $default = $this->db->one('SELECT default_plan_id FROM tenants WHERE tenant_id=?', [$tenant])['default_plan_id'];
-        $rows = $this->db->run("SELECT COALESCE(u.plan_id, t.default_plan_id) plan, COUNT(*) people FROM users u JOIN tenants t ON t.tenant_id=u.tenant_id
+        $rows = $this->db->run("SELECT COALESCE(op.id, dp.id) plan, COUNT(*) people FROM users u JOIN tenants t ON t.tenant_id=u.tenant_id AND t.deleted_at IS NULL
+            LEFT JOIN person_plans op ON op.tenant_id=u.plan_tenant_id AND op.id=u.plan_id AND op.active=TRUE
+            LEFT JOIN person_plans dp ON dp.tenant_id=t.default_plan_tenant_id AND dp.id=t.default_plan_id AND dp.active=TRUE
             WHERE u.tenant_id=? AND u.status='active' GROUP BY plan ORDER BY people DESC", [$tenant])->fetchAll();
         return ['default_plan_id' => $default === null ? null : Util::id($default), 'data' => array_map(fn ($r) => ['plan_id' => $r['plan'] === null ? null : Util::id($r['plan']),
             'name' => $r['plan'] === null ? 'Sin plan' : ($this->db->one('SELECT name FROM person_plans WHERE tenant_id=? AND id=?', [$this->platform, $r['plan']])['name'] ?? 'Sin plan'), 'people' => (int) $r['people']], $rows)];
@@ -121,12 +125,12 @@ final class FeatureAdmin
     {
         if (property_exists($b, 'default_plan_id')) {
             $plan = $b->default_plan_id === null ? null : Util::bin($b->default_plan_id);
-            if ($plan !== null && !$this->db->one('SELECT id FROM person_plans WHERE tenant_id=? AND id=?', [$this->platform, $plan])) { throw new ApiError(422, 'validation_failed', [], 'unknown_plan'); }
+            if ($plan !== null && !$this->db->one('SELECT id FROM person_plans WHERE tenant_id=? AND id=? AND active=TRUE', [$this->platform, $plan])) { throw new ApiError(422, 'validation_failed', [], 'unknown_plan'); }
             $this->db->run('UPDATE tenants SET default_plan_tenant_id=?,default_plan_id=? WHERE tenant_id=?', [$plan === null ? null : $this->platform, $plan, $this->c['tenant_id']]);
         }
         $this->apply($this->c['tenant_id'], $b->package_id === null ? null : Util::bin($b->package_id), $b->features);
         PersonPlans::markRecompile($this->db, $this->c['tenant_id']);
-        (new Audit($this->db))->record($this->c, $this->r, 'putTenantFeatures', 'tenant', $this->c['tenant_id'], ['package_id', 'features']);
+        (new Audit($this->db))->record($this->c, $this->r, 'putTenantFeatures', 'tenant', $this->c['tenant_id'], property_exists($b, 'default_plan_id') ? ['package_id', 'features', 'default_plan_id'] : ['package_id', 'features']);
         return AdminApi::response($this->tenantDto($this->c['tenant_id']));
     }
 }

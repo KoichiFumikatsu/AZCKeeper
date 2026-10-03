@@ -89,5 +89,27 @@ function planApiTests(Database $db): void
     check($edited['features'] === ['productividad', 'web'], 'plan edited');
     check((bool) $db->one('SELECT tenant_id FROM admin_policy_recompiles WHERE tenant_id=?', [$u['tenant_id']]), 'clients using the plan get recompiled');
     check(adminRequest($admin, 'GET', '/person-plans')[0] === 403, 'plans catalog is platform-only');
+    // El conteo para facturar usa el mismo plan efectivo que los equipos (plan inactivo no cuenta).
+    $plat = sharedPlatform($db);
+    $patch = fn (array $p, bool $active) => expect(adminRequest($plat, 'PATCH', '/person-plans/' . $p['id'], ['name' => $p['name'], 'badge_label' => $p['badge_label'] ?? '', 'features' => $p['features'], 'active' => $active], ['if-match' => '"' . $p['version'] . '"']), 200, 'toggle plan');
+    $rowOf = fn (array $us, ?string $plan) => array_values(array_filter($us['data'], fn ($r) => $r['plan_id'] === $plan))[0] ?? null;
+    $person = expect(adminRequest($admin, 'GET', '/users/' . Util::id($u['id'])), 200, 'person again');
+    $own = expect(adminRequest($admin, 'PUT', '/users/' . $person['id'] . '/plan', ['plan_id' => $basic['id']], ['if-match' => '"' . $person['version'] . '"']), 200, 'own plan again');
+    $usage = expect(adminRequest($platform, 'GET', '/tenants/' . $tid . '/plan-usage'), 200, 'usage own');
+    check(($rowOf($usage, $basic['id'])['people'] ?? 0) === 1, 'person counted under own active plan');
+    $proBefore = $rowOf($usage, $pro['id'])['people'] ?? 0;
+    $basicOff = $patch($basic, false);
+    $usage = expect(adminRequest($platform, 'GET', '/tenants/' . $tid . '/plan-usage'), 200, 'usage own inactive');
+    check(($rowOf($usage, $pro['id'])['people'] ?? 0) === $proBefore + 1 && $rowOf($usage, $basic['id']) === null, 'inactive own plan: person counted under the client default');
+    check($basicOff['people'] === 0 && $basicOff['active'] === false, 'inactive own plan reports 0 people');
+    $own = expect(adminRequest($admin, 'PUT', '/users/' . $person['id'] . '/plan', ['plan_id' => null], ['if-match' => '"' . $own['version'] . '"']), 200, 'clear own plan');
+    $proNow = $rowOf(expect(adminRequest($platform, 'GET', '/tenants/' . $tid . '/plan-usage'), 200, 'usage before'), $pro['id'])['people'];
+    $proOff = $patch($edited, false);
+    $usage = expect(adminRequest($platform, 'GET', '/tenants/' . $tid . '/plan-usage'), 200, 'usage no plan');
+    $none = $rowOf($usage, null);
+    check($none !== null && $none['name'] === 'Sin plan' && $none['people'] === $proNow && $rowOf($usage, $pro['id']) === null, 'inactive client default: person counted as Sin plan');
+    $bad = adminRequest($platform, 'PUT', '/tenants/' . $tid . '/features', ['package_id' => null, 'features' => $features['features'], 'default_plan_id' => $pro['id']]);
+    check($bad[0] === 422 && $bad[1]['detail'] === 'unknown_plan', 'inactive plan rejected as client default');
+    $patch($proOff, true);
     echo 'PASS plan api (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
