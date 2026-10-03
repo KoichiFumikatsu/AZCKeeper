@@ -37,7 +37,8 @@ final class Auth
     public function login(Request $r): array
     {
         if ($r->header('authorization') !== '') { throw new ApiError(400, 'ambiguous_credentials'); }
-        return $this->db->transaction(function () use ($r): array {
+        $changed = null;
+        $token = $this->db->transaction(function () use ($r, &$changed): array {
             $i = $this->identity($r->body);
             $ticket = isset($r->body->enrollment_ticket);
             $thumb = Signature::thumbprint($r->body->public_key);
@@ -71,10 +72,10 @@ final class Auth
                 $this->db->run('UPDATE enrollments SET status=\'consumed\',consumed_at=UTC_TIMESTAMP(6),device_id=? WHERE tenant_id=? AND id=?', [$device, $tenant, $i['id']]);
                 $this->db->run('INSERT INTO device_sync_state (tenant_id,device_id,enrollment_id,updated_at) VALUES (?,?,?,UTC_TIMESTAMP(6))', [$tenant, $device, $i['id']]);
             } else { $device = $i['id']; $keyId = $key['id']; }
-            // Si el agente cambio de version, su politica puede cambiar (p. ej. la captura de 4.0.15): se pide recompilar.
+            // Si el agente cambio de version, su politica puede cambiar (p. ej. la captura de 4.0.15): se recompila tras el commit.
             $previous = $this->db->one('SELECT agent_version FROM devices WHERE tenant_id=? AND id=?', [$tenant, $device])['agent_version'] ?? null;
             $this->db->run('UPDATE devices SET hostname=?,agent_version=?,last_seen_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?', [$r->body->hostname, $r->body->agent_version, $tenant, $device]);
-            if ($previous !== null && $previous !== $r->body->agent_version) { PersonPlans::markRecompile($this->db, $tenant); }
+            if ($previous !== null && $previous !== $r->body->agent_version) { $changed = [$tenant, $device]; }
             $c = $this->deviceContext($tenant, $device, $keyId);
             $token = $this->issue($c);
             $action = $ticket ? ($i['device_id'] === null ? 'device.enrolled' : 'device.key_recovered') : 'device.login';
@@ -86,6 +87,21 @@ final class Auth
             }
             return $token;
         });
+        if ($changed !== null) { $this->recompileDevice(...$changed); }
+        return $token;
+    }
+
+    // Recompila solo este equipo en el acto: un agente que vuelve a 4.0.14 no puede leer la politica con captura.
+    // recompile() abre su propia transaccion, por eso va despues del commit. Si falla, queda pendiente para el cron
+    // y el login no falla.
+    private function recompileDevice(string $tenant, string $device): void
+    {
+        try { (new PolicyCompiler($this->db))->recompile(Util::id($device), Util::id($tenant)); }
+        catch (\Throwable $e) {
+            error_log('keeper: login_recompile_deferred failure=' . get_class($e));
+            try { PersonPlans::markRecompile($this->db, $tenant); }
+            catch (\Throwable $e) { error_log('keeper: login_recompile_mark_failed failure=' . get_class($e)); }
+        }
     }
 
     private function deviceContext(string $tenant, string $device, string $key): array

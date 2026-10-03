@@ -215,19 +215,20 @@ function captureFlagsTests(Database $db): void
     $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='sitios'", [$tenant]);
     $next = $compiler->recompile($deviceId);
     $capture = compilerDocument($db, $next)->capture ?? null;
-    check($next['changed'] && $next['policy_version'] > $new['policy_version'] && $capture->windows === true && $capture->window_titles === false, 'capture change publishes a new policy version');
+    check($next['changed'] && $next['policy_version'] > $new['policy_version'] && $capture !== null && $capture->windows === true && $capture->window_titles === false, 'capture change publishes a new policy version');
     // Solo presencia: actividad sin ventanas.
     $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='productividad'", [$tenant]);
     $capture = compilerDocument($db, $compiler->recompile($deviceId))->capture ?? null;
-    check($capture->windows === false && $capture->window_titles === false && $capture->activity === true, 'presencia only: activity without windows');
+    check($capture !== null && $capture->windows === false && $capture->window_titles === false && $capture->activity === true, 'presencia only: activity without windows');
     // Persona inactiva: nada.
     $db->run("UPDATE users SET status='inactive' WHERE tenant_id=? AND id=?", [$tenant, $u['id']]);
     $capture = compilerDocument($db, $compiler->recompile($deviceId))->capture ?? null;
-    check($capture->windows === false && $capture->window_titles === false && $capture->activity === false, 'inactive person captures nothing');
+    check($capture !== null && $capture->windows === false && $capture->window_titles === false && $capture->activity === false, 'inactive person captures nothing');
     echo 'PASS capture flags (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
 
-// Al subir de version el agente (login de equipo ya registrado) se pide recompilar su politica: puede ganar la captura de 4.0.15.
+// Al cambiar la version del agente (login de equipo ya registrado) se recompila ese equipo en el acto: al subir a 4.0.15
+// recibe la captura y al volver a 4.0.14 deja de recibirla (el agente viejo rechaza campos desconocidos).
 function agentUpgradeRecompileTests(Database $db): void
 {
     $before = $GLOBALS['checks'];
@@ -237,14 +238,23 @@ function agentUpgradeRecompileTests(Database $db): void
         $challenge = expect(request('POST', '/client/auth/challenges', ['device_id' => $token['device_id']]), 200, 'upgrade challenge');
         expect(request('POST', '/client/login', ['device_id' => $token['device_id'], 'public_key' => $key[1], 'agent_version' => $version, 'hostname' => 'smoke-device'], $key, null, null, $challenge['nonce']), 200, 'upgrade login ' . $version);
     };
+    $latest = function () use ($db, $tenant, $token): array {
+        $row = $db->one('SELECT policy_version,document FROM effective_policies WHERE tenant_id=? AND device_id=? ORDER BY policy_version DESC LIMIT 1', [$tenant, Util::bin($token['device_id'])]);
+        return $row ? [(int) $row['policy_version'], json_decode($row['document'], false, 64, JSON_THROW_ON_ERROR)] : [0, null];
+    };
     $rows = fn () => (int) $db->one('SELECT COUNT(*) n FROM admin_policy_recompiles WHERE tenant_id=?', [$tenant])['n'];
     $db->run('DELETE FROM admin_policy_recompiles WHERE tenant_id=?', [$tenant]);
     $login('4.0.0');
-    check($rows() === 0, 'login with the same agent version requests no recompile');
+    [$v0] = $latest();
+    check($rows() === 0 && $latest()[0] === $v0, 'login with the same agent version recompiles nothing');
     $login('4.0.15');
-    check($rows() === 1, 'login with a new agent version requests a recompile');
-    $db->run('DELETE FROM admin_policy_recompiles WHERE tenant_id=?', [$tenant]);
+    [$v1, $doc] = $latest();
+    check($doc !== null && isset($doc->capture), 'login at 4.0.15 publishes a policy with capture right away');
+    check($rows() === 0, 'a successful per-device compile requests no tenant-wide recompile');
     $login('4.0.15');
-    check($rows() === 0, 'repeated login at the upgraded version requests nothing');
+    check($latest()[0] === $v1, 'repeated login at the same version keeps the policy version');
+    $login('4.0.14');
+    [$v2, $doc] = $latest();
+    check($doc !== null && $v2 > $v1 && !property_exists($doc, 'capture'), 'rollback to 4.0.14 publishes a policy without capture right away');
     echo 'PASS agent upgrade recompile (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
