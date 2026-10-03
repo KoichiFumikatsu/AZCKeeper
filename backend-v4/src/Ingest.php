@@ -61,6 +61,12 @@ final class Ingest
             $a = $a->modify('+1 day');
         } while ($a->format('Y-m-d') <= $b);
     }
+    private ?array $functions = null;
+    /** Funciones de la persona duena del equipo (cliente compro y plan incluye), una vez por request. */
+    private function functions(): array
+    {
+        return $this->functions ??= PersonPlans::functions($this->db, $this->c['tenant_id'], $this->c['user_id']);
+    }
     private const BROWSERS = ['chrome', 'msedge', 'firefox', 'brave', 'opera', 'vivaldi', 'iexplore'];
     private ?array $sites = null;
     /**
@@ -91,8 +97,12 @@ final class Ingest
         if ($start < $this->c['assignment_start'] || ($this->c['assignment_end'] !== null && $end > $this->c['assignment_end'])) { throw new ApiError(422, 'assignment_conflict'); }
         $assignment = $this->db->one('SELECT a.id,s.timezone FROM user_assignments a JOIN schedules s ON s.tenant_id=a.tenant_id AND s.id=a.schedule_id WHERE a.tenant_id=? AND a.user_id=? AND a.starts_at<=? AND (a.ends_at IS NULL OR a.ends_at>=?) LOCK IN SHARE MODE', [$this->c['tenant_id'], $this->c['user_id'], $start, $end]);
         if (!$assignment) { throw new ApiError(422, 'assignment_conflict'); }
+        // Sin productividad contratada no se guarda el episodio, pero se acusa como aceptado para que el agente no reintente.
+        if (!in_array('productividad', $this->functions(), true)) { return self::ack($e->event_id); }
+        // El sitio solo se deriva si la persona tiene "Sitios web visitados".
+        $site = in_array('sitios', $this->functions(), true) ? $this->site($e->process_name, $e->window_title ?? null) : null;
         // The episode trigger writes the global dedupe ledger atomically with the raw event.
-        $this->write('INSERT INTO episodes (tenant_id,device_id,event_id,user_id,device_assignment_id,user_assignment_id,event_date,started_at,ended_at,process_name,site,window_title,active_seconds,idle_seconds,call_seconds,time_category,body_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?)', [...$this->args($e->event_id), $this->c['user_id'], $this->c['assignment_id'], $assignment['id'], substr($start, 0, 10), $start, $end, $e->process_name, $this->site($e->process_name, $e->window_title ?? null), $e->active_seconds, $e->idle_seconds, $e->call_seconds??0, $e->time_category??null, Util::hash($e)]);
+        $this->write('INSERT INTO episodes (tenant_id,device_id,event_id,user_id,device_assignment_id,user_assignment_id,event_date,started_at,ended_at,process_name,site,window_title,active_seconds,idle_seconds,call_seconds,time_category,body_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?)', [...$this->args($e->event_id), $this->c['user_id'], $this->c['assignment_id'], $assignment['id'], substr($start, 0, 10), $start, $end, $e->process_name, $site, $e->active_seconds, $e->idle_seconds, $e->call_seconds??0, $e->time_category??null, Util::hash($e)]);
         $this->c['timezone']=$assignment['timezone'];
         $this->markDays($e->started_at, $e->ended_at);
         return self::ack($e->event_id);
@@ -215,6 +225,8 @@ final class Ingest
             }
             if ((int) $existing['active_seconds'] > $e->active_seconds || (int) $existing['idle_seconds'] > $e->idle_seconds) { return self::ack($e->snapshot_id, 'rejected', 'invalid_range'); }
         }
+        // Sin productividad ni presencia contratadas no se guarda el snapshot, pero se acusa como aceptado (sin reintentos).
+        if (!array_intersect(['productividad', 'presencia'], $this->functions())) { return self::ack($e->snapshot_id); }
         // Desglose horario y marcas del dia. Ausente = DESCONOCIDO, nunca cero: un agente
         // antiguo que no lo reporta no debe aparecer con una jornada de cero segundos.
         $extra = [];

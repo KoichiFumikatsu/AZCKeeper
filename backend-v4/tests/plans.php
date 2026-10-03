@@ -143,3 +143,49 @@ function planJobsTests(Database $db): void
     check($count() === 1, 'dual-job alert is created with cumplimiento');
     echo 'PASS plan jobs (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+// Fase 2b: el servidor no guarda lo que la persona no tiene contratado, pero acusa recibo igual (el agente no reintenta).
+function captureIngestTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tenant = $u['tenant_id'];
+    $key = keypair(); $token = enroll($db, $u, $key); policy($db, $token);
+    $device = Util::bin($token['device_id']); $bearer = $token['access_token'];
+    $db->run('UPDATE device_assignments SET starts_at=UTC_TIMESTAMP(6)-INTERVAL 2 DAY WHERE tenant_id=? AND device_id=?', [$tenant, $device]);
+    $n = 0;
+    $send = function (string $process, ?string $title) use ($key, $bearer, &$n): array {
+        $n++;
+        $e = ['event_id' => Util::uuid(), 'started_at' => gmdate('Y-m-d\TH:i:s\Z', time() - 3600 + $n * 120), 'ended_at' => gmdate('Y-m-d\TH:i:s\Z', time() - 3600 + $n * 120 + 60), 'process_name' => $process, 'active_seconds' => 50, 'idle_seconds' => 10];
+        if ($title !== null) { $e['window_title'] = $title; }
+        return [$e['event_id'], expect(request('POST', '/client/episodes:batch', ['episodes' => [$e]], $key, $bearer, Util::uuid()), 200, 'capture episode')['acks'][0]];
+    };
+    $row = fn (string $id) => $db->one('SELECT site FROM episodes WHERE tenant_id=? AND device_id=? AND event_id=?', [$tenant, $device, Util::bin($id)]);
+    $accepted = fn (array $ack, string $id) => $ack === ['event_id' => $id, 'status' => 'accepted', 'retryable' => false];
+    // (a) Plan Completo: el sitio del navegador se guarda.
+    [$id, $ack] = $send('chrome.exe', 'Recibidos - Gmail - Google Chrome');
+    check($accepted($ack, $id) && ($row($id)['site'] ?? null) !== null, 'full plan: browser episode stored with its site');
+    // (b) Sin sitios: el episodio se guarda, el sitio no.
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code IN ('sitios')", [$tenant]);
+    [$id, $ack] = $send('chrome.exe', 'Recibidos - Gmail - Google Chrome');
+    $stored = $row($id);
+    check($accepted($ack, $id) && $stored !== null && $stored['site'] === null, 'without sitios: episode stored, site NULL');
+    // (c) Sin productividad: se acusa igual que uno guardado, pero no queda fila.
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code IN ('productividad')", [$tenant]);
+    [$id, $ack] = $send('editor.exe', null);
+    check($accepted($ack, $id) && $row($id) === null, 'without productividad: episode acknowledged as accepted, not stored');
+    check(!$db->one('SELECT 1 FROM episode_ingest_keys WHERE tenant_id=? AND device_id=? AND event_id=?', [$tenant, $device, Util::bin($id)]), 'without productividad: no ledger row either');
+    // (d) Sin productividad ni presencia: el snapshot se acusa como aceptado sin guardarse.
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code IN ('presencia')", [$tenant]);
+    $snapshots = fn () => (int) $db->one('SELECT COUNT(*) n FROM activity_snapshots WHERE tenant_id=? AND device_id=?', [$tenant, $device])['n'];
+    $day = (new DateTimeImmutable('yesterday', new DateTimeZone('America/Bogota')))->format('Y-m-d');
+    $sync = ['protocol_version' => 1, 'sequence' => 1, 'policy_version' => null, 'release_id' => null,
+        'activity' => ['snapshot_id' => Util::uuid(), 'sequence' => 1, 'day' => $day, 'active_seconds' => 50, 'idle_seconds' => 10]];
+    $s = expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'capture snapshot without functions');
+    check($s['activity_ack'] === ['event_id' => $sync['activity']['snapshot_id'], 'status' => 'accepted', 'retryable' => false] && $snapshots() === 0, 'without productividad and presencia: snapshot acknowledged, not stored');
+    // (e) Con presencia (sin productividad): el snapshot se guarda.
+    $db->run("INSERT INTO tenant_features (tenant_id,feature_code) VALUES (?,'presencia')", [$tenant]);
+    $sync['sequence'] = 2; $sync['activity']['snapshot_id'] = Util::uuid(); $sync['activity']['sequence'] = 2;
+    $s = expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'capture snapshot with presencia');
+    check($s['activity_ack']['status'] === 'accepted' && $snapshots() === 1, 'with presencia only: snapshot stored');
+    echo 'PASS capture by contracted functions (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}
