@@ -226,3 +226,25 @@ function captureFlagsTests(Database $db): void
     check($capture->windows === false && $capture->window_titles === false && $capture->activity === false, 'inactive person captures nothing');
     echo 'PASS capture flags (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+// Al subir de version el agente (login de equipo ya registrado) se pide recompilar su politica: puede ganar la captura de 4.0.15.
+function agentUpgradeRecompileTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tenant = $u['tenant_id'];
+    $key = keypair(); $token = enroll($db, $u, $key);
+    $login = function (string $version) use ($token, $key): void {
+        $challenge = expect(request('POST', '/client/auth/challenges', ['device_id' => $token['device_id']]), 200, 'upgrade challenge');
+        expect(request('POST', '/client/login', ['device_id' => $token['device_id'], 'public_key' => $key[1], 'agent_version' => $version, 'hostname' => 'smoke-device'], $key, null, null, $challenge['nonce']), 200, 'upgrade login ' . $version);
+    };
+    $rows = fn () => (int) $db->one('SELECT COUNT(*) n FROM admin_policy_recompiles WHERE tenant_id=?', [$tenant])['n'];
+    $db->run('DELETE FROM admin_policy_recompiles WHERE tenant_id=?', [$tenant]);
+    $login('4.0.0');
+    check($rows() === 0, 'login with the same agent version requests no recompile');
+    $login('4.0.15');
+    check($rows() === 1, 'login with a new agent version requests a recompile');
+    $db->run('DELETE FROM admin_policy_recompiles WHERE tenant_id=?', [$tenant]);
+    $login('4.0.15');
+    check($rows() === 0, 'repeated login at the upgraded version requests nothing');
+    echo 'PASS agent upgrade recompile (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}

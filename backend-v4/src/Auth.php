@@ -71,7 +71,10 @@ final class Auth
                 $this->db->run('UPDATE enrollments SET status=\'consumed\',consumed_at=UTC_TIMESTAMP(6),device_id=? WHERE tenant_id=? AND id=?', [$device, $tenant, $i['id']]);
                 $this->db->run('INSERT INTO device_sync_state (tenant_id,device_id,enrollment_id,updated_at) VALUES (?,?,?,UTC_TIMESTAMP(6))', [$tenant, $device, $i['id']]);
             } else { $device = $i['id']; $keyId = $key['id']; }
+            // Si el agente cambio de version, su politica puede cambiar (p. ej. la captura de 4.0.15): se pide recompilar.
+            $previous = $this->db->one('SELECT agent_version FROM devices WHERE tenant_id=? AND id=?', [$tenant, $device])['agent_version'] ?? null;
             $this->db->run('UPDATE devices SET hostname=?,agent_version=?,last_seen_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?', [$r->body->hostname, $r->body->agent_version, $tenant, $device]);
+            if ($previous !== null && $previous !== $r->body->agent_version) { PersonPlans::markRecompile($this->db, $tenant); }
             $c = $this->deviceContext($tenant, $device, $keyId);
             $token = $this->issue($c);
             $action = $ticket ? ($i['device_id'] === null ? 'device.enrolled' : 'device.key_recovered') : 'device.login';
