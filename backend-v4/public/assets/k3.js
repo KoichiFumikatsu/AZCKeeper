@@ -916,7 +916,16 @@ async function people() {
       if (status && status.value !== u.status) payload.status = status.value;
       try {
         let saved = u ? await api('PATCH', `/users/${u.id}`, { body: payload, ifMatch: u.version }) : await api('POST', '/users', { body: payload });
-        if (planSel && (planSel.value || null) !== (u.plan_id || null)) saved = await api('PUT', `/users/${u.id}/plan`, { body: { plan_id: planSel.value || null }, ifMatch: saved.version });
+        // Desde aquí la persona ya está guardada: el estado local usa la versión nueva, para que un reintento no choque con un 412.
+        if (u) { list = list.map(x => x.id === u.id ? saved : x); u = saved; }
+        if (planSel && (planSel.value || null) !== (u.plan_id || null)) {
+          try { saved = await api('PUT', `/users/${u.id}/plan`, { body: { plan_id: planSel.value || null }, ifMatch: u.version }); list = list.map(x => x.id === u.id ? saved : x); u = saved; }
+          catch (e) {
+            const d = e.problem?.detail;
+            show('Los datos se guardaron, pero el plan no: ' + (d === 'unknown_plan' ? 'Ese plan está inactivo; actívalo o elige otro.' : e.status === 412 ? 'Alguien más la modificó: recarga la página.' : errorMessage(e)));
+            ok.disabled = false; render(); return;
+          }
+        }
         list = u ? list.map(x => x.id === u.id ? saved : x) : [...list, saved]; dialog.close(); render(); done();
       } catch (e) {
         const d = e.problem?.detail;
