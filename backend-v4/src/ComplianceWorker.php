@@ -17,6 +17,7 @@ final class ComplianceWorker
     }
     public function calculate(string $tenant,string $day): void
     {
+        if (!Features::has($this->db,$tenant,'cumplimiento')) { return; }
         $this->db->run('DELETE FROM suspicious_app_detections WHERE tenant_id=? AND day=?',[$tenant,$day]);
         $this->db->run("DELETE FROM dual_job_alerts WHERE tenant_id=? AND day=? AND source='worker' AND reviewed=FALSE",[$tenant,$day]);
         // Keep episodes first: MariaDB otherwise repeats a tenant scan for every assignment.

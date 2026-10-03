@@ -113,3 +113,33 @@ function planApiTests(Database $db): void
     $patch($proOff, true);
     echo 'PASS plan api (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+function planJobsTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tenant = $u['tenant_id'];
+    // Fuente REST nunca corrida: siempre vencida mientras el cliente tenga One.
+    $source = Util::bin(Util::uuid());
+    $db->run("INSERT INTO data_sources (tenant_id,id,name,kind,config_ciphertext,interval_minutes,active) VALUES (?,?,'plan jobs','rest','x',5,TRUE)", [$tenant, $source]);
+    $dueIds = fn () => array_map(fn ($d) => $d[0]['id'], (new Keeper\DataSync($db))->due());
+    check(in_array($source, $dueIds(), true), 'source is due while the client has One');
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='one'", [$tenant]);
+    check(!in_array($source, $dueIds(), true), 'source is not due without One');
+    $db->run("INSERT INTO tenant_features (tenant_id,feature_code) VALUES (?,'one')", [$tenant]);
+    check(in_array($source, $dueIds(), true), 'source is due again with One');
+    // Cumplimiento: un dia con 2 h registradas y 80 % inactivo genera la senal suspicious_idle.
+    $day = gmdate('Y-m-d');
+    $assignment = $db->one('SELECT id FROM user_assignments WHERE tenant_id=? AND user_id=?', [$tenant, $u['id']])['id'];
+    $db->run("INSERT INTO day_summary (tenant_id,day,user_id,user_assignment_id,active_seconds,idle_seconds,productive_seconds,expected_seconds,coverage_percent,productivity_percent,calculation_version,timezone,calculated_at,data_through) VALUES (?,?,?,?,1200,6000,0,0,0,0,'plan-jobs','America/Bogota',UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))", [$tenant, $day, $u['id'], $assignment]);
+    $count = fn () => (int) $db->one('SELECT COUNT(*) c FROM dual_job_alerts WHERE tenant_id=?', [$tenant])['c'];
+    // El worker de productividad deja listo este calendario temporal antes de llamar a cumplimiento.
+    Keeper\ActivityCalendar::create($db, $tenant, $day, gmdate('Y-m-d', time() + 86400));
+    $worker = new Keeper\ComplianceWorker($db);
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='cumplimiento'", [$tenant]);
+    $worker->calculate($tenant, $day);
+    check($count() === 0, 'no dual-job alerts without cumplimiento');
+    $db->run("INSERT INTO tenant_features (tenant_id,feature_code) VALUES (?,'cumplimiento')", [$tenant]);
+    $worker->calculate($tenant, $day);
+    check($count() === 1, 'dual-job alert is created with cumplimiento');
+    echo 'PASS plan jobs (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}

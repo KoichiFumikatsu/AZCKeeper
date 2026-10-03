@@ -568,7 +568,8 @@ final class DataSync
     public function due(): array
     {
         $out = [];
-        foreach ($this->db->run("SELECT s.* FROM data_sources s WHERE s.active=TRUE AND s.kind='rest' AND s.interval_minutes IS NOT NULL")->fetchAll() as $s) {
+        foreach ($this->db->run("SELECT s.* FROM data_sources s WHERE s.active=TRUE AND s.kind='rest' AND s.interval_minutes IS NOT NULL
+            AND EXISTS (SELECT 1 FROM tenant_features f WHERE f.tenant_id=s.tenant_id AND f.feature_code='one')")->fetchAll() as $s) {
             $tz = new \DateTimeZone($this->db->one('SELECT timezone FROM tenants WHERE tenant_id=?', [$s['tenant_id']])['timezone'] ?? 'UTC');
             $now = new \DateTimeImmutable('now', $tz);
             $fullAt = new \DateTimeImmutable($now->format('Y-m-d') . ' ' . $s['full_reconcile_local'], $tz);
