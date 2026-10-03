@@ -23,6 +23,7 @@ require __DIR__ . '/policy-exceptions.php';
 require __DIR__ . '/ops.php';
 require __DIR__ . '/group-structure.php';
 require __DIR__ . '/features.php';
+require __DIR__ . '/plans.php';
 
 use Keeper\{Config, Database, Util, Validator};
 
@@ -129,6 +130,8 @@ function secondTenant(Database $db): array
     $db->run("INSERT INTO principals (tenant_id,id,kind) VALUES (?,?,'system')", [$tenant, Util::bin(Util::uuid())]);
     // Clientes de prueba con todas las funciones (como los clientes existentes al migrar 0040).
     foreach (Keeper\Features::codes() as $code) { $db->run('INSERT INTO tenant_features (tenant_id,feature_code) VALUES (?,?)', [$tenant, $code]); }
+    // Plan por defecto de los clientes de prueba: "Completo" (como los clientes existentes al migrar 0041).
+    $db->run("UPDATE tenants SET default_plan_tenant_id=0x00000000000040008000000000000001, default_plan_id=(SELECT id FROM person_plans WHERE tenant_id=0x00000000000040008000000000000001 AND name='Completo') WHERE tenant_id=?", [$tenant]);
     return $db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$tenant, $user]);
 }
 
@@ -384,6 +387,7 @@ try {
     featureEnforcementTests($db);
     featureAdminTests($db);
     featureMenuTests($db);
+    planResolutionTests($db);
     featureExternalAndCommandTests($db);
     echo "SMOKE PASS: $checks assertions\n";
 } catch (Throwable $e) {

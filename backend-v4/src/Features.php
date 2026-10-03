@@ -37,7 +37,7 @@ final class Features
     /** Siempre incluido: no se vende aparte. */
     public const CORE_PERMISSIONS = ['empresas.ver', 'empresas.editar', 'equipos.ver', 'equipos.enrolar', 'equipos.asignar', 'equipos.editar', 'equipos.transferir',
         'horarios.ver', 'horarios.editar', 'organizacion.ver', 'organizacion.editar', 'usuarios.ver', 'roles.ver', 'reglas.ver', 'reglas.editar', 'reglas.aplicar',
-        'tiers.ver', 'operacion.ajustes_ver', 'operacion.ajustes_editar', 'operacion.logs', 'sesion'];
+        'tiers.ver', 'operacion.ajustes_ver', 'operacion.ajustes_editar', 'operacion.logs', 'sesion', 'planes.asignar'];
     /** Solo de la plataforma: nunca se vende (lo protege x-platform-only o el rol de superadmin). */
     public const PLATFORM_PERMISSIONS = ['empresas.gestionar', 'empresas.rbac_habilitar', 'releases.ver', 'releases.publicar', 'releases.desplegar',
         'migracion.ver', 'migracion.gestionar', 'migracion.recuperar', 'operacion.salud', 'tiers.gestionar'];
