@@ -110,6 +110,11 @@ final class PolicyComposer
         $document = (object) ['tenant_id' => $input['tenant_id'], 'device_id' => $input['device_id'], 'rules' => $rules,
             // Reserve the first slot for work; retain remaining schedules by tenant/UUID order.
             'schedules' => array_slice(array_merge($work === null ? [] : [$work], array_values($scheduleKeys)), 0, 100), 'composition' => $composition, 'management_hosts' => $managementHosts];
+        // Solo para agentes que la entienden (el compilador decide); entra al hash de composicion y cambia la version.
+        $capture = $input['capture'] ?? null;
+        if ($capture !== null) {
+            $document->capture = (object) ['windows' => (bool) $capture['windows'], 'window_titles' => (bool) $capture['window_titles'], 'activity' => (bool) $capture['activity']];
+        }
         $validator->named('EffectivePolicy', self::versioned($document, 1));
         return $document;
     }

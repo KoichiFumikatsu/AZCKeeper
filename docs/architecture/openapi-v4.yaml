@@ -16877,6 +16877,21 @@ components:
             type: string
             maxLength: 255
           maxItems: 30
+        capture:
+          type: object
+          additionalProperties: false
+          required:
+          - windows
+          - window_titles
+          - activity
+          properties:
+            windows:
+              type: boolean
+            window_titles:
+              type: boolean
+            activity:
+              type: boolean
+          description: Qué captura el agente según las funciones de la persona. Solo se envía a agentes 4.0.15 o posteriores.
       description: Sin PIN, secretos ni webhooks. Versión de toda la composición y compilador.
     Episode:
       type: object
@@ -19645,6 +19660,21 @@ components:
             type: string
             maxLength: 255
           maxItems: 30
+        capture:
+          type: object
+          additionalProperties: false
+          required:
+          - windows
+          - window_titles
+          - activity
+          properties:
+            windows:
+              type: boolean
+            window_titles:
+              type: boolean
+            activity:
+              type: boolean
+          description: Qué captura el agente según las funciones de la persona. Ausente para equipos con agente anterior a 4.0.15.
       description: Composicion actual resuelta, sin persistir una nueva version de equipo.
     MigrationAuthorizationInput:
       type: object

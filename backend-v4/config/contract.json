@@ -1,5 +1,5 @@
 {
-  "source_sha256": "f95f901430e95cfb245ff6d4decca55049d5edb15782aad5118f9cb0d93e6a91",
+  "source_sha256": "289ef3afc7ddde2d4aacfc910fbf74098a983e84dc69c7fa1be251a9f15d1d9c",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -22849,6 +22849,27 @@
             "maxLength": 255
           },
           "maxItems": 30
+        },
+        "capture": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "windows",
+            "window_titles",
+            "activity"
+          ],
+          "properties": {
+            "windows": {
+              "type": "boolean"
+            },
+            "window_titles": {
+              "type": "boolean"
+            },
+            "activity": {
+              "type": "boolean"
+            }
+          },
+          "description": "Qué captura el agente según las funciones de la persona. Solo se envía a agentes 4.0.15 o posteriores."
         }
       },
       "description": "Sin PIN, secretos ni webhooks. Versión de toda la composición y compilador."
@@ -26961,6 +26982,27 @@
             "maxLength": 255
           },
           "maxItems": 30
+        },
+        "capture": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "windows",
+            "window_titles",
+            "activity"
+          ],
+          "properties": {
+            "windows": {
+              "type": "boolean"
+            },
+            "window_titles": {
+              "type": "boolean"
+            },
+            "activity": {
+              "type": "boolean"
+            }
+          },
+          "description": "Qué captura el agente según las funciones de la persona. Ausente para equipos con agente anterior a 4.0.15."
         }
       },
       "description": "Composicion actual resuelta, sin persistir una nueva version de equipo."

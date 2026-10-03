@@ -189,3 +189,40 @@ function captureIngestTests(Database $db): void
     check($s['activity_ack']['status'] === 'accepted' && $snapshots() === 1, 'with presencia only: snapshot stored');
     echo 'PASS capture by contracted functions (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+// La politica le dice al agente 4.0.15+ que capturar segun las funciones de la persona; a los viejos no se les envia.
+function captureFlagsTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $input = fn (?array $capture) => ['tenant_id' => Util::uuid(), 'device_id' => Util::uuid(), 'functions' => [], 'capture' => $capture,
+        'assignments' => [['id' => Util::uuid(), 'scope' => 'tenant', 'priority' => 0, 'rules' => [], 'management_hosts' => []]], 'work_schedule' => null, 'rule_schedules' => []];
+    $doc = Keeper\PolicyComposer::compose($input(['windows' => false, 'window_titles' => false, 'activity' => true]));
+    check(isset($doc->capture) && $doc->capture->windows === false && $doc->capture->window_titles === false && $doc->capture->activity === true, 'composer emits capture when given');
+    check(!property_exists(Keeper\PolicyComposer::compose($input(null)), 'capture'), 'composer omits capture when null');
+    $u = secondTenant($db); $tenant = $u['tenant_id'];
+    $compiler = new Keeper\PolicyCompiler($db);
+    $compile = function (string $version) use ($db, $u, $tenant, $compiler): array {
+        $token = enroll($db, $u, keypair());
+        $db->run('UPDATE devices SET agent_version=? WHERE tenant_id=? AND id=?', [$version, $tenant, Util::bin($token['device_id'])]);
+        return [$token['device_id'], $compiler->recompile($token['device_id'])];
+    };
+    [, $old] = $compile('4.0.14');
+    check(!property_exists(compilerDocument($db, $old), 'capture'), 'agent 4.0.14 gets no capture');
+    [$deviceId, $new] = $compile('4.0.15');
+    $capture = compilerDocument($db, $new)->capture ?? null;
+    check($capture !== null && $capture->windows === true && $capture->window_titles === true && $capture->activity === true, 'agent 4.0.15 gets capture, full plan captures everything');
+    // Quitar sitios cambia la captura y por tanto la version de la politica.
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='sitios'", [$tenant]);
+    $next = $compiler->recompile($deviceId);
+    $capture = compilerDocument($db, $next)->capture ?? null;
+    check($next['changed'] && $next['policy_version'] > $new['policy_version'] && $capture->windows === true && $capture->window_titles === false, 'capture change publishes a new policy version');
+    // Solo presencia: actividad sin ventanas.
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='productividad'", [$tenant]);
+    $capture = compilerDocument($db, $compiler->recompile($deviceId))->capture ?? null;
+    check($capture->windows === false && $capture->window_titles === false && $capture->activity === true, 'presencia only: activity without windows');
+    // Persona inactiva: nada.
+    $db->run("UPDATE users SET status='inactive' WHERE tenant_id=? AND id=?", [$tenant, $u['id']]);
+    $capture = compilerDocument($db, $compiler->recompile($deviceId))->capture ?? null;
+    check($capture->windows === false && $capture->window_titles === false && $capture->activity === false, 'inactive person captures nothing');
+    echo 'PASS capture flags (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}

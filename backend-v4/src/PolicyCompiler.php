@@ -134,6 +134,12 @@ final class PolicyCompiler
         $assignments = []; $ruleSchedules = [];
         // Antes de 4.0.13 el agente rechaza campos desconocidos en la politica: no se le envian franjas por dia.
         $dayHours = $device === null || version_compare((string) ($d['agent_version'] ?? '0'), '4.0.13', '>=');
+        // Desde 4.0.15 la politica le dice al agente que capturar segun las funciones de la persona (inactiva: [] y nada).
+        $capture = null;
+        if ($device === null || version_compare((string) ($d['agent_version'] ?? '0'), '4.0.15', '>=')) {
+            $has = static fn (string $f): bool => in_array($f, $functions, true);
+            $capture = ['windows' => $has('productividad'), 'window_titles' => $has('productividad') && $has('sitios'), 'activity' => $has('productividad') || $has('presencia')];
+        }
         foreach ($rows as $row) {
             $document = json_decode($row['document'], false, 64, JSON_THROW_ON_ERROR);
             if (!isset($document->rules) || !is_array($document->rules)) { throw new \RuntimeException('Published policy requires rules'); }
@@ -154,7 +160,7 @@ final class PolicyCompiler
             }
             $assignments[] = ['id' => Util::id($row['id']), 'scope' => $row['scope'], 'priority' => (int) $row['priority'], 'rules' => $rules, 'management_hosts' => $hosts];
         }
-        return ['tenant_id' => Util::id($tenant), 'device_id' => Util::id($device??$userId), 'reported_version' => (int) $d['policy_version'], 'functions' => $functions, 'assignments' => $assignments, 'work_schedule' => $this->schedule($tenant, $org['schedule_id'], $dayHours), 'rule_schedules' => $ruleSchedules];
+        return ['tenant_id' => Util::id($tenant), 'device_id' => Util::id($device??$userId), 'reported_version' => (int) $d['policy_version'], 'functions' => $functions, 'capture' => $capture, 'assignments' => $assignments, 'work_schedule' => $this->schedule($tenant, $org['schedule_id'], $dayHours), 'rule_schedules' => $ruleSchedules];
     }
 
     private function current(string $table, string $owner, string $tenant, string $id, string $at): ?array
