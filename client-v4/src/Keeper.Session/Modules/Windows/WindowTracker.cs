@@ -74,12 +74,15 @@ public sealed class WindowTracker(IForegroundSource source, ActivityTracker acti
     }
     private async Task CloseAsync(CancellationToken ct)
     {
-        if (_window is not null && _end > _start && _active + _idle >= 1)
+        // Captura indicada por la politica (4.0.15). Sin `capture` (servidor viejo o politica sin recompilar) se
+        // captura todo, como antes. El titulo se sigue leyendo en local (CallDetector), solo no sale del equipo.
+        var capture = Policy?.Capture;
+        if (_window is not null && _end > _start && _active + _idle >= 1 && capture?.Windows != false)
         {
             await Context.Outbox.EnqueueAsync(new Episode
             {
                 EventId = Guid.NewGuid(), StartedAt = _start, EndedAt = _end,
-                ProcessName = _window.ProcessName, WindowTitle = _window.Title,
+                ProcessName = _window.ProcessName, WindowTitle = capture?.WindowTitles == false ? null : _window.Title,
                 ActiveSeconds = (long)_active, IdleSeconds = (long)_idle,
                 // Un episodio nunca cruza de franja (se corta al cambiar _category), asi que su franja es unica.
                 TimeCategory = _category switch

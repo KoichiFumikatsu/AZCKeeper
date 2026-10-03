@@ -412,6 +412,70 @@ public sealed class TrackingTests
         Assert.Contains(buffer.Response(Guid.NewGuid(), null).Logs, l => l.Code == "buffer_full");
     }
 
+    // Captura indicada por la politica (agente 4.0.15). Sin `capture` (servidor viejo o politica sin recompilar) se
+    // captura todo, como antes.
+    private static Keeper.Shared.Policy.EffectivePolicyCapture Capture(bool windows = true, bool titles = true, bool activity = true) =>
+        new() { Windows = windows, WindowTitles = titles, Activity = activity };
+
+    private static async Task<CapturedEvents> RunWindowsAsync(Keeper.Shared.Policy.EffectivePolicyCapture? capture)
+    {
+        var clock = new TrackingClock("2026-09-14T10:00:00Z");
+        var events = new CapturedEvents();
+        var activity = new ActivityTracker(new IdleInput());
+        var foreground = new Foreground { Window = new("chrome", "Banco - Mi cuenta") };
+        var windows = new WindowTracker(foreground, activity);
+        var policy = Samples.Policy() with { Capture = capture };
+        await activity.InitAsync(Context(clock, events)); await windows.InitAsync(Context(clock, events));
+        await activity.ApplyPolicyAsync(policy); await windows.ApplyPolicyAsync(policy);
+        clock.Advance(3); await activity.TickAsync(default); await windows.TickAsync(default);
+        foreground.Window = new("editor", "informe.docx");
+        clock.Advance(2); await activity.TickAsync(default); await windows.TickAsync(default);
+        clock.Advance(2); await activity.TickAsync(default); await windows.TickAsync(default);
+        await windows.ShutdownAsync();
+        return events;
+    }
+
+    [Fact]
+    public async Task WithoutCaptureEpisodesKeepTheirTitles()
+    {
+        var events = await RunWindowsAsync(null);
+        Assert.Equal(2, events.Episodes.Count);
+        Assert.Equal("Banco - Mi cuenta", events.Episodes[0].WindowTitle);
+        Assert.Equal("informe.docx", events.Episodes[1].WindowTitle);
+    }
+
+    [Fact]
+    public async Task CaptureWithoutWindowsQueuesNoEpisodes()
+    {
+        var events = await RunWindowsAsync(Capture(windows: false, titles: false));
+        Assert.Empty(events.Episodes);
+    }
+
+    [Fact]
+    public async Task CaptureWithoutTitlesKeepsProcessButDropsTitle()
+    {
+        var events = await RunWindowsAsync(Capture(titles: false));
+        Assert.Equal(["chrome", "editor"], events.Episodes.Select(e => e.ProcessName));
+        Assert.All(events.Episodes, e => Assert.True(string.IsNullOrEmpty(e.WindowTitle)));
+    }
+
+    [Theory]
+    [InlineData(null, 1)]
+    [InlineData(true, 1)]
+    [InlineData(false, 0)]
+    public async Task ActivitySnapshotIsSentOnlyWhenCaptureAllowsIt(bool? allowed, int expected)
+    {
+        var clock = new TrackingClock("2026-09-14T10:00:00Z");
+        var events = new CapturedEvents();
+        var tracker = new ActivityTracker(new IdleInput());
+        await tracker.InitAsync(Context(clock, events));
+        await tracker.ApplyPolicyAsync(Samples.Policy() with { Capture = allowed is null ? null : Capture(activity: allowed.Value) });
+        clock.Advance(3); await tracker.TickAsync(default);
+        Assert.Equal(expected, events.Activity.Count);
+        // El conteo local sigue: bloqueo, inactividad y presencia dependen de el.
+        Assert.Equal(3, tracker.Days.Values.Single().Active);
+    }
+
     private static ModuleContext Context(TimeProvider clock, CapturedEvents? events = null) => new(events ?? new(), clock, _ => { }, default);
     private sealed class IdleInput : IInputIdleSource { public double Seconds { get; set; } public TimeSpan GetIdleTime() => TimeSpan.FromSeconds(Seconds); }
     private sealed class Foreground : IForegroundSource { public ForegroundWindow? Window { get; set; } public ForegroundWindow? Read() => Window; }

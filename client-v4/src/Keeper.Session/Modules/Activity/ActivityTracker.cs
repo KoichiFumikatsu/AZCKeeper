@@ -163,7 +163,10 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
 
         // Se publica el dia que acaba de moverse, y tambien el anterior cuando el tick cruza
         // medianoche: de lo contrario el ultimo tramo del dia viejo no llegaria nunca.
-        foreach (var day in intervals.Select(i => Schedule.Day(i.Start)).Distinct())
+        // Con capture.activity=false el resumen no sale del equipo; el conteo local sigue (bloqueo, inactividad y
+        // presencia lo usan). Sin `capture` se envia como antes.
+        var sent = Policy?.Capture?.Activity == false ? [] : intervals.Select(i => Schedule.Day(i.Start)).Distinct();
+        foreach (var day in sent)
         {
             var snapshot = Snapshot(day, NextSequence());
             if (snapshot is not null) await Context.Outbox.EnqueueAsync(snapshot, ct);
