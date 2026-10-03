@@ -144,7 +144,8 @@ final class AdminApi
             'listDoors','createDoor','patchDoor','getDoorQuarantine'=>(new DoorsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getMyAccess'=>$this->myAccess(),
-            'listFeatures','listFeaturePackages','createFeaturePackage','patchFeaturePackage','getTenantFeatures','putTenantFeatures'=>(new FeatureAdmin($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
+            'setUserPlan'=>$this->userPlan($id,$b),
+            'listFeatures','listFeaturePackages','createFeaturePackage','patchFeaturePackage','getTenantFeatures','putTenantFeatures','listPersonPlans','createPersonPlan','patchPersonPlan','getTenantPlanUsage'=>(new FeatureAdmin($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
             'purgeTenant'=>$this->purgeTenant($b),
             'listCompanyGroups','createCompanyGroup','patchCompanyGroup','deleteCompanyGroup'=>(new CompanyGroups($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
             'listDataSources','createDataSource','patchDataSource','getDataDomains','putDataDomains','runDataSource','listSyncRuns','listSyncItems','approveSyncRun','listPendingSyncItems','resolveSyncItem'=>(new DataSources($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
@@ -295,6 +296,16 @@ final class AdminApi
         $this->audit('org_unit',$id,array_keys($values)); $this->dirty();
         return $this->result($this->orgDto($this->row('org_units',$id)),$op==='createOrgUnit'?201:200);
     }
+    /** Plan propio de una persona (null = el por defecto de su cliente). */
+    private function userPlan(string $id, object $b): array
+    {
+        $this->access->user($id); $old=$this->row('users',$id); $this->match($old);
+        $plan=$b->plan_id===null?null:Util::bin($b->plan_id);
+        if ($plan!==null && !$this->db->one('SELECT id FROM person_plans WHERE tenant_id=? AND id=? AND active=TRUE',[Util::bin(AdminAuth::PLATFORM),$plan])) { throw new ApiError(422,'validation_failed',[],'unknown_plan'); }
+        $this->db->run('UPDATE users SET plan_tenant_id=?,plan_id=?,version=version+1 WHERE tenant_id=? AND id=?',[$plan===null?null:Util::bin(AdminAuth::PLATFORM),$plan,$this->tenant,$id]);
+        $this->audit('user',$id,['plan_id']); $this->dirty($this->userDevices($id));
+        return $this->result($this->userDto($this->row('users',$id)));
+    }
     private function userDto(array $r): array
     {
         $roles=$this->db->run('SELECT ur.role_id FROM user_roles ur JOIN roles r ON r.tenant_id=ur.tenant_id AND r.id=ur.role_id AND r.active=TRUE WHERE ur.tenant_id=? AND ur.user_id=? ORDER BY ur.role_id',[$this->tenant,$r['id']])->fetchAll();
@@ -303,6 +314,7 @@ final class AdminApi
         foreach (['firm_id','site_id','area_id','position_id','schedule_id','company_id','holiday_calendar_id'] as $f) { $out[$f]=$r[$f]===null?null:Util::id($r[$f]); }
         // Cedula: la cargada en v4 ('document') o, si no hay, la importada de K3 ('k3:cc').
         $doc=$this->db->one("SELECT external_ref FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source IN ('document','k3:cc') ORDER BY source='document' DESC LIMIT 1",[$this->tenant,$r['id']]);
+        $out['plan_id']=$r['plan_id']===null?null:Util::id($r['plan_id']);
         $out['document']=$doc['external_ref']??null;
         $out['managed_by']=DataSources::managedBy($this->db,$this->tenant,$r['id']);
         $out['reports_to_user_id']=$r['reports_to_user_id']===null?null:Util::id($r['reports_to_user_id']);

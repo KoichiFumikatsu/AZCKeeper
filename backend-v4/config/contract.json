@@ -1,5 +1,5 @@
 {
-  "source_sha256": "5005821e813939dd4ccb5c2e9c7bc66da020f5dc443356ea5803d583b2e5b1ba",
+  "source_sha256": "f95f901430e95cfb245ff6d4decca55049d5edb15782aad5118f9cb0d93e6a91",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -3028,6 +3028,316 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/FeaturePackageInput"
+              }
+            }
+          }
+        },
+        "x-permission": "empresas.gestionar",
+        "x-platform-only": true,
+        "x-max-body-bytes": 16384
+      }
+    },
+    "/person-plans": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "listPersonPlans",
+        "summary": "Planes por persona",
+        "description": "Planes por persona con el numero de personas activas que los usan.",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Solo plataforma autenticada.",
+        "x-resources": [
+          "PersonPlan"
+        ],
+        "responses": {
+          "200": {
+            "description": "Planes por persona",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonPlanList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "x-permission": "empresas.gestionar",
+        "x-platform-only": true
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "createPersonPlan",
+        "summary": "Crear plan por persona",
+        "description": "Nombre, etiqueta y funciones del plan.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Solo plataforma autenticada.",
+        "x-resources": [
+          "PersonPlan"
+        ],
+        "responses": {
+          "201": {
+            "description": "Crear plan por persona",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonPlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonPlanInput"
+              }
+            }
+          }
+        },
+        "x-permission": "empresas.gestionar",
+        "x-platform-only": true,
+        "x-max-body-bytes": 16384
+      }
+    },
+    "/person-plans/{id}": {
+      "patch": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "patchPersonPlan",
+        "summary": "Editar plan por persona",
+        "description": "Editar un plan cambia las funciones de todas las personas que lo usan.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Solo plataforma autenticada.",
+        "x-resources": [
+          "PersonPlan"
+        ],
+        "responses": {
+          "200": {
+            "description": "Editar plan por persona",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonPlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonPlanInput"
               }
             }
           }
@@ -10417,6 +10727,125 @@
         "x-max-body-bytes": 65536
       }
     },
+    "/users/{id}/plan": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "setUserPlan",
+        "summary": "Asignar plan propio a una persona",
+        "description": "Plan propio de la persona o null para volver al plan por defecto del cliente. Requiere If-Match de la persona.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [
+          "User",
+          "AuditEntry"
+        ],
+        "responses": {
+          "200": {
+            "description": "Asignar plan propio a una persona",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string",
+                  "maxLength": 160
+                },
+                "description": "Versión de recurso."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPlanInput"
+              }
+            }
+          }
+        },
+        "x-permission": "planes.asignar",
+        "x-max-body-bytes": 65536
+      }
+    },
     "/ext/v1/members/{id}": {
       "servers": [
         {
@@ -15177,6 +15606,103 @@
         "x-permission": "empresas.gestionar",
         "x-platform-only": true,
         "x-max-body-bytes": 16384
+      }
+    },
+    "/tenants/{id}/plan-usage": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "getTenantPlanUsage",
+        "summary": "Uso de planes del cliente",
+        "description": "Personas activas del cliente agrupadas por su plan efectivo.",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Solo plataforma autenticada.",
+        "x-resources": [
+          "PlanUsage"
+        ],
+        "responses": {
+          "200": {
+            "description": "Uso de planes del cliente",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanUsage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "x-permission": "empresas.gestionar",
+        "x-platform-only": true
       }
     },
     "/tenants/{id}/logo": {
@@ -25481,6 +26007,158 @@
         }
       }
     },
+    "PersonPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "badge_label",
+        "features",
+        "active",
+        "people",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "badge_label": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "features": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "people": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "PersonPlanInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "badge_label",
+        "features",
+        "active"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "badge_label": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "features": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "active": {
+          "type": "boolean"
+        }
+      }
+    },
+    "PersonPlanList": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data"
+      ],
+      "properties": {
+        "data": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "$ref": "#/components/schemas/PersonPlan"
+          }
+        }
+      }
+    },
+    "PlanUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default_plan_id",
+        "data"
+      ],
+      "properties": {
+        "default_plan_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "data": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "plan_id",
+              "name",
+              "people"
+            ],
+            "properties": {
+              "plan_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "people": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
     "Policy": {
       "type": "object",
       "additionalProperties": false,
@@ -28097,7 +28775,8 @@
       "required": [
         "package_id",
         "package_name",
-        "features"
+        "features",
+        "default_plan_id"
       ],
       "properties": {
         "package_id": {
@@ -28129,6 +28808,17 @@
             "type": "string",
             "maxLength": 40
           }
+        },
+        "default_plan_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -28159,6 +28849,17 @@
             "type": "string",
             "maxLength": 40
           }
+        },
+        "default_plan_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -28445,6 +29146,18 @@
             }
           ],
           "description": "Calendario de festivos propio. Vacío = el del país de su sede."
+        },
+        "plan_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Plan propio de la persona. Null = el plan por defecto de su cliente."
         },
         "reports_to_user_id": {
           "anyOf": [
@@ -28905,6 +29618,26 @@
           "enum": [
             "active",
             "inactive"
+          ]
+        }
+      }
+    },
+    "UserPlanInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plan_id"
+      ],
+      "properties": {
+        "plan_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }

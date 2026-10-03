@@ -59,3 +59,35 @@ function planCompileTests(Database $db): void
     check(Keeper\PolicyComposer::compose($input([]))->rules === [], 'no functions, no sellable rules');
     echo 'PASS plan compile (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+function planApiTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tid = Util::id($u['tenant_id']);
+    $platform = sharedPlatform($db); $platform['tenant'] = $u['tenant_id'];
+    $pro = expect(adminRequest($platform, 'POST', '/person-plans', ['name' => 'Pro ' . substr(Util::uuid(), 0, 6), 'badge_label' => 'Pro', 'features' => ['productividad', 'usb', 'web'], 'active' => true]), 201, 'create plan');
+    check($pro['features'] === ['productividad', 'usb', 'web'] && $pro['people'] === 0, 'plan stored');
+    check(adminRequest($platform, 'POST', '/person-plans', ['name' => 'Malo', 'badge_label' => '', 'features' => ['festivos'], 'active' => true])[1]['detail'] === 'not_person_feature:festivos', 'client-level functions rejected in plans');
+    $features = expect(adminRequest($platform, 'GET', '/tenants/' . $tid . '/features'), 200, 'client functions');
+    check($features['default_plan_id'] !== null, 'client has a default plan');
+    $set = expect(adminRequest($platform, 'PUT', '/tenants/' . $tid . '/features', ['package_id' => null, 'features' => $features['features'], 'default_plan_id' => $pro['id']]), 200, 'set default plan');
+    check($set['default_plan_id'] === $pro['id'], 'default plan stored');
+    $usage = expect(adminRequest($platform, 'GET', '/tenants/' . $tid . '/plan-usage'), 200, 'usage');
+    check($usage['default_plan_id'] === $pro['id'] && $usage['data'][0]['plan_id'] === $pro['id'] && $usage['data'][0]['people'] === 1, 'person counted under the default plan');
+    // Plan propio de una persona, con permiso planes.asignar.
+    $admin = adminFixture($db, $u, ['usuarios.ver', 'planes.asignar'], false);
+    $basic = expect(adminRequest($platform, 'POST', '/person-plans', ['name' => 'Básico ' . substr(Util::uuid(), 0, 6), 'badge_label' => 'B', 'features' => ['productividad'], 'active' => true]), 201, 'second plan');
+    $person = expect(adminRequest($admin, 'GET', '/users/' . Util::id($u['id'])), 200, 'person');
+    $moved = expect(adminRequest($admin, 'PUT', '/users/' . $person['id'] . '/plan', ['plan_id' => $basic['id']], ['if-match' => '"' . $person['version'] . '"']), 200, 'assign own plan');
+    check($moved['plan_id'] === $basic['id'], 'person shows own plan');
+    check(Keeper\PersonPlans::functions($db, $u['tenant_id'], $u['id']) === ['productividad'], 'own plan applies');
+    $back = expect(adminRequest($admin, 'PUT', '/users/' . $person['id'] . '/plan', ['plan_id' => null], ['if-match' => '"' . $moved['version'] . '"']), 200, 'back to default');
+    check($back['plan_id'] === null, 'back to client default');
+    $noPerm = adminFixture($db, adminMember($db, $u), ['usuarios.ver'], false);
+    check(adminRequest($noPerm, 'PUT', '/users/' . $person['id'] . '/plan', ['plan_id' => $basic['id']], ['if-match' => '"' . $back['version'] . '"'])[0] === 403, 'assigning plans needs planes.asignar');
+    $edited = expect(adminRequest(sharedPlatform($db), 'PATCH', '/person-plans/' . $pro['id'], ['name' => $pro['name'], 'badge_label' => 'Pro', 'features' => ['productividad', 'web'], 'active' => true], ['if-match' => '"' . $pro['version'] . '"']), 200, 'edit plan');
+    check($edited['features'] === ['productividad', 'web'], 'plan edited');
+    check((bool) $db->one('SELECT tenant_id FROM admin_policy_recompiles WHERE tenant_id=?', [$u['tenant_id']]), 'clients using the plan get recompiled');
+    check(adminRequest($admin, 'GET', '/person-plans')[0] === 403, 'plans catalog is platform-only');
+    echo 'PASS plan api (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}
