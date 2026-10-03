@@ -146,7 +146,7 @@ final class ExternalApi
     private function activity(): array
     {
         $titles=($_GET['include_titles']??'false')==='true';
-        if ($titles && !Features::has($this->db,$this->tenant,'titulos')) { throw new ApiError(403,'insufficient_scope',[],'feature_not_contracted:titulos'); }
+        if ($titles && !Features::has($this->db,$this->tenant,'sitios')) { throw new ApiError(403,'insufficient_scope',[],'feature_not_contracted:sitios'); }
         $sql='SELECT event_id,device_id,started_at,ended_at,process_name,active_seconds,idle_seconds,received_at'.($titles?',window_title':'').' FROM episodes WHERE tenant_id=? AND user_id=? AND event_date>=? AND event_date<=? AND started_at>=? AND started_at<?';
         return $this->page($sql,[$this->tenant,$this->member['id'],substr($this->start,0,10),substr($this->end,0,10),$this->start,$this->end],static fn($rows)=>array_map(static function($r) use ($titles) {
             $out=['event_id'=>Util::id($r['event_id']),'started_at'=>Util::time($r['started_at']),'ended_at'=>Util::time($r['ended_at']),'process_name'=>$r['process_name'],'active_seconds'=>(int)$r['active_seconds'],'idle_seconds'=>(int)$r['idle_seconds']];

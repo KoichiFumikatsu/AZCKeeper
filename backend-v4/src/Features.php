@@ -11,7 +11,7 @@ final class Features
 {
     public const CATALOG = [
         'productividad' => ['name' => 'Actividad y productividad', 'group' => 'Monitoreo y productividad', 'level' => 'person', 'ops' => [], 'permissions' => ['reportes.ver', 'actividad.ver'], 'rules' => [], 'pending' => false],
-        'titulos' => ['name' => 'Títulos de ventana', 'group' => 'Monitoreo y productividad', 'level' => 'person', 'ops' => [], 'permissions' => ['actividad.titulos_ver'], 'rules' => [], 'pending' => false],
+        'sitios' => ['name' => 'Sitios web visitados', 'group' => 'Monitoreo y productividad', 'level' => 'person', 'ops' => [], 'permissions' => ['actividad.titulos_ver'], 'rules' => [], 'pending' => false],
         'clasificacion' => ['name' => 'Clasificación de apps propia', 'group' => 'Monitoreo y productividad', 'level' => 'client', 'ops' => [], 'permissions' => ['actividad.clasificar'], 'rules' => [], 'pending' => false],
         'presencia' => ['name' => 'Presencia y puntualidad', 'group' => 'Presencia', 'level' => 'person', 'ops' => ['getPresenceReport'], 'permissions' => ['presencia.ver'], 'rules' => [], 'pending' => false],
         'festivos' => ['name' => 'Festivos por país', 'group' => 'Presencia', 'level' => 'client', 'ops' => [], 'permissions' => ['festivos.ver', 'festivos.editar'], 'rules' => [], 'pending' => false],

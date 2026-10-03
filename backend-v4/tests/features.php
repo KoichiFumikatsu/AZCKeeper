@@ -7,6 +7,7 @@ function featureCatalogTests(Database $db): void
 {
     $before = $GLOBALS['checks'];
     check(count(Features::CATALOG) === 23, 'catalog has 23 functions');
+    check(isset(Features::CATALOG['sitios']) && !isset(Features::CATALOG['titulos']) && Features::CATALOG['sitios']['name'] === 'Sitios web visitados', 'titles function is now visited websites');
     // Todo permiso existente pertenece a una funcion, al nucleo o a la plataforma (nunca a dos).
     $byFeature = array_merge(...array_values(array_map(fn ($f) => $f['permissions'], Features::CATALOG)));
     foreach ($db->run('SELECT code FROM permissions')->fetchAll() as $p) {
@@ -80,9 +81,9 @@ function featureExternalAndCommandTests(Database $db): void
     check(externalRequest('/ext/v1/tiers', $key['headers'])[0] === 200, 'external API works while contracted');
     check(externalRequest($activity . '&include_titles=true', $key['headers'])[0] === 200, 'titles served while contracted');
     check(externalRequest('/ext/v1/members/' . $uid . '/check-ins' . $range . '&include_location=true', $key['headers'])[0] === 200, 'location served while contracted');
-    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code IN ('titulos','ubicacion','borrado')", [$tenant]);
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code IN ('sitios','ubicacion','borrado')", [$tenant]);
     $titles = externalRequest($activity . '&include_titles=true', $key['headers']);
-    check($titles[0] === 403 && $titles[1]['detail'] === 'feature_not_contracted:titulos', 'titles need the titulos function');
+    check($titles[0] === 403 && $titles[1]['detail'] === 'feature_not_contracted:sitios', 'titles need the sitios function');
     check(externalRequest($activity, $key['headers'])[0] === 200, 'activity without titles still works');
     $loc = externalRequest('/ext/v1/members/' . $uid . '/check-ins' . $range . '&include_location=true', $key['headers']);
     check($loc[0] === 403 && $loc[1]['detail'] === 'feature_not_contracted:ubicacion', 'location needs the ubicacion function');
