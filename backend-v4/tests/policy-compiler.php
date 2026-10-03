@@ -161,9 +161,14 @@ function policyCompilerTests(Database $db): void
     check(!in_array('web', $kindsOf(compilerDocument($db, $compiler->recompile($token['device_id']))), true), 'plan (d) client without web drops web although the plan has it');
     $db->run("INSERT INTO tenant_features (tenant_id,feature_code) VALUES (?,'web')", [$tenant]);
     $db->run('UPDATE users SET plan_tenant_id=NULL, plan_id=NULL WHERE tenant_id=? AND id=?', [$tenant, $user['id']]);
+    $coreAssignment = compilerAssign($db, $tenant, compilerPublish($db, $tenant, [compilerRule('deny', ['core-os.test'], 0, 'os')]), 'device', $device, 506);
+    $db->run('UPDATE tenants SET default_plan_tenant_id=NULL,default_plan_id=NULL WHERE tenant_id=?', [$tenant]);
+    check($kindsOf(compilerDocument($db, $compiler->recompile($token['device_id']))) === ['os'], 'plan (f) active person without any plan still gets core rules but no sellable ones');
+    $db->run('UPDATE tenants SET default_plan_tenant_id=?,default_plan_id=? WHERE tenant_id=?', [$planPlatform, $fullPlan, $tenant]);
     $db->run("UPDATE users SET status='inactive' WHERE tenant_id=? AND id=?", [$tenant, $user['id']]);
-    check(compilerDocument($db, $compiler->recompile($token['device_id']))->rules === [], 'plan (e) inactive person compiles no sellable rules');
+    check(compilerDocument($db, $compiler->recompile($token['device_id']))->rules === [], 'plan (e) inactive person compiles no rules at all, core included');
     $db->run("UPDATE users SET status='active' WHERE tenant_id=? AND id=?", [$tenant, $user['id']]);
+    $db->run('UPDATE policy_assignments SET enabled=FALSE WHERE tenant_id=? AND id=?', [$tenant, $coreAssignment]);
     $db->run('UPDATE policy_assignments SET enabled=FALSE WHERE tenant_id=? AND id=?', [$tenant, $planAssignment]);
     check(PolicyComposer::canonical(compilerDocument($db, $compiler->recompile($token['device_id']))->rules) === PolicyComposer::canonical($priorityDoc->rules), 'restored full plan compiles the prior rules again');
 

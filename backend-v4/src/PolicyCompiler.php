@@ -128,6 +128,7 @@ final class PolicyCompiler
         }
         // Funciones de la persona: las que su cliente compro y su plan (propio o el por defecto del cliente) incluye.
         $functions = PersonPlans::functions($this->db, $tenant, $userId);
+        $inactive = ($user['status'] ?? null) !== 'active';
         $platform = Util::bin(self::PLATFORM);
         $rows = $this->db->run("SELECT a.*,v.document FROM policy_assignments a JOIN policy_documents p ON p.tenant_id=a.tenant_id AND p.id=a.policy_id AND p.enabled=TRUE JOIN policy_versions v ON v.tenant_id=a.tenant_id AND v.policy_id=a.policy_id AND v.policy_version=a.policy_version WHERE a.enabled=TRUE AND ((a.tenant_id=? AND a.scope='global') OR (a.tenant_id=? AND (a.scope='tenant' OR (a.scope='area' AND a.area_id=?) OR (a.scope='site' AND a.site_id=?) OR (a.scope='user' AND a.user_id=?) OR (a.scope='device' AND a.device_id=?))))", [$platform, $tenant, $org['area_id'], $org['site_id'], $userId, $device])->fetchAll();
         $assignments = []; $ruleSchedules = [];
@@ -141,6 +142,8 @@ final class PolicyCompiler
                 $rules[] = (object) ['id' => Util::id($r['id']), 'kind' => $r['kind'], 'effect' => $r['effect'], 'targets' => json_decode($r['targets'], false, 64, JSON_THROW_ON_ERROR), 'schedule_id' => $r['schedule_id'] === null ? null : Util::id($r['schedule_id']), 'priority' => (int) $r['priority']];
             }
             if ($this->normalizedRules($rules) !== $this->normalizedRules($document->rules)) { throw new \RuntimeException('Published document and policy_rules disagree'); }
+            // Una persona inactiva no recibe ninguna regla (tampoco las de nucleo); se valida la publicacion antes de vaciarla.
+            if ($inactive) { $rules = []; }
             $hosts = $document->management_hosts ?? [];
             $this->validator->check(['type' => 'array', 'maxItems' => 30, 'items' => ['type' => 'string', 'maxLength' => 255]], $hosts);
             foreach ($rules as $rule) {
