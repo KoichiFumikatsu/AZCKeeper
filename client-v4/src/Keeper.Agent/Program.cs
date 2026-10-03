@@ -104,7 +104,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         await using var modules = new ModuleHost(moduleList, context);
         hostReference = modules;
         await modules.InitAsync();
-        policy = new PolicyCoordinator(new SignedFilePolicyStore(Path.Combine(dataDirectory, Keeper.Shared.Contracts.AgentDataFiles.PolicyCache), key), modules, deviceId);
+        policy = new PolicyCoordinator(new SignedFilePolicyStore(Path.Combine(dataDirectory, Keeper.Shared.Contracts.AgentDataFiles.PolicyCache), key, Log), modules, deviceId);
         await policy.RestoreAsync(stoppingToken);
         var localPolicy = Environment.GetEnvironmentVariable("KEEPER_POLICY_FILE");
         if (localPolicy is not null)

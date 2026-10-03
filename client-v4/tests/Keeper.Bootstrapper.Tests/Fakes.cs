@@ -39,6 +39,7 @@ internal sealed class FakeMachine : IServiceControl, ISystemPaths, IRegistryStor
         Guid.Parse("11111111-1111-1111-1111-111111111111"), Guid.Parse("22222222-2222-2222-2222-222222222222"));
     public List<string> Payload { get; } = ["Keeper.Agent.exe", "coreclr.dll", "clrjit.dll"];
     public List<string> Mutations { get; } = [];
+    public Action? OnStart { get; set; }
     public HashSet<string> Directories { get; } = [];
     public Dictionary<string, string> Files { get; } = [];
     public HashSet<string> RegistryTrees { get; } = [];
@@ -73,7 +74,7 @@ internal sealed class FakeMachine : IServiceControl, ISystemPaths, IRegistryStor
     {
         Assert.Equal(Service!.Name, name);
         Assert.NotEmpty(EnvironmentValues);
-        Mutations.Add("start"); Running = true;
+        OnStart?.Invoke(); Mutations.Add("start"); Running = true;
     }
     public void Delete(string name)
     {

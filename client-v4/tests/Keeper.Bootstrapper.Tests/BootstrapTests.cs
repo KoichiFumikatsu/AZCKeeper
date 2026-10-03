@@ -346,6 +346,29 @@ public sealed class BootstrapTests
     }
 
     [Fact]
+    public void VueltaAtrasBorraLaPoliticaGuardadaAntesDeArrancarElServicio()
+    {
+        elevation.Elevated = true;
+        App.Run(Options with { SystemMode = true }, []);
+        var data = Path.Combine(machine.InstallDirectory, "v4");
+        Directory.CreateDirectory(data);
+        var cache = Path.Combine(data, Keeper.Shared.Contracts.AgentDataFiles.PolicyCache);
+        File.WriteAllText(cache, "{}");
+        try
+        {
+            var guard = new FakeGuard(machine) { Result = UpdateHealth.Unhealthy };
+            var app = new BootstrapApplication(elevation, machine, machine, machine, output.Add, guard: guard);
+            machine.Mutations.Clear();
+            var existedAtRollbackStart = new List<bool>();
+            machine.OnStart = () => existedAtRollbackStart.Add(File.Exists(cache));
+            Assert.Equal(3, app.Run(Options with { SystemMode = true, SystemUpdate = true }, []));
+            Assert.Equal([false], existedAtRollbackStart.TakeLast(1));   // el ultimo start es el de la vuelta atras
+            Assert.True(existedAtRollbackStart.Count >= 2);
+        }
+        finally { if (File.Exists(cache)) File.Delete(cache); }
+    }
+
+    [Fact]
     public void VueltaAtrasSigueAunqueNoPuedaBorrarLaPoliticaGuardada()
     {
         elevation.Elevated = true;

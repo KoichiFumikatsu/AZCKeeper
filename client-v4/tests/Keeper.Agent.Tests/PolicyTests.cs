@@ -75,11 +75,15 @@ public sealed class PolicyTests
 
         var module = new TestModule();
         await using var host = new ModuleHost([module], Samples.Context());
-        var coordinator = new PolicyCoordinator(new SignedFilePolicyStore(path, key), host, Samples.Device);
+        var logs = new List<string>();
+        var coordinator = new PolicyCoordinator(new SignedFilePolicyStore(path, key, logs.Add), host, Samples.Device);
         await coordinator.RestoreAsync(default);
         Assert.Null(coordinator.CurrentVersion);
         Assert.Equal(0, module.Applications);
         Assert.False(File.Exists(path));
+        Assert.True(File.Exists(path + ".rejected"));
+        Assert.Contains(logs, l => l.Contains(" warn: ") && l.Contains(".rejected"));
+        Assert.True(AgentLogLevel.IsWarning(logs.Single()));
     }
 
     [Fact]
