@@ -487,6 +487,7 @@ let showArchived = false;
 async function tenantsPage() {
   const catalog = (await api('GET', '/features', { tenant: PLATFORM_TENANT })).data;
   let packages = (await api('GET', '/feature-packages', { tenant: PLATFORM_TENANT })).data;
+  let personPlans = (await api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).data;
   const render = () => {
     $('page-content').replaceChildren();
     const s = surface('Empresas');
@@ -519,6 +520,7 @@ async function tenantsPage() {
       }]], companies);
     renderGroups();
     renderPackages();
+    renderPersonPlans();
   };
   let groups = (await optional(api('GET', '/company-groups', { tenant: PLATFORM_TENANT })))?.data || [];
   const groupOf = id => groups.find(g => g.tenant_ids.includes(id)) || null;
@@ -601,11 +603,22 @@ async function tenantsPage() {
     const pkg = el('select'); pkg.append(new Option('Sin paquete (a medida)', '')); packages.forEach(p => pkg.append(new Option(p.name, p.id))); pkg.value = current.package_id || '';
     labeled(body, 'Paquete de origen', pkg, 'Al elegir un paquete se marcan sus funciones; después puedes ajustar las de esta venta.');
     const boxes = featureChecks(body, current.features);
+    const defPlan = el('select'); defPlan.append(new Option('Sin plan (sus equipos no reciben controles)', '')); personPlans.filter(x => x.active).forEach(x => defPlan.append(new Option(x.name, x.id)));
+    defPlan.value = current.default_plan_id || '';
+    labeled(body, 'Plan por defecto de sus personas', defPlan, 'Las personas sin plan propio usan este. Los planes se crean abajo, en "Planes por persona".');
+    const usage = el('p', undefined, 'help'); body.append(usage);
+    const warn = el('p', 'Sin plan por defecto, los equipos de este cliente no reciben reglas de funciones vendibles (web, USB, descargas, instalaciones) hasta que se asigne un plan.', 'notice'); body.append(warn);
+    const syncWarn = () => { warn.hidden = !!defPlan.value; };
+    defPlan.addEventListener('change', syncWarn); syncWarn();
+    api('GET', `/tenants/${c.id}/plan-usage`, { tenant: PLATFORM_TENANT }).then(u => {
+      const parts = (u.data || []).filter(x => x.people > 0).map(x => `${x.people} en ${x.name || 'Sin plan'}`);
+      usage.textContent = parts.length ? `Uso actual: ${parts.join(' · ')}` : 'Uso actual: aún no hay personas.';
+    }).catch(() => { usage.hidden = true; });
     pkg.addEventListener('change', () => { const p = packages.find(x => x.id === pkg.value); if (p) boxes.forEach(b => { b.checked = p.features.includes(b.value); }); });
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault(); ok.disabled = true;
-      try { await api('PUT', `/tenants/${c.id}/features`, { tenant: c.id, body: { package_id: pkg.value || null, features: boxes.filter(b => b.checked).map(b => b.value) } }); dialog.close(); done(); }
-      catch (e) { show(e); ok.disabled = false; }
+      try { await api('PUT', `/tenants/${c.id}/features`, { tenant: c.id, body: { package_id: pkg.value || null, features: boxes.filter(b => b.checked).map(b => b.value), default_plan_id: defPlan.value || null } }); personPlans = (await api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done(); }
+      catch (e) { show(e.problem?.detail === 'unknown_plan' ? 'Ese plan está inactivo; actívalo o elige otro.' : e); ok.disabled = false; }
     });
     dialog.showModal();
   };
@@ -630,6 +643,41 @@ async function tenantsPage() {
         if (p) await api('PATCH', `/feature-packages/${p.id}`, { tenant: PLATFORM_TENANT, body: payload, ifMatch: p.version }); else await api('POST', '/feature-packages', { tenant: PLATFORM_TENANT, body: payload });
         packages = (await api('GET', '/feature-packages', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done();
       } catch (e) { show(e.problem?.detail === 'duplicate_name' ? 'Ya hay un paquete con ese nombre.' : e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
+  const personChecks = (parent, selected) => {
+    const boxes = [];
+    const fs0 = catalog.filter(f => f.level === 'person');
+    for (const group of [...new Set(fs0.map(f => f.group))]) {
+      const fs = el('fieldset', undefined, 'perm-group'); fs.append(el('legend', group)); parent.append(fs);
+      boxes.push(...checks(fs, fs0.filter(f => f.group === group).map(f => [f.code, f.name, f.pending ? 'aún sin pantalla' : '']), selected));
+    }
+    return boxes;
+  };
+  const renderPersonPlans = () => {
+    const s = surface('Planes por persona');
+    s.append(el('p', 'Qué funciones recibe cada persona. Cada cliente elige un plan por defecto y las personas pueden tener uno propio. No hay cupos: el conteo de personas por plan sirve para facturar.', 'help'));
+    const add = el('button', 'Crear plan'); add.type = 'button'; add.addEventListener('click', () => personPlanEditor(null)); s.append(add);
+    if (!personPlans.length) { s.append(el('p', 'Aún no hay planes por persona.', 'help')); return; }
+    table(s, 'Planes por persona', [['Plan', x => x.active ? x.name : `${x.name} (inactivo)`], ['Funciones', x => String(x.features.length)], ['Personas', x => String(x.people)],
+      ['', x => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => personPlanEditor(x)); return b; }]], personPlans);
+  };
+  const personPlanEditor = p => {
+    const { dialog, body, ok, show } = dialogShell(p ? `Editar ${p.name}` : 'Crear plan por persona');
+    dialog.classList.add('wide-dialog');
+    const name = labeled(body, 'Nombre', el('input')); name.maxLength = 80; name.value = p?.name || '';
+    const badgeLabel = labeled(body, 'Etiqueta', el('input'), 'El texto corto que se muestra junto a la persona.'); badgeLabel.maxLength = 40; badgeLabel.value = p?.badge_label || '';
+    const boxes = personChecks(body, p?.features || []);
+    const [activeBox] = checks(body, [['active', 'Plan activo']], !p || p.active ? ['active'] : []);
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
+      ok.disabled = true;
+      const payload = { name: name.value.trim(), badge_label: badgeLabel.value.trim(), features: boxes.filter(b => b.checked).map(b => b.value), active: activeBox.checked };
+      try {
+        if (p) await api('PATCH', `/person-plans/${p.id}`, { tenant: PLATFORM_TENANT, body: payload, ifMatch: p.version }); else await api('POST', '/person-plans', { tenant: PLATFORM_TENANT, body: payload });
+        personPlans = (await api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done();
+      } catch (e) { show(e.problem?.detail === 'duplicate_name' ? 'Ya hay un plan con ese nombre.' : e.status === 412 ? 'Alguien más cambió el plan: recarga la página.' : e); ok.disabled = false; }
     });
     dialog.showModal();
   };
@@ -797,6 +845,9 @@ async function people() {
   const fallback = kind => { const u = units(kind); return u.length === 1 ? u[0] : u.find(o => fold(o.name).startsWith('sin ')) || null; };
   const scheduleList = (schedules || []).sort((a, b) => a.name.localeCompare(b.name, 'es'));
   const defaultSchedule = () => scheduleList.find(s => fold(s.name).includes('por defecto')) || scheduleList[0] || null;
+  // Los planes solo los lista la plataforma: la ficha muestra el select de plan solo a superadmin.
+  const isSuper = !!readSession()?.is_platform_admin;
+  const personPlans = isSuper ? ((await optional(api('GET', '/person-plans', { tenant: PLATFORM_TENANT })))?.data || []) : [];
   const render = () => {
     $('page-content').replaceChildren();
     kpis([['Personas', String(list.length)], ['Activas', String(list.filter(u => u.status === 'active').length)],
@@ -843,6 +894,12 @@ async function people() {
     holidays.value = u?.holiday_calendar_id || ''; labeled(grid, 'Festivos', holidays);
     let status = null;
     if (u) { status = el('select'); status.append(new Option('Activa', 'active'), new Option('Inactiva (retirada)', 'inactive')); status.value = u.status; labeled(body, 'Estado', status); }
+    let planSel = null;
+    if (u && isSuper) {
+      planSel = el('select'); planSel.append(new Option('Por defecto del cliente', ''));
+      personPlans.filter(x => x.active || x.id === u.plan_id).forEach(x => planSel.append(new Option(x.active ? x.name : `${x.name} (inactivo)`, x.id)));
+      planSel.value = u.plan_id || ''; labeled(body, 'Plan', planSel, 'Define qué funciones recibe esta persona. Sin plan propio usa el del cliente.');
+    }
     ok.textContent = u ? 'Guardar' : 'Crear persona';
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
@@ -858,7 +915,8 @@ async function people() {
       for (const [k] of ORG_FIELDS) payload[`${k}_id`] = selects[k].value || null;
       if (status && status.value !== u.status) payload.status = status.value;
       try {
-        const saved = u ? await api('PATCH', `/users/${u.id}`, { body: payload, ifMatch: u.version }) : await api('POST', '/users', { body: payload });
+        let saved = u ? await api('PATCH', `/users/${u.id}`, { body: payload, ifMatch: u.version }) : await api('POST', '/users', { body: payload });
+        if (planSel && (planSel.value || null) !== (u.plan_id || null)) saved = await api('PUT', `/users/${u.id}/plan`, { body: { plan_id: planSel.value || null }, ifMatch: saved.version });
         list = u ? list.map(x => x.id === u.id ? saved : x) : [...list, saved]; dialog.close(); render(); done();
       } catch (e) {
         const d = e.problem?.detail;

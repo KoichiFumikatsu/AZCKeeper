@@ -13,7 +13,7 @@ $portal = [
         ['holidays', 'Festivos', '/festivos.php', false], ['absences', 'Ausencias', '/ausencias.php', false], ['doors', 'Puertas', '/puertas.php', false],
         ['assignments', 'Asignación de equipos', '/asignaciones.php', false]],
     'Control' => [['policies', 'Reglas de los equipos', '/reglas.php', false], ['classification', 'Clasificación de apps', '/clasificacion.php', false],
-        ['tiers', 'Planes', '/planes.php', false], ['suspicious-apps', 'Apps sospechosas', '/apps-sospechosas.php', false], ['dual-job', 'Doble empleo', '/doble-empleo.php'],
+        ['suspicious-apps', 'Apps sospechosas', '/apps-sospechosas.php', false], ['dual-job', 'Doble empleo', '/doble-empleo.php'],
         ['coverage', 'Cobertura de instalación', '/cobertura.php']],
     'Accesos' => [['accounts', 'Cuentas del panel', '/cuentas.php', false], ['roles', 'Roles y permisos', '/roles.php', false], ['sources', 'Fuentes de datos', '/fuentes.php', false]],
     'Registro y ajustes' => [['audit', 'Auditoría', '/auditoria.php', false], ['client-logs', 'Logs de los equipos', '/logs.php', false], ['panel-settings', 'Ajustes', '/ajustes.php', false]],
