@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Keeper.Bootstrapper.Hardening;
+using Keeper.Shared.Contracts;
 
 namespace Keeper.Bootstrapper;
 
@@ -189,6 +190,15 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
                 services.Stop(ServiceName);
                 guard.Restore(bin);
                 paths.ApplyBinaryAcl(bin);
+                // La politica guardada por la version nueva puede traer campos que la anterior rechaza al leerla
+                // (antes del login): se borra y la anterior pide una fresca al servidor. Si falla, la vuelta atras sigue.
+                var policyCache = Path.Combine(data, AgentDataFiles.PolicyCache);
+                try
+                {
+                    if (File.Exists(policyCache)) { File.Delete(policyCache); log($"DEL \"{policyCache}\" (politica de la version nueva; la anterior la pedira al servidor)"); }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                { log($"AVISO: no se pudo borrar \"{policyCache}\" ({ex.Message}); se continua la vuelta atras."); }
                 services.Start(ServiceName);
                 if (sequence is { } blocked) { guard.BlockRelease(blocked); log($"Release sequence {blocked} bloqueada: el agente no la reintentara."); }
                 log("Vuelta atras completada. Servicio Running con la version anterior.");

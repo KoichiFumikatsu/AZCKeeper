@@ -322,6 +322,51 @@ public sealed class BootstrapTests
         Assert.True(machine.Running);
     }
 
+    [Theory]
+    [InlineData(UpdateHealth.Healthy, true)]
+    [InlineData(UpdateHealth.Unhealthy, false)]
+    public void VueltaAtrasBorraLaPoliticaGuardadaQueLaVersionAnteriorPodriaNoEntender(UpdateHealth health, bool kept)
+    {
+        elevation.Elevated = true;
+        App.Run(Options with { SystemMode = true }, []);
+        var data = Path.Combine(machine.InstallDirectory, "v4");
+        Directory.CreateDirectory(data);
+        var cache = Path.Combine(data, Keeper.Shared.Contracts.AgentDataFiles.PolicyCache);
+        File.WriteAllText(cache, "{\"payload\":\"x\",\"signature\":\"y\"}");
+        try
+        {
+            var guard = new FakeGuard(machine) { Result = health };
+            var app = new BootstrapApplication(elevation, machine, machine, machine, output.Add, guard: guard);
+            Assert.Equal(kept ? 0 : 3, app.Run(Options with { SystemMode = true, SystemUpdate = true }, []));
+            Assert.Equal(kept, File.Exists(cache));
+            Assert.Equal(!kept, output.Any(line => line.Contains(cache, StringComparison.OrdinalIgnoreCase)));
+            Assert.True(machine.Running);
+        }
+        finally { if (File.Exists(cache)) File.Delete(cache); }
+    }
+
+    [Fact]
+    public void VueltaAtrasSigueAunqueNoPuedaBorrarLaPoliticaGuardada()
+    {
+        elevation.Elevated = true;
+        App.Run(Options with { SystemMode = true }, []);
+        var data = Path.Combine(machine.InstallDirectory, "v4");
+        Directory.CreateDirectory(data);
+        var cache = Path.Combine(data, Keeper.Shared.Contracts.AgentDataFiles.PolicyCache);
+        File.WriteAllText(cache, "{}");
+        try
+        {
+            var guard = new FakeGuard(machine) { Result = UpdateHealth.Unhealthy };
+            var app = new BootstrapApplication(elevation, machine, machine, machine, output.Add, guard: guard);
+            using (new FileStream(cache, FileMode.Open, FileAccess.Read, FileShare.None))   // bloqueado: File.Delete falla
+                Assert.Equal(3, app.Run(Options with { SystemMode = true, SystemUpdate = true }, []));
+            Assert.True(machine.Running);
+            Assert.Equal(7, guard.Blocked);
+            Assert.Contains(output, line => line.Contains("no se pudo borrar", StringComparison.OrdinalIgnoreCase));
+        }
+        finally { if (File.Exists(cache)) File.Delete(cache); }
+    }
+
     [Fact]
     public void RescateSeInstalaAlInstalarSoloSiFaltaAlActualizarYSeBorraAlDesinstalar()
     {

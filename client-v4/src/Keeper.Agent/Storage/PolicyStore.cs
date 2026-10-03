@@ -26,8 +26,18 @@ public sealed class SignedFilePolicyStore(string path, ECDsa key) : IPolicyStore
         if (!key.VerifyData(envelope.Payload, envelope.Signature, HashAlgorithmName.SHA256,
                 DSASignatureFormat.IeeeP1363FixedFieldConcatenation))
             throw new CryptographicException("invalid_policy_cache_signature");
-        return JsonSerializer.Deserialize<CachedPolicy>(envelope.Payload, ProtocolJson.Options)
-            ?? throw new InvalidDataException("invalid_policy_cache_payload");
+        try
+        {
+            return JsonSerializer.Deserialize<CachedPolicy>(envelope.Payload, ProtocolJson.Options)
+                ?? throw new InvalidDataException("invalid_policy_cache_payload");
+        }
+        catch (JsonException)
+        {
+            // Firma valida (lo escribio este equipo) pero esquema distinto: la dejo otra version del agente,
+            // p.ej. tras una vuelta atras. Se descarta para no impedir el login; el servidor envia una politica fresca.
+            File.Delete(path);
+            return null;
+        }
     }
 
     public Task SaveAsync(CachedPolicy policy, CancellationToken ct)

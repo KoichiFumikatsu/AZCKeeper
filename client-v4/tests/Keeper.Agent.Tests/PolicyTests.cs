@@ -60,6 +60,29 @@ public sealed class PolicyTests
     }
 
     [Fact]
+    public async Task SignedCacheWithFieldsThisVersionDoesNotKnowIsDiscardedNotFatal()
+    {
+        // Tras volver a una version anterior, la cache firmada por este mismo equipo puede traer campos nuevos.
+        using var directory = new TestDirectory();
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var path = directory.File("policy.json");
+        var store = new SignedFilePolicyStore(path, key);
+        await store.SaveAsync(new CachedPolicy(7, Samples.Policy()), default);
+        var envelope = JsonSerializer.Deserialize<SignedPolicyCache>(await File.ReadAllBytesAsync(path), ProtocolJson.Options)!;
+        var payload = System.Text.Encoding.UTF8.GetBytes(System.Text.Encoding.UTF8.GetString(envelope.Payload)[..^1] + ",\"future_field\":{}}");
+        var signature = key.SignData(payload, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+        await File.WriteAllBytesAsync(path, JsonSerializer.SerializeToUtf8Bytes(new SignedPolicyCache(payload, signature), ProtocolJson.Options));
+
+        var module = new TestModule();
+        await using var host = new ModuleHost([module], Samples.Context());
+        var coordinator = new PolicyCoordinator(new SignedFilePolicyStore(path, key), host, Samples.Device);
+        await coordinator.RestoreAsync(default);
+        Assert.Null(coordinator.CurrentVersion);
+        Assert.Equal(0, module.Applications);
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
     public void ContractUsesNumericInt64AndRejectsUnknownFields()
     {
         var request = new SyncRequest { ProtocolVersion = 1, Sequence = 1, PolicyVersion = (long)int.MaxValue + 1, ReleaseId = null };
