@@ -391,6 +391,7 @@ try {
     planCompileTests($db);
     planApiTests($db);
     planJobsTests($db);
+    newTenantDefaultPlanTests($db);
     captureIngestTests($db);
     captureFlagsTests($db);
     agentUpgradeRecompileTests($db);

@@ -97,8 +97,8 @@ final class Ingest
         if ($start < $this->c['assignment_start'] || ($this->c['assignment_end'] !== null && $end > $this->c['assignment_end'])) { throw new ApiError(422, 'assignment_conflict'); }
         $assignment = $this->db->one('SELECT a.id,s.timezone FROM user_assignments a JOIN schedules s ON s.tenant_id=a.tenant_id AND s.id=a.schedule_id WHERE a.tenant_id=? AND a.user_id=? AND a.starts_at<=? AND (a.ends_at IS NULL OR a.ends_at>=?) LOCK IN SHARE MODE', [$this->c['tenant_id'], $this->c['user_id'], $start, $end]);
         if (!$assignment) { throw new ApiError(422, 'assignment_conflict'); }
-        // Sin productividad contratada no se guarda el episodio, pero se acusa como aceptado para que el agente no reintente.
-        if (!in_array('productividad', $this->functions(), true)) { return self::ack($e->event_id); }
+        // Sin productividad ni cumplimiento (doble empleo usa los episodios guardados) no se guarda el episodio, pero se acusa como aceptado para que el agente no reintente.
+        if (!array_intersect(['productividad', 'cumplimiento'], $this->functions())) { return self::ack($e->event_id); }
         // El sitio solo se deriva si la persona tiene "Sitios web visitados".
         $site = in_array('sitios', $this->functions(), true) ? $this->site($e->process_name, $e->window_title ?? null) : null;
         // The episode trigger writes the global dedupe ledger atomically with the raw event.

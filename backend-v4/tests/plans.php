@@ -145,6 +145,17 @@ function planJobsTests(Database $db): void
 }
 
 // Fase 2b: el servidor no guarda lo que la persona no tiene contratado, pero acusa recibo igual (el agente no reintenta).
+// Un cliente nuevo nace con el plan Completo por defecto (las funciones reales las limita lo que compro).
+function newTenantDefaultPlanTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $platform = sharedPlatform($db);
+    $created = expect(adminRequest($platform, 'POST', '/tenants', ['name' => 'Cliente Plan ' . substr(Util::uuid(), 0, 6), 'timezone' => 'America/Bogota', 'branding' => ['display_name' => 'Cliente Plan', 'logo_url' => 'https://example.test/logo.svg', 'primary_color' => '#3C4082', 'accent_color' => '#5A61B3']]), 201, 'create client for default plan');
+    $plan = $db->one('SELECT p.name FROM tenants t JOIN person_plans p ON p.tenant_id=t.default_plan_tenant_id AND p.id=t.default_plan_id WHERE t.tenant_id=?', [Util::bin($created['id'])]);
+    check(($plan['name'] ?? null) === Keeper\PersonPlans::FULL_PLAN, 'new client default plan is Completo');
+    echo 'PASS new client default plan (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}
+
 function captureIngestTests(Database $db): void
 {
     $before = $GLOBALS['checks'];
@@ -170,10 +181,15 @@ function captureIngestTests(Database $db): void
     $stored = $row($id);
     check($accepted($ack, $id) && $stored !== null && $stored['site'] === null, 'without sitios: episode stored, site NULL');
     // (c) Sin productividad: se acusa igual que uno guardado, pero no queda fila.
-    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code IN ('productividad')", [$tenant]);
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code IN ('productividad','cumplimiento')", [$tenant]);
     [$id, $ack] = $send('editor.exe', null);
     check($accepted($ack, $id) && $row($id) === null, 'without productividad: episode acknowledged as accepted, not stored');
     check(!$db->one('SELECT 1 FROM episode_ingest_keys WHERE tenant_id=? AND device_id=? AND event_id=?', [$tenant, $device, Util::bin($id)]), 'without productividad: no ledger row either');
+    // (c2) Solo cumplimiento (sin productividad): el episodio se guarda, el doble empleo lo necesita.
+    $db->run("INSERT INTO tenant_features (tenant_id,feature_code) VALUES (?,'cumplimiento')", [$tenant]);
+    [$id, $ack] = $send('editor.exe', null);
+    check($accepted($ack, $id) && $row($id) !== null, 'cumplimiento without productividad: episode stored');
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='cumplimiento'", [$tenant]);
     // (d) Sin productividad ni presencia: el snapshot se acusa como aceptado sin guardarse.
     $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code IN ('presencia')", [$tenant]);
     $snapshots = fn () => (int) $db->one('SELECT COUNT(*) n FROM activity_snapshots WHERE tenant_id=? AND device_id=?', [$tenant, $device])['n'];
@@ -217,9 +233,14 @@ function captureFlagsTests(Database $db): void
     $capture = compilerDocument($db, $next)->capture ?? null;
     check($next['changed'] && $next['policy_version'] > $new['policy_version'] && $capture !== null && $capture->windows === true && $capture->window_titles === false, 'capture change publishes a new policy version');
     // Solo presencia: actividad sin ventanas.
-    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='productividad'", [$tenant]);
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code IN ('productividad','cumplimiento')", [$tenant]);
     $capture = compilerDocument($db, $compiler->recompile($deviceId))->capture ?? null;
     check($capture !== null && $capture->windows === false && $capture->window_titles === false && $capture->activity === true, 'presencia only: activity without windows');
+    // Solo cumplimiento: ventanas (para el doble empleo) sin titulos ni actividad.
+    $db->run("INSERT INTO tenant_features (tenant_id,feature_code) VALUES (?,'cumplimiento')", [$tenant]);
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='presencia'", [$tenant]);
+    $capture = compilerDocument($db, $compiler->recompile($deviceId))->capture ?? null;
+    check($capture !== null && $capture->windows === true && $capture->window_titles === false && $capture->activity === false, 'cumplimiento only: windows without titles');
     // Persona inactiva: nada.
     $db->run("UPDATE users SET status='inactive' WHERE tenant_id=? AND id=?", [$tenant, $u['id']]);
     $capture = compilerDocument($db, $compiler->recompile($deviceId))->capture ?? null;

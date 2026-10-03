@@ -135,10 +135,11 @@ final class PolicyCompiler
         // Antes de 4.0.13 el agente rechaza campos desconocidos en la politica: no se le envian franjas por dia.
         $dayHours = $device === null || version_compare((string) ($d['agent_version'] ?? '0'), '4.0.13', '>=');
         // Desde 4.0.15 la politica le dice al agente que capturar segun las funciones de la persona (inactiva: [] y nada).
+        // Ventanas: productividad o cumplimiento (el doble empleo se calcula de los episodios). Titulos: solo productividad con sitios.
         $capture = null;
         if ($device === null || version_compare((string) ($d['agent_version'] ?? '0'), '4.0.15', '>=')) {
             $has = static fn (string $f): bool => in_array($f, $functions, true);
-            $capture = ['windows' => $has('productividad'), 'window_titles' => $has('productividad') && $has('sitios'), 'activity' => $has('productividad') || $has('presencia')];
+            $capture = ['windows' => $has('productividad') || $has('cumplimiento'), 'window_titles' => $has('productividad') && $has('sitios'), 'activity' => $has('productividad') || $has('presencia')];
         }
         foreach ($rows as $row) {
             $document = json_decode($row['document'], false, 64, JSON_THROW_ON_ERROR);

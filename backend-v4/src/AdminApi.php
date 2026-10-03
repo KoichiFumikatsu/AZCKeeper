@@ -186,6 +186,9 @@ final class AdminApi
                 $this->db->run('INSERT INTO roles (tenant_id,id,name,seed_key,seed_version,scope_kind) VALUES (?,?,?,?,?,?)',[$id,$role,$template['name'],$template['seed_key'],$template['version'],$template['scope_kind']]);
                 $this->db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) SELECT ?,?,permission_code FROM role_template_permissions WHERE seed_key=?',[$id,$role,$template['seed_key']]);
             }
+            // Plan por defecto Completo: las funciones reales se limitan a las que el cliente compro (tenant_features), asi que no regala nada.
+            $full=$this->db->one('SELECT id FROM person_plans WHERE tenant_id=0x00000000000040008000000000000001 AND name=? AND active=TRUE',[PersonPlans::FULL_PLAN]);
+            if ($full) { $this->db->run('UPDATE tenants SET default_plan_tenant_id=0x00000000000040008000000000000001,default_plan_id=? WHERE tenant_id=?',[$full['id'],$id]); }
             // Funciones del cliente nuevo: las de su paquete (sin paquete, solo el nucleo).
             if (isset($b->package_id)) {
                 $pkg=Util::bin($b->package_id);
