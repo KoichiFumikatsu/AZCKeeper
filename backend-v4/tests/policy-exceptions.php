@@ -11,7 +11,7 @@ function policyExceptionTests(): void
     $rule = fn (string $effect, array $targets) => (object) ['id' => Util::uuid(), 'kind' => 'web', 'effect' => $effect, 'targets' => $targets, 'schedule_id' => null, 'priority' => 0];
     $tenant = ['id' => Util::uuid(), 'scope' => 'tenant', 'priority' => 0, 'rules' => [$rule('deny', ['facebook.com', 'youtube.com'])], 'management_hosts' => []];
     $person = ['id' => Util::uuid(), 'scope' => 'user', 'priority' => 0, 'rules' => [$rule('allow', ['facebook.com'])], 'management_hosts' => []];
-    $input = fn (array $assignments) => ['tenant_id' => Util::uuid(), 'device_id' => Util::uuid(), 'reported_version' => 0, 'modules' => ['policies'], 'assignments' => $assignments, 'work_schedule' => null, 'rule_schedules' => []];
+    $input = fn (array $assignments) => ['tenant_id' => Util::uuid(), 'device_id' => Util::uuid(), 'reported_version' => 0, 'functions' => ['web', 'usb', 'descargas', 'instalaciones'], 'assignments' => $assignments, 'work_schedule' => null, 'rule_schedules' => []];
     $blocked = fn (object $policy) => array_merge(...array_map(fn ($r) => $r->effect === 'deny' ? $r->targets : [], array_filter($policy->rules, fn ($r) => $r->kind === 'web')));
     $others = PolicyComposer::compose($input([$tenant]));
     check($blocked($others) === ['facebook.com', 'youtube.com'], 'company blocks both sites');

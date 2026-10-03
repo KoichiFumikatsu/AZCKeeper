@@ -7,7 +7,13 @@ final class PolicyComposer
 {
     public const VERSION = 'azckeeper-policy-2';
     public const SCOPES = ['global' => 0, 'tenant' => 1, 'site' => 2, 'area' => 3, 'user' => 4, 'device' => 5];
-    public const RULE_MODULES = ['web' => 'policies', 'download' => 'policies', 'installation' => 'policies', 'schedule' => 'policies', 'os' => 'policies', 'usb' => 'policies', 'encryption' => 'policies'];
+
+    /** Un tipo de regla nucleo siempre pasa; uno vendible (web, usb, download, installation) necesita su funcion. */
+    public static function ruleAllowed(string $kind, array $functions): bool
+    {
+        $feature = Features::forRuleKind($kind);
+        return $feature === null || in_array($feature, $functions, true);
+    }
 
     public static function compose(array $input, ?array &$provenance = null): object
     {
@@ -20,7 +26,7 @@ final class PolicyComposer
             foreach ($assignment['management_hosts'] as $host) { $hosts[$host] = true; }
             foreach ($assignment['rules'] as $rule) {
                 $validator->named('Rule', $rule);
-                if (!in_array(self::RULE_MODULES[$rule->kind], $input['modules'], true)) { continue; }
+                if (!self::ruleAllowed($rule->kind, $input['functions'])) { continue; }
                 $rule = clone $rule;
                 $rule->targets = self::normalizeTargets($rule->targets);
                 $candidates[] = ['rule' => $rule, 'level' => $level, 'rank' => self::SCOPES[$assignment['scope']], 'assignment' => $assignment['id']];

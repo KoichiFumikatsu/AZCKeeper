@@ -42,3 +42,20 @@ function planResolutionTests(Database $db): void
     check((bool) $db->one('SELECT tenant_id FROM admin_policy_recompiles WHERE tenant_id=?', [$tenant]), 'recompile marked');
     echo 'PASS plan resolution (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+// El equipo de una persona solo recibe reglas de funciones que su cliente compro y su plan incluye.
+function planCompileTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    check(Keeper\PolicyComposer::ruleAllowed('schedule', []) && Keeper\PolicyComposer::ruleAllowed('os', []), 'core rule kinds always pass');
+    check(!Keeper\PolicyComposer::ruleAllowed('usb', ['web']) && Keeper\PolicyComposer::ruleAllowed('usb', ['usb']), 'sellable rule kinds need their function');
+    $rules = [(object) ['id' => Util::uuid(), 'kind' => 'web', 'effect' => 'deny', 'targets' => ['facebook.com'], 'schedule_id' => null, 'priority' => 0],
+        (object) ['id' => Util::uuid(), 'kind' => 'usb', 'effect' => 'deny', 'targets' => ['*'], 'schedule_id' => null, 'priority' => 0]];
+    $input = fn (array $functions) => ['tenant_id' => Util::uuid(), 'device_id' => Util::uuid(), 'functions' => $functions,
+        'assignments' => [['id' => Util::uuid(), 'scope' => 'tenant', 'priority' => 0, 'rules' => $rules, 'management_hosts' => []]], 'work_schedule' => null, 'rule_schedules' => []];
+    $kinds = fn (object $doc) => array_values(array_unique(array_map(fn ($r) => $r->kind, $doc->rules)));
+    check($kinds(Keeper\PolicyComposer::compose($input(['web', 'usb']))) === ['usb', 'web'] || $kinds(Keeper\PolicyComposer::compose($input(['web', 'usb']))) === ['web', 'usb'], 'both rules with both functions');
+    check($kinds(Keeper\PolicyComposer::compose($input(['web']))) === ['web'], 'usb dropped without its function');
+    check(Keeper\PolicyComposer::compose($input([]))->rules === [], 'no functions, no sellable rules');
+    echo 'PASS plan compile (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}

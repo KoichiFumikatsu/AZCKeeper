@@ -42,9 +42,7 @@ function compilerDocument(Database $db, array $result): object
 function policyCompilerTests(Database $db): void
 {
     $user = secondTenant($db); $tenant = $user['tenant_id']; $tenantId = Util::id($tenant);
-    $db->run("INSERT INTO tier (tenant_id,id,name,badge_label) VALUES (?,?,'Compiler tier','Compiler tier')", [$tenant, $tier = Util::bin(Util::uuid())]);
-    $db->run("INSERT INTO tier_module (tenant_id,tier_id,module_code) VALUES (?,?,'policies')", [$tenant, $tier]);
-    $db->run("INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at) VALUES (?,?,?,?,UTC_TIMESTAMP(6)-INTERVAL 1 DAY)", [$tenant, $subscription = Util::bin(Util::uuid()), $user['id'], $tier]);
+    // secondTenant() deja al cliente con todas las funciones y el plan "Completo" por defecto: la persona recibe todas las reglas.
     foreach ([5, 1, 3] as $day) { $db->run('INSERT INTO schedule_days (tenant_id,schedule_id,weekday) VALUES (?,?,?)', [$tenant, $user['schedule_id'], $day]); }
     $key = keypair(); $token = enroll($db, $user, $key); $device = Util::bin($token['device_id']);
     $compiler = new PolicyCompiler($db);
@@ -143,23 +141,31 @@ function policyCompilerTests(Database $db): void
     $db->run('UPDATE policy_assignments SET enabled=FALSE WHERE tenant_id=? AND id=?', [$tenant, $tieAssignment]);
     check(!$compiler->recompile($token['device_id'])['changed'], 'removing conflict reuses prior valid version');
 
-    $db->run("DELETE FROM tier_module WHERE tenant_id=? AND tier_id=? AND module_code='policies'", [$tenant, $tier]);
-    check(compilerDocument($db, $compiler->recompile($token['device_id']))->rules === [], 'module outside tier removed');
-    $db->run("INSERT INTO firma_module_override (tenant_id,firm_id,module_code,enabled,reason) VALUES (?,?,'policies',TRUE,'test')", [$tenant, $user['firm_id']]);
-    check(!$compiler->recompile($token['device_id'])['changed'], 'positive firm override cannot grant outside tier');
-    $db->run("INSERT INTO tier_module (tenant_id,tier_id,module_code) VALUES (?,?,'policies')", [$tenant, $tier]);
-    check(count(compilerDocument($db, $compiler->recompile($token['device_id']))->rules) > 0, 'tier and positive override permit rules');
-    $db->run("UPDATE firma_module_override SET enabled=FALSE WHERE tenant_id=? AND firm_id=? AND module_code='policies'", [$tenant, $user['firm_id']]);
-    check(compilerDocument($db, $compiler->recompile($token['device_id']))->rules === [], 'negative firm override vetoes tier');
-    $db->run("UPDATE firma_module_override SET enabled=TRUE WHERE tenant_id=? AND firm_id=? AND module_code='policies'", [$tenant, $user['firm_id']]);
-    $db->run('UPDATE tier SET active=FALSE WHERE tenant_id=? AND id=?', [$tenant, $tier]);
-    check(!$compiler->recompile($token['device_id'])['changed'], 'inactive tier cannot grant policies');
-    $db->run('UPDATE tier SET active=TRUE WHERE tenant_id=? AND id=?', [$tenant, $tier]);
-    $db->run("UPDATE subscriptions SET status='cancelled' WHERE tenant_id=? AND id=?", [$tenant, $subscription]);
-    check(!$compiler->recompile($token['device_id'])['changed'], 'cancelled subscription cannot grant policies');
-    $db->run("UPDATE subscriptions SET status='active',ends_at=UTC_TIMESTAMP(6)-INTERVAL 1 SECOND WHERE tenant_id=? AND id=?", [$tenant, $subscription]);
-    check(!$compiler->recompile($token['device_id'])['changed'], 'expired subscription cannot grant policies');
-    $db->run('UPDATE subscriptions SET ends_at=NULL WHERE tenant_id=? AND id=?', [$tenant, $subscription]);
+    // Planes por persona (fase 2a): solo se compilan reglas de funciones que el cliente compro y el plan efectivo incluye.
+    $kindsOf = fn (object $doc) => array_values(array_unique(array_map(fn ($r) => $r->kind, $doc->rules)));
+    $planPlatform = Util::bin('00000000-0000-4000-8000-000000000001');
+    $fullPlan = $db->one("SELECT id FROM person_plans WHERE tenant_id=? AND name='Completo'", [$planPlatform])['id'];
+    $webPlan = Util::bin(Util::uuid());
+    $db->run("INSERT INTO person_plans (tenant_id,id,name,badge_label) VALUES (?,?,'Compilador web','CW')", [$planPlatform, $webPlan]);
+    foreach (['instalaciones', 'web'] as $f) { $db->run('INSERT INTO person_plan_items (tenant_id,plan_id,feature_code) VALUES (?,?,?)', [$planPlatform, $webPlan, $f]); }
+    $planAssignment = compilerAssign($db, $tenant, compilerPublish($db, $tenant, [compilerRule('deny', ['plan-web.test'], 0, 'web'), compilerRule('deny', ['*'], 0, 'usb')]), 'device', $device, 505);
+    check(in_array('usb', $kindsOf(compilerDocument($db, $compiler->recompile($token['device_id']))), true), 'full default plan delivers usb rules');
+    $db->run('UPDATE tenants SET default_plan_tenant_id=NULL,default_plan_id=NULL WHERE tenant_id=?', [$tenant]);
+    check(compilerDocument($db, $compiler->recompile($token['device_id']))->rules === [], 'plan (a) no own plan and no client default plan compiles no sellable rules');
+    $db->run('UPDATE tenants SET default_plan_tenant_id=?,default_plan_id=? WHERE tenant_id=?', [$planPlatform, $webPlan, $tenant]);
+    check(in_array('web', $kindsOf(compilerDocument($db, $compiler->recompile($token['device_id']))), true), 'plan (b) client default plan with web compiles the web rule');
+    $db->run('UPDATE tenants SET default_plan_tenant_id=?,default_plan_id=? WHERE tenant_id=?', [$planPlatform, $fullPlan, $tenant]);
+    $db->run('UPDATE users SET plan_tenant_id=0x00000000000040008000000000000001, plan_id=? WHERE tenant_id=? AND id=?', [$webPlan, $tenant, $user['id']]);
+    check(!in_array('usb', $kindsOf(compilerDocument($db, $compiler->recompile($token['device_id']))), true), 'plan (c) own plan without usb drops usb although the client bought it');
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='web'", [$tenant]);
+    check(!in_array('web', $kindsOf(compilerDocument($db, $compiler->recompile($token['device_id']))), true), 'plan (d) client without web drops web although the plan has it');
+    $db->run("INSERT INTO tenant_features (tenant_id,feature_code) VALUES (?,'web')", [$tenant]);
+    $db->run('UPDATE users SET plan_tenant_id=NULL, plan_id=NULL WHERE tenant_id=? AND id=?', [$tenant, $user['id']]);
+    $db->run("UPDATE users SET status='inactive' WHERE tenant_id=? AND id=?", [$tenant, $user['id']]);
+    check(compilerDocument($db, $compiler->recompile($token['device_id']))->rules === [], 'plan (e) inactive person compiles no sellable rules');
+    $db->run("UPDATE users SET status='active' WHERE tenant_id=? AND id=?", [$tenant, $user['id']]);
+    $db->run('UPDATE policy_assignments SET enabled=FALSE WHERE tenant_id=? AND id=?', [$tenant, $planAssignment]);
+    check(PolicyComposer::canonical(compilerDocument($db, $compiler->recompile($token['device_id']))->rules) === PolicyComposer::canonical($priorityDoc->rules), 'restored full plan compiles the prior rules again');
 
     $night = Util::bin(Util::uuid());
     $db->run("INSERT INTO schedules (tenant_id,id,name,timezone,start_local,end_local) VALUES (?,?,'Night','Asia/Tokyo','22:00:00','06:00:00')", [$tenant, $night]);
@@ -210,7 +216,7 @@ function policyCompilerTests(Database $db): void
     try { $compiler->recompile($token['device_id'], Util::id($platform)); throw new RuntimeException('Missing tenant isolation'); }
     catch (RuntimeException $e) { check(str_contains($e->getMessage(), 'absent or ambiguous'), 'explicit tenant cannot select foreign device'); }
 
-    $input = ['tenant_id' => $tenantId, 'device_id' => $token['device_id'], 'modules' => ['policies'], 'assignments' => [
+    $input = ['tenant_id' => $tenantId, 'device_id' => $token['device_id'], 'functions' => ['web', 'usb', 'descargas', 'instalaciones'], 'assignments' => [
         ['id' => Util::uuid(), 'scope' => 'global', 'priority' => 9, 'rules' => [$low], 'management_hosts' => ['b.test', 'a.test']],
         ['id' => Util::uuid(), 'scope' => 'device', 'priority' => 0, 'rules' => [$high], 'management_hosts' => ['a.test']],
     ], 'work_schedule' => null, 'rule_schedules' => []];
@@ -260,13 +266,17 @@ function policyCompilerTests(Database $db): void
     $otherUser = Util::bin(Util::uuid());
     $db->run("INSERT INTO users (tenant_id,id,display_name,firm_id,site_id,area_id,position_id,schedule_id) SELECT tenant_id,?,'Second compiler member',firm_id,site_id,area_id,position_id,schedule_id FROM users WHERE tenant_id=? AND id=?", [$otherUser, $tenant, $user['id']]);
     $withoutDevice=expect(adminRequest($policyAdmin,'GET','/users/'.Util::id($otherUser).'/policies'),200,'policy resolution without a device');
+    // El nuevo miembro tiene plan propio sin funciones de reglas: si el compilador usara el plan del miembro anterior, habria reglas.
+    $db->run("INSERT INTO person_plans (tenant_id,id,name,badge_label) VALUES (?,?,'Compilador sin reglas','CS')", [$planPlatform, $noRulesPlan = Util::bin(Util::uuid())]);
+    $db->run("INSERT INTO person_plan_items (tenant_id,plan_id,feature_code) VALUES (?,?,'productividad')", [$planPlatform, $noRulesPlan]);
+    $db->run('UPDATE users SET plan_tenant_id=?, plan_id=? WHERE tenant_id=? AND id=?', [$planPlatform, $noRulesPlan, $tenant, $otherUser]);
     check($withoutDevice['devices'][0]['device_id']===null && $withoutDevice['devices'][0]['policy']['device_id']===null,'no invented device in person policy');
     $boundary = $db->one('SELECT UTC_TIMESTAMP(6)+INTERVAL 1 MINUTE instant')['instant'];
     $db->run('UPDATE device_assignments SET ends_at=? WHERE tenant_id=? AND device_id=?', [$boundary, $tenant, $device]);
     $db->run("INSERT INTO device_assignments (tenant_id,id,device_id,user_id,starts_at,reason) VALUES (?,?,?,?,?,'compiler reassignment')", [$tenant, Util::bin(Util::uuid()), $device, $otherUser, $boundary]);
     $assigned = $compiler->recompile($token['device_id'], $tenantId, new DateTimeImmutable($boundary, new DateTimeZone('UTC')));
     $assignedDoc = compilerDocument($db, $assigned);
-    check($assignedDoc->rules === [] && $assignedDoc->schedules[0]->id === Util::id($user['schedule_id']), 'device assignment boundary selects new member tier and schedule despite stale devices.user_id');
+    check($assignedDoc->rules === [] && $assignedDoc->schedules[0]->id === Util::id($user['schedule_id']), 'device assignment boundary selects new member plan and schedule despite stale devices.user_id');
     check($assigned['policy_version'] > $beforeFailure['policy_version'], 'reassignment never resets version');
     $compiler->recompile($token['device_id']);
 

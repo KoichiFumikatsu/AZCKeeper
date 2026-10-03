@@ -126,11 +126,8 @@ final class PolicyCompiler
                 throw new \RuntimeException('Inactive organizational assignment');
             }
         }
-        $modules = [];
-        if ($user['status'] === 'active') {
-            $rows = $this->db->run("SELECT tm.module_code FROM subscriptions s JOIN tier t ON t.tenant_id=s.tenant_id AND t.id=s.tier_id AND t.active=TRUE JOIN tier_module tm ON tm.tenant_id=t.tenant_id AND tm.tier_id=t.id LEFT JOIN firma_module_override o ON o.tenant_id=s.tenant_id AND o.firm_id=? AND o.module_code=tm.module_code WHERE s.tenant_id=? AND s.user_id=? AND s.status IN ('active','scheduled') AND s.starts_at<=? AND (s.ends_at IS NULL OR s.ends_at>?) AND (o.enabled IS NULL OR o.enabled=TRUE) ORDER BY tm.module_code", [$org['firm_id'], $tenant, $userId, $at, $at])->fetchAll();
-            $modules = array_column($rows, 'module_code');
-        }
+        // Funciones de la persona: las que su cliente compro y su plan (propio o el por defecto del cliente) incluye.
+        $functions = PersonPlans::functions($this->db, $tenant, $userId);
         $platform = Util::bin(self::PLATFORM);
         $rows = $this->db->run("SELECT a.*,v.document FROM policy_assignments a JOIN policy_documents p ON p.tenant_id=a.tenant_id AND p.id=a.policy_id AND p.enabled=TRUE JOIN policy_versions v ON v.tenant_id=a.tenant_id AND v.policy_id=a.policy_id AND v.policy_version=a.policy_version WHERE a.enabled=TRUE AND ((a.tenant_id=? AND a.scope='global') OR (a.tenant_id=? AND (a.scope='tenant' OR (a.scope='area' AND a.area_id=?) OR (a.scope='site' AND a.site_id=?) OR (a.scope='user' AND a.user_id=?) OR (a.scope='device' AND a.device_id=?))))", [$platform, $tenant, $org['area_id'], $org['site_id'], $userId, $device])->fetchAll();
         $assignments = []; $ruleSchedules = [];
@@ -147,14 +144,14 @@ final class PolicyCompiler
             $hosts = $document->management_hosts ?? [];
             $this->validator->check(['type' => 'array', 'maxItems' => 30, 'items' => ['type' => 'string', 'maxLength' => 255]], $hosts);
             foreach ($rules as $rule) {
-                if ($rule->schedule_id !== null && in_array(PolicyComposer::RULE_MODULES[$rule->kind], $modules, true)) {
+                if ($rule->schedule_id !== null && PolicyComposer::ruleAllowed($rule->kind, $functions)) {
                     $key = ($row['scope'] === 'global' ? 'global/' : 'tenant/') . $rule->schedule_id;
                     $ruleSchedules[$key] = $this->schedule($row['tenant_id'], Util::bin($rule->schedule_id), $dayHours);
                 }
             }
             $assignments[] = ['id' => Util::id($row['id']), 'scope' => $row['scope'], 'priority' => (int) $row['priority'], 'rules' => $rules, 'management_hosts' => $hosts];
         }
-        return ['tenant_id' => Util::id($tenant), 'device_id' => Util::id($device??$userId), 'reported_version' => (int) $d['policy_version'], 'modules' => $modules, 'assignments' => $assignments, 'work_schedule' => $this->schedule($tenant, $org['schedule_id'], $dayHours), 'rule_schedules' => $ruleSchedules];
+        return ['tenant_id' => Util::id($tenant), 'device_id' => Util::id($device??$userId), 'reported_version' => (int) $d['policy_version'], 'functions' => $functions, 'assignments' => $assignments, 'work_schedule' => $this->schedule($tenant, $org['schedule_id'], $dayHours), 'rule_schedules' => $ruleSchedules];
     }
 
     private function current(string $table, string $owner, string $tenant, string $id, string $at): ?array
