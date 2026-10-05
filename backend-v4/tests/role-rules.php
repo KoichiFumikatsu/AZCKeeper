@@ -30,6 +30,16 @@ function roleRulesTests(Database $db): void
     $byRule = fn (string $user) => (bool) $db->one("SELECT 1 FROM access_grants WHERE tenant_id=? AND user_id=? AND role_id=? AND source='rule'", [$tenant, Util::bin($user), Util::bin($jefe['id'])]);
     check($byRule($boss) && $byRule($p1['id']) && !$byRule($p2['id']), 'rule assigned the role to managers only');
 
+    // Rol por defecto del cliente: al dejar de cumplirse la regla, la persona vuelve a este rol.
+    $db->run("INSERT INTO roles (tenant_id,id,name,seed_key,scope_kind) VALUES (?,?,'Colaborador','colaborador','self')", [$tenant, Util::bin(Util::uuid())]);
+
+    // La regla propone el rol, no el alcance (§4): el jefe queda con «solo lo propio» hasta que alguien le da «su equipo».
+    $scopeOf = fn (string $user) => $db->one('SELECT scope_kind FROM access_grants WHERE tenant_id=? AND user_id=?', [$tenant, Util::bin($user)])['scope_kind'];
+    check($scopeOf($boss) === 'self', 'rule never sets the scope');
+    $bv = $db->one('SELECT version FROM users WHERE tenant_id=? AND id=?', [$tenant, $u['id']])['version'];
+    expect(adminRequest($platform, 'PUT', '/users/' . $boss . '/access', ['role_id' => $jefe['id'], 'scope' => accessScopeBody('team')], ['if-match' => '"' . $bv . '"']), 200, 'give the boss his team');
+    check($byRule($boss) && $scopeOf($boss) === 'team', 'changing only the scope keeps the rule role');
+
     // El jefe ve a su equipo (directos e indirectos) y a nadie mas.
     expect(adminRequest($platform, 'POST', '/auth/reauth', ['password' => $platform['password']]), 200, 'reauth');
     $email = 'jefe.' . substr(Util::uuid(), 0, 8) . '@example.test';
@@ -47,6 +57,8 @@ function roleRulesTests(Database $db): void
     $v3 = $db->one('SELECT version FROM users WHERE tenant_id=? AND id=?', [$tenant, Util::bin($p3['id'])])['version'];
     expect(adminRequest($platform, 'PATCH', '/users/' . $p3['id'], ['reports_to_user_id' => $boss], ['if-match' => '"' . $v3 . '"']), 200, 'move p3 under boss');
     check(!$byRule($p1['id']) && $byRule($boss), 'rule role removed when condition stops');
+    check($scopeOf($boss) === 'team', 'applying rules again keeps the scope');
+    check($db->one("SELECT source FROM access_grants WHERE tenant_id=? AND user_id=?", [$tenant, Util::bin($p1['id'])])['source'] === 'default', 'stopped matching: back to the default role');
 
     // Directivos fuera del monitoreo: por cargo, con excepcion por persona; el alta no los aprueba sola.
     $director = Util::bin(Util::uuid());

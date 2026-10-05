@@ -2,9 +2,9 @@
 declare(strict_types=1);
 namespace Keeper;
 
-// Asignacion automatica de roles (spec de integraciones §8.3): One (o Keeper) dice el cargo y a quien reporta cada
-// persona; estas reglas, que solo se administran en Keeper, convierten eso en roles del panel. Una regla solo puede usar
-// roles marcados "asignable por regla" y solo quita los roles que ella misma puso; los manuales no se tocan.
+// Asignacion automatica por cargo (§4): propone el rol, no el alcance. Solo a personas sin acceso manual; si deja de
+// cumplirse, vuelve el rol por defecto con el mismo alcance. One (o Keeper) dice el cargo y a quien reporta cada persona
+// (spec de integraciones §8.3). Una regla solo puede usar roles "asignables por regla".
 final class RoleRules
 {
     private const SENSITIVE = ['usuarios.editar', 'roles.gestionar', 'roles.reglas', 'integraciones.aprobar', 'integraciones.gestionar'];
@@ -43,12 +43,12 @@ final class RoleRules
         }
         $added = 0; $removed = 0;
         foreach ($db->run("SELECT user_id FROM access_grants WHERE tenant_id=? AND source='rule' AND user_id IS NOT NULL", [$tenant])->fetchAll() as $row) {
-            if (!isset($desired[bin2hex($row['user_id'])])) { AccessGrants::grantDefault($db, $tenant, $row['user_id']); $removed++; }
+            if (!isset($desired[bin2hex($row['user_id'])])) { AccessGrants::revertToDefault($db, $tenant, $row['user_id']); $removed++; }
         }
         foreach ($desired as [$user, $role, $rule]) {
             $g = AccessGrants::forUser($db, $tenant, $user);
             if ($g !== null && ($g['source'] === 'manual' || ($g['role_id'] === $role && $g['rule_id'] === $rule))) { continue; }
-            AccessGrants::setForUser($db, $tenant, $user, $role, AccessScope::fromLegacyRole($db, $tenant, $role), 'rule', $rule);
+            AccessGrants::setForUser($db, $tenant, $user, $role, $g['scope'] ?? AccessScope::own(), 'rule', $rule);
             $added++;
         }
         return [$added, $removed];

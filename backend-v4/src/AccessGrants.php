@@ -73,6 +73,16 @@ final class AccessGrants
         self::setForUser($db, $tenant, $user, $role, AccessScope::own(), 'default');
     }
 
+    /** La regla que puso el rol dejo de cumplirse: vuelve el rol por defecto; el alcance se conserva (la regla nunca lo toco). */
+    public static function revertToDefault(Database $db, string $tenant, string $user): void
+    {
+        $g = self::forUser($db, $tenant, $user);
+        if ($g === null) { return; }
+        $role = self::defaultRole($db, $tenant);
+        if ($role === null) { self::removeForUser($db, $tenant, $user); return; }
+        self::setForUser($db, $tenant, $user, $role, $g['scope'], 'default');
+    }
+
     /** Dar el acceso de una persona (AccessInput) con delegacion segura. Cambiar solo el alcance no le quita el rol a la regla que lo puso. */
     public static function assign(Database $db, AdminAccess $by, string $tenant, string $user, object $input): void
     {
