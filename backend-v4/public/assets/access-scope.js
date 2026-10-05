@@ -6,6 +6,8 @@ export function scopeSummary(roleName, scope, names) {
   if (scope.kind === 'all') return `${role} · Todo el cliente`;
   if (scope.kind === 'team') return `${role} · Su equipo (quienes le reportan)`;
   if (scope.kind === 'self') return `${role} · Solo lo propio`;
+  // En el servidor un `filters` sin valores no ve a nadie (1=0): nunca se lee como «todas las sedes».
+  if (!LISTS.some(k => scope[k]?.length)) return `${role} · Filtros sin unidades: no ve a nadie`;
   const label = ids => ids.map(id => names.get(id) || id).join(', ');
   const parts = [role];
   if (scope.company_ids.length) parts.push(`Empresa: ${label(scope.company_ids)}`);

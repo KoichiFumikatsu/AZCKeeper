@@ -110,7 +110,7 @@ final class AdminApi
     {
         try { return $this->handle(); }
         catch (\PDOException $e) {
-            if (in_array($e->errorInfo[1]??0,[1062,1451,1452,1644,3819],true)) { throw new ApiError(409,'invalid_transition'); }
+            if (in_array($e->errorInfo[1]??0,[1062,1451,1452,1644,3819,4025],true)) { throw new ApiError(409,'invalid_transition'); }
             throw $e;
         }
     }
@@ -420,7 +420,7 @@ final class AdminApi
             $this->db->run("DELETE FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source='document'",[$this->tenant,$id]);
             if ($document!==null) { $this->db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,'document',?)",[$this->tenant,$id,$document]); }
         }
-        RoleRules::apply($this->db,$this->tenant);
+        RoleRules::apply($this->db,$this->tenant,$this->access);
         $this->audit('user',$id,array_keys(get_object_vars($b))); $this->dirty($this->userDevices($id));
         return $this->result($this->userDto($this->row('users',$id)),$op==='createUser'?201:200);
     }
@@ -511,7 +511,7 @@ final class AdminApi
         foreach ($b->permissions as $permission) { $this->db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)',[$this->tenant,$id,$permission]); }
         foreach ($this->db->run('SELECT user_id FROM access_grants WHERE tenant_id=? AND role_id=? AND user_id IS NOT NULL',[$this->tenant,$id])->fetchAll() as $user) { $this->invalidateUser($user['user_id']); }
         $this->db->run('UPDATE tenants SET auth_version=auth_version+1 WHERE tenant_id=?',[$this->tenant]);
-        RoleRules::apply($this->db,$this->tenant);
+        RoleRules::apply($this->db,$this->tenant,$this->access);
         $this->audit('role',$id,array_keys(get_object_vars($b))); return $this->result($this->roleDto($this->row('roles',$id)),$op==='createRole'?201:200);
     }
     /** Un rol nunca incluye permisos de funciones que el cliente no compro (§4), ni siquiera si lo guarda superadmin. */

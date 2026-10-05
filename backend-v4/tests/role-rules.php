@@ -77,5 +77,30 @@ function roleRulesTests(Database $db): void
     $queue = expect(adminRequest($platform, 'GET', '/enrollments/requests?status=pending'), 200, 'intake queue')['data'];
     $row = array_values(array_filter($queue, fn ($x) => $x['hostname'] === 'DESKTOP-PRESI'))[0];
     check($row['alert'] === 'person_excluded', 'intake shows person_excluded alert');
+
+    // Delegacion (§4): una regla no da un rol con permisos que quien la guarda no tiene; cambiar el cargo tampoco.
+    accessResetPreloginQuota();
+    $v = secondTenant($db); $t2 = $v['tenant_id'];
+    $platform2 = sharedPlatform($db); $platform2['tenant'] = $t2;
+    $strong = expect(adminRequest($platform2, 'POST', '/roles', ['name' => 'Gestor por cargo', 'permissions' => ['usuarios.ver', 'usuarios.editar', 'equipos.ver'], 'active' => true, 'assignable_by_rule' => true]), 201, 'strong assignable role');
+    $light = expect(adminRequest($platform2, 'POST', '/roles', ['name' => 'Lector por cargo', 'permissions' => ['usuarios.ver'], 'active' => true, 'assignable_by_rule' => true]), 201, 'light assignable role');
+    $position = function (string $name) use ($db, $t2): string { $id = Util::bin(Util::uuid()); $db->run("INSERT INTO org_units (tenant_id,id,kind,name) VALUES (?,?,'position',?)", [$t2, $id, $name]); return Util::id($id); };
+    $director = $position('Director de sede'); $analyst = $position('Analista');
+    $manager = adminFixture($db, adminMember($db, $v), ['usuarios.ver', 'usuarios.editar', 'roles.reglas']); $manager['tenant'] = $t2;
+    $exceeds = fn (array $r) => $r[0] === 403 && ($r[1]['detail'] ?? null) === 'delegation_exceeds_own_access';
+    $byPosition = fn (string $role, string $pos) => ['name' => 'Por cargo ' . substr(Util::uuid(), 0, 6), 'condition_kind' => 'position', 'position_id' => $pos, 'area_id' => null, 'role_id' => $role, 'active' => true];
+    check($exceeds(adminRequest($manager, 'POST', '/role-rules', $byPosition($strong['id'], $director))), 'a rule cannot grant permissions the caller lacks');
+    $lightRule = expect(adminRequest($manager, 'POST', '/role-rules', $byPosition($light['id'], $analyst)), 201, 'a rule with a role the caller holds');
+    check($exceeds(adminRequest($manager, 'PATCH', '/role-rules/' . $lightRule['id'], $byPosition($strong['id'], $analyst), ['if-match' => '"' . $lightRule['version'] . '"'])), 'editing a rule cannot switch to a larger role');
+    expect(adminRequest($platform2, 'POST', '/role-rules', $byPosition($strong['id'], $director)), 201, 'platform creates the larger rule');
+    $target = adminMember($db, $v);
+    $roleOf = fn () => $db->one('SELECT role_id FROM access_grants WHERE tenant_id=? AND user_id=?', [$t2, $target['id']])['role_id'] ?? null;
+    $tv = fn () => '"' . $db->one('SELECT version FROM users WHERE tenant_id=? AND id=?', [$t2, $target['id']])['version'] . '"';
+    check($exceeds(adminRequest($manager, 'PATCH', '/users/' . Util::id($target['id']), ['position_id' => $director], ['if-match' => $tv()])), 'changing the position cannot trigger a larger role');
+    check($roleOf() !== Util::bin($strong['id']), 'refused position change grants nothing');
+    expect(adminRequest($manager, 'PATCH', '/users/' . Util::id($target['id']), ['position_id' => $analyst], ['if-match' => $tv()]), 200, 'position with a role the caller holds');
+    check($roleOf() === Util::bin($light['id']), 'rule within the caller access fires');
+    expect(adminRequest($platform2, 'PATCH', '/users/' . Util::id($target['id']), ['position_id' => $director], ['if-match' => $tv()]), 200, 'platform changes the position');
+    check($roleOf() === Util::bin($strong['id']), 'platform change fires the larger rule');
     echo 'PASS role rules (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

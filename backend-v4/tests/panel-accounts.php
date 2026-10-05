@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-use Keeper\{Database,Util};
+use Keeper\{AccessGrants,AccessScope,Database,Util};
 
 // Cuentas del panel: superadmin y cuentas de empresa con contraseña temporal obligatoria de cambiar.
 function panelLogin(string $email, string $password): array
@@ -95,5 +95,41 @@ function panelAccountsTests(Database $db): void
     // No puede desactivarse a si misma la cuenta de plataforma.
     $selfId = Util::id($platform['id']);
     check(adminRequest($platform, 'PATCH', '/panel-accounts/' . $selfId, ['active' => false])[1]['detail'] === 'cannot_disable_self', 'cannot disable self');
+
+    // Delegacion (§4): quien no es plataforma no toma una cuenta con mas acceso que el suyo, ni una cuenta de grupo.
+    accessResetPreloginQuota();
+    $editor = adminFixture($db, adminMember($db, $u), ['usuarios.ver', 'usuarios.editar']); $editor['tenant'] = $tenant;
+    expect(adminRequest($editor, 'POST', '/auth/reauth', ['password' => $editor['password']]), 200, 'editor reauth');
+    $exceeds = fn (array $r) => $r[0] === 403 && ($r[1]['detail'] ?? null) === 'delegation_exceeds_own_access' && !isset($r[1]['temporary_password']);
+    $mkRole = function (string $name, array $permissions) use ($db, $tenant): string {
+        $id = Util::bin(Util::uuid());
+        $db->run("INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,?,'self')", [$tenant, $id, $name]);
+        foreach ($permissions as $p) { $db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)', [$tenant, $id, $p]); }
+        return $id;
+    };
+    $strong = $mkRole('Gestor de accesos', ['usuarios.ver', 'usuarios.editar', 'roles.gestionar']); $weak = $mkRole('Solo personas', ['usuarios.ver']);
+    $big = adminMember($db, $u); AccessGrants::setForUser($db, $tenant, $big['id'], $strong, AccessScope::own(), 'manual');
+    $small = adminMember($db, $u); AccessGrants::setForUser($db, $tenant, $small['id'], $weak, AccessScope::own(), 'default');
+    $acctBody = fn (array $who) => ['kind' => 'company', 'email' => 'deleg.' . substr(Util::uuid(), 0, 8) . '@example.test', 'display_name' => null, 'user_id' => Util::id($who['id'])];
+    $bigBody = $acctBody($big);
+    check($exceeds(adminRequest($editor, 'POST', '/panel-accounts', $bigBody)), 'no account for a person with more access than the caller');
+    check(!$db->one('SELECT id FROM admin_accounts WHERE email=?', [$bigBody['email']]), 'refused account not created');
+    $smallAcct = expect(adminRequest($editor, 'POST', '/panel-accounts', $acctBody($small)), 201, 'account for a person with less access');
+    check(strlen($smallAcct['temporary_password']) === 16 && $smallAcct['account']['access']['role_id'] === Util::id($weak), 'existing smaller access kept');
+    $bigAcct = expect(adminRequest($platform, 'POST', '/panel-accounts', $bigBody), 201, 'platform creates the larger account');
+    $hash = fn (string $id) => $db->one('SELECT password_hash FROM admin_accounts WHERE id=?', [Util::bin($id)])['password_hash'];
+    $bigHash = $hash($bigAcct['account']['id']);
+    check($exceeds(adminRequest($editor, 'POST', '/panel-accounts/' . $bigAcct['account']['id'] . '/reset-password')), 'no reset of an account with roles.gestionar');
+    check($hash($bigAcct['account']['id']) === $bigHash, 'refused reset keeps the password');
+    check(strlen(expect(adminRequest($editor, 'POST', '/panel-accounts/' . $smallAcct['account']['id'] . '/reset-password'), 200, 'reset smaller account')['temporary_password']) === 16, 'smaller account reset');
+    // Cuenta de grupo: tiene accesos en otras empresas; solo la plataforma la restablece o la edita.
+    $group = Util::bin(Util::uuid());
+    $db->run('INSERT INTO company_groups (id,name) VALUES (?,?)', [$group, 'Grupo ' . substr(Util::uuid(), 0, 8)]);
+    $db->run('UPDATE admin_accounts SET group_id=?,group_tenant_id=? WHERE id=?', [$group, Util::bin(Keeper\AdminAuth::PLATFORM), Util::bin($smallAcct['account']['id'])]);
+    $smallHash = $hash($smallAcct['account']['id']);
+    check($exceeds(adminRequest($editor, 'POST', '/panel-accounts/' . $smallAcct['account']['id'] . '/reset-password')), 'no reset of a group account');
+    check($hash($smallAcct['account']['id']) === $smallHash, 'group account password kept');
+    check($exceeds(adminRequest($editor, 'PATCH', '/panel-accounts/' . $smallAcct['account']['id'], ['active' => false])), 'no edit of a group account');
+    expect(adminRequest($platform, 'POST', '/panel-accounts/' . $smallAcct['account']['id'] . '/reset-password'), 200, 'platform resets a group account');
     echo 'PASS panel accounts (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

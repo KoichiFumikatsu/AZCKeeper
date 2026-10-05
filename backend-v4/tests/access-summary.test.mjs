@@ -34,3 +34,7 @@ test('mismo acceso aunque cambie el orden', () => {
   assert.equal(sameAccess(null, null), true);
   assert.equal(sameAccess(a, null), false);
 });
+// En el servidor un `filters` sin valores no ve a nadie (1=0): el resumen nunca dice «todas las sedes».
+test('filtros sin unidades: no ve a nadie', () => {
+  assert.equal(scopeSummary('Coordinador', scope('filters'), names), 'Coordinador · Filtros sin unidades: no ve a nadie');
+});

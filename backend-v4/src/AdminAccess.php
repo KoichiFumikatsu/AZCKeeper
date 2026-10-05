@@ -104,6 +104,15 @@ final class AdminAccess
     public function delegate(array $permissions, AccessScope $scope, ?string $target): void
     {
         $this->rolesGate();
+        $this->within($permissions, $scope, $target);
+    }
+
+    /**
+     * La misma comprobacion sin la compuerta de autogestion: para lo que da o expone un acceso sin pasar por la pantalla
+     * de roles (tomar una cuenta del panel, una regla por cargo que se dispara al editar a una persona).
+     */
+    public function within(array $permissions, AccessScope $scope, ?string $target): void
+    {
         foreach ($permissions as $code) {
             $p = $this->db->one('SELECT * FROM permissions WHERE code=?', [$code]);
             if (!$p || $p['platform_only']) { throw new ApiError(403, 'permission_denied'); }

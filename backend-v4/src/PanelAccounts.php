@@ -79,6 +79,8 @@ final class PanelAccounts
             $user = $this->access->user(Util::bin($b->user_id));
             if ($user['status'] !== 'active') { throw new ApiError(409, 'invalid_transition', [], 'person_inactive'); }
             if ($this->db->one('SELECT id FROM admin_accounts WHERE tenant_id=? AND user_id=?', [$this->tenant, $user['id']])) { throw new ApiError(409, 'invalid_transition', [], 'person_has_account'); }
+            // Sin `access` la persona conserva el que tiene: quien recibe la contrasena temporal debe poder darlo.
+            if (($b->access ?? null) === null) { $this->mayTake(AccessGrants::forUser($this->db, $this->tenant, $user['id']), $user['id']); }
             $this->db->run('INSERT INTO admin_accounts (tenant_id,id,user_id,email,display_name,password_hash,must_change_password,is_platform_admin) VALUES (?,?,?,?,?,?,TRUE,FALSE)',
                 [$this->tenant, $id, $user['id'], $email, $b->display_name, password_hash($temporary, PASSWORD_DEFAULT)]);
             $this->db->run('UPDATE users SET panel_login_enabled=TRUE,version=version+1 WHERE tenant_id=? AND id=?', [$this->tenant, $user['id']]);
@@ -123,8 +125,22 @@ final class PanelAccounts
         $this->db->run('UPDATE admin_sessions SET revoked_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND admin_id=? AND revoked_at IS NULL', [$a['tenant_id'], $a['id']]);
     }
 
+    /** Tomar una cuenta (crearla o restablecer su contrasena) es recibir su acceso: delegacion sobre el acceso actual (§4). */
+    private function mayTake(?array $grant, string $user): void
+    {
+        if ($this->c['platform'] || $grant === null) { return; }
+        $this->access->within(AccessGrants::permissions($this->db, $this->tenant, $grant['role_id']), $grant['scope'], $user);
+    }
+
+    /** Una cuenta de grupo tiene accesos en otras empresas del grupo: solo la plataforma la edita o la restablece. */
+    private function notGroup(array $a): void
+    {
+        if (!$this->c['platform'] && ($a['group_id'] ?? null) !== null) { throw new ApiError(403, 'permission_denied', [], 'delegation_exceeds_own_access'); }
+    }
+
     private function patch(array $a, object $b): array
     {
+        $this->notGroup($a);
         $self = $a['id'] === $this->c['admin_id'] && $a['tenant_id'] === $this->c['admin_tenant_id'];
         if ($self && !$b->active) { throw new ApiError(409, 'invalid_transition', [], 'cannot_disable_self'); }
         if ($a['is_platform_admin']) {
@@ -146,6 +162,9 @@ final class PanelAccounts
     private function reset(array $a): array
     {
         $this->reauth();
+        $this->notGroup($a);
+        $self = $a['id'] === $this->c['admin_id'] && $a['tenant_id'] === $this->c['admin_tenant_id'];
+        if (!$a['is_platform_admin'] && !$self) { $this->mayTake(AccessGrants::forUser($this->db, $a['tenant_id'], $a['user_id']), $a['user_id']); }
         $temporary = self::temporaryPassword();
         $this->db->run('UPDATE admin_accounts SET password_hash=?,must_change_password=TRUE WHERE tenant_id=? AND id=?', [password_hash($temporary, PASSWORD_DEFAULT), $a['tenant_id'], $a['id']]);
         $this->revokeSessions($a);

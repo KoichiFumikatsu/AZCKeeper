@@ -34,8 +34,12 @@ final class RoleRules
         })->fetchAll(), 'id');
     }
 
-    /** Recalcula los roles puestos por reglas en toda la empresa. Devuelve [añadidos, quitados]. */
-    public static function apply(Database $db, string $tenant): array
+    /**
+     * Recalcula los roles puestos por reglas en toda la empresa. Devuelve [añadidos, quitados].
+     * $by: quien hizo el cambio desde el panel. Un rol que la regla le daria a alguien por ese cambio pasa por su
+     * delegacion (§4); si no podria darlo, 403 y no cambia nada. Sin $by (sync, sistema), la regla aplica sin mas.
+     */
+    public static function apply(Database $db, string $tenant, ?AdminAccess $by = null): array
     {
         $desired = [];
         foreach ($db->run('SELECT p.* FROM panel_role_rules p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id AND r.active=TRUE AND r.assignable_by_rule=TRUE WHERE p.tenant_id=? AND p.active=TRUE ORDER BY p.created_at', [$tenant])->fetchAll() as $rule) {
@@ -48,7 +52,9 @@ final class RoleRules
         foreach ($desired as [$user, $role, $rule]) {
             $g = AccessGrants::forUser($db, $tenant, $user);
             if ($g !== null && ($g['source'] === 'manual' || ($g['role_id'] === $role && $g['rule_id'] === $rule))) { continue; }
-            AccessGrants::setForUser($db, $tenant, $user, $role, $g['scope'] ?? AccessScope::own(), 'rule', $rule);
+            $scope = $g['scope'] ?? AccessScope::own();
+            if ($by !== null && ($g === null || $g['role_id'] !== $role)) { $by->within(AccessGrants::permissions($db, $tenant, $role), $scope, $user); }
+            AccessGrants::setForUser($db, $tenant, $user, $role, $scope, 'rule', $rule);
             $added++;
         }
         return [$added, $removed];
@@ -78,6 +84,8 @@ final class RoleRules
         $role = $this->db->one('SELECT * FROM roles WHERE tenant_id=? AND id=? AND active=TRUE', [$tenant, Util::bin($b->role_id)]);
         if (!$role) { throw new ApiError(422, 'validation_failed', [], 'role_not_found'); }
         if (!$role['assignable_by_rule']) { throw new ApiError(409, 'invalid_transition', [], 'role_not_assignable'); }
+        // La regla da el rol a cualquiera del cliente que cumpla la condicion: quien la guarda debe tener todos sus permisos (§4).
+        $this->access->within(AccessGrants::permissions($this->db, $tenant, $role['id']), AccessScope::all(), null);
         $position = $b->condition_kind === 'manages' ? null : ($b->position_id === null ? null : Util::bin($b->position_id));
         $area = $b->condition_kind === 'position_in_area' && $b->area_id !== null ? Util::bin($b->area_id) : null;
         if (($b->condition_kind !== 'manages' && $position === null) || ($b->condition_kind === 'position_in_area' && $area === null)) { throw new ApiError(422, 'validation_failed', [], 'condition_incomplete'); }
@@ -97,7 +105,7 @@ final class RoleRules
             $this->db->run('UPDATE panel_role_rules SET name=?,condition_kind=?,position_id=?,area_id=?,role_id=?,active=?,version=version+1 WHERE tenant_id=? AND id=?', [$b->name, $b->condition_kind, $position, $area, $role['id'], (int) $b->active, $tenant, $id]);
             // Cambiar el rol de una regla: lo que puso con el rol anterior se recalcula abajo.
         }
-        self::apply($this->db, $tenant);
+        self::apply($this->db, $tenant, $this->access);
         (new Audit($this->db))->record($this->c, $this->r, $this->r->operation['operationId'], 'role_rule', $id, array_keys(get_object_vars($b)));
         return AdminApi::response($this->dto($this->db->one('SELECT * FROM panel_role_rules WHERE tenant_id=? AND id=?', [$tenant, $id])), $this->r->method === 'POST' ? 201 : 200);
     }
