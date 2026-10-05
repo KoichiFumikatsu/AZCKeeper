@@ -1618,7 +1618,7 @@ const AUDIT_ACTIONS = {
   'migration.authorization_issued': 'Autorizó una migración desde K3', 'migration.escrow_persisted': 'Guardó la llave de migración', 'migration.escrow_recovered': 'Recuperó la llave de migración',
   'migration.escrow_verified': 'Verificó la llave de migración', 'migration.phase_reported': 'El equipo reportó su avance de migración',
   approveEnrollmentRequest: 'Aprobó un equipo nuevo', rejectEnrollmentRequest: 'Rechazó un equipo nuevo', requestEnrollment: 'Un equipo pidió registrarse', createEnrollment: 'Autorizó un equipo',
-  createEnrollmentKey: 'Creó una clave de registro de equipos', revokeEnrollmentKey: 'Revocó una clave de registro', putEnrollmentSettings: 'Cambió los ajustes de registro de equipos',
+  createEnrollmentKey: 'Creó una clave de registro de equipos', downloadInstaller: 'Descargó el instalador con clave nueva', revokeEnrollmentKey: 'Revocó una clave de registro', putEnrollmentSettings: 'Cambió los ajustes de registro de equipos',
   createExpectedDevice: 'Agregó un equipo esperado', importExpectedDevices: 'Importó equipos esperados', externalImportExpectedDevices: 'Otro sistema cargó equipos esperados', cancelExpectedDevice: 'Canceló un equipo esperado',
   assignDevice: 'Asignó un equipo a una persona', transferDevice: 'Transfirió un equipo', patchDevice: 'Editó un equipo', createDeviceCommand: 'Envió un comando a un equipo',
   createHardeningCommand: 'Envió un endurecimiento a un equipo', setTenantHardening: 'Cambió la seguridad de cuentas de Windows', revealTenantHardening: 'Vio la contraseña de administrador local',

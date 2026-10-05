@@ -261,12 +261,14 @@ final class DeviceIntake
             case 'listEnrollmentKeys':
                 return $this->page('SELECT * FROM enrollment_keys WHERE tenant_id=? ORDER BY created_at DESC,id', [$tenant], fn ($x) => $this->keyDto($x));
             case 'createEnrollmentKey':
-                if ($c['reauthenticated_at'] === null || strtotime($c['reauthenticated_at'] . ' UTC') < time() - 300) { throw new ApiError(403, 'reauth_required'); }
-                $secret = 'kek_' . Util::b64(random_bytes(32)); $kid = Util::bin(Util::uuid());
-                $this->db->run('INSERT INTO enrollment_keys (tenant_id,id,key_hash,hint) VALUES (?,?,?,?)', [$tenant, $kid, hash('sha256', $secret, true), substr($secret, 4, 6)]);
+                self::requireReauth($c);
+                [$kid, $secret] = $this->newKey($tenant);
                 $audit('enrollment_key', $kid, ['hint']);
                 $k = $this->keyDto($this->db->one('SELECT * FROM enrollment_keys WHERE tenant_id=? AND id=?', [$tenant, $kid]));
                 return AdminApi::response(['id' => $k['id'], 'key' => $secret, 'hint' => $k['hint'], 'created_at' => $k['created_at']], 201, ['Cache-Control' => 'no-store']);
+            case 'downloadInstaller':
+                self::requireReauth($c);
+                return $this->installer($tenant, $audit);
             case 'revokeEnrollmentKey':
                 $k = $this->db->one('SELECT * FROM enrollment_keys WHERE tenant_id=? AND id=? FOR UPDATE', [$tenant, $id]);
                 if (!$k) { throw new ApiError(404, 'resource_not_found'); }
@@ -285,6 +287,56 @@ final class DeviceIntake
             if ($error !== null) { $errors[] = ['row' => $n + 1, 'code' => $error]; } else { $created++; }
         }
         return ['created' => $created, 'errors' => $errors];
+    }
+
+    private static function requireReauth(array $c): void
+    {
+        if ($c['reauthenticated_at'] === null || strtotime($c['reauthenticated_at'] . ' UTC') < time() - 300) { throw new ApiError(403, 'reauth_required'); }
+    }
+
+    // [id binario, clave completa]: la clave solo sale en la respuesta; se guarda el hash y una pista.
+    private function newKey(string $tenant): array
+    {
+        $secret = 'kek_' . Util::b64(random_bytes(32)); $kid = Util::bin(Util::uuid());
+        $this->db->run('INSERT INTO enrollment_keys (tenant_id,id,key_hash,hint) VALUES (?,?,?,?)', [$tenant, $kid, hash('sha256', $secret, true), substr($secret, 4, 6)]);
+        return [$kid, $secret];
+    }
+
+    // Paquete publicado (stable x64 de mayor sequence) con installation.json generico: api_base de este servidor + clave nueva.
+    // Sin el archivo en public/releases (o con otro tamano) responde 409 sin crear clave. La clave y el zip van en la
+    // transaccion de la peticion: si el zip falla, la clave se deshace con ella (nunca queda una clave sin entregar).
+    // Solo se reemplaza installation.json de la raiz; agent/ (contenido firmado) se copia tal cual.
+    private function installer(string $tenant, callable $audit): array
+    {
+        $rel = $this->db->one('SELECT version,artifact_url,size_bytes FROM client_releases WHERE tenant_id=? AND channel=\'stable\' AND architecture=\'x64\' ORDER BY sequence DESC LIMIT 1', [Util::bin(AdminAuth::PLATFORM)]);
+        $name = $rel ? basename((string) parse_url($rel['artifact_url'], PHP_URL_PATH)) : '';
+        $file = dirname(__DIR__) . '/public/releases/' . $name; clearstatcache(true, $file);
+        if (!preg_match('/^AZCKeeper_v4_bootstrap_[0-9.]+\.zip$/D', $name) || !is_file($file) || filesize($file) !== (int) $rel['size_bytes']) { throw new ApiError(409, 'invalid_transition', [], 'installer_unavailable'); }
+        [$kid, $secret] = $this->newKey($tenant);
+        $audit('enrollment_key', $kid, ['hint', 'source:installer']);
+        $origin = parse_url(Config::get('ORIGIN'));
+        // api_base sale de KEEPER_ORIGIN (origen canonico ya validado por Request), siempre https: el bootstrapper rechaza http.
+        $config = json_encode(['api_base' => 'https://' . $origin['host'] . (isset($origin['port']) ? ':' . $origin['port'] : '') . '/v1/', 'enrollment_key' => $secret, 'enable_hklm' => true], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        $tmp = tempnam(sys_get_temp_dir(), 'keeper-installer');
+        if ($tmp === false) { throw new \RuntimeException('installer temp failed'); }
+        // Se borra al terminar la peticion pase lo que pase (Application lo borra tras enviarlo; esto cubre fallos y abortos).
+        register_shutdown_function(static function () use ($tmp): void { if (is_file($tmp)) { unlink($tmp); } });
+        try {
+            if (!copy($file, $tmp)) { throw new \RuntimeException('installer copy failed'); }
+            $zip = new \ZipArchive();
+            if ($zip->open($tmp) !== true || !$zip->addFromString('installation.json', $config, \ZipArchive::FL_OVERWRITE) || !$zip->close()) { throw new \RuntimeException('installer zip failed'); }
+        } catch (\Throwable $e) { if (is_file($tmp)) { unlink($tmp); } throw $e; }
+        $company = self::slug((string) $this->db->one('SELECT name FROM tenants WHERE tenant_id=?', [$tenant])['name']);
+        $version = preg_replace('/[^0-9A-Za-z.\-]/', '', $rel['version']);
+        return ['status' => 200, 'json' => '', 'file' => $tmp, 'headers' => ['Content-Type' => 'application/zip', 'Content-Disposition' => 'attachment; filename="AZCKeeper-' . $version . '-' . $company . '.zip"', 'Cache-Control' => 'no-store']];
+    }
+
+    // Nombre de la empresa para el archivo: ASCII en minusculas con guiones ("Compañía S.A.S." -> "compania-s-a-s").
+    private static function slug(string $name): string
+    {
+        if (class_exists(\Normalizer::class)) { $name = preg_replace('/\p{Mn}+/u', '', (string) \Normalizer::normalize($name, \Normalizer::FORM_D)); }
+        $slug = trim(substr(trim((string) preg_replace('/[^a-z0-9]+/', '-', strtolower($name)), '-'), 0, 60), '-');
+        return $slug === '' ? 'empresa' : $slug;
     }
 
     // [id binario, null] o [null, codigo de error de fila]. Sin $access (integracion) el alcance es la empresa.

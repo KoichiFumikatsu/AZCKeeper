@@ -137,7 +137,7 @@ final class AdminApi
             'getSubscription','setSubscription'=>$this->subscription($op,$id,$b),
             'listReleases','registerRelease','deployRelease'=>$this->releases($op,$b),
             'listExpectedDevices','createExpectedDevice','importExpectedDevices','cancelExpectedDevice','listEnrollmentRequests','approveEnrollmentRequest','rejectEnrollmentRequest',
-            'getEnrollmentSettings','putEnrollmentSettings','listEnrollmentKeys','createEnrollmentKey','revokeEnrollmentKey'=>(new DeviceIntake($this->db))->admin($op,$id,$b,$this->access,$this->c,$this->r),
+            'getEnrollmentSettings','putEnrollmentSettings','listEnrollmentKeys','createEnrollmentKey','revokeEnrollmentKey','downloadInstaller'=>(new DeviceIntake($this->db))->admin($op,$id,$b,$this->access,$this->c,$this->r),
             'listPanelAccounts','createPanelAccount','patchPanelAccount','resetPanelAccountPassword'=>(new PanelAccounts($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getAppClassification','putAppClassification','createAppClassificationOverride','deleteAppClassificationOverride','createAppSite'=>(new AppClassification($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listAbsences','createAbsence','patchAbsence'=>(new Absences($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),

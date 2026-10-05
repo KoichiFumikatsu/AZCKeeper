@@ -53,10 +53,11 @@ export function goToLogin() {
   } catch { /* No persisted state. */ }
   location.replace('/login.php');
 }
-export async function api(method, path, { body, tenant = tenantId, idempotencyKey, ifMatch } = {}) {
+// raw: descargas binarias (instalador). Si responde bien y no es JSON devuelve la Response; los errores siguen igual.
+export async function api(method, path, { body, tenant = tenantId, idempotencyKey, ifMatch, raw = false } = {}) {
   method = method.toUpperCase();
   if (!path.startsWith('/') || path.startsWith('//') || path.includes('://')) throw new Error('Ruta de API inválida.');
-  const headers = { Accept: 'application/json, application/problem+json' };
+  const headers = { Accept: raw ? 'application/zip, application/json, application/problem+json' : 'application/json, application/problem+json' };
   if (!path.startsWith('/auth/')) {
     if (!isUuid(tenant)) throw new Error('Selecciona una empresa válida para consultar los datos.');
     headers['X-Tenant-ID'] = tenant;
@@ -83,6 +84,7 @@ export async function api(method, path, { body, tenant = tenantId, idempotencyKe
   }
   if (response.status === 204 && response.ok) return null;
   const type = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  if (raw && response.ok && !['application/json', 'application/problem+json'].includes(type)) return response;
   let data;
   if (['application/json', 'application/problem+json'].includes(type)) {
     try { data = await response.json(); } catch { throw new ApiError(response.status, { code: 'invalid_response' }); }

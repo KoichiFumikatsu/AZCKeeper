@@ -65,7 +65,7 @@ final class Application
                     catch (ApiError) { throw new \RuntimeException('Invalid response contract'); }
                 }
             }
-            $this->send($response['status'], $response['json'], $id, $response['headers'] ?? []);
+            $this->send($response['status'], $response['json'], $id, $response['headers'] ?? [], false, $response['file'] ?? null);
         } catch (OAuthError $e) {
             $this->send($e->status, Util::json(['error'=>$e->errorCode]), $id, ['Cache-Control'=>'no-store', 'Pragma'=>'no-cache'] + ($e->status === 401 ? ['WWW-Authenticate'=>'Basic realm="keeper-oauth"'] : []));
         } catch (ApiError $e) {
@@ -153,8 +153,18 @@ final class Application
         }
         throw new ApiError(404, 'resource_not_found');
     }
-    private function send(int $status, string $json, string $id, array $headers, bool $problem = false): void
+    // $file: descarga binaria (instalador) que se envia desde disco sin cargarla en memoria y se borra despues.
+    private function send(int $status, string $json, string $id, array $headers, bool $problem = false, ?string $file = null): void
     {
+        if ($file !== null) {
+            try {
+                http_response_code($status); header('X-Request-ID: ' . $id); header('Content-Length: ' . filesize($file));
+                foreach ($headers + $this->limiter->headers as $key => $value) { foreach (is_array($value) ? $value : [$value] as $line) { header($key . ': ' . $line, $key !== 'Set-Cookie'); } }
+                while (ob_get_level() > 0) { ob_end_clean(); }
+                readfile($file);
+            } finally { if (is_file($file)) { unlink($file); } }
+            return;
+        }
         http_response_code($status);
         header('X-Request-ID: ' . $id);
         header('Content-Type: ' . ($problem ? 'application/problem+json' : 'application/json'));

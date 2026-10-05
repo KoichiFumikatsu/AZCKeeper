@@ -258,31 +258,59 @@ async function keysAndSettings(content, tenant, rerender) {
   });
 
   s.append(el('h3', 'Claves de alta'));
-  const keys = await api('GET', '/enrollments/keys', { tenant });
-  const active = keys.data.filter(k => !k.revoked_at);
-  if (!keys.data.length) s.append(el('p', 'Aún no hay clave de alta: créala para generar el paquete genérico de la empresa.', 'empty-state'));
-  else {
-    const body = table(s, 'Claves de alta', ['Clave', 'Creada', 'Estado', '']);
-    keys.data.forEach(k => {
-      const tr = el('tr'); tr.append(el('td', `kek_${k.hint}…`), el('td', when(k.created_at)), el('td', k.revoked_at ? `Revocada ${when(k.revoked_at)}` : 'Activa'));
-      const cell = el('td');
-      if (!k.revoked_at) {
-        const revoke = el('button', 'Revocar'); revoke.type = 'button';
-        revoke.addEventListener('click', async () => {
-          if (prompt(`Los paquetes con la clave kek_${k.hint}… dejarán de poder dar de alta equipos nuevos. Escribe REVOCAR para confirmar.`) !== 'REVOCAR') return;
-          revoke.disabled = true;
-          try { await api('DELETE', `/enrollments/keys/${k.id}`, { tenant }); await rerender(); } catch (error) { cell.append(el('span', message(error), 'error-message')); revoke.disabled = false; }
-        });
-        cell.append(revoke);
-      }
-      tr.append(cell); body.append(tr);
-    });
-  }
+  const list = el('div'); s.append(list);
+  let active = [];
+  // Se vuelve a dibujar tras descargar el instalador (trae una clave nueva) sin perder el aviso de abajo.
+  const drawKeys = async () => {
+    const keys = await api('GET', '/enrollments/keys', { tenant });
+    active = keys.data.filter(k => !k.revoked_at);
+    list.replaceChildren();
+    if (!keys.data.length) list.append(el('p', 'Aún no hay clave de alta: créala o descarga el instalador para generar el paquete genérico de la empresa.', 'empty-state'));
+    else {
+      const body = table(list, 'Claves de alta', ['Clave', 'Creada', 'Estado', '']);
+      keys.data.forEach(k => {
+        const tr = el('tr'); tr.append(el('td', `kek_${k.hint}…`), el('td', when(k.created_at)), el('td', k.revoked_at ? `Revocada ${when(k.revoked_at)}` : 'Activa'));
+        const cell = el('td');
+        if (!k.revoked_at) {
+          const revoke = el('button', 'Revocar'); revoke.type = 'button';
+          revoke.addEventListener('click', async () => {
+            if (prompt(`Los paquetes con la clave kek_${k.hint}… dejarán de poder dar de alta equipos nuevos. Escribe REVOCAR para confirmar.`) !== 'REVOCAR') return;
+            revoke.disabled = true;
+            try { await api('DELETE', `/enrollments/keys/${k.id}`, { tenant }); await rerender(); } catch (error) { cell.append(el('span', message(error), 'error-message')); revoke.disabled = false; }
+          });
+          cell.append(revoke);
+        }
+        tr.append(cell); body.append(tr);
+      });
+    }
+  };
+  await drawKeys();
   const create = el('form', undefined, 'toolbar'); create.noValidate = true;
   const password = field(create, 'Tu contraseña (confirmación)', 'password', { type: 'password', required: true });
   password.autocomplete = 'current-password';
-  const go = el('button', active.length ? 'Crear otra clave' : 'Crear clave de alta', 'primary'); go.type = 'submit'; create.append(go); s.append(create);
+  const go = el('button', active.length ? 'Crear otra clave' : 'Crear clave de alta', 'primary'); go.type = 'submit';
+  const download = el('button', 'Descargar instalador', 'primary'); download.type = 'button';
+  create.append(go, download); s.append(create);
   const keyFb = feedback(s); const reveal = el('div'); s.append(reveal);
+  // Instalador listo: el servidor crea una clave nueva y la mete en installation.json del paquete publicado.
+  download.addEventListener('click', async () => {
+    keyFb.clear(); reveal.replaceChildren();
+    if (!password.value) { keyFb.fail('Escribe tu contraseña para confirmar.'); return; }
+    go.disabled = true; download.disabled = true;
+    try {
+      await api('POST', '/auth/reauth', { tenant, body: { password: password.value } });
+      password.value = '';
+      const response = await api('POST', '/enrollments/keys/installer', { tenant, raw: true });
+      const name = (response.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'AZCKeeper-instalador.zip';
+      const url = URL.createObjectURL(await response.blob());
+      const a = el('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+      await drawKeys();
+      reveal.append(el('p', 'El instalador trae una clave de registro nueva. Trátalo como secreto: quien lo tenga puede pedir el alta de un equipo (queda pendiente hasta que se apruebe). Para invalidarlo, revoca su clave.', 'notice'));
+    } catch (error) {
+      password.value = '';
+      keyFb.fail(error?.problem?.detail === 'installer_unavailable' ? 'No hay un instalador publicado en el servidor.' : error);
+    } finally { go.disabled = false; download.disabled = false; }
+  });
   create.addEventListener('submit', async event => {
     event.preventDefault(); keyFb.clear(); reveal.replaceChildren();
     if (!password.value) { keyFb.fail('Escribe tu contraseña para confirmar.'); return; }

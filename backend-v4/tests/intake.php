@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-use Keeper\{Database,Util};
+use Keeper\{Config,Database,Util};
 
 // Alta de equipos a escala: clave de alta de la empresa + registro propio de equipos esperados.
 function intakeAsk(string $key, array $pair, ?string $serial, string $host = 'DESKTOP-INTAKE', ?string $document = null, string $version = '4.0.9'): array
@@ -145,4 +145,57 @@ function intakeTests(Database $db): void
     $again = externalRequest('/ext/v1/expected-devices:import', $writer['headers'] + ['Content-Type' => 'application/json'], 'POST', $rows);
     check($again[1]['created'] === 0 && $again[1]['errors'][0]['code'] === 'duplicate_asset', 'external re-send never overwrites');
     echo 'PASS device intake (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+    installerTests($db, $admin, $u);
+}
+// Instalador listo para la empresa: el zip publicado con una clave nueva dentro de installation.json. Sin el archivo
+// publicado (o con otro tamano) responde 409 sin crear clave. Deja una release que no se puede borrar: corre despues de las pruebas de releases.
+function installerTests(Database $db, array $admin, array $u): void
+{
+    // Reutiliza la sesion de intakeTests: cada login nuevo gasta el cupo de prelogin compartido por toda la suite.
+    $before = $GLOBALS['checks']; $tenant = $u['tenant_id'];
+    $db->run("UPDATE tenants SET name='Compañía Ñandú S.A.S.' WHERE tenant_id=?", [$tenant]);
+    $start = (int) $db->one('SELECT COUNT(*) n FROM enrollment_keys WHERE tenant_id=?', [$tenant])['n'];
+    $keys = fn (): int => (int) $db->one('SELECT COUNT(*) n FROM enrollment_keys WHERE tenant_id=?', [$tenant])['n'] - $start;
+    check(\Keeper\Features::forOperation('downloadInstaller', 'equipos.enrolar') === null, 'installer download is core, like createEnrollmentKey');
+    $db->run("DELETE FROM role_permissions WHERE tenant_id=? AND role_id=? AND permission_code='equipos.enrolar'", [$tenant, $admin['role']]);
+    expect(adminRequest($admin, 'POST', '/enrollments/keys/installer'), 403, 'installer needs equipos.enrolar');
+    $db->run("INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,'equipos.enrolar')", [$tenant, $admin['role']]);
+    $db->run('UPDATE admin_sessions SET reauthenticated_at=UTC_TIMESTAMP(6)-INTERVAL 301 SECOND WHERE tenant_id=? AND admin_id=?', [$tenant, $admin['id']]);
+    check(expect(adminRequest($admin, 'POST', '/enrollments/keys/installer'), 403, 'installer needs recent reauth')['code'] === 'reauth_required', 'installer reauth code');
+    expect(adminRequest($admin, 'POST', '/auth/reauth', ['password' => $admin['password']]), 200, 'reauth for installer');
+    $dir = dirname(__DIR__) . '/public/releases'; $made = !is_dir($dir) && mkdir($dir, 0755, true);
+    $seq = (int) $db->one("SELECT COALESCE(MAX(sequence),0) s FROM client_releases WHERE channel='stable' AND architecture='x64'")['s'] + 1000;
+    $version = '9.9.' . $seq; $name = "AZCKeeper_v4_bootstrap_$version.zip"; $file = "$dir/$name";
+    $build = tempnam(sys_get_temp_dir(), 'kzip'); $got = tempnam(sys_get_temp_dir(), 'kzip');
+    try {
+        $none = adminRequest($admin, 'POST', '/enrollments/keys/installer');
+        check($none[0] === 409 && ($none[1]['detail'] ?? null) === 'installer_unavailable' && $keys() === 0, 'no published installer: 409 and no key created');
+        $zip = new ZipArchive(); $zip->open($build, ZipArchive::OVERWRITE);
+        $zip->addFromString('installation.json', "{\n  \"api_base\": \"https://backend.example.invalid/v1/\",\n  \"tenant_id\": \"11111111-1111-1111-1111-111111111111\",\n  \"device_id\": \"22222222-2222-2222-2222-222222222222\",\n  \"enable_hklm\": true\n}");
+        $zip->addFromString('agent/x.txt', 'contenido firmado'); $zip->close();
+        $bytes = file_get_contents($build);
+        $db->run("INSERT INTO client_releases (tenant_id,id,version,channel,sequence,min_agent_version,architecture,artifact_url,size_bytes,sha256,key_id,manifest_jws,published_at) VALUES (0x00000000000040008000000000000001,?,?,'stable',?,'4.0.0','x64',?,?,?,'smoke-1',?,UTC_TIMESTAMP(6))",
+            [Util::bin(Util::uuid()), $version, $seq, "https://releases.example.test/$name", strlen($bytes), hash('sha256', $bytes, true), str_repeat('x', 32)]);
+        $missing = adminRequest($admin, 'POST', '/enrollments/keys/installer');
+        check($missing[0] === 409 && ($missing[1]['detail'] ?? null) === 'installer_unavailable' && $keys() === 0, 'release without file: 409 and no key created');
+        file_put_contents($file, $bytes . 'x');
+        $wrong = adminRequest($admin, 'POST', '/enrollments/keys/installer');
+        check($wrong[0] === 409 && ($wrong[1]['detail'] ?? null) === 'installer_unavailable' && $keys() === 0, 'file with another size: 409 and no key created');
+        file_put_contents($file, $bytes);
+        $r = adminRequest($admin, 'POST', '/enrollments/keys/installer');
+        check($r[0] === 200 && $r[2]['content-type'] === 'application/zip' && $r[2]['cache-control'] === 'no-store', 'installer served as zip, no-store');
+        check($r[2]['content-disposition'] === 'attachment; filename="AZCKeeper-' . $version . '-compania-nandu-s-a-s.zip"', 'installer file name: version and ascii tenant slug');
+        file_put_contents($got, $r[3]); $out = new ZipArchive(); check($out->open($got, ZipArchive::RDONLY) === true, 'downloaded installer is a valid zip');
+        $raw = $out->getFromName('installation.json'); $cfg = json_decode($raw, true);
+        check(!str_starts_with($raw, "\xEF\xBB\xBF") && str_contains($raw, "\n    ") && array_keys($cfg) === ['api_base', 'enrollment_key', 'enable_hklm'] && $cfg['enable_hklm'] === true, 'installation.json pretty, no BOM, only the generic fields');
+        check(str_starts_with($cfg['api_base'], 'https://') && str_ends_with($cfg['api_base'], '/v1/') && parse_url($cfg['api_base'], PHP_URL_HOST) === parse_url(Config::get('ORIGIN'), PHP_URL_HOST), 'api_base is this backend over https ending in /v1/');
+        $k = $db->one('SELECT * FROM enrollment_keys WHERE tenant_id=? AND key_hash=?', [$tenant, hash('sha256', $cfg['enrollment_key'], true)]);
+        check(str_starts_with($cfg['enrollment_key'], 'kek_') && $k && $k['revoked_at'] === null && $keys() === 1, 'installer key stored (hash) for this tenant and active');
+        check($out->getFromName('agent/x.txt') === 'contenido firmado' && $out->numFiles === 2, 'signed agent content untouched');
+        $out->close();
+        $audit = $db->one("SELECT changed_fields FROM audit_log WHERE tenant_id=? AND action='downloadInstaller' AND resource_id=?", [$tenant, $k['id']]);
+        check($audit && in_array('source:installer', json_decode($audit['changed_fields'], true), true), 'installer key audited as installer download');
+        check(expect(intakeAsk($cfg['enrollment_key'], keypair(), 'SN-INSTALLER', 'DESKTOP-INSTALLER'), 200, 'intake with installer key')['status'] === 'pending', 'installer key accepted by intake');
+    } finally { foreach ([$file, $build, $got] as $f) { if (is_file($f)) { unlink($f); } } if ($made) { rmdir($dir); } }
+    echo 'PASS installer download (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

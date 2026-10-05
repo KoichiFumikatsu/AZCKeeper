@@ -1,5 +1,5 @@
 {
-  "source_sha256": "289ef3afc7ddde2d4aacfc910fbf74098a983e84dc69c7fa1be251a9f15d1d9c",
+  "source_sha256": "8790a981c5abeea78d6271bffa6547d79920c9443f81106d2962fc13fb1dc511",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -14508,6 +14508,109 @@
         ],
         "x-permission": "equipos.enrolar",
         "x-max-body-bytes": 65536
+      }
+    },
+    "/enrollments/keys/installer": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "downloadInstaller",
+        "summary": "Descargar instalador con clave nueva",
+        "description": "Crea una clave de alta nueva y devuelve el paquete publicado (canal stable, x64) con installation.json ya configurado (api_base de este servidor y la clave). Requiere reautenticación reciente. Sin paquete publicado en el servidor responde 409 installer_unavailable y no crea la clave.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [
+          "EnrollmentRequest",
+          "ExpectedDevice"
+        ],
+        "responses": {
+          "200": {
+            "description": "Paquete de instalación (zip) con la clave nueva",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store"
+                },
+                "description": "No almacenar secretos/sesiones."
+              },
+              "Content-Disposition": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "attachment; filename=\"AZCKeeper-<versión>-<empresa>.zip\""
+              }
+            },
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "x-permission": "equipos.enrolar",
+        "x-max-body-bytes": 4096
       }
     },
     "/enrollments/keys/{id}": {

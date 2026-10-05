@@ -12,6 +12,8 @@ function adminRequest(array $a,string $method,string $path,mixed $body=null,arra
         foreach ($paths as $template=>$ops) {
             $pattern=str_replace(['\{id\}','\{code\}'],'[^/]+',preg_quote($template,'~'));
             if (preg_match('~^'.$pattern.'$~D',$route) && isset($ops[strtolower($method)])) {
+                // Descargas binarias (instalador): basta con que el contrato declare ese tipo para el estado.
+                if (($r[2]['content-type']??'')==='application/zip') { check(isset($ops[strtolower($method)]['responses'][(string)$r[0]]['content']['application/zip']),'admin binary status declared: '.$method.' '.$template); break; }
                 $schema=$ops[strtolower($method)]['responses'][(string)$r[0]]['content']['application/json']['schema']??null;
                 check($schema!==null,'admin success status declared: '.$method.' '.$template);
                 $v->check($schema,json_decode($r[3])); break;

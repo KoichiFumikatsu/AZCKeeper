@@ -82,7 +82,7 @@ function request(string $method, string $path, mixed $body = null, ?array $ident
     $response = curl_exec($curl);
     if ($response === false) { throw new RuntimeException('HTTP connection failed'); }
     $status = curl_getinfo($curl, CURLINFO_RESPONSE_CODE); curl_close($curl);
-    $json = $response === '' ? null : json_decode($response, true, 64, JSON_THROW_ON_ERROR);
+    $json = $response === '' || ($received['content-type'] ?? '') === 'application/zip' ? null : json_decode($response, true, 64, JSON_THROW_ON_ERROR);
     if ($status >= 400) { (new Validator())->named('Problem', json_decode($response)); }
     return [$status, $json, $received, $response];
 }
