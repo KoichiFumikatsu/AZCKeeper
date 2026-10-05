@@ -19,6 +19,7 @@ $portal = [
     'Registro y ajustes' => [['audit', 'Auditoría', '/auditoria.php', false], ['client-logs', 'Logs de los equipos', '/logs.php', false], ['panel-settings', 'Ajustes', '/ajustes.php', false]],
 ];
 $platform = [['platform-home', 'Resumen de plataforma', '/admin/'], ['tenants', 'Empresas', '/empresas.php', false],
+    ['plans', 'Planes y paquetes', '/planes.php', false],
     ['releases', 'Versiones del agente', '/admin/releases.php'], ['server-health', 'Salud del servidor', '/admin/salud.php', false]];
 if ($surface === 'admin' && $current === 'home') { $current = 'platform-home'; }
 $h = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');

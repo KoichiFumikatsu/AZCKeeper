@@ -2143,6 +2143,67 @@ paths:
       x-permission: empresas.gestionar
       x-platform-only: true
       x-max-body-bytes: 16384
+  /person-plans/available:
+    get:
+      tags:
+      - admin
+      operationId: listAvailablePersonPlans
+      summary: Planes asignables en la empresa
+      description: Planes activos que se pueden asignar a las personas de la empresa, cada uno con las funciones
+        de persona que da en ella (plan ∩ funciones del cliente), el plan por defecto efectivo y las funciones de
+        persona que el cliente compró.
+      security:
+      - adminSession: []
+      x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
+      x-resources:
+      - PersonPlan
+      responses:
+        '200':
+          description: Planes asignables en la empresa
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailablePersonPlans'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      x-permission: planes.asignar
   /person-plans/{id}:
     patch:
       tags:
@@ -15877,13 +15938,14 @@ components:
     Feature:
       type: object
       additionalProperties: false
-      required: [code, name, group, level, pending]
+      required: [code, name, group, level, pending, description]
       properties:
         code: {type: string, maxLength: 40}
         name: {type: string, maxLength: 120}
         group: {type: string, maxLength: 80}
         level: {type: string, enum: [client, person]}
         pending: {type: boolean, description: Sin endpoints todavia; se puede vender pero aun no se aplica.}
+        description: {type: string, maxLength: 200}
     FeatureList:
       type: object
       additionalProperties: false
@@ -15951,6 +16013,34 @@ components:
         active: {type: boolean}
         people: {type: integer, minimum: 0}
         version: {type: integer, minimum: 1}
+    AvailablePersonPlans:
+      type: object
+      additionalProperties: false
+      required: [default_plan_id, features, data]
+      properties:
+        default_plan_id: {anyOf: [{type: string, format: uuid}, {type: 'null'}]}
+        features:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, name]
+            properties:
+              code: {type: string, maxLength: 40}
+              name: {type: string, maxLength: 120}
+        data:
+          type: array
+          maxItems: 500
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, name, badge_label, features]
+            properties:
+              id: {type: string, format: uuid}
+              name: {type: string, minLength: 1, maxLength: 80}
+              badge_label: {type: string, maxLength: 120}
+              features: {type: array, maxItems: 100, items: {type: string, maxLength: 40}}
     PersonPlanList:
       type: object
       additionalProperties: false

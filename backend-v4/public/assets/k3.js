@@ -484,16 +484,30 @@ function logoImage(company, className = 'company-logo') {
   img.onerror = () => { img.hidden = true; };
   return img;
 }
+// Casillas del catálogo agrupadas. Paquetes y funciones del cliente usan todo el catálogo; los planes por persona,
+// solo las funciones de nivel persona.
+function featureChecks(catalog, parent, selected, { personOnly = false } = {}) {
+  const list = personOnly ? catalog.filter(f => f.level === 'person') : catalog;
+  const boxes = [];
+  for (const group of [...new Set(list.map(f => f.group))]) {
+    const fs = el('fieldset', undefined, 'perm-group'); fs.append(el('legend', group)); parent.append(fs);
+    boxes.push(...checks(fs, list.filter(f => f.group === group).map(f => [f.code, f.name,
+      personOnly ? (f.pending ? 'aún sin pantalla' : '') : `${f.level === 'person' ? 'Por persona' : 'Del cliente'}${f.pending ? ' · aún sin pantalla' : ''}`]), selected));
+  }
+  return boxes;
+}
 let showArchived = false;
 async function tenantsPage() {
   const catalog = (await api('GET', '/features', { tenant: PLATFORM_TENANT })).data;
-  let packages = (await api('GET', '/feature-packages', { tenant: PLATFORM_TENANT })).data;
+  const packages = (await api('GET', '/feature-packages', { tenant: PLATFORM_TENANT })).data;
   let personPlans = (await api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).data;
   const render = () => {
     $('page-content').replaceChildren();
     const s = surface('Empresas');
     if (!companies.some(c => c.id !== PLATFORM_TENANT && !c.archived)) s.append(el('p', 'Aún no hay empresas cliente activas. Crea la primera con "Crear empresa" (arriba a la derecha); las demás pantallas (Personas, Organización, Equipos…) trabajan sobre una empresa cliente y se habilitan cuando exista.', 'notice'));
     s.append(el('p', `${ownerName()} es la empresa dueña de Keeper: su nombre y logo son los del producto (login y barra lateral). Las demás son empresas cliente; cada una con su marca, sus personas, equipos y cuentas.`, 'help'));
+    const plansLink = el('p', 'En "Funciones" de cada empresa eliges lo que compró y el plan por defecto de sus personas. Los paquetes y los planes por persona se crean en ', 'help');
+    const pa = el('a', 'Administrar planes y paquetes'); pa.href = '/planes.php'; plansLink.append(pa, '.'); s.append(plansLink);
     // Archivadas: ocultas por defecto en todo el panel y de solo lectura (nadie las modifica hasta desarchivarlas).
     const toggle = el('label', undefined, 'check'); const box = el('input'); box.type = 'checkbox'; box.checked = showArchived;
     toggle.append(box, ' Mostrar empresas archivadas'); s.append(toggle);
@@ -520,8 +534,6 @@ async function tenantsPage() {
         return box;
       }]], companies);
     renderGroups();
-    renderPackages();
-    renderPersonPlans();
   };
   let groups = (await optional(api('GET', '/company-groups', { tenant: PLATFORM_TENANT })))?.data || [];
   const groupOf = id => groups.find(g => g.tenant_ids.includes(id)) || null;
@@ -588,14 +600,6 @@ async function tenantsPage() {
     dialog.showModal();
   };
   // Funciones contratadas del cliente: paquete de origen + ajustes de la venta (docs/architecture/v4-clientes-funciones-accesos.md).
-  const featureChecks = (parent, selected) => {
-    const boxes = [];
-    for (const group of [...new Set(catalog.map(f => f.group))]) {
-      const fs = el('fieldset', undefined, 'perm-group'); fs.append(el('legend', group)); parent.append(fs);
-      boxes.push(...checks(fs, catalog.filter(f => f.group === group).map(f => [f.code, f.name, `${f.level === 'person' ? 'Por persona' : 'Del cliente'}${f.pending ? ' · aún sin pantalla' : ''}`]), selected));
-    }
-    return boxes;
-  };
   const featuresEditor = async c => {
     const current = await api('GET', `/tenants/${c.id}/features`, { tenant: c.id });
     const { dialog, body, ok, show } = dialogShell(`Funciones de ${c.branding?.display_name || c.name}`);
@@ -603,84 +607,23 @@ async function tenantsPage() {
     body.append(el('p', 'Lo que el cliente compró. Lo que no esté marcado desaparece de su panel y la API lo rechaza; apagar no borra datos. El núcleo (organización, horarios, personas, equipos) siempre está incluido.', 'help'));
     const pkg = el('select'); pkg.append(new Option('Sin paquete (a medida)', '')); packages.forEach(p => pkg.append(new Option(p.name, p.id))); pkg.value = current.package_id || '';
     labeled(body, 'Paquete de origen', pkg, 'Al elegir un paquete se marcan sus funciones; después puedes ajustar las de esta venta.');
-    const boxes = featureChecks(body, current.features);
+    const boxes = featureChecks(catalog, body, current.features);
     const defPlan = el('select'); defPlan.append(new Option('Sin plan (sus equipos no reciben controles)', '')); personPlans.filter(x => x.active || x.id === current.default_plan_id).forEach(x => defPlan.append(new Option(x.active ? x.name : `${x.name} (inactivo)`, x.id)));
     defPlan.value = current.default_plan_id || '';
-    labeled(body, 'Plan por defecto de sus personas', defPlan, 'Las personas sin plan propio usan este. Los planes se crean abajo, en "Planes por persona".');
+    labeled(body, 'Plan por defecto de sus personas', defPlan, 'Las personas sin plan propio usan este. Los planes se crean en Planes y paquetes.');
     const usage = el('p', undefined, 'help'); body.append(usage);
     const warn = el('p', 'Sin plan por defecto, los equipos de este cliente no reciben reglas de funciones vendibles (web, USB, descargas, instalaciones) hasta que se asigne un plan.', 'notice'); body.append(warn);
     const syncWarn = () => { warn.hidden = !!defPlan.value; };
     defPlan.addEventListener('change', syncWarn); syncWarn();
     api('GET', `/tenants/${c.id}/plan-usage`, { tenant: c.id }).then(u => {
       const parts = (u.data || []).filter(x => x.people > 0).map(x => `${x.people} en ${x.name || 'Sin plan'}`);
-      usage.textContent = parts.length ? `Uso actual: ${parts.join(' · ')}` : 'Uso actual: aún no hay personas.';
+      usage.textContent = parts.length ? `Planes en uso: ${parts.join(' · ')}` : 'Planes en uso: aún no hay personas.';
     }).catch(() => { usage.hidden = true; });
     pkg.addEventListener('change', () => { const p = packages.find(x => x.id === pkg.value); if (p) boxes.forEach(b => { b.checked = p.features.includes(b.value); }); });
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault(); ok.disabled = true;
       try { await api('PUT', `/tenants/${c.id}/features`, { tenant: c.id, body: { package_id: pkg.value || null, features: boxes.filter(b => b.checked).map(b => b.value), ...((defPlan.value || null) === (current.default_plan_id || null) ? {} : { default_plan_id: defPlan.value || null }) } }); personPlans = (await api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done(); }
       catch (e) { show(e.problem?.detail === 'unknown_plan' ? 'Ese plan está inactivo; actívalo o elige otro.' : e); ok.disabled = false; }
-    });
-    dialog.showModal();
-  };
-  const renderPackages = () => {
-    const s = surface('Paquetes de funciones');
-    s.append(el('p', 'Atajos para vender: un paquete marca funciones de una vez. Cambiar un paquete no cambia a los clientes que ya lo usan.', 'help'));
-    const add = el('button', 'Crear paquete'); add.type = 'button'; add.addEventListener('click', () => packageEditor(null)); s.append(add);
-    if (!packages.length) { s.append(el('p', 'Aún no hay paquetes.', 'help')); return; }
-    table(s, 'Paquetes', [['Paquete', p => p.name], ['Funciones', p => String(p.features.length)], ['Clientes', p => String(p.tenants)],
-      ['', p => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => packageEditor(p)); return b; }]], packages);
-  };
-  const packageEditor = p => {
-    const { dialog, body, ok, show } = dialogShell(p ? `Editar ${p.name}` : 'Crear paquete');
-    dialog.classList.add('wide-dialog');
-    const name = labeled(body, 'Nombre', el('input')); name.maxLength = 80; name.value = p?.name || '';
-    const boxes = featureChecks(body, p?.features || []);
-    dialog.querySelector('form').addEventListener('submit', async ev => {
-      ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
-      ok.disabled = true;
-      const payload = { name: name.value.trim(), features: boxes.filter(b => b.checked).map(b => b.value) };
-      try {
-        if (p) await api('PATCH', `/feature-packages/${p.id}`, { tenant: PLATFORM_TENANT, body: payload, ifMatch: p.version }); else await api('POST', '/feature-packages', { tenant: PLATFORM_TENANT, body: payload });
-        packages = (await api('GET', '/feature-packages', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done();
-      } catch (e) { show(e.problem?.detail === 'duplicate_name' ? 'Ya hay un paquete con ese nombre.' : e); ok.disabled = false; }
-    });
-    dialog.showModal();
-  };
-  const personChecks = (parent, selected) => {
-    const boxes = [];
-    const fs0 = catalog.filter(f => f.level === 'person');
-    for (const group of [...new Set(fs0.map(f => f.group))]) {
-      const fs = el('fieldset', undefined, 'perm-group'); fs.append(el('legend', group)); parent.append(fs);
-      boxes.push(...checks(fs, fs0.filter(f => f.group === group).map(f => [f.code, f.name, f.pending ? 'aún sin pantalla' : '']), selected));
-    }
-    return boxes;
-  };
-  const renderPersonPlans = () => {
-    const s = surface('Planes por persona');
-    s.append(el('p', 'Qué funciones recibe cada persona. Cada cliente elige un plan por defecto y las personas pueden tener uno propio. No hay cupos: el conteo de personas por plan sirve para facturar.', 'help'));
-    const add = el('button', 'Crear plan'); add.type = 'button'; add.addEventListener('click', () => personPlanEditor(null)); s.append(add);
-    if (!personPlans.length) { s.append(el('p', 'Aún no hay planes por persona.', 'help')); return; }
-    table(s, 'Planes por persona', [['Plan', x => x.active ? x.name : `${x.name} (inactivo)`], ['Funciones', x => String(x.features.length)], ['Personas', x => String(x.people)],
-      ['', x => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => personPlanEditor(x)); return b; }]], personPlans);
-  };
-  const personPlanEditor = p => {
-    const { dialog, body, ok, show } = dialogShell(p ? `Editar ${p.name}` : 'Crear plan por persona');
-    dialog.classList.add('wide-dialog');
-    const name = labeled(body, 'Nombre', el('input')); name.maxLength = 80; name.value = p?.name || '';
-    const badgeLabel = labeled(body, 'Etiqueta', el('input'), 'El texto corto que se muestra junto a la persona.'); badgeLabel.maxLength = 40; badgeLabel.value = p?.badge_label || '';
-    const boxes = personChecks(body, p?.features || []);
-    const [activeBox] = checks(body, [['active', 'Plan activo']], !p || p.active ? ['active'] : []);
-    dialog.querySelector('form').addEventListener('submit', async ev => {
-      ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
-      const nextFeatures = boxes.filter(b => b.checked).map(b => b.value);
-      if (p && p.people > 0 && ((p.active && !activeBox.checked) || p.features.some(f => !nextFeatures.includes(f))) && !confirm(`Este plan lo usan ${p.people} personas. Al guardar, sus equipos dejarán de aplicar lo que quitaste (en la próxima compilación). ¿Continuar?`)) { return; }
-      ok.disabled = true;
-      const payload = { name: name.value.trim(), badge_label: badgeLabel.value.trim(), features: boxes.filter(b => b.checked).map(b => b.value), active: activeBox.checked };
-      try {
-        if (p) await api('PATCH', `/person-plans/${p.id}`, { tenant: PLATFORM_TENANT, body: payload, ifMatch: p.version }); else await api('POST', '/person-plans', { tenant: PLATFORM_TENANT, body: payload });
-        personPlans = (await api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done();
-      } catch (e) { show(e.problem?.detail === 'duplicate_name' ? 'Ya hay un plan con ese nombre.' : e.status === 412 ? 'Alguien más cambió el plan: recarga la página.' : e); ok.disabled = false; }
     });
     dialog.showModal();
   };
@@ -848,9 +791,19 @@ async function people() {
   const fallback = kind => { const u = units(kind); return u.length === 1 ? u[0] : u.find(o => fold(o.name).startsWith('sin ')) || null; };
   const scheduleList = (schedules || []).sort((a, b) => a.name.localeCompare(b.name, 'es'));
   const defaultSchedule = () => scheduleList.find(s => fold(s.name).includes('por defecto')) || scheduleList[0] || null;
-  // Los planes solo los lista la plataforma: la ficha muestra el select de plan solo a superadmin.
+  // Planes asignables en esta empresa (superadmin o permiso planes.asignar; sin acceso: null y no se muestran). Cada
+  // plan trae las funciones que da aquí (plan ∩ funciones del cliente). Superadmin además ve el nombre de planes inactivos.
   const isSuper = !!readSession()?.is_platform_admin;
-  const personPlans = isSuper ? ((await optional(api('GET', '/person-plans', { tenant: PLATFORM_TENANT })))?.data || []) : [];
+  const [avail, allPlans] = await Promise.all([optional(api('GET', '/person-plans/available')),
+    isSuper ? optional(api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).then(r => r?.data || []) : []]);
+  const planName = id => avail?.data.find(p => p.id === id)?.name || allPlans.find(p => p.id === id)?.name || null;
+  const defaultLabel = avail ? `Por defecto (${planName(avail.default_plan_id) || 'sin plan'})` : '';
+  const ownPlan = u => avail?.data.find(p => p.id === u.plan_id) || null;
+  const receives = planId => {
+    const plan = avail.data.find(p => p.id === planId) || avail.data.find(p => p.id === avail.default_plan_id);
+    const names = plan ? avail.features.filter(f => plan.features.includes(f.code)).map(f => f.name) : [];
+    return `Recibe: ${names.length ? names.join(', ') : 'ninguna función de persona'}.`;
+  };
   const render = () => {
     $('page-content').replaceChildren();
     kpis([['Personas', String(list.length)], ['Activas', String(list.filter(u => u.status === 'active').length)],
@@ -870,6 +823,7 @@ async function people() {
       ['Nombre', u => { const a = el('a', u.display_name); a.href = `/miembro.php?id=${encodeURIComponent(u.id)}`; const d = el('div'); d.append(a); if (u.email) d.append(el('small', u.email)); return d; }],
       ['Cédula', u => u.document || '—'], ['Empresa', u => n.get(u.company_id) || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'],
       ['Estado', u => { const d = el('div'); d.append(badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : '')); if (u.monitoring === 'excluded') d.append(' ', badge('No se monitorea', 'info')); return d; }],
+      ...(avail ? [['Plan', u => ownPlan(u)?.name || defaultLabel]] : []),
       ['Acciones', u => { if (u.managed_by) return el('small', `Gestionada por ${u.managed_by}`); const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(u)); return b; }]],
       list, { filters: [['Empresa', u => n.get(u.company_id) || 'Sin empresa'], ['País', u => countryName(siteCountry(u))], ['Ciudad', u => org.find(o => o.id === u.site_id)?.city || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']] });
   };
@@ -898,10 +852,16 @@ async function people() {
     let status = null;
     if (u) { status = el('select'); status.append(new Option('Activa', 'active'), new Option('Inactiva (retirada)', 'inactive')); status.value = u.status; labeled(body, 'Estado', status); }
     let planSel = null;
-    if (u && isSuper) {
-      planSel = el('select'); planSel.append(new Option('Por defecto del cliente', ''));
-      personPlans.filter(x => x.active || x.id === u.plan_id).forEach(x => planSel.append(new Option(x.active ? x.name : `${x.name} (inactivo)`, x.id)));
-      planSel.value = u.plan_id || ''; labeled(body, 'Plan', planSel, 'Define qué funciones recibe esta persona. Sin plan propio usa el del cliente.');
+    if (avail) {
+      planSel = el('select'); planSel.append(new Option(defaultLabel, ''));
+      avail.data.forEach(x => planSel.append(new Option(x.name, x.id)));
+      // Plan propio inactivo: se conserva en el select, pero la persona ya usa el por defecto.
+      if (u?.plan_id && !ownPlan(u)) planSel.append(new Option(`${planName(u.plan_id) || 'Plan'} (inactivo: usa el por defecto)`, u.plan_id));
+      planSel.value = u?.plan_id || '';
+      labeled(body, 'Plan', planSel, 'Define qué funciones de persona recibe. Sin plan propio usa el del cliente; nunca recibe lo que el cliente no compró.');
+      const summary = el('p', '', 'help'); summary.setAttribute('aria-live', 'polite'); body.append(summary);
+      const sync = () => { summary.textContent = receives(planSel.value); };
+      planSel.addEventListener('change', sync); sync();
     }
     ok.textContent = u ? 'Guardar' : 'Crear persona';
     dialog.querySelector('form').addEventListener('submit', async ev => {
@@ -919,17 +879,21 @@ async function people() {
       if (status && status.value !== u.status) payload.status = status.value;
       try {
         let saved = u ? await api('PATCH', `/users/${u.id}`, { body: payload, ifMatch: u.version }) : await api('POST', '/users', { body: payload });
-        // Desde aquí la persona ya está guardada: el estado local usa la versión nueva, para que un reintento no choque con un 412.
-        if (u) { list = list.map(x => x.id === u.id ? saved : x); u = saved; }
+        // Desde aquí la persona ya está guardada: el estado local usa la versión nueva, para que un reintento no choque
+        // con un 412 ni cree la persona otra vez (el diálogo pasa a editar la recién creada).
+        list = u ? list.map(x => x.id === saved.id ? saved : x) : [...list, saved];
+        if (!u) ok.textContent = 'Guardar';
+        u = saved;
+        // Segundo paso: el plan propio (PUT /users/{id}/plan, permiso planes.asignar).
         if (planSel && (planSel.value || null) !== (u.plan_id || null)) {
-          try { saved = await api('PUT', `/users/${u.id}/plan`, { body: { plan_id: planSel.value || null }, ifMatch: u.version }); list = list.map(x => x.id === u.id ? saved : x); u = saved; }
+          try { saved = await api('PUT', `/users/${u.id}/plan`, { body: { plan_id: planSel.value || null }, ifMatch: u.version }); list = list.map(x => x.id === saved.id ? saved : x); u = saved; }
           catch (e) {
             const d = e.problem?.detail;
             show('Los datos se guardaron, pero el plan no: ' + (d === 'unknown_plan' ? 'Ese plan está inactivo; actívalo o elige otro.' : e.status === 412 ? 'Alguien más la modificó: recarga la página.' : errorMessage(e)));
             ok.disabled = false; render(); return;
           }
         }
-        list = u ? list.map(x => x.id === u.id ? saved : x) : [...list, saved]; dialog.close(); render(); done();
+        dialog.close(); render(); done();
       } catch (e) {
         const d = e.problem?.detail;
         show(d === 'hierarchy_cycle' ? 'Ese jefe reporta (directa o indirectamente) a esta persona: no puede ser su jefe.' : d === 'document_in_use' ? 'Esa cédula ya pertenece a otra persona de la empresa.' : d === 'invalid_document' ? 'La cédula no es válida.' : e.status === 412 ? 'Alguien más la modificó: recarga la página.' : e);
@@ -1553,54 +1517,113 @@ async function policiesPage() {
   render();
 }
 
-// ---- Planes (tiers) -------------------------------------------------------------------------------------------------
-const MODULES = [
-  ['activity', 'Actividad', 'Qué aplicaciones y sitios se usan y cuánto tiempo.'],
-  ['productivity', 'Productividad', 'Productividad, distracción, focus y ranking.'],
-  ['presence', 'Presencia', 'Llegada, salida, puntualidad y entradas por puerta.'],
-  ['devices', 'Equipos', 'Inventario y acciones remotas (bloquear, reiniciar, apagar).'],
-  ['policies', 'Reglas', 'Bloqueos de sitios web, descargas, instalaciones y USB.'],
-  ['integrations', 'Integraciones', 'Acceso por API desde otros sistemas (One, puertas).'],
-];
-async function tiersPage() {
-  let list = await allPages('/tiers');
-  const users = (await optional(allPages('/users'))) || [];
-  const count = id => users.filter(u => u.tier_id === id && u.status === 'active').length;
-  const render = () => {
-    $('page-content').replaceChildren();
-    const s = surface('Planes de la empresa');
-    s.append(el('p', 'Un plan decide qué funciones de Keeper aplican a cada persona: si un módulo no está en su plan, Keeper no mide ni aplica eso en sus equipos (por ejemplo, sin "Reglas" no se le bloquea nada). Cada persona tiene un plan en su ficha.', 'help'));
-    const grid = el('div', undefined, 'three'); s.append(grid);
-    for (const t of list) {
-      const card = surface(t.name, grid);
-      card.append(badge(t.active ? `${count(t.id)} personas` : 'Inactivo', t.active ? 'info' : ''), el('p', t.badge_label, 'help'));
-      const ul = el('ul', undefined, 'tier-modules');
-      MODULES.forEach(([code, name]) => { const li = el('li', `${t.entitlements.includes(code) ? '✓' : '✗'} ${name}`); if (!t.entitlements.includes(code)) li.className = 'muted'; ul.append(li); });
-      card.append(ul);
-      const b = el('button', 'Editar plan'); b.type = 'button'; b.addEventListener('click', () => editor(t)); card.append(b);
+// ---- Planes y paquetes (solo plataforma) ----------------------------------------------------------------------------
+// Catálogo de funciones, paquetes (plantillas para vender) y planes por persona (docs/architecture/v4-clientes-funciones-accesos.md
+// §2-3). Las funciones de cada cliente y su plan por defecto se eligen en Empresas → Funciones.
+async function plansPage() {
+  const [catalogPage, packagePage, planPage] = await Promise.all([api('GET', '/features', { tenant: PLATFORM_TENANT }),
+    api('GET', '/feature-packages', { tenant: PLATFORM_TENANT }), api('GET', '/person-plans', { tenant: PLATFORM_TENANT })]);
+  const catalog = catalogPage.data;
+  let packages = packagePage.data, personPlans = planPage.data;
+  const featureName = code => catalog.find(f => f.code === code)?.name || code;
+  const clients = companies.filter(c => c.id !== PLATFORM_TENANT && !c.archived);
+  // Uso por cliente: personas de cada empresa en cada plan (plan efectivo: propio activo o el por defecto del cliente).
+  const usage = new Map();
+  const loadUsage = async () => {
+    const results = await Promise.all(clients.map(c => api('GET', `/tenants/${c.id}/plan-usage`, { tenant: c.id }).then(u => [c, u], () => [c, null])));
+    usage.clear();
+    for (const [c, u] of results) {
+      for (const row of u?.data || []) {
+        if (!row.plan_id || !row.people) continue;
+        if (!usage.has(row.plan_id)) usage.set(row.plan_id, []);
+        usage.get(row.plan_id).push(`${c.branding?.display_name || c.name}: ${row.people}`);
+      }
     }
   };
-  const editor = t => {
-    const { dialog, body, ok, show } = dialogShell(t ? `Editar ${t.name}` : 'Crear plan');
-    const name = labeled(body, 'Nombre', el('input')); name.maxLength = 80; name.value = t?.name || '';
-    const label = labeled(body, 'Descripción corta', el('input')); label.maxLength = 120; label.value = t?.badge_label || '';
-    body.append(el('h3', '¿Qué incluye?'));
-    const boxes = checks(body, MODULES.map(([code, n, d]) => [code, n, d]), t?.entitlements || []);
-    const active = el('input'); active.type = 'checkbox'; active.checked = t ? t.active : true;
-    const al = el('label', undefined, 'check'); al.append(active, ' Plan activo'); body.append(al);
-    if (t && count(t.id)) body.append(el('p', `Los cambios aplican de inmediato a las ${count(t.id)} personas con este plan.`, 'help'));
+  await loadUsage();
+  const refresh = async () => { await loadUsage(); render(); done(); };
+  const render = () => {
+    $('page-content').replaceChildren();
+    renderHow(); renderCatalog(); renderPackages(); renderPersonPlans();
+  };
+  const renderHow = () => {
+    const s = surface('Cómo funciona');
+    const chain = el('div', undefined, 'portal-path');
+    ['Funciones (catálogo)', 'Paquete', 'Funciones del cliente', 'Plan de cada persona', 'Lo que recibe la persona'].forEach((t, i) => { if (i) chain.append('→'); chain.append(el('span', t)); });
+    s.append(chain);
+    const ul = el('ul');
+    ['Funciones: todo lo que Keeper sabe hacer. Unas son por persona (se aplican a cada persona) y otras del cliente (valen para toda la empresa).',
+      'Paquete: una plantilla para vender. Al dar de alta o editar un cliente marca sus funciones de una vez; cambiar un paquete no cambia a los clientes que ya lo usan.',
+      'Funciones del cliente: lo que compró (paquete + ajustes de la venta). Se eligen en Empresas → Funciones.',
+      'Plan de cada persona: qué funciones de persona recibe. Cada cliente tiene un plan por defecto; una persona puede tener uno propio (en su ficha de Personas).',
+      'Lo que recibe la persona = funciones del cliente ∩ su plan. Si el cliente no compró una función, ningún plan la da.']
+      .forEach(t => ul.append(el('li', t, 'help')));
+    s.append(ul);
+  };
+  const renderCatalog = () => {
+    const s = surface('Catálogo de funciones');
+    s.append(el('p', `Las ${catalog.length} funciones de Keeper. Las de persona son las que se eligen en los planes; las del cliente solo dependen de lo que compró.`, 'help'));
+    table(s, 'Funciones', [
+      ['Función', f => { const d = el('div'); d.append(el('strong', f.name)); if (f.pending) d.append(el('small', 'Aún sin pantalla: se puede vender pero todavía no se aplica')); return d; }],
+      ['Nivel', f => badge(f.level === 'person' ? 'Persona' : 'Cliente', f.level === 'person' ? 'info' : '')],
+      ['Grupo', f => f.group], ['Qué hace', f => f.description || '—']], catalog,
+    { filters: [['Nivel', f => f.level === 'person' ? 'Persona' : 'Cliente'], ['Grupo', f => f.group]] });
+  };
+  const editButton = fn => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', fn); return b; };
+  const featureList = codes => { const d = el('div'); d.append(el('strong', String(codes.length))); if (codes.length) d.append(el('small', codes.map(featureName).join(', '))); return d; };
+  const renderPackages = () => {
+    const s = surface('Paquetes de funciones');
+    s.append(el('p', 'Atajos para vender: un paquete marca funciones de una vez. Cambiar un paquete no cambia a los clientes que ya lo usan.', 'help'));
+    const add = el('button', 'Crear paquete'); add.type = 'button'; add.addEventListener('click', () => packageEditor(null)); s.append(add);
+    if (!packages.length) { s.append(el('p', 'Aún no hay paquetes.', 'help')); return; }
+    table(s, 'Paquetes', [['Paquete', p => p.name], ['Funciones', p => featureList(p.features)], ['Clientes', p => String(p.tenants)], ['', p => editButton(() => packageEditor(p))]], packages);
+  };
+  const packageEditor = p => {
+    const { dialog, body, ok, show } = dialogShell(p ? `Editar ${p.name}` : 'Crear paquete');
+    dialog.classList.add('wide-dialog');
+    const name = labeled(body, 'Nombre', el('input')); name.maxLength = 80; name.value = p?.name || '';
+    const boxes = featureChecks(catalog, body, p?.features || []);
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
       ok.disabled = true;
-      const payload = { name: name.value.trim(), badge_label: label.value.trim() || name.value.trim(), entitlements: boxes.filter(b => b.checked).map(b => b.value), active: active.checked };
+      const payload = { name: name.value.trim(), features: boxes.filter(b => b.checked).map(b => b.value) };
       try {
-        const saved = t ? await api('PATCH', `/tiers/${t.id}`, { body: payload, ifMatch: t.version }) : await api('POST', '/tiers', { body: payload });
-        list = t ? list.map(x => x.id === t.id ? saved : x) : [...list, saved]; dialog.close(); render(); done();
-      } catch (e) { show(e.status === 412 ? 'Alguien más lo cambió: recarga la página.' : e); ok.disabled = false; }
+        if (p) await api('PATCH', `/feature-packages/${p.id}`, { tenant: PLATFORM_TENANT, body: payload, ifMatch: p.version }); else await api('POST', '/feature-packages', { tenant: PLATFORM_TENANT, body: payload });
+        packages = (await api('GET', '/feature-packages', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done();
+      } catch (e) { show(e.problem?.detail === 'duplicate_name' ? 'Ya hay un paquete con ese nombre.' : e.status === 412 ? 'Alguien más cambió el paquete: recarga la página.' : e); ok.disabled = false; }
     });
     dialog.showModal();
   };
-  const action = $('page-action'); action.textContent = 'Crear plan'; action.hidden = false; action.addEventListener('click', () => editor(null));
+  const renderPersonPlans = () => {
+    const s = surface('Planes por persona');
+    s.append(el('p', 'Qué funciones de persona recibe cada persona. Cada cliente elige un plan por defecto y las personas pueden tener uno propio. No hay cupos: el conteo de personas por plan sirve para facturar.', 'help'));
+    const add = el('button', 'Crear plan'); add.type = 'button'; add.addEventListener('click', () => personPlanEditor(null)); s.append(add);
+    if (!personPlans.length) { s.append(el('p', 'Aún no hay planes por persona.', 'help')); return; }
+    table(s, 'Planes por persona', [['Plan', x => { const d = el('div'); d.append(el('strong', x.name)); if (!x.active) d.append(' ', badge('Inactivo', '')); if (x.badge_label) d.append(el('small', x.badge_label)); return d; }],
+      ['Funciones', x => featureList(x.features)], ['Personas', x => String(x.people)],
+      ['Por cliente', x => (usage.get(x.id) || []).join(' · ') || '—'], ['', x => editButton(() => personPlanEditor(x))]], personPlans);
+  };
+  const personPlanEditor = p => {
+    const { dialog, body, ok, show } = dialogShell(p ? `Editar ${p.name}` : 'Crear plan por persona');
+    dialog.classList.add('wide-dialog');
+    const name = labeled(body, 'Nombre', el('input')); name.maxLength = 80; name.value = p?.name || '';
+    const badgeLabel = labeled(body, 'Etiqueta', el('input'), 'El texto corto que se muestra junto a la persona.'); badgeLabel.maxLength = 40; badgeLabel.value = p?.badge_label || '';
+    body.append(el('p', 'Marca las funciones de persona que da este plan. Cada persona recibe solo las que además compró su cliente.', 'help'));
+    const boxes = featureChecks(catalog, body, p?.features || [], { personOnly: true });
+    const [activeBox] = checks(body, [['active', 'Plan activo']], !p || p.active ? ['active'] : []);
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
+      const nextFeatures = boxes.filter(b => b.checked).map(b => b.value);
+      if (p && p.people > 0 && ((p.active && !activeBox.checked) || p.features.some(f => !nextFeatures.includes(f))) && !confirm(`Este plan lo usan ${p.people} personas. Al guardar, sus equipos dejarán de aplicar lo que quitaste (en la próxima compilación). ¿Continuar?`)) { return; }
+      ok.disabled = true;
+      const payload = { name: name.value.trim(), badge_label: badgeLabel.value.trim(), features: nextFeatures, active: activeBox.checked };
+      try {
+        if (p) await api('PATCH', `/person-plans/${p.id}`, { tenant: PLATFORM_TENANT, body: payload, ifMatch: p.version }); else await api('POST', '/person-plans', { tenant: PLATFORM_TENANT, body: payload });
+        personPlans = (await api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).data; dialog.close(); await refresh();
+      } catch (e) { show(e.problem?.detail === 'duplicate_name' ? 'Ya hay un plan con ese nombre.' : e.status === 412 ? 'Alguien más cambió el plan: recarga la página.' : e); ok.disabled = false; }
+    });
+    dialog.showModal();
+  };
   render();
 }
 
@@ -1785,7 +1808,9 @@ async function settingsPage() {
   }
   const more = surface('Otros ajustes');
   const ul = el('ul');
-  [['Marca, logo y colores', '/empresas.php'], ['Horarios', '/horarios.php'], ['Festivos', '/festivos.php'], ['Clasificación de apps', '/clasificacion.php'], ['Planes', '/planes.php'], ['Fuentes de datos (AZC One)', '/fuentes.php']]
+  // Planes y paquetes son de la plataforma: solo superadmin los administra.
+  [['Marca, logo y colores', '/empresas.php'], ['Horarios', '/horarios.php'], ['Festivos', '/festivos.php'], ['Clasificación de apps', '/clasificacion.php'],
+    ...(readSession()?.is_platform_admin ? [['Planes y paquetes', '/planes.php']] : []), ['Fuentes de datos (AZC One)', '/fuentes.php']]
     .forEach(([t, href]) => { const li = el('li'); const a = el('a', t); a.href = href; li.append(a); ul.append(li); });
   more.append(ul);
 }
@@ -2084,9 +2109,9 @@ async function start() {
   $('now').textContent = new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
   $('logout').addEventListener('click', async () => { try { await refreshCsrf(); await api('POST', '/auth/logout'); } finally { goToLogin(); } });
   if ($('platform-group')) $('platform-group').hidden = !session.is_platform_admin;
-  // Una cuenta de empresa siempre trabaja en su empresa. Superadmin: Cuentas y Empresas son globales (empresa duena);
+  // Una cuenta de empresa siempre trabaja en su empresa. Superadmin: Cuentas, Empresas y Planes son globales (empresa duena);
   // las pantallas de una empresa usan la elegida en el selector (por defecto la primera empresa cliente).
-  const globalPage = ['accounts', 'tenants'].includes(page);
+  const globalPage = ['accounts', 'tenants', 'plans'].includes(page);
   try {
     if (session.is_platform_admin) {
       companies = sortCompanies(await allPages('/tenants', PLATFORM_TENANT));
@@ -2132,7 +2157,6 @@ async function start() {
     else if (page === 'absences') await absencesPage();
     else if (page === 'classification') await classificationPage();
     else if (page === 'policies') await policiesPage();
-    else if (page === 'tiers') await tiersPage();
     else if (page === 'audit') await auditPage();
     else if (page === 'client-logs') await logsPage();
     else if (page === 'server-health') await healthPage();
@@ -2140,6 +2164,7 @@ async function start() {
     else if (page === 'holidays') await holidaysPage();
     else if (page === 'suspicious-apps') await suspiciousPage();
     else if (page === 'tenants') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await tenantsPage(); }
+    else if (page === 'plans') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await plansPage(); }
     done();
   } catch (e) {
     if (e.status === 403) { $('page-content').replaceChildren(); empty($('page-content'), 'Sin permiso', 'Tu cuenta no tiene acceso a esta sección. Pide a un administrador el permiso correspondiente.'); $('page-status').textContent = ''; }

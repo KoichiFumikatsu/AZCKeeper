@@ -12,7 +12,7 @@ final class FeatureAdmin
     {
         return match ($op) {
             'listFeatures' => AdminApi::response(['data' => array_map(fn ($code) => ['code' => $code, 'name' => Features::CATALOG[$code]['name'], 'group' => Features::CATALOG[$code]['group'],
-                'level' => Features::CATALOG[$code]['level'], 'pending' => Features::CATALOG[$code]['pending']], Features::codes())]),
+                'level' => Features::CATALOG[$code]['level'], 'pending' => Features::CATALOG[$code]['pending'], 'description' => Features::CATALOG[$code]['description']], Features::codes())]),
             'listFeaturePackages' => AdminApi::response(['data' => array_map(fn ($p) => $this->packageDto($p), $this->db->run('SELECT * FROM feature_packages WHERE tenant_id=? ORDER BY name', [$this->platform])->fetchAll())]),
             'createFeaturePackage', 'patchFeaturePackage' => $this->savePackage($id, $b),
             'getTenantFeatures' => AdminApi::response($this->tenantDto($this->c['tenant_id'])),
@@ -20,6 +20,7 @@ final class FeatureAdmin
             'listPersonPlans' => AdminApi::response(['data' => array_map(fn ($p) => $this->planDto($p), $this->db->run('SELECT * FROM person_plans WHERE tenant_id=? ORDER BY name', [$this->platform])->fetchAll())]),
             'createPersonPlan', 'patchPersonPlan' => $this->savePlan($id, $b),
             'getTenantPlanUsage' => AdminApi::response($this->usage($this->c['tenant_id'])),
+            'listAvailablePersonPlans' => AdminApi::response($this->available($this->c['tenant_id'])),
             default => throw new ApiError(404, 'resource_not_found'),
         };
     }
@@ -79,6 +80,20 @@ final class FeatureAdmin
             WHERE u.tenant_id=? AND u.status='active' GROUP BY plan ORDER BY people DESC", [$tenant])->fetchAll();
         return ['default_plan_id' => $default === null ? null : Util::id($default), 'data' => array_map(fn ($r) => ['plan_id' => $r['plan'] === null ? null : Util::id($r['plan']),
             'name' => $r['plan'] === null ? 'Sin plan' : ($this->db->one('SELECT name FROM person_plans WHERE tenant_id=? AND id=?', [$this->platform, $r['plan']])['name'] ?? 'Sin plan'), 'people' => (int) $r['people']], $rows)];
+    }
+    /** Planes que se pueden asignar en este cliente: cada uno con las funciones de persona que de verdad da aqui (plan ∩ cliente). */
+    private function available(string $tenant): array
+    {
+        $bought = array_flip(Features::enabled($this->db, $tenant));
+        $person = array_values(array_filter(Features::codes(), fn ($code) => Features::CATALOG[$code]['level'] === 'person' && isset($bought[$code])));
+        $default = $this->db->one('SELECT p.id FROM tenants t JOIN person_plans p ON p.tenant_id=t.default_plan_tenant_id AND p.id=t.default_plan_id AND p.active=TRUE WHERE t.tenant_id=?', [$tenant]);
+        $plans = $this->db->run('SELECT id,name,badge_label FROM person_plans WHERE tenant_id=? AND active=TRUE ORDER BY name', [$this->platform])->fetchAll();
+        return ['default_plan_id' => $default ? Util::id($default['id']) : null,
+            'features' => array_map(fn ($code) => ['code' => $code, 'name' => Features::CATALOG[$code]['name']], $person),
+            'data' => array_map(function ($p) use ($bought) {
+                $items = array_column($this->db->run('SELECT feature_code FROM person_plan_items WHERE tenant_id=? AND plan_id=? ORDER BY feature_code', [$this->platform, $p['id']])->fetchAll(), 'feature_code');
+                return ['id' => Util::id($p['id']), 'name' => $p['name'], 'badge_label' => $p['badge_label'], 'features' => array_values(array_filter($items, fn ($code) => isset($bought[$code])))];
+            }, $plans)];
     }
     private function packageDto(array $p): array
     {

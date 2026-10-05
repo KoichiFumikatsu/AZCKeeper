@@ -24,6 +24,7 @@ function featureCatalogTests(Database $db): void
         // Ninguna funcion sin uso, salvo las marcadas pendientes (sin endpoints todavia).
         check($f['pending'] || $f['ops'] || $f['permissions'] || $f['rules'], "$code is used somewhere");
         check(in_array($f['level'], ['client', 'person'], true), "$code has a level");
+        check(is_string($f['description'] ?? null) && $f['description'] !== '' && mb_strlen($f['description']) <= 200, "$code has a description");
     }
     // Resolucion: la operacion manda sobre el permiso; el permiso sobre nada.
     check(Features::forOperation('listDoors', 'organizacion.ver') === 'puertas', 'doors by operation');
@@ -111,6 +112,7 @@ function featureAdminTests(Database $db): void
     $platform = sharedPlatform($db); $platform['tenant'] = $u['tenant_id'];
     $catalog = expect(adminRequest($platform, 'GET', '/features'), 200, 'catalog')['data'];
     check(count($catalog) === 23 && $catalog[0]['code'] === 'productividad', 'catalog listed in order');
+    check($catalog[0]['description'] === Features::CATALOG['productividad']['description'], 'catalog lists each function description');
     $basic = expect(adminRequest($platform, 'POST', '/feature-packages', ['name' => 'Básico ' . substr(Util::uuid(), 0, 6), 'features' => ['productividad', 'presencia']]), 201, 'create package');
     check($basic['features'] === ['presencia', 'productividad'] && $basic['tenants'] === 0, 'package stored');
     check(adminRequest($platform, 'POST', '/feature-packages', ['name' => 'Malo', 'features' => ['inventada']])[1]['detail'] === 'unknown_feature:inventada', 'unknown function rejected');

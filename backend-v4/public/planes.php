@@ -1,4 +1,4 @@
 <?php
 declare(strict_types=1);
-$page = 'tiers'; $title = 'Planes'; $subtitle = 'Qué funciones de Keeper incluye cada plan y a cuántas personas aplica.';
+$page = 'plans'; $title = 'Planes y paquetes'; $subtitle = 'Qué funciones tiene Keeper, cómo se venden en paquetes y qué recibe cada persona según su plan.';
 require __DIR__ . '/partials/layout-k3.php';

@@ -85,6 +85,17 @@ function planApiTests(Database $db): void
     check($back['plan_id'] === null, 'back to client default');
     $noPerm = adminFixture($db, adminMember($db, $u), ['usuarios.ver'], false);
     check(adminRequest($noPerm, 'PUT', '/users/' . $person['id'] . '/plan', ['plan_id' => $basic['id']], ['if-match' => '"' . $back['version'] . '"'])[0] === 403, 'assigning plans needs planes.asignar');
+    // Lista de planes asignables para quien tiene planes.asignar (sin ser plataforma): solo activos y con plan ∩ cliente.
+    $avail = expect(adminRequest($admin, 'GET', '/person-plans/available'), 200, 'available plans');
+    $bought = Features::enabled($db, $u['tenant_id']);
+    $codes = array_column($avail['features'], 'code');
+    check($avail['default_plan_id'] === $pro['id'], 'available plans report the client default');
+    check($codes !== [] && array_diff($codes, $bought) === [] && array_filter($codes, fn ($c) => Features::CATALOG[$c]['level'] !== 'person') === [], 'available features are the client person-level functions');
+    $basicRow = array_values(array_filter($avail['data'], fn ($p) => $p['id'] === $basic['id']))[0] ?? null;
+    check($basicRow !== null && $basicRow['features'] === array_values(array_intersect(['productividad'], $bought)), 'available plan lists plan ∩ client functions');
+    check(array_filter($avail['data'], fn ($p) => array_diff($p['features'], $codes) !== []) === [], 'no available plan offers functions the client lacks');
+    check(adminRequest($noPerm, 'GET', '/person-plans/available')[0] === 403, 'available plans need planes.asignar');
+    check(adminRequest($platform, 'GET', '/person-plans/available')[0] === 200, 'platform reads available plans of a client');
     $edited = expect(adminRequest(sharedPlatform($db), 'PATCH', '/person-plans/' . $pro['id'], ['name' => $pro['name'], 'badge_label' => 'Pro', 'features' => ['productividad', 'web'], 'active' => true], ['if-match' => '"' . $pro['version'] . '"']), 200, 'edit plan');
     check($edited['features'] === ['productividad', 'web'], 'plan edited');
     check((bool) $db->one('SELECT tenant_id FROM admin_policy_recompiles WHERE tenant_id=?', [$u['tenant_id']]), 'clients using the plan get recompiled');
@@ -102,6 +113,7 @@ function planApiTests(Database $db): void
     $usage = expect(adminRequest($platform, 'GET', '/tenants/' . $tid . '/plan-usage'), 200, 'usage own inactive');
     check(($rowOf($usage, $pro['id'])['people'] ?? 0) === $proBefore + 1 && $rowOf($usage, $basic['id']) === null, 'inactive own plan: person counted under the client default');
     check($basicOff['people'] === 0 && $basicOff['active'] === false, 'inactive own plan reports 0 people');
+    check(!in_array($basic['id'], array_column(expect(adminRequest($admin, 'GET', '/person-plans/available'), 200, 'available after deactivation')['data'], 'id'), true), 'inactive plans are not assignable');
     $own = expect(adminRequest($admin, 'PUT', '/users/' . $person['id'] . '/plan', ['plan_id' => null], ['if-match' => '"' . $own['version'] . '"']), 200, 'clear own plan');
     $proNow = $rowOf(expect(adminRequest($platform, 'GET', '/tenants/' . $tid . '/plan-usage'), 200, 'usage before'), $pro['id'])['people'];
     $proOff = $patch($edited, false);
