@@ -136,9 +136,10 @@ function hardeningTests(Database $db): void
         check($command['device_id'] === $device && $command['type'] === $action && $command['status'] === 'pending' && $command['envelope_jws'] === null, 'pending command has no secret');
         check((int) $db->one('SELECT COUNT(*) n FROM audit_log WHERE tenant_id=? AND resource_id=? AND action=?', [$tenant, Util::bin($queued['command_id']), 'hardening.command.' . $action])['n'] === 1, 'command audited once');
     }
-    $db->run("UPDATE roles SET scope_kind='area' WHERE tenant_id=? AND id=?", [$tenant, $admin['role']]);
+    // El alcance va en el acceso de la persona (0043): un filters sin valores no ve nada.
+    $db->run("UPDATE access_grants SET scope_kind='filters' WHERE tenant_id=? AND role_id=?", [$tenant, $admin['role']]);
     expect(adminRequest($admin, 'POST', $devicePath . '/command', ['action' => 'unharden'], $idem), 404, 'cached command still checks current device scope');
-    $db->run("UPDATE roles SET scope_kind='tenant' WHERE tenant_id=? AND id=?", [$tenant, $admin['role']]);
+    $db->run("UPDATE access_grants SET scope_kind='all' WHERE tenant_id=? AND role_id=?", [$tenant, $admin['role']]);
     // The existing command cursor takes a snapshot with second precision.
     $db->run('UPDATE device_command SET created_at=UTC_TIMESTAMP(6)-INTERVAL 1 SECOND WHERE tenant_id=? AND device_id=?', [$tenant, $device]);
     $commands = request('GET', '/client/commands', null, $key, $token['access_token']);

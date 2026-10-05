@@ -1,5 +1,5 @@
 {
-  "source_sha256": "91c652efa36a4511298f237b95c203267577f09e5bf697da1cc2e7f30c4af856",
+  "source_sha256": "2c0e8458949fbecebe0325e82591d9e467f5f8dfcb26bf8265d1ac1010b305ff",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -25377,7 +25377,8 @@
                     "area",
                     "site",
                     "self",
-                    "team"
+                    "team",
+                    "filters"
                   ]
                 }
               }

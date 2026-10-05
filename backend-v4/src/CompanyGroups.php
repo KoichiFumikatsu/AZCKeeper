@@ -60,7 +60,7 @@ final class CompanyGroups
             $old = array_column($this->db->run('SELECT tenant_id FROM company_group_members WHERE group_id=?', [$id])->fetchAll(), 'tenant_id');
             // Sacar una empresa del grupo quita los roles que las cuentas del grupo tenian alli.
             foreach (array_diff($old, $tenants) as $gone) {
-                $this->db->run('DELETE r FROM admin_account_roles r JOIN admin_accounts a ON a.tenant_id=r.admin_tenant_id AND a.id=r.admin_id WHERE a.group_id=? AND r.tenant_id=?', [$id, $gone]);
+                $this->db->run('DELETE g FROM access_grants g JOIN admin_accounts a ON a.tenant_id=g.admin_tenant_id AND a.id=g.admin_id WHERE a.group_id=? AND g.tenant_id=?', [$id, $gone]);
                 $this->db->run('DELETE FROM company_group_members WHERE group_id=? AND tenant_id=?', [$id, $gone]);
             }
             foreach (array_diff($tenants, $old) as $new) { $this->db->run('INSERT INTO company_group_members (group_id,tenant_id) VALUES (?,?)', [$id, $new]); }

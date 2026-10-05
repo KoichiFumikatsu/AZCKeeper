@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-use Keeper\{ActivityCalendar,AdminAuth,Database,HolidaySeeds,Util};
+use Keeper\{AccessGrants,AccessScope,ActivityCalendar,AdminAuth,Database,HolidaySeeds,Util};
 
 // Grupo con empresas internas, sedes por pais y calendarios de festivos por persona (2026-10-01).
 function groupStructureTests(Database $db): void
@@ -136,7 +136,7 @@ function myAccessTests(Database $db): void
     $mine = expect(adminRequest($admin, 'GET', '/me/access'), 200, 'my access');
     $codes = array_column($mine['permissions'], 'scopes', 'code');
     check($mine['platform'] === false && isset($codes['usuarios.ver'], $codes['festivos.ver']) && !isset($codes['reglas.ver']), 'only granted permissions');
-    check($codes['festivos.ver'] === ['area'], 'scope reported (festivos needs whole company, so the menu hides it)');
+    check($codes['festivos.ver'] === ['filters'], 'scope reported (festivos needs whole company, so the menu hides it)');
     $platform = sharedPlatform($db); $platform['tenant'] = $u['tenant_id'];
     check(expect(adminRequest($platform, 'GET', '/me/access'), 200, 'platform access')['platform'] === true, 'platform sees everything');
     // Guardia: todo item de empresa del menu tiene regla y apunta a un permiso que existe.
@@ -162,6 +162,14 @@ function tenantPurgeTests(Database $db): void
     expect(adminRequest($mine, 'POST', '/organization', ['kind' => 'site', 'name' => 'Sede a borrar', 'parent_id' => null, 'active' => true]), 201, 'data with audit');
     $audit = (int) $db->one('SELECT COUNT(*) n FROM audit_log WHERE tenant_id=?', [$tenant])['n'];
     check($audit > 0, 'tenant has audit');
+    // Accesos (0043): los de la empresa y los de sus cuentas de grupo en otra empresa no frenan el borrado.
+    $role = Util::bin(Util::uuid()); $db->run("INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,'Rol a borrar','tenant')", [$tenant, $role]);
+    AccessGrants::setForUser($db, $tenant, $u['id'], $role, new AccessScope('filters', [], [], [$u['site_id']]), 'manual');
+    $other = secondTenant($db)['tenant_id']; $otherRole = Util::bin(Util::uuid());
+    $db->run("INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,'Rol de grupo','tenant')", [$other, $otherRole]);
+    $account = Util::bin(Util::uuid());
+    $db->run('INSERT INTO admin_accounts (tenant_id,id,user_id,email,password_hash,is_platform_admin) VALUES (?,?,?,?,?,FALSE)', [$tenant, $account, $u['id'], Util::uuid() . '@example.test', password_hash(Util::uuid(), PASSWORD_DEFAULT)]);
+    AccessGrants::setForGroupAccount($db, $other, $tenant, $account, $otherRole, AccessScope::all());
     $t = expect(adminRequest($mine, 'GET', '/tenants/' . $tid), 200, 'read tenant');
     $body = ['confirm_name' => $t['name'], 'accept_hardening_loss' => false];
     // La contrasena (reauth de 5 minutos) es el mismo mecanismo que prueban las cuentas del panel.
@@ -173,6 +181,7 @@ function tenantPurgeTests(Database $db): void
     foreach (['users', 'org_units', 'user_assignments', 'schedules', 'roles', 'retention_settings'] as $table) {
         check((int) $db->one("SELECT COUNT(*) n FROM `$table` WHERE tenant_id=?", [$tenant])['n'] === 0, "$table emptied");
     }
+    check(!$db->one('SELECT 1 x FROM access_grants WHERE tenant_id=? OR admin_tenant_id=?', [$tenant, $tenant]) && !$db->one('SELECT 1 x FROM access_grant_units WHERE tenant_id=?', [$tenant]), 'access grants purged, also those in other companies');
     check((int) $db->one('SELECT COUNT(*) n FROM audit_log WHERE tenant_id=?', [$tenant])['n'] >= $audit, 'audit kept');
     check((bool) $db->one('SELECT 1 x FROM tenants WHERE tenant_id=? AND deleted_at IS NOT NULL', [$tenant]), 'minimal record kept');
     check(!(bool) $db->one('SELECT 1 x FROM principals WHERE tenant_id=? AND detached=FALSE AND kind<>\'system\'', [$tenant]), 'identities detached');

@@ -124,6 +124,22 @@ final class AccessScope
         return true;
     }
 
+    /** PUENTE Tareas 3-7 (se borra en la Tarea 8): alcance del modelo viejo (rol con tenant/site/area/team/self). */
+    public static function fromLegacy(string $kind, array $ids): self
+    {
+        return match ($kind) {
+            'tenant' => self::all(), 'team' => new self('team'), 'site' => new self('filters', [], [], $ids), 'area' => new self('filters', [], [], [], $ids), default => self::own(),
+        };
+    }
+
+    /** PUENTE Tareas 3-7: el alcance que tenia un rol en el modelo viejo. */
+    public static function fromLegacyRole(Database $db, string $tenant, string $role): self
+    {
+        $kind = $db->one('SELECT scope_kind FROM roles WHERE tenant_id=? AND id=?', [$tenant, $role])['scope_kind'] ?? 'self';
+        $ids = in_array($kind, ['site', 'area'], true) ? array_column($db->run("SELECT {$kind}_id id FROM role_{$kind}_scopes WHERE tenant_id=? AND role_id=? ORDER BY {$kind}_id", [$tenant, $role])->fetchAll(), 'id') : [];
+        return self::fromLegacy($kind, $ids);
+    }
+
     /** Ciudad comparable en PHP como la compara la base (sin mayusculas ni tildes). */
     public static function cityKey(string $city): string
     {

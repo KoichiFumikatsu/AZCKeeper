@@ -96,7 +96,7 @@ final class ExternalApi
     {
         if (!$rows) { return []; }
         $ids=array_column($rows,'id'); $stats=array_column($this->metrics->rows('user',$ids),null,'bucket');
-        $roles=$this->db->run('SELECT ur.user_id,r.name FROM user_roles ur JOIN roles r ON r.tenant_id=ur.tenant_id AND r.id=ur.role_id WHERE ur.tenant_id=? AND ur.user_id IN ('.implode(',',array_fill(0,count($ids),'?')).') ORDER BY r.name,r.id',[$this->tenant,...$ids])->fetchAll();
+        $roles=$this->db->run('SELECT g.user_id,r.name FROM access_grants g JOIN roles r ON r.tenant_id=g.tenant_id AND r.id=g.role_id WHERE g.tenant_id=? AND g.user_id IN ('.implode(',',array_fill(0,count($ids),'?')).') ORDER BY r.name,r.id',[$this->tenant,...$ids])->fetchAll();
         $labels=[]; foreach ($roles as $role) { $labels[$role['user_id']][]=$role['name']; }
         return array_map(function($row) use ($stats,$labels) {
             $out=[]; foreach (['id','firm_id','area_id','site_id'] as $key) { $out[$key]=Util::id($row[$key]); }

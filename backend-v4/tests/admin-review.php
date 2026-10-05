@@ -99,11 +99,11 @@ function adminReviewTests(Database $db, array $admin, array $base, array $member
     foreach (['area', 'site'] as $kind) {
         $unitBody = ['kind' => $kind, 'name' => 'Referenced ' . $kind, 'parent_id' => null, 'active' => true];
         $unit = expect(adminRequest($admin, 'POST', '/organization', $unitBody), 201, 'scope reference unit');
-        $roleId = Util::bin(Util::uuid());
-        $db->run('INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,?,?)', [$tenant, $roleId, 'Reference ' . $kind, $kind]);
-        $db->run("INSERT INTO role_{$kind}_scopes (tenant_id,role_id,{$kind}_id) VALUES (?,?,?)", [$tenant, $roleId, Util::bin($unit['id'])]);
-        expect(adminRequest($admin, 'PATCH', '/organization/' . $unit['id'], array_replace($unitBody, ['active' => false]), ['if-match' => '"1"']), 409, $kind . ' role scope prevents deactivation');
-        $db->run("DELETE FROM role_{$kind}_scopes WHERE tenant_id=? AND role_id=?", [$tenant, $roleId]);
+        $grantId = Util::bin(Util::uuid());
+        $db->run("INSERT INTO access_grants (tenant_id,id,user_id,role_id,scope_kind) SELECT ?,?,?,id,'filters' FROM roles WHERE tenant_id=? LIMIT 1", [$tenant, $grantId, adminMember($db, $base)['id'], $tenant]);
+        $db->run('INSERT INTO access_grant_units (tenant_id,grant_id,unit_id,unit_kind) VALUES (?,?,?,?)', [$tenant, $grantId, Util::bin($unit['id']), $kind]);
+        expect(adminRequest($admin, 'PATCH', '/organization/' . $unit['id'], array_replace($unitBody, ['active' => false]), ['if-match' => '"1"']), 409, $kind . ' access scope prevents deactivation');
+        $db->run('DELETE FROM access_grants WHERE tenant_id=? AND id=?', [$tenant, $grantId]);
         expect(adminRequest($admin, 'POST', '/policies', ['name' => 'Reference policy ' . $kind, 'target_type' => $kind, 'target_id' => $unit['id'], 'enabled' => true, 'rules' => []]), 201, 'policy reference unit');
         expect(adminRequest($admin, 'PATCH', '/organization/' . $unit['id'], array_replace($unitBody, ['active' => false]), ['if-match' => '"1"']), 409, $kind . ' policy assignment prevents deactivation');
     }

@@ -36,6 +36,8 @@ function adminFixture(Database $db,array $u,array $permissions,bool $platform=fa
         foreach ($permissions as $p) { $db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)',[$tenant,$role,$p]); }
         foreach ($scopeIds as $id) { $db->run("INSERT INTO role_{$scope}_scopes (tenant_id,role_id,{$scope}_id) VALUES (?,?,?)",[$tenant,$role,$id]); }
         $db->run('INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)',[$tenant,$u['id'],$role]);
+        $kind=['tenant'=>'all','site'=>'filters','area'=>'filters'][$scope]??$scope;
+        Keeper\AccessGrants::setForUser($db,$tenant,$u['id'],$role,new Keeper\AccessScope($kind,[],[],$scope==='site'?$scopeIds:[],$scope==='area'?$scopeIds:[]),'manual');
     }
     $db->run('INSERT INTO admin_accounts (tenant_id,id,user_id,email,password_hash,is_platform_admin) VALUES (?,?,?,?,?,?)',[$tenant,$admin,$platform?null:$u['id'],$email,password_hash($password,PASSWORD_DEFAULT),(int)$platform]);
     return adminLogin(['tenant'=>$tenant,'id'=>$admin,'email'=>$email,'password'=>$password,'role'=>$role]);

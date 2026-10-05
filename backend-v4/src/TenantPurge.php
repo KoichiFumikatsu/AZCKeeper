@@ -29,6 +29,8 @@ final class TenantPurge
         $this->db->run("UPDATE tenants SET deleted_at=UTC_TIMESTAMP(6),status='suspended',auth_version=auth_version+1,version=version+1 WHERE tenant_id=?", [$tenant]);
         // Identidades: las de la empresa y las de sus cuentas en otras empresas quedan desvinculadas (la auditoria sigue).
         $this->db->run('UPDATE principals SET detached=TRUE,admin_id=NULL,admin_tenant_id=NULL,device_id=NULL,integration_id=NULL WHERE tenant_id=? OR admin_tenant_id=?', [$tenant, $tenant]);
+        $this->db->run('DELETE FROM access_grants WHERE admin_tenant_id=? OR tenant_id=?', [$tenant, $tenant]);
+        // PUENTE hasta la Tarea 8: la tabla vieja sigue con filas convertidas y su FK a admin_accounts frena el borrado.
         $this->db->run('DELETE FROM admin_account_roles WHERE admin_tenant_id=? OR tenant_id=?', [$tenant, $tenant]);
         $tables = array_values(array_diff(array_column($this->db->run("SELECT c.table_name t FROM information_schema.columns c JOIN information_schema.tables x ON x.table_schema=c.table_schema AND x.table_name=c.table_name AND x.table_type='BASE TABLE'
             WHERE c.table_schema=DATABASE() AND c.column_name='tenant_id'")->fetchAll(), 't'), self::KEEP));

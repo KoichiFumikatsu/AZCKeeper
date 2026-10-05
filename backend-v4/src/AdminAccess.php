@@ -2,91 +2,122 @@
 declare(strict_types=1);
 namespace Keeper;
 
+/**
+ * Autorizacion de una peticion del panel (docs/architecture/v4-clientes-funciones-accesos.md §4 y §7). La persona (o la
+ * cuenta de grupo en otra empresa) tiene un solo acceso: 1 rol (permisos) + 1 alcance (datos). Superadmin: todo.
+ * 403 permission_denied con detalle feature_not_contracted:<f>, scope_denied o delegation_exceeds_own_access.
+ */
 final class AdminAccess
 {
-    private array $grants = [];
+    private ?array $grant = null;
+    private AccessScope $scope;
+    /** @var list<string> */
+    private array $permissions = [];
+
     public function __construct(private Database $db, public readonly array $c, public readonly string $permission, ?string $operation = null)
     {
         if ($c['platform']) {
-            if (!$db->one('SELECT code FROM permissions WHERE code=?',[$permission])) { throw new ApiError(403,'permission_denied'); }
-            $this->grants = [['scope_kind'=>'tenant']];
-        } elseif (($c['group_id'] ?? null) !== null && $c['tenant_id'] !== $c['admin_tenant_id']) {
-            // Cuenta de grupo en otra empresa del grupo: solo los roles que se le dieron en esa empresa.
-            $this->grants=$db->run('SELECT r.id,r.scope_kind FROM admin_account_roles g JOIN roles r ON r.tenant_id=g.tenant_id AND r.id=g.role_id AND r.active=TRUE JOIN role_permissions p ON p.tenant_id=r.tenant_id AND p.role_id=r.id JOIN permissions m ON m.code=p.permission_code AND m.platform_only=FALSE WHERE g.admin_tenant_id=? AND g.admin_id=? AND g.tenant_id=? AND p.permission_code=?',[$c['admin_tenant_id'],$c['admin_id'],$c['tenant_id'],$permission])->fetchAll();
-        } else {
-            $this->grants=$db->run('SELECT r.id,r.scope_kind FROM user_roles u JOIN roles r ON r.tenant_id=u.tenant_id AND r.id=u.role_id AND r.active=TRUE JOIN role_permissions p ON p.tenant_id=r.tenant_id AND p.role_id=r.id JOIN permissions m ON m.code=p.permission_code AND m.platform_only=FALSE WHERE u.tenant_id=? AND u.user_id=? AND p.permission_code=?',[$c['tenant_id'],$c['user_id'],$permission])->fetchAll();
+            if (!$db->one('SELECT code FROM permissions WHERE code=?', [$permission])) { throw new ApiError(403, 'permission_denied'); }
+            $this->scope = AccessScope::all();
+            return;
         }
-        if (!$this->grants) { throw new ApiError(403,'permission_denied'); }
+        $this->grant = AccessGrants::forContext($db, $c);
+        $this->permissions = $this->grant === null ? [] : AccessGrants::permissions($db, $c['tenant_id'], $this->grant['role_id']);
+        if (!in_array($permission, $this->permissions, true)) { throw new ApiError(403, 'permission_denied'); }
+        $this->scope = $this->grant['scope'];
         // Funcion no contratada por el cliente: aunque el rol tenga el permiso (superadmin nunca queda bloqueado).
-        if (!$c['platform']) {
-            $feature=Features::forOperation($operation??'',$permission);
-            if ($feature!==null && !Features::has($db,$c['tenant_id'],$feature)) { throw new ApiError(403,'permission_denied',[],"feature_not_contracted:$feature"); }
-        }
+        $feature = Features::forOperation($operation ?? '', $permission);
+        if ($feature !== null && !Features::has($db, $c['tenant_id'], $feature)) { throw new ApiError(403, 'permission_denied', [], "feature_not_contracted:$feature"); }
     }
-    public function full(): bool { return in_array('tenant',array_column($this->grants,'scope_kind'),true); }
-    public function hasScopeKind(string $kind): bool { return in_array($kind,array_column($this->grants,'scope_kind'),true); }
-    public function requireFull(): void { if (!$this->full()) { throw new ApiError(403,'permission_denied'); } }
+
+    public function scope(): AccessScope { return $this->scope; }
+    public function full(): bool { return $this->scope->kind === 'all'; }
+    public function requireFull(): void { if (!$this->full()) { throw new ApiError(403, 'permission_denied', [], 'scope_denied'); } }
     public function rolesGate(): void
     {
-        if (!$this->c['platform'] && !$this->c['gate']) { throw new ApiError(403,'tenant_rbac_disabled'); }
+        if (!$this->c['platform'] && !$this->c['gate']) { throw new ApiError(403, 'tenant_rbac_disabled'); }
     }
-    public function usersSql(string $alias='u',string $userKey='id'): array
+
+    /** Condicion SQL de las personas del alcance sobre $alias (users, o user_assignments con $userKey='user_id'). */
+    public function usersSql(string $alias = 'u', string $userKey = 'id'): array
     {
-        if ($this->full()) { return ['1=1',[]]; }
-        $parts=[]; $args=[];
-        foreach ($this->grants as $g) {
-            if ($g['scope_kind']==='self') { $parts[]="$alias.$userKey=?"; $args[]=$this->c['user_id']; }
-            elseif ($g['scope_kind']==='team') { $team=$this->team(); $parts[]=$team?"$alias.$userKey IN (".implode(',',array_fill(0,count($team),'?')).')':'1=0'; array_push($args,...$team); }
-            else { $kind=$g['scope_kind']; $parts[]="$alias.{$kind}_id IN (SELECT {$kind}_id FROM role_{$kind}_scopes WHERE tenant_id=? AND role_id=?)"; array_push($args,$this->c['tenant_id'],$g['id']); }
-        }
-        return ['(' . implode(' OR ',$parts) . ')',$args];
+        return match ($this->scope->kind) {
+            'all' => ['1=1', []],
+            'self' => ($this->c['user_id'] ?? null) === null ? ['1=0', []] : ["$alias.$userKey=?", [$this->c['user_id']]],
+            'team' => ($team = $this->team()) ? ["$alias.$userKey IN (" . implode(',', array_fill(0, count($team), '?')) . ')', $team] : ['1=0', []],
+            'filters' => $this->scope->filterSql($alias),
+        };
     }
-    private ?array $teamIds=null;
-    /** La persona de la cuenta y quienes le reportan, directa o indirectamente (alcance "team", §8.4). */
+
+    private ?array $teamIds = null;
+    /** La persona de la cuenta y quienes le reportan, directa o indirectamente (alcance "team", §4). */
     public function team(): array
     {
-        if ($this->teamIds!==null) { return $this->teamIds; }
-        if (($this->c['user_id']??null)===null) { return $this->teamIds=[]; }
-        $seen=[bin2hex($this->c['user_id'])=>$this->c['user_id']]; $level=[$this->c['user_id']];
-        for ($depth=0; $level && $depth<20; $depth++) {
-            $next=[];
-            foreach ($this->db->run('SELECT id FROM users WHERE tenant_id=? AND reports_to_user_id IN ('.implode(',',array_fill(0,count($level),'?')).')',[$this->c['tenant_id'],...$level])->fetchAll() as $row) {
-                if (!isset($seen[bin2hex($row['id'])])) { $seen[bin2hex($row['id'])]=$row['id']; $next[]=$row['id']; }
+        if ($this->teamIds !== null) { return $this->teamIds; }
+        if (($this->c['user_id'] ?? null) === null) { return $this->teamIds = []; }
+        $seen = [bin2hex($this->c['user_id']) => $this->c['user_id']]; $level = [$this->c['user_id']];
+        for ($depth = 0; $level && $depth < 20; $depth++) {
+            $next = [];
+            foreach ($this->db->run('SELECT id FROM users WHERE tenant_id=? AND reports_to_user_id IN (' . implode(',', array_fill(0, count($level), '?')) . ')', [$this->c['tenant_id'], ...$level])->fetchAll() as $row) {
+                if (!isset($seen[bin2hex($row['id'])])) { $seen[bin2hex($row['id'])] = $row['id']; $next[] = $row['id']; }
             }
-            $level=$next;
+            $level = $next;
         }
-        return $this->teamIds=array_values($seen);
+        return $this->teamIds = array_values($seen);
     }
+
+    /** Persona dentro del alcance; fuera, 404 (no se revela que existe). */
     public function user(string $id): array
     {
-        [$where,$args]=$this->usersSql();
-        $u=$this->db->one("SELECT u.* FROM users u WHERE u.tenant_id=? AND u.id=? AND $where",[$this->c['tenant_id'],$id,...$args]);
-        if (!$u) { throw new ApiError(404,'resource_not_found'); } return $u;
+        [$where, $args] = $this->usersSql();
+        $u = $this->db->one("SELECT u.* FROM users u WHERE u.tenant_id=? AND u.id=? AND $where", [$this->c['tenant_id'], $id, ...$args]);
+        if (!$u) { throw new ApiError(404, 'resource_not_found'); }
+        return $u;
     }
-    public function allowsScope(object $scope): bool
+
+    /** Crear o mover una persona: su nueva ubicacion debe caer dentro del alcance (equipo o propio no crean ni mueven). */
+    public function allowsPlacement(array $person): bool
+    {
+        return $this->scope->matches($this->db, $this->c['tenant_id'], $person);
+    }
+
+    /** Objetivo de una regla (sede, area o empresa): afecta a todos los de esa unidad, asi que el alcance debe limitarse a ella. */
+    public function allowsUnitTarget(string $kind, string $id): bool
     {
         if ($this->full()) { return true; }
-        if (in_array($scope->kind,['tenant','self','team'],true)) { return false; }
-        $available=[];
-        foreach ($this->grants as $g) {
-            if ($g['scope_kind']!==$scope->kind) { continue; }
-            $kind=$scope->kind;
-            foreach ($this->db->run("SELECT {$kind}_id id FROM role_{$kind}_scopes WHERE tenant_id=? AND role_id=?",[$this->c['tenant_id'],$g['id']])->fetchAll() as $row) { $available[]=Util::id($row['id']); }
-        }
-        return count(array_diff($scope->resource_ids,$available))===0;
+        if ($this->scope->kind !== 'filters' || !in_array($id, $this->scope->list($kind), true)) { return false; }
+        foreach (['company', 'city', 'site', 'area'] as $other) { if ($other !== $kind && $this->scope->list($other)) { return false; } }
+        return true;
     }
-    public function delegate(array $permissions, object $scope): void
+
+    /** Delegacion segura (§4): nadie da permisos que no tiene ni un alcance mas amplio que el propio. */
+    public function delegate(array $permissions, AccessScope $scope, ?string $target): void
     {
         $this->rolesGate();
-        if (!$this->allowsScope($scope)) { throw new ApiError(403,'permission_denied'); }
         foreach ($permissions as $code) {
-            $p=$this->db->one('SELECT * FROM permissions WHERE code=?',[$code]);
-            if (!$p || $p['platform_only']) { throw new ApiError(403,'permission_denied'); }
-            if (!$this->c['platform']) {
-                if ($code==='roles.gestionar' || !$p['delegable']) { throw new ApiError(403,'permission_denied'); }
-                $access=new self($this->db,$this->c,$code);
-                if (!$access->allowsScope($scope)) { throw new ApiError(403,'permission_denied'); }
+            $p = $this->db->one('SELECT * FROM permissions WHERE code=?', [$code]);
+            if (!$p || $p['platform_only']) { throw new ApiError(403, 'permission_denied'); }
+            if (!$this->c['platform'] && ($code === 'roles.gestionar' || !$p['delegable'] || !in_array($code, $this->permissions, true))) {
+                throw new ApiError(403, 'permission_denied', [], 'delegation_exceeds_own_access');
             }
         }
+        if (!$this->c['platform'] && !$this->covers($scope, $target)) { throw new ApiError(403, 'permission_denied', [], 'delegation_exceeds_own_access'); }
+    }
+
+    private function covers(AccessScope $child, ?string $target): bool
+    {
+        if ($this->full()) { return true; }
+        return match ($child->kind) {
+            'all' => false,
+            'self' => $target !== null && $this->sees($target),
+            'team' => $target !== null && $this->scope->kind === 'team' && in_array($target, $this->team(), true),
+            'filters' => $this->scope->covers($child),
+        };
+    }
+
+    private function sees(string $user): bool
+    {
+        [$where, $args] = $this->usersSql();
+        return (bool) $this->db->one("SELECT u.id FROM users u WHERE u.tenant_id=? AND u.id=? AND $where", [$this->c['tenant_id'], $user, ...$args]);
     }
 }

@@ -39,18 +39,17 @@ final class RoleRules
     {
         $desired = [];
         foreach ($db->run('SELECT p.* FROM panel_role_rules p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id AND r.active=TRUE AND r.assignable_by_rule=TRUE WHERE p.tenant_id=? AND p.active=TRUE ORDER BY p.created_at', [$tenant])->fetchAll() as $rule) {
-            foreach (self::matching($db, $tenant, $rule) as $user) { $desired[bin2hex($user) . '|' . bin2hex($rule['role_id'])] ??= [$user, $rule['role_id'], $rule['id']]; }
+            foreach (self::matching($db, $tenant, $rule) as $user) { $desired[bin2hex($user)] ??= [$user, $rule['role_id'], $rule['id']]; }
         }
         $added = 0; $removed = 0;
-        foreach ($db->run('SELECT user_id,role_id FROM user_roles WHERE tenant_id=? AND rule_id IS NOT NULL', [$tenant])->fetchAll() as $row) {
-            if (!isset($desired[bin2hex($row['user_id']) . '|' . bin2hex($row['role_id'])])) {
-                $db->run('DELETE FROM user_roles WHERE tenant_id=? AND user_id=? AND role_id=? AND rule_id IS NOT NULL', [$tenant, $row['user_id'], $row['role_id']]); $removed++;
-            }
+        foreach ($db->run("SELECT user_id FROM access_grants WHERE tenant_id=? AND source='rule' AND user_id IS NOT NULL", [$tenant])->fetchAll() as $row) {
+            if (!isset($desired[bin2hex($row['user_id'])])) { AccessGrants::grantDefault($db, $tenant, $row['user_id']); $removed++; }
         }
         foreach ($desired as [$user, $role, $rule]) {
-            if (!$db->one('SELECT 1 FROM user_roles WHERE tenant_id=? AND user_id=? AND role_id=?', [$tenant, $user, $role])) {
-                $db->run('INSERT INTO user_roles (tenant_id,user_id,role_id,rule_id) VALUES (?,?,?,?)', [$tenant, $user, $role, $rule]); $added++;
-            }
+            $g = AccessGrants::forUser($db, $tenant, $user);
+            if ($g !== null && ($g['source'] === 'manual' || ($g['role_id'] === $role && $g['rule_id'] === $rule))) { continue; }
+            AccessGrants::setForUser($db, $tenant, $user, $role, AccessScope::fromLegacyRole($db, $tenant, $role), 'rule', $rule);
+            $added++;
         }
         return [$added, $removed];
     }

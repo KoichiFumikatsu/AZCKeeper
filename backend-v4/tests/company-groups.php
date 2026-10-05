@@ -47,7 +47,7 @@ function companyGroupTests(Database $db): void
     // Sacar la empresa B del grupo corta el acceso al instante.
     expect(adminRequest($platform, 'PATCH', '/company-groups/' . $group['id'], ['tenant_ids' => [Util::id($ta)]], ['if-match' => '"' . $group['version'] . '"']), 200, 'remove company from group');
     expect(adminRequest($inB, 'GET', '/tenants/' . Util::id($tb) . '/devices'), 404, 'access removed with the company');
-    check(!$db->one('SELECT 1 FROM admin_account_roles WHERE tenant_id=?', [$tb]), 'group roles there removed');
+    check(!$db->one('SELECT 1 FROM access_grants WHERE tenant_id=? AND admin_id IS NOT NULL', [$tb]), 'group access there removed');
     expect(adminRequest($owner, 'GET', '/tenants/' . Util::id($ta) . '/devices'), 200, 'home company still works');
     // Eliminar un grupo: rechazado mientras tenga cuentas de grupo; sin ellas, sus empresas quedan independientes.
     $g = expect(adminRequest($platform, 'GET', '/company-groups'), 200, 'list groups')['data'];

@@ -54,7 +54,7 @@ final class AdminAuth
     {
         if (($a['group_id'] ?? null) === null) { return []; }
         $adminId = $a['admin_id'] ?? $a['id'];
-        return array_column($this->db->run('SELECT DISTINCT r.tenant_id FROM admin_account_roles r JOIN company_group_members m ON m.tenant_id=r.tenant_id AND m.group_id=? JOIN tenants t ON t.tenant_id=r.tenant_id AND t.status=\'active\' WHERE r.admin_tenant_id=? AND r.admin_id=? ORDER BY r.tenant_id', [$a['group_id'], $a['tenant_id'], $adminId])->fetchAll(), 'tenant_id');
+        return array_column($this->db->run('SELECT DISTINCT g.tenant_id FROM access_grants g JOIN company_group_members m ON m.tenant_id=g.tenant_id AND m.group_id=? JOIN tenants t ON t.tenant_id=g.tenant_id AND t.status=\'active\' WHERE g.admin_tenant_id=? AND g.admin_id=? ORDER BY g.tenant_id', [$a['group_id'], $a['tenant_id'], $adminId])->fetchAll(), 'tenant_id');
     }
     /** Datos del grupo para la sesion del panel (selector de empresa y tablero consolidado). */
     private function groupInfo(array $a): array

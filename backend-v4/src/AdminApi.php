@@ -167,7 +167,7 @@ final class AdminApi
         if ($op==='listTenants') {
             // Cuenta de grupo: su empresa y las del grupo donde tiene roles (selector de empresa del panel).
             if (!$this->c['platform'] && ($this->c['group_id']??null)!==null) {
-                $ids=array_values(array_unique([$this->c['admin_tenant_id'],...array_column($this->db->run('SELECT DISTINCT r.tenant_id FROM admin_account_roles r JOIN company_group_members m ON m.tenant_id=r.tenant_id AND m.group_id=? WHERE r.admin_tenant_id=? AND r.admin_id=?',[$this->c['group_id'],$this->c['admin_tenant_id'],$this->c['admin_id']])->fetchAll(),'tenant_id')]));
+                $ids=array_values(array_unique([$this->c['admin_tenant_id'],...array_column($this->db->run('SELECT DISTINCT g.tenant_id FROM access_grants g JOIN company_group_members m ON m.tenant_id=g.tenant_id AND m.group_id=? WHERE g.admin_tenant_id=? AND g.admin_id=?',[$this->c['group_id'],$this->c['admin_tenant_id'],$this->c['admin_id']])->fetchAll(),'tenant_id')]));
                 return $this->page('SELECT t.*,tenant_id id FROM tenants t WHERE tenant_id IN ('.implode(',',array_fill(0,count($ids),'?')).')',$ids,fn($x)=>$this->tenantDto($x));
             }
             // Archivadas: ocultas salvo que superadmin pida verlas (Empresas > "Mostrar archivadas").
@@ -247,7 +247,7 @@ final class AdminApi
         $uses=[
             'personas activas'=>["SELECT COUNT(*) n FROM users WHERE tenant_id=? AND status='active' AND ? IN (firm_id,site_id,area_id,position_id,company_id)",[$this->tenant,$id]],
             'unidades que dependen de ella'=>['SELECT COUNT(*) n FROM org_units WHERE tenant_id=? AND parent_id=? AND deleted_at IS NULL',[$this->tenant,$id]],
-            'roles'=>['SELECT (SELECT COUNT(*) FROM role_area_scopes WHERE tenant_id=? AND area_id=?)+(SELECT COUNT(*) FROM role_site_scopes WHERE tenant_id=? AND site_id=?) n',[$this->tenant,$id,$this->tenant,$id]],
+            'accesos'=>['SELECT COUNT(*) n FROM access_grant_units WHERE tenant_id=? AND unit_id=?',[$this->tenant,$id]],
             'reglas de los equipos'=>['SELECT COUNT(*) n FROM policy_assignments WHERE tenant_id=? AND (area_id=? OR site_id=?)',[$this->tenant,$id,$id]],
             'puertas'=>['SELECT COUNT(*) n FROM doors WHERE tenant_id=? AND site_id=?',[$this->tenant,$id]],
             'asignaciones automáticas de roles'=>['SELECT COUNT(*) n FROM panel_role_rules WHERE tenant_id=? AND (area_id=? OR position_id=?)',[$this->tenant,$id,$id]],
@@ -282,8 +282,7 @@ final class AdminApi
         if ($id && $old['active'] && !$b->active) {
             if ($this->db->one('SELECT id FROM users WHERE tenant_id=? AND (firm_id=? OR site_id=? OR area_id=? OR position_id=? OR company_id=?) LIMIT 1',[$this->tenant,$id,$id,$id,$id,$id])
                 || $this->db->one('SELECT id FROM org_units WHERE tenant_id=? AND parent_id=? AND active=TRUE LIMIT 1',[$this->tenant,$id])
-                || $this->db->one('SELECT role_id FROM role_area_scopes WHERE tenant_id=? AND area_id=? LIMIT 1',[$this->tenant,$id])
-                || $this->db->one('SELECT role_id FROM role_site_scopes WHERE tenant_id=? AND site_id=? LIMIT 1',[$this->tenant,$id])
+                || $this->db->one('SELECT grant_id FROM access_grant_units WHERE tenant_id=? AND unit_id=? LIMIT 1',[$this->tenant,$id])
                 || $this->db->one('SELECT id FROM policy_assignments WHERE tenant_id=? AND (area_id=? OR site_id=?) LIMIT 1',[$this->tenant,$id,$id])) { throw new ApiError(409,'org_unit_in_use',[], 'La unidad tiene usuarios, unidades hijas activas, scopes de roles o asignaciones de políticas.'); }
         }
         // Pais: solo las sedes lo tienen (las remotas son "Remoto - <pais>"); de el sale el calendario de festivos por defecto.
@@ -311,9 +310,9 @@ final class AdminApi
     }
     private function userDto(array $r): array
     {
-        $roles=$this->db->run('SELECT ur.role_id FROM user_roles ur JOIN roles r ON r.tenant_id=ur.tenant_id AND r.id=ur.role_id AND r.active=TRUE WHERE ur.tenant_id=? AND ur.user_id=? ORDER BY ur.role_id',[$this->tenant,$r['id']])->fetchAll();
+        $grant=AccessGrants::forUser($this->db,$this->tenant,$r['id']);
         $sub=$this->currentSubscription($r['id']);
-        $out=['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'display_name'=>$r['display_name'],'email'=>$r['email'],'status'=>$r['status'],'role_ids'=>array_map([Util::class,'id'],array_column($roles,'role_id')),'panel_login_enabled'=>(bool)$r['panel_login_enabled'],'tier_id'=>$sub?Util::id($sub['tier_id']):null,'version'=>(int)$r['version']];
+        $out=['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'display_name'=>$r['display_name'],'email'=>$r['email'],'status'=>$r['status'],'role_ids'=>$grant===null?[]:[Util::id($grant['role_id'])],'panel_login_enabled'=>(bool)$r['panel_login_enabled'],'tier_id'=>$sub?Util::id($sub['tier_id']):null,'version'=>(int)$r['version']];
         foreach (['firm_id','site_id','area_id','position_id','schedule_id','company_id','holiday_calendar_id'] as $f) { $out[$f]=$r[$f]===null?null:Util::id($r[$f]); }
         // Cedula: la cargada en v4 ('document') o, si no hay, la importada de K3 ('k3:cc').
         $doc=$this->db->one("SELECT external_ref FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source IN ('document','k3:cc') ORDER BY source='document' DESC LIMIT 1",[$this->tenant,$r['id']]);
@@ -360,14 +359,7 @@ final class AdminApi
         if ($id) { $this->access->user($id); $old=$this->row('users',$id); if ($op==='getUser') { return $this->result($this->userDto($old)); } $this->match($old); }
         if ($op==='setUserRoles') {
             $this->unique($b->role_ids);
-            $oldIds=array_column($this->db->run('SELECT role_id FROM user_roles WHERE tenant_id=? AND user_id=?',[$this->tenant,$id])->fetchAll(),'role_id');
-            foreach (array_unique([...$b->role_ids,...array_map([Util::class,'id'],$oldIds)]) as $rid) {
-                $role=$this->row('roles',Util::bin($rid)); $dto=$this->roleDto($role);
-                if (in_array($rid,$b->role_ids,true) && !$role['active']) { throw new ApiError(409,'invalid_transition'); }
-                $this->access->delegate($dto['permissions'],(object)$dto['scope']);
-            }
-            $this->db->run('DELETE FROM user_roles WHERE tenant_id=? AND user_id=? AND rule_id IS NULL',[$this->tenant,$id]);
-            foreach ($b->role_ids as $rid) { $this->db->run('INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?) ON DUPLICATE KEY UPDATE rule_id=NULL',[$this->tenant,$id,Util::bin($rid)]); }
+            AccessGrants::assignLegacy($this->db,$this->access,$this->tenant,$id,$b->role_ids);
             $this->db->run('UPDATE users SET version=version+1 WHERE tenant_id=? AND id=?',[$this->tenant,$id]); $this->invalidateUser($id);
         } else {
             DataSources::guardWrite($this->db,$this->tenant,'personas','user',$id);
@@ -384,16 +376,8 @@ final class AdminApi
             if (isset($values['holiday_calendar_id'])) { $this->row('holiday_calendars',$values['holiday_calendar_id']); }
             $next=($values+($old??[]));
             if (!$this->access->full()) {
-                $allowed=false;
-                foreach (['area','site'] as $kind) {
-                    if (!$this->access->hasScopeKind($kind)) { continue; }
-                    $field=$kind.'_id'; $target=$next[$field]??null;
-                    if ($target===null) { continue; }
-                    $within=$this->access->allowsScope((object)['kind'=>$kind,'resource_ids'=>[Util::id($target)]]);
-                    if (array_key_exists($field,$values) && !$within) { throw new ApiError(403,'permission_denied'); }
-                    $allowed=$allowed || $within;
-                }
-                if (!$allowed) { throw new ApiError(403,'permission_denied'); }
+                // Crear o mover una persona: su ubicacion debe quedar dentro del alcance (§4). Equipo o propio no crean ni mueven.
+                if (!$this->access->allowsPlacement($next)) { throw new ApiError(403,'permission_denied',[],'scope_denied'); }
                 $p=$next['area_id']??null; $seen=[];
                 while ($p!==null) {
                     if (in_array($p,$seen,true)) { throw new ApiError(422,'validation_failed'); } $seen[]=$p;
@@ -405,9 +389,7 @@ final class AdminApi
             if (!$id) {
                 $id=Util::bin(Util::uuid()); $columns=implode(',',array_keys($values)); $marks=implode(',',array_fill(0,count($values),'?'));
                 $this->db->run("INSERT INTO users (tenant_id,id,$columns) VALUES (?,?,$marks)",[$this->tenant,$id,...array_values($values)]);
-                $role=$this->db->one("SELECT id FROM roles WHERE tenant_id=? AND seed_key='colaborador' AND active=TRUE",[$this->tenant]);
-                if (!$role) { $role=$this->db->one("SELECT id FROM roles WHERE tenant_id=? AND seed_key='collaborator' AND active=TRUE",[$this->tenant]); }
-                if ($role) { $this->db->run('INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)',[$this->tenant,$id,$role['id']]); }
+                AccessGrants::grantDefault($this->db,$this->tenant,$id);
                 $this->assignment($id,$next);
                 // Tier por defecto del tenant: sin suscripción el compositor descarta toda regla
                 // (el módulo no está en el tier activo), así que el enforcement sería invisible.
@@ -455,16 +437,12 @@ final class AdminApi
             $rows=array_map(fn($x)=>['code'=>$x['code'],'scopes'=>['tenant']],$this->db->run('SELECT code FROM permissions ORDER BY code')->fetchAll());
             return self::response(['platform'=>true,'features'=>Features::enabled($this->db,$this->tenant),'permissions'=>$rows]);
         }
-        if (($this->c['group_id']??null)!==null && $this->c['tenant_id']!==$this->c['admin_tenant_id']) {
-            $grants=$this->db->run('SELECT p.permission_code code,r.scope_kind FROM admin_account_roles g JOIN roles r ON r.tenant_id=g.tenant_id AND r.id=g.role_id AND r.active=TRUE JOIN role_permissions p ON p.tenant_id=r.tenant_id AND p.role_id=r.id JOIN permissions m ON m.code=p.permission_code AND m.platform_only=FALSE WHERE g.admin_tenant_id=? AND g.admin_id=? AND g.tenant_id=?',[$this->c['admin_tenant_id'],$this->c['admin_id'],$this->tenant])->fetchAll();
-        } else {
-            $grants=$this->c['user_id']===null?[]:$this->db->run('SELECT p.permission_code code,r.scope_kind FROM user_roles u JOIN roles r ON r.tenant_id=u.tenant_id AND r.id=u.role_id AND r.active=TRUE JOIN role_permissions p ON p.tenant_id=r.tenant_id AND p.role_id=r.id JOIN permissions m ON m.code=p.permission_code AND m.platform_only=FALSE WHERE u.tenant_id=? AND u.user_id=?',[$this->tenant,$this->c['user_id']])->fetchAll();
-        }
-        $by=[]; foreach ($grants as $g) { $by[$g['code']][$g['scope_kind']]=true; }
-        ksort($by);
+        $grant=AccessGrants::forContext($this->db,$this->c);
+        $codes=$grant===null?[]:AccessGrants::permissions($this->db,$this->tenant,$grant['role_id']);
+        $kind=$grant===null?null:($grant['scope']->kind==='all'?'tenant':$grant['scope']->kind);
         $features=Features::enabled($this->db,$this->tenant);
-        $codes=array_values(array_filter(array_keys($by),function ($code) use ($features) { $f=Features::forOperation('',$code); return $f===null || in_array($f,$features,true); }));
-        return self::response(['platform'=>false,'features'=>$features,'permissions'=>array_map(fn($code)=>['code'=>$code,'scopes'=>array_keys($by[$code])],$codes)]);
+        $codes=array_values(array_filter($codes,function ($code) use ($features) { $f=Features::forOperation('',$code); return $f===null || in_array($f,$features,true); }));
+        return self::response(['platform'=>false,'features'=>$features,'permissions'=>array_map(fn($code)=>['code'=>$code,'scopes'=>[$kind]],$codes)]);
     }
     private function placeholderFirm(): string
     {
@@ -509,19 +487,19 @@ final class AdminApi
     private function roles(string $op,?string $id,?object $b): array
     {
         if ($op==='listRoles') { $this->access->requireFull(); return $this->page('SELECT * FROM roles WHERE tenant_id=?',[$this->tenant],fn($x)=>$this->roleDto($x)); }
-        if ($id) { $old=$this->row('roles',$id); $dto=$this->roleDto($old); if (!$this->access->allowsScope((object)$dto['scope'])) { throw new ApiError(404,'resource_not_found'); } if ($op==='getRole') { return $this->result($dto); } $this->match($old); $this->access->delegate($dto['permissions'],(object)$dto['scope']); }
+        if ($id) { $old=$this->row('roles',$id); $dto=$this->roleDto($old); if ($op==='getRole') { return $this->result($dto); } $this->match($old); $this->access->delegate($dto['permissions'],AccessScope::fromLegacy($dto['scope']['kind'],array_map([Util::class,'bin'],$dto['scope']['resource_ids'])),null); }
         $this->unique($b->permissions); $this->unique($b->scope->resource_ids);
         $kind=$b->scope->kind;
         if ((in_array($kind,['tenant','self','team'],true) && $b->scope->resource_ids) || (in_array($kind,['area','site'],true) && !$b->scope->resource_ids)) { throw new ApiError(422,'validation_failed'); }
         foreach ($b->scope->resource_ids as $rid) { $this->org(Util::bin($rid),$kind); }
-        $this->access->delegate($b->permissions,$b->scope);
+        $this->access->delegate($b->permissions,AccessScope::fromLegacy($kind,array_map([Util::class,'bin'],$b->scope->resource_ids)),null);
         if ($id) {
             foreach (['role_area_scopes','role_site_scopes','role_permissions'] as $table) { $this->db->run("DELETE FROM $table WHERE tenant_id=? AND role_id=?",[$this->tenant,$id]); }
             $this->update('roles',$id,['name'=>$b->name,'scope_kind'=>$kind,'active'=>(int)$b->active,'assignable_by_rule'=>(int)($b->assignable_by_rule??$old['assignable_by_rule'])]);
         } else { $id=Util::bin(Util::uuid()); $this->db->run('INSERT INTO roles (tenant_id,id,name,scope_kind,active,assignable_by_rule) VALUES (?,?,?,?,?,?)',[$this->tenant,$id,$b->name,$kind,(int)$b->active,(int)($b->assignable_by_rule??false)]); }
         foreach ($b->permissions as $permission) { $this->db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)',[$this->tenant,$id,$permission]); }
         foreach ($b->scope->resource_ids as $rid) { $this->db->run("INSERT INTO role_{$kind}_scopes (tenant_id,role_id,{$kind}_id) VALUES (?,?,?)",[$this->tenant,$id,Util::bin($rid)]); }
-        foreach ($this->db->run('SELECT user_id FROM user_roles WHERE tenant_id=? AND role_id=?',[$this->tenant,$id])->fetchAll() as $user) { $this->invalidateUser($user['user_id']); }
+        foreach ($this->db->run('SELECT user_id FROM access_grants WHERE tenant_id=? AND role_id=? AND user_id IS NOT NULL',[$this->tenant,$id])->fetchAll() as $user) { $this->invalidateUser($user['user_id']); }
         $this->db->run('UPDATE tenants SET auth_version=auth_version+1 WHERE tenant_id=?',[$this->tenant]);
         RoleRules::apply($this->db,$this->tenant);
         $this->audit('role',$id,array_keys(get_object_vars($b))); return $this->result($this->roleDto($this->row('roles',$id)),$op==='createRole'?201:200);
@@ -644,7 +622,7 @@ final class AdminApi
         if ($kind==='tenant') { if ($target!==$this->tenant) { throw new ApiError(404,'resource_not_found'); } $this->access->requireFull(); }
         elseif ($kind==='user') { $this->access->user($target); }
         elseif ($kind==='device') { $d=$this->row('devices',$target); $this->access->user($d['user_id']); }
-        else { $this->org($target,$kind); if (!$this->access->allowsScope((object)['kind'=>$kind,'resource_ids'=>[Util::id($target)]])) { throw new ApiError(404,'resource_not_found'); } }
+        else { $this->org($target,$kind); if (!$this->access->allowsUnitTarget($kind,$target)) { throw new ApiError(403,'permission_denied',[],'scope_denied'); } }
     }
     private function validateRules(array $rules): void
     {

@@ -15935,6 +15935,7 @@ components:
                   - site
                   - self
                   - team
+                  - filters
     Feature:
       type: object
       additionalProperties: false

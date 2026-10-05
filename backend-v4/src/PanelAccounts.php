@@ -58,32 +58,8 @@ final class PanelAccounts
         return $out;
     }
 
-    // Roles de la empresa que se asignan a la cuenta. Una cuenta de empresa que asigna roles necesita poder
-    // delegarlos (mismas reglas que la pantalla de roles); la plataforma puede asignar cualquiera.
-    private function validateRoles(array $roleIds): array
-    {
-        $ids = [];
-        foreach (array_unique($roleIds) as $rid) {
-            $role = $this->db->one('SELECT * FROM roles WHERE tenant_id=? AND id=? AND active=TRUE', [$this->tenant, Util::bin($rid)]);
-            if (!$role) { throw new ApiError(422, 'validation_failed', [], 'role_not_found'); }
-            if (!$this->c['platform']) {
-                $permissions = array_column($this->db->run('SELECT permission_code FROM role_permissions WHERE tenant_id=? AND role_id=?', [$this->tenant, $role['id']])->fetchAll(), 'permission_code');
-                $kind = $role['scope_kind'];
-                $scopeIds = in_array($kind, ['area', 'site'], true)
-                    ? array_map([Util::class, 'id'], array_column($this->db->run("SELECT {$kind}_id id FROM role_{$kind}_scopes WHERE tenant_id=? AND role_id=?", [$this->tenant, $role['id']])->fetchAll(), 'id')) : [];
-                (new AdminAccess($this->db, $this->c, 'roles.gestionar'))->delegate($permissions, (object) ['kind' => $kind, 'resource_ids' => $scopeIds]);
-            }
-            $ids[] = $role['id'];
-        }
-        return $ids;
-    }
-
-    private function setRoles(string $user, array $roles): void
-    {
-        // Solo los roles manuales: los que puso una regla (cargo, jefe) los mantiene la regla.
-        $this->db->run('DELETE FROM user_roles WHERE tenant_id=? AND user_id=? AND rule_id IS NULL', [$this->tenant, $user]);
-        foreach ($roles as $role) { $this->db->run('INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?) ON DUPLICATE KEY UPDATE rule_id=NULL', [$this->tenant, $user, $role]); }
-    }
+    // Quien asigna el acceso de la cuenta debe poder delegarlo (mismas reglas que la pantalla de roles); la plataforma, cualquiera.
+    private function delegator(): AdminAccess { return $this->c['platform'] ? $this->access : new AdminAccess($this->db, $this->c, 'roles.gestionar'); }
 
     private function create(object $b): array
     {
@@ -103,11 +79,11 @@ final class PanelAccounts
             $user = $this->access->user(Util::bin($b->user_id));
             if ($user['status'] !== 'active') { throw new ApiError(409, 'invalid_transition', [], 'person_inactive'); }
             if ($this->db->one('SELECT id FROM admin_accounts WHERE tenant_id=? AND user_id=?', [$this->tenant, $user['id']])) { throw new ApiError(409, 'invalid_transition', [], 'person_has_account'); }
-            $roles = $this->validateRoles($b->role_ids);
             $this->db->run('INSERT INTO admin_accounts (tenant_id,id,user_id,email,display_name,password_hash,must_change_password,is_platform_admin) VALUES (?,?,?,?,?,?,TRUE,FALSE)',
                 [$this->tenant, $id, $user['id'], $email, $b->display_name, password_hash($temporary, PASSWORD_DEFAULT)]);
             $this->db->run('UPDATE users SET panel_login_enabled=TRUE,version=version+1 WHERE tenant_id=? AND id=?', [$this->tenant, $user['id']]);
-            $this->setRoles($user['id'], $roles);
+            if ($b->role_ids) { AccessGrants::assignLegacy($this->db, $this->delegator(), $this->tenant, $user['id'], $b->role_ids); }
+            elseif (AccessGrants::forUser($this->db, $this->tenant, $user['id']) === null) { AccessGrants::grantDefault($this->db, $this->tenant, $user['id']); }
             if (($b->group_id ?? null) !== null) { $this->setGroup($id, $b->group_id, $b->group_roles ?? []); }
             $tenant = $this->tenant;
         }
@@ -123,7 +99,7 @@ final class PanelAccounts
     private function setGroup(string $account, ?string $group, array $grants): void
     {
         if (!$this->c['platform']) { throw new ApiError(403, 'permission_denied'); }
-        $this->db->run('DELETE FROM admin_account_roles WHERE admin_tenant_id=? AND admin_id=?', [$this->tenant, $account]);
+        $this->db->run('DELETE FROM access_grants WHERE admin_tenant_id=? AND admin_id=?', [$this->tenant, $account]);
         if ($group === null) { $this->db->run('UPDATE admin_accounts SET group_id=NULL,group_tenant_id=NULL WHERE tenant_id=? AND id=?', [$this->tenant, $account]); return; }
         $gid = Util::bin($group);
         $members = array_column($this->db->run('SELECT tenant_id FROM company_group_members WHERE group_id=?', [$gid])->fetchAll(), 'tenant_id');
@@ -131,9 +107,11 @@ final class PanelAccounts
         foreach ($grants as $g) {
             $t = Util::bin($g->tenant_id);
             if ($t === $this->tenant || !in_array($t, $members, true)) { throw new ApiError(422, 'validation_failed', [], 'tenant_not_in_group'); }
-            foreach (array_unique($g->role_ids) as $rid) {
+            $ids = array_values(array_unique($g->role_ids));
+            if (count($ids) > 1) { throw new ApiError(422, 'validation_failed', [], 'one_role_only'); }
+            foreach ($ids as $rid) {
                 if (!$this->db->one('SELECT id FROM roles WHERE tenant_id=? AND id=? AND active=TRUE', [$t, Util::bin($rid)])) { throw new ApiError(422, 'validation_failed', [], 'role_not_found'); }
-                $this->db->run('INSERT INTO admin_account_roles (admin_tenant_id,admin_id,tenant_id,role_id) VALUES (?,?,?,?)', [$this->tenant, $account, $t, Util::bin($rid)]);
+                AccessGrants::setForGroupAccount($this->db, $t, $this->tenant, $account, Util::bin($rid), AccessScope::fromLegacyRole($this->db, $t, Util::bin($rid)));
             }
         }
         $this->db->run('UPDATE admin_accounts SET group_id=?,group_tenant_id=? WHERE tenant_id=? AND id=?', [$gid, Util::bin(AdminAuth::PLATFORM), $this->tenant, $account]);
@@ -153,7 +131,7 @@ final class PanelAccounts
             if ($b->role_ids) { throw new ApiError(422, 'validation_failed'); }
         } else {
             $this->access->user($a['user_id']);
-            $this->setRoles($a['user_id'], $this->validateRoles($b->role_ids));
+            AccessGrants::assignLegacy($this->db, $this->delegator(), $this->tenant, $a['user_id'], $b->role_ids);
             if (property_exists($b, 'group_id')) { $this->setGroup($a['id'], $b->group_id, $b->group_roles ?? []); }
             $this->db->run('UPDATE users SET panel_login_enabled=?,version=version+1 WHERE tenant_id=? AND id=?', [(int) $b->active, $a['tenant_id'], $a['user_id']]);
         }
@@ -179,7 +157,7 @@ final class PanelAccounts
     {
         if (($a['group_id'] ?? null) === null) { return ['group_id' => null, 'group_name' => null, 'group_roles' => []]; }
         $grants = [];
-        foreach ($this->db->run('SELECT r.tenant_id,t.name,r.role_id FROM admin_account_roles r JOIN tenants t ON t.tenant_id=r.tenant_id WHERE r.admin_tenant_id=? AND r.admin_id=? ORDER BY t.name,r.role_id', [$a['tenant_id'], $a['id']])->fetchAll() as $r) {
+        foreach ($this->db->run('SELECT g.tenant_id,t.name,g.role_id FROM access_grants g JOIN tenants t ON t.tenant_id=g.tenant_id WHERE g.admin_tenant_id=? AND g.admin_id=? ORDER BY t.name,g.role_id', [$a['tenant_id'], $a['id']])->fetchAll() as $r) {
             $k = Util::id($r['tenant_id']);
             $grants[$k] ??= ['tenant_id' => $k, 'tenant_name' => $r['name'], 'role_ids' => []];
             $grants[$k]['role_ids'][] = Util::id($r['role_id']);
@@ -188,7 +166,7 @@ final class PanelAccounts
     }
     private function dto(array $a): array
     {
-        $roles = $a['is_platform_admin'] ? [] : array_map([Util::class, 'id'], array_column($this->db->run('SELECT role_id FROM user_roles WHERE tenant_id=? AND user_id=? ORDER BY role_id', [$a['tenant_id'], $a['user_id']])->fetchAll(), 'role_id'));
+        $g = $a['is_platform_admin'] ? null : AccessGrants::forUser($this->db, $a['tenant_id'], $a['user_id']); $roles = $g === null ? [] : [Util::id($g['role_id'])];
         return ['tenant_id' => Util::id($a['tenant_id']), 'tenant_name' => $a['tenant_name'], 'id' => Util::id($a['id']), 'kind' => $a['is_platform_admin'] ? 'platform' : 'company', 'email' => $a['email'], 'display_name' => $a['display_name'],
             'user_id' => $a['user_id'] === null ? null : Util::id($a['user_id']), 'user_name' => $a['user_name'] ?? null, 'role_ids' => $roles,
             'active' => (bool) $a['active'], 'must_change_password' => (bool) $a['must_change_password'], 'created_at' => Util::time($a['created_at']),

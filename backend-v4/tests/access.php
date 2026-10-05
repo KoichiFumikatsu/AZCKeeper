@@ -147,3 +147,85 @@ function accessScopeTests(Database $db): void
     catch (Keeper\ApiError $e) { check($e->detail === 'group_scope_invalid', 'group accounts only get all or filters'); }
     echo 'PASS access scope (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+/**
+ * Cliente de los casos del §8. Tiene dos empresas (AZC Legal, BilingueLaw), tres sedes en tres ciudades y dos áreas.
+ * Las ocho personas tienen equipo y actividad del 2026-09-10.
+ * Jerarquía: ag808 reporta a coord2 y jur808 a ag808. También queda «base», la persona de secondTenant() sin empresa.
+ */
+function accessOrg(Database $db): array
+{
+    $base = secondTenant($db); $tenant = $base['tenant_id'];
+    for ($w = 1; $w <= 7; $w++) { $db->run('INSERT INTO schedule_days (tenant_id,schedule_id,weekday) VALUES (?,?,?)', [$tenant, $base['schedule_id'], $w]); }
+    $unit = function (string $kind, string $name, ?string $city = null) use ($db, $tenant): string {
+        $id = Util::bin(Util::uuid());
+        $db->run('INSERT INTO org_units (tenant_id,id,kind,name,city) VALUES (?,?,?,?,?)', [$tenant, $id, $kind, $name, $city]);
+        return $id;
+    };
+    $o = ['tenant' => $tenant, 'base' => $base, 'azc' => $unit('company', 'AZC Legal'), 'bl' => $unit('company', 'BilingueLaw'),
+        'teq' => $unit('site', 'Tequendama', 'Cali'), 'med' => $unit('site', 'Medellín 808', 'Medellín'), 'torre' => $unit('site', 'Torre Bogotá', 'Bogotá'),
+        'agentes' => $unit('area', 'Agentes de servicio'), 'juridica' => $unit('area', 'Jurídica')];
+    $people = ['zafra' => ['azc', 'torre', 'juridica'], 'bl1' => ['bl', 'teq', 'agentes'], 'bl2' => ['bl', 'torre', 'juridica'], 'juan' => ['azc', 'teq', 'agentes'],
+        'ag808' => ['azc', 'med', 'agentes'], 'agTorre' => ['azc', 'torre', 'agentes'], 'jur808' => ['azc', 'med', 'juridica'], 'coord2' => ['azc', 'med', 'agentes']];
+    foreach ($people as $key => [$company, $site, $area]) {
+        $id = Util::bin(Util::uuid()); $assignment = Util::bin(Util::uuid());
+        $db->run('INSERT INTO users (tenant_id,id,display_name,firm_id,site_id,area_id,position_id,schedule_id,company_id) VALUES (?,?,?,?,?,?,?,?,?)',
+            [$tenant, $id, $key, $base['firm_id'], $o[$site], $o[$area], $base['position_id'], $base['schedule_id'], $o[$company]]);
+        $db->run("INSERT INTO user_assignments (tenant_id,id,user_id,firm_id,site_id,area_id,position_id,schedule_id,company_id,starts_at) VALUES (?,?,?,?,?,?,?,?,?,'2026-09-01')",
+            [$tenant, $assignment, $id, $base['firm_id'], $o[$site], $o[$area], $base['position_id'], $base['schedule_id'], $o[$company]]);
+        $db->run("INSERT INTO devices (tenant_id,id,user_id,hostname,agent_version,os_edition,cpu,ram_bytes,capabilities,last_seen_at) VALUES (?,?,?,?,'4.0','test','test',1024,'[]',UTC_TIMESTAMP(6))",
+            [$tenant, Util::bin(Util::uuid()), $id, 'PC-' . $key]);
+        $db->run("INSERT INTO day_summary (tenant_id,day,user_id,user_assignment_id,active_seconds,idle_seconds,productive_seconds,expected_seconds,coverage_percent,productivity_percent,calculation_version,timezone,calculated_at,data_through) VALUES (?,'2026-09-10',?,?,120,30,90,240,50,75,'access-test','America/Bogota','2026-09-11','2026-09-10 23:00:00')",
+            [$tenant, $id, $assignment]);
+        $o[$key] = $db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$tenant, $id]);
+    }
+    $db->run('UPDATE users SET reports_to_user_id=? WHERE tenant_id=? AND id=?', [$o['coord2']['id'], $tenant, $o['ag808']['id']]);
+    $db->run('UPDATE users SET reports_to_user_id=? WHERE tenant_id=? AND id=?', [$o['ag808']['id'], $tenant, $o['jur808']['id']]);
+    return $o;
+}
+
+/** Cuenta del panel de una persona del cliente de casos, con su rol de prueba y el alcance dado. */
+function accessAccount(Database $db, array $o, string $key, array $permissions, AccessScope $scope): array
+{
+    $a = adminFixture($db, $o[$key], $permissions);
+    AccessGrants::setForUser($db, $o['tenant'], $o[$key]['id'], $a['role'], $scope, 'manual');
+    return $a;
+}
+
+/** Claves de accessOrg (ordenadas) de las personas que devuelve un listado del panel. */
+function accessSeen(array $o, array $admin, string $path, string $field = 'id'): array
+{
+    $byId = [];
+    foreach ($o as $key => $v) { if (is_array($v) && isset($v['display_name'], $v['id'])) { $byId[Util::id($v['id'])] = $key; } }
+    $seen = array_map(fn ($r) => $byId[$r[$field]] ?? 'otro', expect(adminRequest($admin, 'GET', $path), 200, "list $path")['data']);
+    sort($seen); return $seen;
+}
+
+function accessEvaluationTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $o = accessOrg($db); $tid = Util::id($o['tenant']);
+    $perms = ['usuarios.ver', 'equipos.ver', 'reglas.ver']; // reglas.ver: el 403 de /policies debe ser por alcance, no por permiso
+    $users = '/users?limit=100'; $devices = '/tenants/' . $tid . '/devices?limit=100';
+    $all = accessAccount($db, $o, 'zafra', $perms, AccessScope::all());
+    $area = accessAccount($db, $o, 'juan', $perms, new AccessScope('filters', [], [], [], [$o['agentes']]));
+    $city = accessAccount($db, $o, 'jur808', $perms, new AccessScope('filters', [], ['Medellín']));
+    $team = accessAccount($db, $o, 'coord2', $perms, new AccessScope('team'));
+    $own = accessAccount($db, $o, 'agTorre', $perms, AccessScope::own());
+    $mix = accessAccount($db, $o, 'bl1', $perms, new AccessScope('filters', [$o['bl'], $o['azc']], [], [$o['teq']]));
+    $empty = accessAccount($db, $o, 'bl2', $perms, new AccessScope('filters'));
+    check(accessSeen($o, $all, $users) === ['ag808', 'agTorre', 'base', 'bl1', 'bl2', 'coord2', 'juan', 'jur808', 'zafra'], 'all sees the whole client');
+    check(accessSeen($o, $area, $users) === ['ag808', 'agTorre', 'bl1', 'coord2', 'juan'], 'area filter, every site and company');
+    check(accessSeen($o, $area, $devices, 'user_id') === ['ag808', 'agTorre', 'bl1', 'coord2', 'juan'], 'devices follow the same scope');
+    check(accessSeen($o, $city, $users) === ['ag808', 'coord2', 'jur808'], 'city filter through the site');
+    check(accessSeen($o, $team, $users) === ['ag808', 'coord2', 'jur808'], 'team = self + direct + indirect reports');
+    check(accessSeen($o, $own, $users) === ['agTorre'], 'self sees only self');
+    check(accessSeen($o, $mix, $users) === ['bl1', 'juan'], 'OR inside company, AND with site');
+    check(accessSeen($o, $empty, $users) === [], 'filters without values see nothing');
+    check(adminRequest($area, 'GET', '/users/' . Util::id($o['jur808']['id']))[0] === 404, 'outside detail stays 404');
+    $full = adminRequest($area, 'GET', '/policies');
+    check($full[0] === 403 && $full[1]['detail'] === 'scope_denied', 'whole-client screens need scope all');
+    $mine = expect(adminRequest($area, 'GET', '/me/access'), 200, 'my access');
+    check(array_column($mine['permissions'], 'scopes', 'code') === ['equipos.ver' => ['filters'], 'reglas.ver' => ['filters'], 'usuarios.ver' => ['filters']], 'my access reports filters');
+    echo 'PASS access evaluation (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}

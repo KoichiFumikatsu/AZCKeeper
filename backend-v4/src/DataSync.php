@@ -472,8 +472,7 @@ final class DataSync
         $id = Util::bin(Util::uuid()); $at = $this->now();
         $this->db->run('INSERT INTO users (tenant_id,id,display_name,email,firm_id,site_id,area_id,position_id,schedule_id) VALUES (?,?,?,?,?,?,?,?,?)', [$this->tenant, $id, $name, $email, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id']]);
         $this->db->run('INSERT INTO user_assignments (tenant_id,id,user_id,firm_id,site_id,area_id,position_id,schedule_id,starts_at) VALUES (?,?,?,?,?,?,?,?,?)', [$this->tenant, Util::bin(Util::uuid()), $id, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id'], $at]);
-        $role = $this->db->one("SELECT id FROM roles WHERE tenant_id=? AND seed_key IN ('colaborador','collaborator') AND active=TRUE ORDER BY seed_key='colaborador' DESC LIMIT 1", [$this->tenant]);
-        if ($role) { $this->db->run('INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)', [$this->tenant, $id, $role['id']]); }
+        AccessGrants::grantDefault($this->db, $this->tenant, $id);
         $tier = $this->db->one('SELECT id FROM tier WHERE tenant_id=? AND is_default=1 AND active=TRUE', [$this->tenant]);
         if ($tier) { $this->db->run("INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at,status) VALUES (?,?,?,?,UTC_TIMESTAMP(6),'active')", [$this->tenant, Util::bin(Util::uuid()), $id, $tier['id']]); }
         if ($document !== null) { $this->db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,'document',?)", [$this->tenant, $id, $document]); }

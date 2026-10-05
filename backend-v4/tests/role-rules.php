@@ -27,7 +27,7 @@ function roleRulesTests(Database $db): void
     $jefe = expect(adminRequest($platform, 'POST', '/roles', ['name' => 'Jefe de equipo', 'permissions' => ['usuarios.ver'], 'scope' => ['kind' => 'team', 'resource_ids' => []], 'active' => true, 'assignable_by_rule' => true]), 201, 'create assignable role');
     $created = expect(adminRequest($platform, 'POST', '/role-rules', ['role_id' => $jefe['id']] + $rule), 201, 'create manages rule');
     check($created['matches'] === 2, 'boss and p1 manage someone');
-    $byRule = fn (string $user) => (bool) $db->one('SELECT 1 FROM user_roles WHERE tenant_id=? AND user_id=? AND role_id=? AND rule_id IS NOT NULL', [$tenant, Util::bin($user), Util::bin($jefe['id'])]);
+    $byRule = fn (string $user) => (bool) $db->one("SELECT 1 FROM access_grants WHERE tenant_id=? AND user_id=? AND role_id=? AND source='rule'", [$tenant, Util::bin($user), Util::bin($jefe['id'])]);
     check($byRule($boss) && $byRule($p1['id']) && !$byRule($p2['id']), 'rule assigned the role to managers only');
 
     // El jefe ve a su equipo (directos e indirectos) y a nadie mas.
