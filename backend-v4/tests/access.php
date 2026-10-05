@@ -81,3 +81,69 @@ function accessMigrationTests(Database $db): void
     check((int) $db->one('SELECT COUNT(*) n FROM access_migration_report WHERE tenant_id IN (?,?)', [$tenant, $tb])['n'] === 3, 'conversion is idempotent (report)');
     echo 'PASS access migration (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+/** Cuerpo AccessScope del contrato: las cuatro listas siempre presentes y en el orden del DTO (se compara con ===). */
+function accessScopeBody(string $kind, array $lists = []): array
+{
+    $body = ['kind' => $kind];
+    foreach (['company_ids', 'cities', 'site_ids', 'area_ids'] as $key) { $body[$key] = $lists[$key] ?? []; }
+    return $body;
+}
+
+function accessScopeTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tenant = $u['tenant_id'];
+    $db->run("UPDATE org_units SET city='Medellín' WHERE tenant_id=? AND id=?", [$tenant, $u['site_id']]);
+    $company = Util::bin(Util::uuid());
+    $db->run("INSERT INTO org_units (tenant_id,id,kind,name) VALUES (?,?,'company','BilingueLaw')", [$tenant, $company]);
+    $db->run('UPDATE users SET company_id=? WHERE tenant_id=? AND id=?', [$company, $tenant, $u['id']]);
+    $fail = function (array $body, string $detail) use ($db, $tenant): void {
+        try { AccessScope::fromInput($db, $tenant, json_decode(json_encode($body))); check(false, "scope rejected: $detail"); }
+        catch (Keeper\ApiError $e) { check($e->status === 422 && $e->detail === $detail, "scope rejected: $detail"); }
+    };
+    $fail(accessScopeBody('all', ['area_ids' => [Util::id($u['area_id'])]]), 'scope_lists_only_for_filters');
+    $fail(accessScopeBody('filters'), 'scope_filters_empty');
+    $fail(accessScopeBody('filters', ['area_ids' => [Util::id($u['site_id'])]]), 'unknown_area');
+    $fail(accessScopeBody('filters', ['cities' => ['Atlántida']]), 'unknown_city');
+    $s = AccessScope::fromInput($db, $tenant, json_decode(json_encode(accessScopeBody('filters', ['cities' => ['  MEDELLIN '], 'company_ids' => [Util::id($company), Util::id($company)]]))));
+    check($s->kind === 'filters' && $s->companies === [$company] && $s->cities === ['MEDELLIN'], 'duplicates collapsed, city trimmed');
+
+    // Guardar y leer.
+    $role = AccessGrants::defaultRole($db, $tenant) ?? (function () use ($db, $tenant) {
+        $id = Util::bin(Util::uuid()); $db->run("INSERT INTO roles (tenant_id,id,name,seed_key,scope_kind) VALUES (?,?,'Colaborador','colaborador','self')", [$tenant, $id]); return $id; })();
+    AccessGrants::setForUser($db, $tenant, $u['id'], $role, $s, 'manual');
+    $g = AccessGrants::forUser($db, $tenant, $u['id']);
+    check($g['role_name'] === 'Colaborador' && $g['scope']->kind === 'filters' && $g['scope']->companies === [$company] && $g['scope']->cities === ['MEDELLIN'], 'access round trip');
+    check(AccessGrants::dto($g)['scope'] === accessScopeBody('filters', ['company_ids' => [Util::id($company)], 'cities' => ['MEDELLIN']]), 'dto shape');
+
+    // SQL: O dentro de un filtro, Y entre filtros; ciudad sin mayusculas ni tildes; filtros vacios no ven nada.
+    $sees = function (AccessScope $scope) use ($db, $tenant, $u): bool {
+        [$where, $args] = $scope->filterSql('u');
+        return (bool) $db->one("SELECT u.id FROM users u WHERE u.tenant_id=? AND u.id=? AND $where", [$tenant, $u['id'], ...$args]);
+    };
+    $other = Util::bin(Util::uuid());
+    $db->run("INSERT INTO org_units (tenant_id,id,kind,name) VALUES (?,?,'area','Otra área')", [$tenant, $other]);
+    check($sees($s), 'company AND city match');
+    check($sees(new AccessScope('filters', [], [], [], [$other, $u['area_id']])), 'OR inside a filter');
+    check(!$sees(new AccessScope('filters', [$company], [], [], [$other])), 'AND across filters');
+    check(!$sees(new AccessScope('filters')), 'empty filters see nothing');
+    check($s->matches($db, $tenant, ['company_id' => $company, 'site_id' => $u['site_id'], 'area_id' => $u['area_id']]), 'placement inside');
+    check(!$s->matches($db, $tenant, ['company_id' => null, 'site_id' => $u['site_id'], 'area_id' => $u['area_id']]), 'person without company is outside a company filter');
+
+    // Cobertura (delegacion): cada filtro que limito, el otro tambien lo limita a un subconjunto.
+    $area = new AccessScope('filters', [], [], [], [$u['area_id']]);
+    check(AccessScope::all()->covers($area) && $area->covers(new AccessScope('filters', [], [], [$u['site_id']], [$u['area_id']])), 'narrower filters covered');
+    check(!$area->covers(new AccessScope('filters', [], [], [$u['site_id']])), 'dropping my area filter widens');
+    check(!$area->covers(AccessScope::all()) && !$area->covers(new AccessScope('filters', [], [], [], [$other])), 'all or other area not covered');
+    check((new AccessScope('filters', [], ['Medellín']))->covers(new AccessScope('filters', [], ['MEDELLIN'])), 'cities compared without case or accents');
+
+    // Acceso por defecto: Colaborador, solo lo propio.
+    $p = adminMember($db, $u);
+    AccessGrants::grantDefault($db, $tenant, $p['id']);
+    $d = AccessGrants::forUser($db, $tenant, $p['id']);
+    check($d['role_id'] === $role && $d['scope']->kind === 'self' && $d['source'] === 'default', 'default access');
+    try { AccessGrants::setForGroupAccount($db, $tenant, Util::bin(Util::uuid()), Util::bin(Util::uuid()), $role, new AccessScope('team')); check(false, 'group scope'); }
+    catch (Keeper\ApiError $e) { check($e->detail === 'group_scope_invalid', 'group accounts only get all or filters'); }
+    echo 'PASS access scope (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}
