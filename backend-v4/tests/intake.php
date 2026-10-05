@@ -167,15 +167,21 @@ function installerTests(Database $db, array $admin, array $u): void
     $seq = (int) $db->one("SELECT COALESCE(MAX(sequence),0) s FROM client_releases WHERE channel='stable' AND architecture='x64'")['s'] + 1000;
     $version = '9.9.' . $seq; $name = "AZCKeeper_v4_bootstrap_$version.zip"; $file = "$dir/$name";
     $build = tempnam(sys_get_temp_dir(), 'kzip'); $got = tempnam(sys_get_temp_dir(), 'kzip');
-    // Temporales del servidor (en Windows tempnam recorta el prefijo a 3 letras: kee*.tmp, y libzip anade .XXXXXX).
+    // Temporales que dejaria el servidor si volviera a copiar el zip (en Windows tempnam recorta el prefijo: kee*.tmp).
     $temps = fn (): array => glob(sys_get_temp_dir() . DIRECTORY_SEPARATOR . (PHP_OS_FAMILY === 'Windows' ? 'kee*' : 'keeper-installer*')) ?: [];
     $tempsBefore = $temps(); $leftovers = fn (): array => array_values(array_diff($temps(), $tempsBefore));
     try {
         $none = adminRequest($admin, 'POST', '/enrollments/keys/installer');
         check($none[0] === 409 && ($none[1]['detail'] ?? null) === 'installer_unavailable' && $keys() === 0, 'no published installer: 409 and no key created');
+        // Como el publicado: varias entradas agent/ comprimidas (texto y binario), installation.json de la raiz comprimido.
         $zip = new ZipArchive(); $zip->open($build, ZipArchive::OVERWRITE);
+        $zip->addFromString('agent/x.txt', 'contenido firmado');
         $zip->addFromString('installation.json', "{\n  \"api_base\": \"https://backend.example.invalid/v1/\",\n  \"tenant_id\": \"11111111-1111-1111-1111-111111111111\",\n  \"device_id\": \"22222222-2222-2222-2222-222222222222\",\n  \"enable_hklm\": true\n}");
-        $zip->addFromString('agent/x.txt', 'contenido firmado'); $zip->close();
+        $zip->addEmptyDir('agent/lib');
+        $zip->addFromString('agent/lib/AZCKeeper.dll', str_repeat(random_bytes(4096) . str_repeat("\0", 4096), 40));
+        $zip->addFromString('agent/manifest.json', str_repeat('{"file":"agent/lib/AZCKeeper.dll","sha256":"' . bin2hex(random_bytes(32)) . "\"}\n", 50));
+        $zip->addFromString('agent/README.txt', 'stored'); $zip->setCompressionName('agent/README.txt', ZipArchive::CM_STORE);
+        $zip->close();
         $bytes = file_get_contents($build);
         $db->run("INSERT INTO client_releases (tenant_id,id,version,channel,sequence,min_agent_version,architecture,artifact_url,size_bytes,sha256,key_id,manifest_jws,published_at) VALUES (0x00000000000040008000000000000001,?,?,'stable',?,'4.0.0','x64',?,?,?,'smoke-1',?,UTC_TIMESTAMP(6))",
             [Util::bin(Util::uuid()), $version, $seq, "https://releases.example.test/$name", strlen($bytes), hash('sha256', $bytes, true), str_repeat('x', 32)]);
@@ -185,23 +191,78 @@ function installerTests(Database $db, array $admin, array $u): void
         $wrong = adminRequest($admin, 'POST', '/enrollments/keys/installer');
         check($wrong[0] === 409 && ($wrong[1]['detail'] ?? null) === 'installer_unavailable' && $keys() === 0, 'file with another size: 409 and no key created');
         check($leftovers() === [], 'no installer temp file left after the 409 paths');
+        // Zip no soportado (bit de cifrado en el directorio central; mismo tamano, la release es inmutable): 409 sin clave.
+        $flag = strpos($bytes, "PK\x01\x02", unpack('V', $bytes, strlen($bytes) - 6)[1]) + 8;
+        file_put_contents($file, substr_replace($bytes, chr(ord($bytes[$flag]) | 1), $flag, 1));
+        $locked = adminRequest($admin, 'POST', '/enrollments/keys/installer');
+        check($locked[0] === 409 && ($locked[1]['detail'] ?? null) === 'installer_unavailable' && $keys() === 0, 'unsupported zip (encrypted entry): 409 and no key created');
         file_put_contents($file, $bytes);
         $r = adminRequest($admin, 'POST', '/enrollments/keys/installer');
         check($r[0] === 200 && $r[2]['content-type'] === 'application/zip' && $r[2]['cache-control'] === 'no-store', 'installer served as zip, no-store');
         check($r[2]['content-disposition'] === 'attachment; filename="AZCKeeper-' . $version . '-compania-nandu-s-a-s.zip"', 'installer file name: version and ascii tenant slug');
+        check(($r[2]['content-length'] ?? null) === (string) strlen($r[3]) && ($r[2]['x-accel-buffering'] ?? null) === 'no', 'installer Content-Length is the exact body length; proxy buffering off');
+        $cd = unpack('V', $bytes, strlen($bytes) - 6)[1]; // offset del directorio central (EOCD sin comentario)
+        check(substr($r[3], 0, $cd) === substr($bytes, 0, $cd), 'installer streams the published bytes up to the central directory unchanged');
         check($leftovers() === [], 'no installer temp file left after a download');
-        file_put_contents($got, $r[3]); $out = new ZipArchive(); check($out->open($got, ZipArchive::RDONLY) === true, 'downloaded installer is a valid zip');
+        file_put_contents($got, $r[3]); $out = new ZipArchive(); check($out->open($got, ZipArchive::RDONLY | ZipArchive::CHECKCONS) === true, 'downloaded installer is a valid zip (libzip consistency check)');
         $raw = $out->getFromName('installation.json'); $cfg = json_decode($raw, true);
         check(!str_starts_with($raw, "\xEF\xBB\xBF") && str_contains($raw, "\n    ") && array_keys($cfg) === ['api_base', 'enrollment_key', 'enable_hklm'] && $cfg['enable_hklm'] === true, 'installation.json pretty, no BOM, only the generic fields');
         check(str_starts_with($cfg['api_base'], 'https://') && str_ends_with($cfg['api_base'], '/v1/') && parse_url($cfg['api_base'], PHP_URL_HOST) === parse_url(Config::get('ORIGIN'), PHP_URL_HOST), 'api_base is this backend over https ending in /v1/');
         $k = $db->one('SELECT * FROM enrollment_keys WHERE tenant_id=? AND key_hash=?', [$tenant, hash('sha256', $cfg['enrollment_key'], true)]);
         check(str_starts_with($cfg['enrollment_key'], 'kek_') && $k && $k['revoked_at'] === null && $keys() === 1, 'installer key stored (hash) for this tenant and active');
         check(($r[2]['x-enrollment-key-id'] ?? null) === Util::id($k['id']), 'installer response names the new key id (panel revokes it if the download fails)');
-        check($out->getFromName('agent/x.txt') === 'contenido firmado' && $out->numFiles === 2, 'signed agent content untouched');
-        $out->close();
+        check($out->getFromName('agent/x.txt') === 'contenido firmado', 'signed agent content untouched');
+        $out->close(); installerZipMatches($build, $got, $raw, 'downloaded installer');
         $audit = $db->one("SELECT changed_fields FROM audit_log WHERE tenant_id=? AND action='downloadInstaller' AND resource_id=?", [$tenant, $k['id']]);
         check($audit && in_array('source:installer', json_decode($audit['changed_fields'], true), true), 'installer key audited as installer download');
         check(expect(intakeAsk($cfg['enrollment_key'], keypair(), 'SN-INSTALLER', 'DESKTOP-INSTALLER'), 200, 'intake with installer key')['status'] === 'pending', 'installer key accepted by intake');
     } finally { foreach ([$file, $build, $got] as $f) { if (is_file($f)) { unlink($f); } } if ($made) { rmdir($dir); } }
+    // El artefacto real (si esta en el repo): misma transformacion a un archivo local y las mismas comprobaciones.
+    $real = dirname(__DIR__, 2) . '/client-v4/artifacts/AZCKeeper_v4_bootstrap_4.0.15.zip';
+    if (is_file($real)) {
+        $h = fopen($real, 'rb'); $zip = \Keeper\InstallerZip::read($h, filesize($real)); $out = tempnam(sys_get_temp_dir(), 'kzip');
+        try {
+            check($zip !== null && count($zip['records']) === 306 && $zip['target'] !== null, 'real 4.0.15 artifact is a supported zip with installation.json');
+            $cfg = json_encode(['api_base' => 'https://keeper.example.test/v1/', 'enrollment_key' => 'kek_' . Util::b64(random_bytes(32)), 'enable_hklm' => true], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+            $o = fopen($out, 'wb'); fseek($h, 0); stream_copy_to_stream($h, $o, $zip['cd_offset']); fwrite($o, \Keeper\InstallerZip::tail($zip, $cfg, time())); fclose($o);
+            installerZipMatches($real, $out, $cfg, 'real 4.0.15 installer');
+        } finally { fclose($h); if (is_file($out)) { unlink($out); } }
+    }
     echo 'PASS installer download (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}
+// $got es $orig con installation.json = $config: lo abre ZipArchive (con chequeo de consistencia) y un lector propio que
+// recorre directorio central -> cabecera local -> datos; mismas entradas, y todo lo demas igual (nombre, CRC, tamano, contenido).
+function installerZipMatches(string $orig, string $got, string $config, string $label): void
+{
+    $a = new ZipArchive(); $b = new ZipArchive();
+    check($a->open($orig, ZipArchive::RDONLY) === true && $b->open($got, ZipArchive::RDONLY | ZipArchive::CHECKCONS) === true, "$label opens with ZipArchive");
+    $raw = rawZipEntries((string) file_get_contents($got));
+    check($raw !== null && count($raw) === $b->numFiles && $b->numFiles === $a->numFiles, "$label: same entry count in ZipArchive, the raw reader and the original");
+    check($b->getFromName('installation.json') === $config && ($raw['installation.json'] ?? null) === $config, "$label: installation.json is the new config");
+    $same = true;
+    for ($i = 0; $i < $a->numFiles; $i++) {
+        $s = $a->statIndex($i); if ($s['name'] === 'installation.json') { continue; }
+        $t = $b->statName($s['name']); $content = $a->getFromIndex($i);
+        $same = $same && $t !== false && $t['crc'] === $s['crc'] && $t['size'] === $s['size'] && $t['comp_method'] === $s['comp_method'] && $b->getFromName($s['name']) === $content && ($raw[$s['name']] ?? null) === $content;
+    }
+    check($same, "$label: every other entry keeps name, CRC, size, method and content");
+    $a->close(); $b->close();
+}
+// Lector minimo e independiente de libzip (EOCD -> directorio central -> cabecera local -> stored/deflate, CRC verificado).
+function rawZipEntries(string $z): ?array
+{
+    $e = strrpos($z, "PK\x05\x06"); if ($e === false) { return null; }
+    $eocd = unpack('ventries/Vsize/Voffset', $z, $e + 10); $p = $eocd['offset']; $out = [];
+    if ($p + $eocd['size'] !== $e) { return null; }
+    for ($n = 0; $n < $eocd['entries']; $n++) {
+        if (substr($z, $p, 4) !== "PK\x01\x02") { return null; }
+        $c = unpack('vmethod/x4/Vcrc/Vcsize/Vusize/vnlen/vxlen/vclen/x8/Voffset', $z, $p + 10); $name = substr($z, $p + 46, $c['nlen']);
+        $l = unpack('vnlen/vxlen', $z, $c['offset'] + 26);
+        if (substr($z, $c['offset'], 4) !== "PK\x03\x04" || substr($z, $c['offset'] + 30, $l['nlen']) !== $name) { return null; }
+        $data = substr($z, $c['offset'] + 30 + $l['nlen'] + $l['xlen'], $c['csize']);
+        $data = $c['method'] === 0 ? $data : ($c['method'] === 8 ? @gzinflate($data) : false);
+        if ($data === false || strlen($data) !== $c['usize'] || crc32($data) !== $c['crc']) { return null; }
+        $out[$name] = $data; $p += 46 + $c['nlen'] + $c['xlen'] + $c['clen'];
+    }
+    return $out;
 }

@@ -1,5 +1,5 @@
 {
-  "source_sha256": "d459f09af61755385404baa512ab6543f0c070415d0c95822e0b0fc01f2a21e4",
+  "source_sha256": "3216e5171f35320aa811798ba62509dcc29717ff3f73bb0b88ac5d67195d6969",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -14558,6 +14558,18 @@
                   "type": "string"
                 },
                 "description": "attachment; filename=\"AZCKeeper-<versión>-<empresa>.zip\""
+              },
+              "Content-Length": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Tamaño exacto del zip; se calcula antes de enviar y el cuerpo se transmite en streaming."
+              },
+              "X-Accel-Buffering": {
+                "schema": {
+                  "const": "no"
+                },
+                "description": "Pide a nginx no almacenar en disco la respuesta (zip grande en streaming)."
               },
               "X-Enrollment-Key-Id": {
                 "schema": {

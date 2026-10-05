@@ -303,39 +303,37 @@ final class DeviceIntake
     }
 
     // Paquete publicado (stable x64 de mayor sequence) con installation.json generico: api_base de este servidor + clave nueva.
-    // Sin el archivo en public/releases (o con otro tamano) responde 409 sin crear clave. La clave y el zip van en la
-    // transaccion de la peticion: si el zip falla, la clave se deshace con ella; si falla el envio, se revoca (undelivered).
-    // Solo se reemplaza installation.json de la raiz; agent/ (contenido firmado) se copia tal cual.
+    // Sin el archivo en public/releases (o con otro tamano, o un zip no soportado por InstallerZip) responde 409 sin crear
+    // clave. La clave va en la transaccion de la peticion; si falla el envio, se revoca (undelivered). El zip no se copia ni
+    // se reescribe (disco lento => 504): Application envia el original hasta el directorio central y luego la cola nueva.
+    // Solo se reemplaza installation.json de la raiz; agent/ (contenido firmado) sale byte a byte del original.
     private function installer(string $tenant, callable $audit): array
     {
         $rel = $this->db->one('SELECT version,artifact_url,size_bytes FROM client_releases WHERE tenant_id=? AND channel=\'stable\' AND architecture=\'x64\' AND published_at<=UTC_TIMESTAMP(6) ORDER BY sequence DESC LIMIT 1', [Util::bin(AdminAuth::PLATFORM)]);
         $name = $rel ? basename((string) parse_url($rel['artifact_url'], PHP_URL_PATH)) : '';
         $file = dirname(__DIR__) . '/public/releases/' . $name; clearstatcache(true, $file);
-        if (!class_exists(\ZipArchive::class) || !preg_match('/^AZCKeeper_v4_bootstrap_[0-9.]+\.zip$/D', $name) || !is_file($file) || filesize($file) !== (int) $rel['size_bytes']) { throw new ApiError(409, 'invalid_transition', [], 'installer_unavailable'); }
+        $size = $rel ? (int) $rel['size_bytes'] : -1; $h = false; $zip = null;
+        if (preg_match('/^AZCKeeper_v4_bootstrap_[0-9.]+\.zip$/D', $name) && is_file($file) && filesize($file) === $size && ($h = fopen($file, 'rb')) !== false) {
+            // El tamano se vuelve a mirar sobre el handle: es el archivo que se enviara aunque lo reemplacen despues.
+            $zip = fstat($h)['size'] === $size ? InstallerZip::read($h, $size) : null;
+        }
+        if ($zip === null) { if ($h !== false) { fclose($h); } throw new ApiError(409, 'invalid_transition', [], 'installer_unavailable'); }
         [$kid, $secret] = $this->newKey($tenant);
         $audit('enrollment_key', $kid, ['hint', 'source:installer']);
         $origin = parse_url(Config::get('ORIGIN'));
         // api_base sale de KEEPER_ORIGIN (origen canonico ya validado por Request), siempre https: el bootstrapper rechaza http.
         $config = json_encode(['api_base' => 'https://' . $origin['host'] . (isset($origin['port']) ? ':' . $origin['port'] : '') . '/v1/', 'enrollment_key' => $secret, 'enable_hklm' => true], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-        $tmp = tempnam(sys_get_temp_dir(), 'keeper-installer');
-        if ($tmp === false) { throw new \RuntimeException('installer temp failed'); }
-        // Se borra al terminar la peticion pase lo que pase (Application lo borra tras enviarlo; esto cubre fallos y abortos).
-        register_shutdown_function(static function () use ($tmp): void { if (is_file($tmp)) { unlink($tmp); } });
-        try {
-            if (!copy($file, $tmp)) { throw new \RuntimeException('installer copy failed'); }
-            $zip = new \ZipArchive();
-            if ($zip->open($tmp) !== true || !$zip->addFromString('installation.json', $config, \ZipArchive::FL_OVERWRITE) || !$zip->close()) { throw new \RuntimeException('installer zip failed'); }
-        } catch (\Throwable $e) { if (is_file($tmp)) { unlink($tmp); } throw $e; }
+        $tail = InstallerZip::tail($zip, $config, time());
         $company = self::slug((string) $this->db->one('SELECT name FROM tenants WHERE tenant_id=?', [$tenant])['name']);
         $version = preg_replace('/[^0-9A-Za-z.\-]/', '', $rel['version']);
-        // Tras el commit: si el envio no llega completo (cliente corta, readfile falla) Application llama a esto y la clave
+        // Tras el commit: si el envio no llega completo (cliente corta, falla la lectura) Application llama a esto y la clave
         // se revoca igual que revokeEnrollmentKey, para no dejar una clave activa que nadie recibio.
         $undelivered = function () use ($tenant, $kid, $audit): void {
             $this->db->transaction(function () use ($tenant, $kid, $audit): void {
                 if ($this->db->run('UPDATE enrollment_keys SET revoked_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=? AND revoked_at IS NULL', [$tenant, $kid])->rowCount() > 0) { $audit('enrollment_key', $kid, ['revoked_at', 'source:installer_undelivered']); }
             });
         };
-        return ['status' => 200, 'json' => '', 'file' => $tmp, 'undelivered' => $undelivered, 'headers' => ['Content-Type' => 'application/zip', 'Content-Disposition' => 'attachment; filename="AZCKeeper-' . $version . '-' . $company . '.zip"', 'Cache-Control' => 'no-store', 'X-Enrollment-Key-Id' => Util::id($kid)]];
+        return ['status' => 200, 'json' => '', 'stream' => ['handle' => $h, 'prefix' => $zip['cd_offset'], 'tail' => $tail], 'undelivered' => $undelivered, 'headers' => ['Content-Type' => 'application/zip', 'Content-Disposition' => 'attachment; filename="AZCKeeper-' . $version . '-' . $company . '.zip"', 'Cache-Control' => 'no-store', 'X-Accel-Buffering' => 'no', 'X-Enrollment-Key-Id' => Util::id($kid)]];
     }
 
     // Nombre de la empresa para el archivo: ASCII en minusculas con guiones ("Compañía S.A.S." -> "compania-s-a-s").

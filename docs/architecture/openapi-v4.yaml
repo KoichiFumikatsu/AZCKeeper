@@ -9956,6 +9956,14 @@ paths:
               schema:
                 type: string
               description: attachment; filename="AZCKeeper-<versión>-<empresa>.zip"
+            Content-Length:
+              schema:
+                type: integer
+              description: Tamaño exacto del zip; se calcula antes de enviar y el cuerpo se transmite en streaming.
+            X-Accel-Buffering:
+              schema:
+                const: 'no'
+              description: Pide a nginx no almacenar en disco la respuesta (zip grande en streaming).
             X-Enrollment-Key-Id:
               schema:
                 type: string

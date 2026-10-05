@@ -38,7 +38,7 @@ final class Application
                     return $result;
                 });
                 try { AdminApi::compilePending($db, $context['tenant_id'], $admin?->recompileScope()); }
-                catch (\Throwable $e) { if (isset($response['file']) && is_file($response['file'])) { unlink($response['file']); } if (isset($response['undelivered'])) { $this->undelivered($response['undelivered'], $id); } throw $e; }
+                catch (\Throwable $e) { if (isset($response['stream'])) { fclose($response['stream']['handle']); } if (isset($response['undelivered'])) { $this->undelivered($response['undelivered'], $id); } throw $e; }
             }
             elseif ($r->route === '/client/auth/challenges') { $response = $this->ok($auth->challenge($r)); }
             elseif ($r->route === '/client/login') { $response = $this->ok($auth->login($r)); }
@@ -66,7 +66,7 @@ final class Application
                     catch (ApiError) { throw new \RuntimeException('Invalid response contract'); }
                 }
             }
-            $this->send($response['status'], $response['json'], $id, $response['headers'] ?? [], false, $response['file'] ?? null, $response['undelivered'] ?? null);
+            $this->send($response['status'], $response['json'], $id, $response['headers'] ?? [], false, $response['stream'] ?? null, $response['undelivered'] ?? null);
         } catch (OAuthError $e) {
             $this->send($e->status, Util::json(['error'=>$e->errorCode]), $id, ['Cache-Control'=>'no-store', 'Pragma'=>'no-cache'] + ($e->status === 401 ? ['WWW-Authenticate'=>'Basic realm="keeper-oauth"'] : []));
         } catch (ApiError $e) {
@@ -160,21 +160,28 @@ final class Application
         }
         throw new ApiError(404, 'resource_not_found');
     }
-    // $file: descarga binaria (instalador) que se envia desde disco sin cargarla en memoria y se borra despues.
-    // $undelivered: se llama si el archivo no llega completo (la peticion ya hizo commit).
-    private function send(int $status, string $json, string $id, array $headers, bool $problem = false, ?string $file = null, ?callable $undelivered = null): void
+    // $stream: descarga binaria (instalador) ['handle', 'prefix', 'tail']: los primeros 'prefix' bytes del archivo abierto y
+    // luego 'tail', sin cargarlo en memoria ni pasar por disco; la salida empieza enseguida (Timeout de Apache por inactividad).
+    // $undelivered: se llama si no llega completo (la peticion ya hizo commit).
+    private function send(int $status, string $json, string $id, array $headers, bool $problem = false, ?array $stream = null, ?callable $undelivered = null): void
     {
-        if ($file !== null) {
-            $size = filesize($file); $sent = false;
+        if ($stream !== null) {
+            $h = $stream['handle']; $left = $stream['prefix']; $sent = false;
             try {
                 ignore_user_abort(true); // si el cliente corta, seguir hasta poder revocar la clave
-                http_response_code($status); header('X-Request-ID: ' . $id); header('Content-Length: ' . $size);
+                http_response_code($status); header('X-Request-ID: ' . $id); header('Content-Length: ' . ($left + strlen($stream['tail'])));
                 foreach ($headers + $this->limiter->headers as $key => $value) { foreach (is_array($value) ? $value : [$value] as $line) { header($key . ': ' . $line, $key !== 'Set-Cookie'); } }
                 while (ob_get_level() > 0) { ob_end_clean(); }
-                $sent = readfile($file) === $size; flush();
-                $sent = $sent && !connection_aborted();
+                if (fseek($h, 0) === 0) {
+                    while ($left > 0 && !connection_aborted()) {
+                        $chunk = fread($h, min($left, 1048576));
+                        if ($chunk === false || $chunk === '') { break; }
+                        echo $chunk; flush(); $left -= strlen($chunk);
+                    }
+                    if ($left === 0 && !connection_aborted()) { echo $stream['tail']; flush(); $sent = !connection_aborted(); }
+                }
             } finally {
-                if (is_file($file)) { unlink($file); }
+                fclose($h);
                 if (!$sent && $undelivered !== null) { $this->undelivered($undelivered, $id); }
             }
             return;
