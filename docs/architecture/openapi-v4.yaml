@@ -2280,7 +2280,7 @@ paths:
       - admin
       operationId: listOrganization
       summary: Leer firmas, sedes, áreas y cargos
-      description: Leer firmas, sedes, áreas y cargos
+      description: Leer firmas, sedes, áreas y cargos. Solo exige organizacion.ver, con cualquier alcance (quien delega elige el alcance con ellas).
       security:
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
@@ -2637,7 +2637,7 @@ paths:
       - admin
       operationId: listRoles
       summary: Leer roles semilla/custom
-      description: Leer roles semilla/custom
+      description: Leer roles semilla/custom. Solo exige roles.ver, con cualquier alcance (quien delega elige entre ellos).
       security:
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
@@ -2688,7 +2688,7 @@ paths:
       operationId: createRole
       summary: Crear o clonar rol
       description: 'Gate OFF: solo plataforma. Gate ON: roles.gestionar y no autoescalada. Clonar=crear desde definición
-        autorizada. Autorización de acción/objeto obligatoria además de CSRF; registrar auditoría.'
+        autorizada. Autorización de acción/objeto obligatoria además de CSRF; registrar auditoría. Exige alcance todo (403 scope_denied). Un permiso de una función no contratada da 403 feature_not_contracted:<f>, también a superadmin.'
       security:
       - adminSession: []
         csrfToken: []
@@ -6440,7 +6440,7 @@ paths:
       - admin
       operationId: getOrgUnit
       summary: Leer unidad organizativa
-      description: Leer unidad organizativa
+      description: Leer unidad organizativa. Solo exige organizacion.ver, con cualquier alcance.
       security:
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
@@ -6871,8 +6871,8 @@ paths:
       tags:
       - admin
       operationId: getRole
-      summary: Leer rol/alcance
-      description: Leer rol/alcance
+      summary: Leer rol
+      description: Leer un rol (sus permisos). Solo exige roles.ver, con cualquier alcance.
       security:
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
@@ -6926,8 +6926,8 @@ paths:
       - admin
       operationId: patchRole
       summary: Editar/desactivar rol
-      description: Dos gates; solo plataforma concede meta-permiso. Invalidar caché de autorización. Autorización
-        de acción/objeto obligatoria además de CSRF; registrar auditoría.
+      description: 'Dos gates; solo plataforma concede meta-permiso. Invalidar caché de autorización. Autorización
+        de acción/objeto obligatoria además de CSRF; registrar auditoría. Exige alcance todo (403 scope_denied). Un permiso de una función no contratada da 403 feature_not_contracted:<f>, también a superadmin.'
       security:
       - adminSession: []
         csrfToken: []
@@ -16834,34 +16834,12 @@ components:
           - manual
           - rule
           - default
-    RoleScope:
-      type: object
-      additionalProperties: false
-      required:
-      - kind
-      - resource_ids
-      properties:
-        kind:
-          type: string
-          enum:
-          - tenant
-          - area
-          - site
-          - self
-          - team
-        resource_ids:
-          type: array
-          items:
-            type: string
-            format: uuid
-          maxItems: 100
     RoleInput:
       type: object
       additionalProperties: false
       required:
       - name
       - permissions
-      - scope
       - active
       properties:
         assignable_by_rule:
@@ -16875,12 +16853,11 @@ components:
             type: string
             maxLength: 100
           maxItems: 200
-        scope:
-          $ref: '#/components/schemas/RoleScope'
         active:
           type: boolean
     Role:
       type: object
+      description: Un conjunto de permisos. El alcance va en el acceso de cada persona.
       additionalProperties: false
       required:
       - assignable_by_rule
@@ -16888,7 +16865,6 @@ components:
       - tenant_id
       - name
       - permissions
-      - scope
       - active
       - seed_key
       - version
@@ -16911,8 +16887,6 @@ components:
             type: string
             maxLength: 100
           maxItems: 200
-        scope:
-          $ref: '#/components/schemas/RoleScope'
         active:
           type: boolean
         seed_key:

@@ -30,8 +30,12 @@ final class TenantPurge
         // Identidades: las de la empresa y las de sus cuentas en otras empresas quedan desvinculadas (la auditoria sigue).
         $this->db->run('UPDATE principals SET detached=TRUE,admin_id=NULL,admin_tenant_id=NULL,device_id=NULL,integration_id=NULL WHERE tenant_id=? OR admin_tenant_id=?', [$tenant, $tenant]);
         $this->db->run('DELETE FROM access_grants WHERE admin_tenant_id=? OR tenant_id=?', [$tenant, $tenant]);
-        // PUENTE hasta la Tarea 8: la tabla vieja sigue con filas convertidas y su FK a admin_accounts frena el borrado.
-        $this->db->run('DELETE FROM admin_account_roles WHERE admin_tenant_id=? OR tenant_id=?', [$tenant, $tenant]);
+        // Filas de otras empresas que apuntan a las cuentas de esta (admin_tenant_id con FK a admin_accounts) frenarian el borrado.
+        // Incluye las tablas viejas congeladas por 0043 (se borran en la fase 4) sin nombrarlas.
+        foreach (array_column($this->db->run("SELECT DISTINCT table_name t FROM information_schema.key_column_usage
+            WHERE table_schema=DATABASE() AND referenced_table_name='admin_accounts' AND column_name='admin_tenant_id'")->fetchAll(), 't') as $table) {
+            if (!in_array($table, self::KEEP, true)) { $this->db->run("DELETE FROM `$table` WHERE admin_tenant_id=?", [$tenant]); }
+        }
         $tables = array_values(array_diff(array_column($this->db->run("SELECT c.table_name t FROM information_schema.columns c JOIN information_schema.tables x ON x.table_schema=c.table_schema AND x.table_name=c.table_name AND x.table_type='BASE TABLE'
             WHERE c.table_schema=DATABASE() AND c.column_name='tenant_id'")->fetchAll(), 't'), self::KEEP));
         $count = fn (string $table): int => (int) $this->db->one("SELECT COUNT(*) n FROM `$table` WHERE tenant_id=?", [$tenant])['n'];

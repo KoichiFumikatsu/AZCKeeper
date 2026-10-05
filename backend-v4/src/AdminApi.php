@@ -182,11 +182,6 @@ final class AdminApi
             $this->db->run("INSERT INTO principals (tenant_id,id,kind) VALUES (?,?,'system')",[$id,Util::bin(Util::uuid())]);
             $this->tenant=$id; $this->c['tenant_id']=$id;
             $this->c['principal_id']=(new AdminAuth($this->db,new RateLimiter()))->principal($this->c);
-            foreach ($this->db->run('SELECT * FROM role_templates WHERE platform_only=FALSE')->fetchAll() as $template) {
-                $role=Util::bin(Util::uuid());
-                $this->db->run('INSERT INTO roles (tenant_id,id,name,seed_key,seed_version,scope_kind) VALUES (?,?,?,?,?,?)',[$id,$role,$template['name'],$template['seed_key'],$template['version'],$template['scope_kind']]);
-                $this->db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) SELECT ?,?,permission_code FROM role_template_permissions WHERE seed_key=?',[$id,$role,$template['seed_key']]);
-            }
             // Plan por defecto Completo: las funciones reales se limitan a las que el cliente compro (tenant_features), asi que no regala nada.
             $full=$this->db->one('SELECT id FROM person_plans WHERE tenant_id=0x00000000000040008000000000000001 AND name=? AND active=TRUE',[PersonPlans::FULL_PLAN]);
             if ($full) { $this->db->run('UPDATE tenants SET default_plan_tenant_id=0x00000000000040008000000000000001,default_plan_id=? WHERE tenant_id=?',[$full['id'],$id]); }
@@ -195,6 +190,15 @@ final class AdminApi
                 $pkg=Util::bin($b->package_id);
                 $codes=array_column($this->db->run('SELECT feature_code FROM feature_package_items WHERE tenant_id=? AND package_id=?',[Util::bin(AdminAuth::PLATFORM),$pkg])->fetchAll(),'feature_code');
                 (new FeatureAdmin($this->db,$this->c,$this->r))->apply($id,$pkg,$codes);
+            }
+            // Roles base del cliente nuevo (§4): las plantillas ofrecidas, solo con permisos de sus funciones (o del nucleo).
+            foreach ($this->db->run('SELECT * FROM role_templates WHERE platform_only=FALSE AND offered=TRUE ORDER BY seed_key')->fetchAll() as $template) {
+                $role=Util::bin(Util::uuid());
+                $this->db->run("INSERT INTO roles (tenant_id,id,name,seed_key,seed_version,scope_kind) VALUES (?,?,?,?,?,'self')",[$id,$role,$template['name'],$template['seed_key'],$template['version']]);
+                foreach (array_column($this->db->run('SELECT permission_code FROM role_template_permissions WHERE seed_key=?',[$template['seed_key']])->fetchAll(),'permission_code') as $code) {
+                    $f=Features::forOperation('',$code);
+                    if ($f===null || Features::has($this->db,$id,$f)) { $this->db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)',[$id,$role,$code]); }
+                }
             }
         } else { $id=$this->tenant; $row=$this->row('tenants',$id,'tenant_id'); if ($op==='getTenant') { return $this->result($this->tenantDto($row)); } $this->match($row); }
         if ($op==='setRbacGate') { $this->db->run('UPDATE tenants SET rbac_self_management=?,auth_version=auth_version+1,version=version+1 WHERE tenant_id=?',[(int)$b->enabled,$id]); }
@@ -273,7 +277,8 @@ final class AdminApi
     private function orgDto(array $r): array { return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'kind'=>$r['kind'],'name'=>$r['name'],'parent_id'=>$r['parent_id']===null?null:Util::id($r['parent_id']),'active'=>(bool)$r['active'],'version'=>(int)$r['version'],'country_code'=>$r['country_code'],'city'=>$r['city']]; }
     private function organization(string $op,?string $id,?object $b): array
     {
-        $this->access->requireFull();
+        // Leer la estructura (empresas, sedes, areas, cargos) no es dato de personas: quien delega la necesita para elegir el alcance.
+        if (!in_array($op,['listOrganization','getOrgUnit'],true)) { $this->access->requireFull(); }
         if ($op==='listOrganization') { return $this->page('SELECT * FROM org_units WHERE tenant_id=? AND deleted_at IS NULL',[$this->tenant],fn($x)=>$this->orgDto($x)); }
         if ($id) { $old=$this->row('org_units',$id); if ($old['deleted_at']!==null) { throw new ApiError(404,'resource_not_found'); } if ($op==='deleteOrgUnit') { return $this->deleteOrgUnit($old); } if ($op==='getOrgUnit') { return $this->result($this->orgDto($old)); } $this->match($old); if ($old['kind']!==$b->kind) { throw new ApiError(409,'invalid_transition'); } }
         $parent=$b->parent_id===null?null:Util::bin($b->parent_id);
@@ -484,29 +489,38 @@ final class AdminApi
     private function roleDto(array $r): array
     {
         $permissions=array_column($this->db->run('SELECT permission_code FROM role_permissions WHERE tenant_id=? AND role_id=? ORDER BY permission_code',[$this->tenant,$r['id']])->fetchAll(),'permission_code');
-        $ids=[]; $kind=$r['scope_kind'];
-        if (in_array($kind,['area','site'],true)) { $ids=array_map([Util::class,'id'],array_column($this->db->run("SELECT {$kind}_id id FROM role_{$kind}_scopes WHERE tenant_id=? AND role_id=? ORDER BY {$kind}_id",[$this->tenant,$r['id']])->fetchAll(),'id')); }
-        return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'name'=>$r['name'],'permissions'=>$permissions,'scope'=>['kind'=>$kind,'resource_ids'=>$ids],'active'=>(bool)$r['active'],'assignable_by_rule'=>(bool)$r['assignable_by_rule'],'seed_key'=>$r['seed_key'],'version'=>(int)$r['version']];
+        return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'name'=>$r['name'],'permissions'=>$permissions,'active'=>(bool)$r['active'],'assignable_by_rule'=>(bool)$r['assignable_by_rule'],'seed_key'=>$r['seed_key'],'version'=>(int)$r['version']];
     }
     private function roles(string $op,?string $id,?object $b): array
     {
-        if ($op==='listRoles') { $this->access->requireFull(); return $this->page('SELECT * FROM roles WHERE tenant_id=?',[$this->tenant],fn($x)=>$this->roleDto($x)); }
-        if ($id) { $old=$this->row('roles',$id); $dto=$this->roleDto($old); if ($op==='getRole') { return $this->result($dto); } $this->match($old); $this->access->delegate($dto['permissions'],AccessScope::fromLegacy($dto['scope']['kind'],array_map([Util::class,'bin'],$dto['scope']['resource_ids'])),null); }
-        $this->unique($b->permissions); $this->unique($b->scope->resource_ids);
-        $kind=$b->scope->kind;
-        if ((in_array($kind,['tenant','self','team'],true) && $b->scope->resource_ids) || (in_array($kind,['area','site'],true) && !$b->scope->resource_ids)) { throw new ApiError(422,'validation_failed'); }
-        foreach ($b->scope->resource_ids as $rid) { $this->org(Util::bin($rid),$kind); }
-        $this->access->delegate($b->permissions,AccessScope::fromLegacy($kind,array_map([Util::class,'bin'],$b->scope->resource_ids)),null);
+        if ($op==='listRoles') { return $this->page('SELECT * FROM roles WHERE tenant_id=?',[$this->tenant],fn($x)=>$this->roleDto($x)); }
+        if ($op==='getRole') { return $this->result($this->roleDto($this->row('roles',$id))); }
+        // Los roles son de todo el cliente: crearlos o editarlos exige alcance «todo» (§4).
+        $this->access->requireFull();
+        if ($id) { $old=$this->row('roles',$id); $this->match($old); $this->access->delegate(AccessGrants::permissions($this->db,$this->tenant,$id),AccessScope::all(),null); }
+        $this->unique($b->permissions);
+        $this->contracted($b->permissions);
+        $this->access->delegate($b->permissions,AccessScope::all(),null);
         if ($id) {
-            foreach (['role_area_scopes','role_site_scopes','role_permissions'] as $table) { $this->db->run("DELETE FROM $table WHERE tenant_id=? AND role_id=?",[$this->tenant,$id]); }
-            $this->update('roles',$id,['name'=>$b->name,'scope_kind'=>$kind,'active'=>(int)$b->active,'assignable_by_rule'=>(int)($b->assignable_by_rule??$old['assignable_by_rule'])]);
-        } else { $id=Util::bin(Util::uuid()); $this->db->run('INSERT INTO roles (tenant_id,id,name,scope_kind,active,assignable_by_rule) VALUES (?,?,?,?,?,?)',[$this->tenant,$id,$b->name,$kind,(int)$b->active,(int)($b->assignable_by_rule??false)]); }
+            $this->db->run('DELETE FROM role_permissions WHERE tenant_id=? AND role_id=?',[$this->tenant,$id]);
+            $this->update('roles',$id,['name'=>$b->name,'active'=>(int)$b->active,'assignable_by_rule'=>(int)($b->assignable_by_rule??$old['assignable_by_rule'])]);
+        } else {
+            // scope_kind: columna vieja sin uso (el alcance va en la persona, 0043).
+            $id=Util::bin(Util::uuid()); $this->db->run("INSERT INTO roles (tenant_id,id,name,scope_kind,active,assignable_by_rule) VALUES (?,?,?,'self',?,?)",[$this->tenant,$id,$b->name,(int)$b->active,(int)($b->assignable_by_rule??false)]);
+        }
         foreach ($b->permissions as $permission) { $this->db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)',[$this->tenant,$id,$permission]); }
-        foreach ($b->scope->resource_ids as $rid) { $this->db->run("INSERT INTO role_{$kind}_scopes (tenant_id,role_id,{$kind}_id) VALUES (?,?,?)",[$this->tenant,$id,Util::bin($rid)]); }
         foreach ($this->db->run('SELECT user_id FROM access_grants WHERE tenant_id=? AND role_id=? AND user_id IS NOT NULL',[$this->tenant,$id])->fetchAll() as $user) { $this->invalidateUser($user['user_id']); }
         $this->db->run('UPDATE tenants SET auth_version=auth_version+1 WHERE tenant_id=?',[$this->tenant]);
         RoleRules::apply($this->db,$this->tenant);
         $this->audit('role',$id,array_keys(get_object_vars($b))); return $this->result($this->roleDto($this->row('roles',$id)),$op==='createRole'?201:200);
+    }
+    /** Un rol nunca incluye permisos de funciones que el cliente no compro (§4), ni siquiera si lo guarda superadmin. */
+    private function contracted(array $permissions): void
+    {
+        foreach ($permissions as $code) {
+            $f=Features::forOperation('',$code);
+            if ($f!==null && !Features::has($this->db,$this->tenant,$f)) { throw new ApiError(403,'permission_denied',[],"feature_not_contracted:$f"); }
+        }
     }
     private function permissionDto(array $r): array { return ['code'=>$r['code'],'label'=>$r['label'],'resource'=>$r['resource'],'action'=>$r['action'],'delegable'=>(bool)$r['delegable'],'platform_only'=>(bool)$r['platform_only'],'version'=>(int)$r['version']]; }
     private function permissions(string $op,?object $b): array

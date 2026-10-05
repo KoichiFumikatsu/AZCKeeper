@@ -20,11 +20,11 @@ function roleRulesTests(Database $db): void
     check($cycle[0] === 422 && $cycle[1]['detail'] === 'hierarchy_cycle', 'hierarchy cycles rejected');
 
     // Rol de jefe con alcance "mi equipo", asignable por regla.
-    $plain = expect(adminRequest($platform, 'POST', '/roles', ['name' => 'Solo manual', 'permissions' => ['usuarios.ver'], 'scope' => ['kind' => 'team', 'resource_ids' => []], 'active' => true]), 201, 'create manual team role');
-    check($plain['assignable_by_rule'] === false && $plain['scope']['kind'] === 'team', 'team scope role');
+    $plain = expect(adminRequest($platform, 'POST', '/roles', ['name' => 'Solo manual', 'permissions' => ['usuarios.ver'], 'active' => true]), 201, 'create manual team role');
+    check($plain['assignable_by_rule'] === false, 'manual role');
     $rule = ['name' => 'Jefes ven a su equipo', 'condition_kind' => 'manages', 'position_id' => null, 'area_id' => null, 'role_id' => $plain['id'], 'active' => true];
     check(adminRequest($platform, 'POST', '/role-rules', $rule)[1]['detail'] === 'role_not_assignable', 'rules only use assignable roles');
-    $jefe = expect(adminRequest($platform, 'POST', '/roles', ['name' => 'Jefe de equipo', 'permissions' => ['usuarios.ver'], 'scope' => ['kind' => 'team', 'resource_ids' => []], 'active' => true, 'assignable_by_rule' => true]), 201, 'create assignable role');
+    $jefe = expect(adminRequest($platform, 'POST', '/roles', ['name' => 'Jefe de equipo', 'permissions' => ['usuarios.ver'], 'active' => true, 'assignable_by_rule' => true]), 201, 'create assignable role');
     $created = expect(adminRequest($platform, 'POST', '/role-rules', ['role_id' => $jefe['id']] + $rule), 201, 'create manages rule');
     check($created['matches'] === 2, 'boss and p1 manage someone');
     $byRule = fn (string $user) => (bool) $db->one("SELECT 1 FROM access_grants WHERE tenant_id=? AND user_id=? AND role_id=? AND source='rule'", [$tenant, Util::bin($user), Util::bin($jefe['id'])]);

@@ -32,10 +32,9 @@ function adminFixture(Database $db,array $u,array $permissions,bool $platform=fa
     $tenant=$platform?Util::bin(AdminAuth::PLATFORM):$u['tenant_id']; $admin=Util::bin(Util::uuid()); $role=Util::bin(Util::uuid()); $password=Util::b64(random_bytes(20)); $email=Util::uuid().'@example.test';
     if (!$platform) {
         $db->run('UPDATE users SET panel_login_enabled=TRUE WHERE tenant_id=? AND id=?',[$tenant,$u['id']]);
-        $db->run('INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,?,?)',[$tenant,$role,Util::uuid(),$scope]);
+        // scope_kind: columna vieja sin uso: el alcance va en la persona.
+        $db->run("INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,?,'self')",[$tenant,$role,Util::uuid()]);
         foreach ($permissions as $p) { $db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)',[$tenant,$role,$p]); }
-        foreach ($scopeIds as $id) { $db->run("INSERT INTO role_{$scope}_scopes (tenant_id,role_id,{$scope}_id) VALUES (?,?,?)",[$tenant,$role,$id]); }
-        $db->run('INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)',[$tenant,$u['id'],$role]);
         $kind=['tenant'=>'all','site'=>'filters','area'=>'filters'][$scope]??$scope;
         Keeper\AccessGrants::setForUser($db,$tenant,$u['id'],$role,new Keeper\AccessScope($kind,[],[],$scope==='site'?$scopeIds:[],$scope==='area'?$scopeIds:[]),'manual');
     }
@@ -77,19 +76,19 @@ function adminTests(Database $db): void
     $outside=adminMember($db,array_replace($aUser,['area_id'=>$outsideArea]));
     $scopedList=expect(adminRequest($scoped,'GET','/users?limit=100'),200,'area scope list'); check(!in_array(Util::id($outside['id']),array_column($scopedList['data'],'id'),true),'area scope hides outside members');
     expect(adminRequest($scoped,'GET','/users/'.Util::id($outside['id'])),404,'same tenant outside area ID');
-    expect(adminRequest($reader,'POST','/roles',['name'=>'Forbidden','permissions'=>[],'scope'=>['kind'=>'tenant','resource_ids'=>[]],'active'=>true]),403,'missing permission');
+    expect(adminRequest($reader,'POST','/roles',['name'=>'Forbidden','permissions'=>[],'active'=>true]),403,'missing permission');
     expect(adminRequest($admin,'GET','/users/'.$uid,null,['x-tenant-id'=>Util::id($bUser['tenant_id'])]),404,'tenant selector cannot select foreign company');
     expect(adminRequest($admin,'GET','/users/'.Util::id($bUser['id'])),404,'foreign user ID');
     expect(adminRequest($other,'GET','/users/'.$uid),404,'reverse foreign user ID');
     expect(adminRequest($admin,'GET','/users',null,['x-tenant-id'=>'']),422,'selector required');
-    $roleBody=['name'=>'Read only','permissions'=>['usuarios.ver'],'scope'=>['kind'=>'tenant','resource_ids'=>[]],'active'=>true];
+    $roleBody=['name'=>'Read only','permissions'=>['usuarios.ver'],'active'=>true];
     expect(adminRequest($delegate,'POST','/roles',$roleBody),403,'company gate off');
     $t=expect(adminRequest($platformTenant,'GET','/tenants/'.$tid),200,'tenant read');
     expect(adminRequest($admin,'PATCH','/tenants/'.$tid.'/rbac-gate',['enabled'=>true,'reason'=>'Forbidden'],['if-match'=>'"'.$t['version'].'"']),403,'only platform changes gate');
     $t=expect(adminRequest($platformTenant,'PATCH','/tenants/'.$tid.'/rbac-gate',['enabled'=>true,'reason'=>'Test delegation'],['if-match'=>'"'.$t['version'].'"']),200,'enable gate');
     expect(adminRequest($reader,'POST','/roles',$roleBody),403,'gate on still requires meta permission');
     $role=expect(adminRequest($delegate,'POST','/roles',$roleBody),201,'delegated creation');
-    expect(adminRequest($scoped,'POST','/roles',$roleBody),403,'scoped delegate cannot create tenant-wide role');
+    expect(adminRequest($scoped,'POST','/roles',$roleBody),403,'scoped delegate cannot create roles');
     expect(adminRequest($delegate,'POST','/roles',array_replace($roleBody,['name'=>'Escalate','permissions'=>['equipos.apagar']])),403,'cannot grant missing permission');
     expect(adminRequest($delegate,'POST','/roles',array_replace($roleBody,['name'=>'Meta clone','permissions'=>['roles.gestionar']])),403,'cannot clone meta permission');
     $self=expect(adminRequest($delegate,'GET','/roles/'.Util::id($delegate['role'])),200,'read own role');

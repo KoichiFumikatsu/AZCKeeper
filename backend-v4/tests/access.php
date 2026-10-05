@@ -347,3 +347,42 @@ function accessDelegationTests(Database $db): void
     check($set[0] === 200 && $set[1]['access']['scope']['kind'] === 'all', 'superadmin da cualquier alcance');
     echo 'PASS access delegation (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+// Roles (§4): sin alcance, de todo el cliente, nunca con funciones no compradas; plantillas Corporativo, Gerente, Coordinador, IT, Colaborador.
+function accessRoleTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $o = accessOrg($db); $t = $o['tenant'];
+    $db->run('UPDATE tenants SET rbac_self_management=TRUE WHERE tenant_id=?', [$t]);
+    accessResetPreloginQuota();
+    $juan = accessAccount($db, $o, 'juan', ['usuarios.ver', 'roles.ver', 'roles.gestionar', 'organizacion.ver'], new AccessScope('filters', [], [], [], [$o['agentes']]));
+    $platform = sharedPlatform($db); $platform['tenant'] = $t;
+    $body = ['name' => 'Lectura', 'permissions' => ['usuarios.ver'], 'active' => true];
+    $made = expect(adminRequest($platform, 'POST', '/roles', $body), 201, 'role without scope');
+    check(!array_key_exists('scope', $made), 'roles carry no scope');
+    check(adminRequest($juan, 'GET', '/roles')[0] === 200 && adminRequest($juan, 'GET', '/organization')[0] === 200, 'a scoped delegate can read roles and organization to delegate');
+    check(adminRequest($juan, 'GET', '/roles/' . $made['id'])[0] === 200 && adminRequest($juan, 'GET', '/organization/' . Util::id($o['agentes']))[0] === 200, 'a scoped delegate reads one role and one unit');
+    $denied = adminRequest($juan, 'POST', '/roles', ['name' => 'Otro'] + $body);
+    check($denied[0] === 403 && $denied[1]['detail'] === 'scope_denied', 'only scope all creates roles');
+    $edit = adminRequest($juan, 'PATCH', '/roles/' . $made['id'], $body, ['if-match' => '"' . $made['version'] . '"']);
+    check($edit[0] === 403 && $edit[1]['detail'] === 'scope_denied', 'only scope all edits roles');
+    // Un rol ya no lleva alcance: el campo viejo se rechaza (422), nunca cambia lo que ven quienes lo tienen.
+    $old = adminRequest($platform, 'PATCH', '/roles/' . $made['id'], $body + ['scope' => ['kind' => 'area', 'resource_ids' => [Util::id($o['agentes'])]]], ['if-match' => '"' . $made['version'] . '"']);
+    check($old[0] === 422, 'PATCH /roles cannot set a scope');
+    check(adminRequest($platform, 'POST', '/roles', ['name' => 'Mal', 'permissions' => 'usuarios.ver', 'active' => true])[0] === 422, 'malformed role body: 422');
+    check($db->one('SELECT scope_kind FROM roles WHERE tenant_id=? AND id=?', [$t, Util::bin($made['id'])])['scope_kind'] === 'self', 'old scope column fixed at self');
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='cumplimiento'", [$t]);
+    $off = adminRequest($platform, 'POST', '/roles', ['name' => 'Cumplimiento', 'permissions' => ['cumplimiento.ver'], 'active' => true]);
+    check($off[0] === 403 && $off[1]['detail'] === 'feature_not_contracted:cumplimiento', 'a role never includes an uncontracted function');
+    $offEdit = adminRequest($platform, 'PATCH', '/roles/' . $made['id'], ['permissions' => ['usuarios.ver', 'cumplimiento.ver']] + $body, ['if-match' => '"' . $made['version'] . '"']);
+    check($offEdit[0] === 403 && $offEdit[1]['detail'] === 'feature_not_contracted:cumplimiento', 'editing a role cannot add an uncontracted function');
+    // Cliente nuevo: las cinco plantillas, con solo lo de su paquete.
+    $pkg = expect(adminRequest($platform, 'POST', '/feature-packages', ['name' => 'Solo productividad ' . substr(Util::uuid(), 0, 6), 'features' => ['productividad']]), 201, 'package');
+    $new = expect(adminRequest(sharedPlatform($db), 'POST', '/tenants', ['name' => 'Cliente roles ' . substr(Util::uuid(), 0, 6), 'timezone' => 'America/Bogota', 'package_id' => $pkg['id'],
+        'branding' => ['display_name' => 'Cliente roles', 'logo_url' => 'https://example.test/logo.svg', 'primary_color' => '#3C4082', 'accent_color' => '#5A61B3']]), 201, 'new client');
+    $names = array_column($db->run('SELECT name FROM roles WHERE tenant_id=? ORDER BY name', [Util::bin($new['id'])])->fetchAll(), 'name');
+    check($names === ['Colaborador', 'Coordinador', 'Corporativo', 'Gerente', 'IT'], 'new client gets the five templates');
+    check(!$db->one("SELECT 1 x FROM role_permissions p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=? AND p.permission_code IN ('cumplimiento.ver','cobertura.ver','equipos.apagar')", [Util::bin($new['id'])]), 'templates drop uncontracted permissions');
+    check((bool) $db->one("SELECT 1 x FROM role_permissions p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=? AND r.name='Corporativo' AND p.permission_code='reportes.ver'", [Util::bin($new['id'])]), 'contracted permissions kept');
+    echo 'PASS access roles (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}

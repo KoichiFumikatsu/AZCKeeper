@@ -1,5 +1,5 @@
 {
-  "source_sha256": "559161cce2d34a7bd0874a53d0aeac924536a0b6e434d276f6aece7e93ad8902",
+  "source_sha256": "cfeec6fdae070839ea5eafc04726bc8f97a82bf8ccff2463b64a00247cef6bdd",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -3447,7 +3447,7 @@
         ],
         "operationId": "listOrganization",
         "summary": "Leer firmas, sedes, áreas y cargos",
-        "description": "Leer firmas, sedes, áreas y cargos",
+        "description": "Leer firmas, sedes, áreas y cargos. Solo exige organizacion.ver, con cualquier alcance (quien delega elige el alcance con ellas).",
         "security": [
           {
             "adminSession": []
@@ -4012,7 +4012,7 @@
         ],
         "operationId": "listRoles",
         "summary": "Leer roles semilla/custom",
-        "description": "Leer roles semilla/custom",
+        "description": "Leer roles semilla/custom. Solo exige roles.ver, con cualquier alcance (quien delega elige entre ellos).",
         "security": [
           {
             "adminSession": []
@@ -4094,7 +4094,7 @@
         ],
         "operationId": "createRole",
         "summary": "Crear o clonar rol",
-        "description": "Gate OFF: solo plataforma. Gate ON: roles.gestionar y no autoescalada. Clonar=crear desde definición autorizada. Autorización de acción/objeto obligatoria además de CSRF; registrar auditoría.",
+        "description": "Gate OFF: solo plataforma. Gate ON: roles.gestionar y no autoescalada. Clonar=crear desde definición autorizada. Autorización de acción/objeto obligatoria además de CSRF; registrar auditoría. Exige alcance todo (403 scope_denied). Un permiso de una función no contratada da 403 feature_not_contracted:<f>, también a superadmin.",
         "security": [
           {
             "adminSession": [],
@@ -9296,7 +9296,7 @@
         ],
         "operationId": "getOrgUnit",
         "summary": "Leer unidad organizativa",
-        "description": "Leer unidad organizativa",
+        "description": "Leer unidad organizativa. Solo exige organizacion.ver, con cualquier alcance.",
         "security": [
           {
             "adminSession": []
@@ -9977,8 +9977,8 @@
           "admin"
         ],
         "operationId": "getRole",
-        "summary": "Leer rol/alcance",
-        "description": "Leer rol/alcance",
+        "summary": "Leer rol",
+        "description": "Leer un rol (sus permisos). Solo exige roles.ver, con cualquier alcance.",
         "security": [
           {
             "adminSession": []
@@ -10064,7 +10064,7 @@
         ],
         "operationId": "patchRole",
         "summary": "Editar/desactivar rol",
-        "description": "Dos gates; solo plataforma concede meta-permiso. Invalidar caché de autorización. Autorización de acción/objeto obligatoria además de CSRF; registrar auditoría.",
+        "description": "Dos gates; solo plataforma concede meta-permiso. Invalidar caché de autorización. Autorización de acción/objeto obligatoria además de CSRF; registrar auditoría. Exige alcance todo (403 scope_denied). Un permiso de una función no contratada da 403 feature_not_contracted:<f>, también a superadmin.",
         "security": [
           {
             "adminSession": [],
@@ -27424,6 +27424,7 @@
     },
     "Role": {
       "type": "object",
+      "description": "Un conjunto de permisos. El alcance va en el acceso de cada persona.",
       "additionalProperties": false,
       "required": [
         "assignable_by_rule",
@@ -27431,7 +27432,6 @@
         "tenant_id",
         "name",
         "permissions",
-        "scope",
         "active",
         "seed_key",
         "version"
@@ -27461,9 +27461,6 @@
           },
           "maxItems": 200
         },
-        "scope": {
-          "$ref": "#/components/schemas/RoleScope"
-        },
         "active": {
           "type": "boolean"
         },
@@ -27490,7 +27487,6 @@
       "required": [
         "name",
         "permissions",
-        "scope",
         "active"
       ],
       "properties": {
@@ -27508,9 +27504,6 @@
             "maxLength": 100
           },
           "maxItems": 200
-        },
-        "scope": {
-          "$ref": "#/components/schemas/RoleScope"
         },
         "active": {
           "type": "boolean"
@@ -27701,34 +27694,6 @@
           "items": {
             "$ref": "#/components/schemas/RoleRule"
           }
-        }
-      }
-    },
-    "RoleScope": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "kind",
-        "resource_ids"
-      ],
-      "properties": {
-        "kind": {
-          "type": "string",
-          "enum": [
-            "tenant",
-            "area",
-            "site",
-            "self",
-            "team"
-          ]
-        },
-        "resource_ids": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "maxItems": 100
         }
       }
     },

@@ -98,26 +98,6 @@ final class AccessGrants
         self::setForUser($db, $tenant, $user, $role['id'], $scope, $keepRule ? 'rule' : 'manual', $keepRule ? $current['rule_id'] : null);
     }
 
-    /**
-     * PUENTE de las Tareas 3 a 7 (se borra en la Tarea 8). Atiende los role_ids viejos (0 o 1) de las cuentas.
-     * Copia el alcance viejo del rol a la persona. [] quita el acceso manual (vuelve al por defecto); lo que puso una regla se queda.
-     */
-    public static function assignLegacy(Database $db, AdminAccess $by, string $tenant, string $user, array $roleIds): void
-    {
-        $roleIds = array_values(array_unique($roleIds));
-        if (count($roleIds) > 1) { throw new ApiError(422, 'validation_failed', [], 'one_role_only'); }
-        $current = self::forUser($db, $tenant, $user);
-        if ($current !== null && (!$roleIds && $current['source'] !== 'manual')) { return; }
-        if ($current !== null) { $by->delegate(self::permissions($db, $tenant, $current['role_id']), $current['scope'], $user); }
-        if (!$roleIds) { self::grantDefault($db, $tenant, $user); return; }
-        $role = $db->one('SELECT * FROM roles WHERE tenant_id=? AND id=?', [$tenant, Util::bin($roleIds[0])]);
-        if (!$role) { throw new ApiError(422, 'validation_failed', [], 'role_not_found'); }
-        if (!$role['active']) { throw new ApiError(409, 'invalid_transition'); }
-        $scope = AccessScope::fromLegacyRole($db, $tenant, $role['id']);
-        $by->delegate(self::permissions($db, $tenant, $role['id']), $scope, $user);
-        self::setForUser($db, $tenant, $user, $role['id'], $scope, 'manual');
-    }
-
     /** Access del contrato. */
     public static function dto(?array $g): ?array
     {

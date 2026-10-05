@@ -170,6 +170,11 @@ function tenantPurgeTests(Database $db): void
     $account = Util::bin(Util::uuid());
     $db->run('INSERT INTO admin_accounts (tenant_id,id,user_id,email,password_hash,is_platform_admin) VALUES (?,?,?,?,?,FALSE)', [$tenant, $account, $u['id'], Util::uuid() . '@example.test', password_hash(Util::uuid(), PASSWORD_DEFAULT)]);
     AccessGrants::setForGroupAccount($db, $other, $tenant, $account, $otherRole, AccessScope::all());
+    // Tablas viejas congeladas (0043, se borran en la fase 4): sus filas tampoco frenan el borrado, ni la de la cuenta en otra empresa.
+    $db->run('INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)', [$tenant, $u['id'], $role]);
+    $siteRole = Util::bin(Util::uuid()); $db->run("INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,'Rol viejo de sede','site')", [$tenant, $siteRole]);
+    $db->run('INSERT INTO role_site_scopes (tenant_id,role_id,site_id) VALUES (?,?,?)', [$tenant, $siteRole, $u['site_id']]);
+    $db->run('INSERT INTO admin_account_roles (admin_tenant_id,admin_id,tenant_id,role_id) VALUES (?,?,?,?)', [$tenant, $account, $other, $otherRole]);
     $t = expect(adminRequest($mine, 'GET', '/tenants/' . $tid), 200, 'read tenant');
     $body = ['confirm_name' => $t['name'], 'accept_hardening_loss' => false];
     // La contrasena (reauth de 5 minutos) es el mismo mecanismo que prueban las cuentas del panel.
@@ -182,6 +187,8 @@ function tenantPurgeTests(Database $db): void
         check((int) $db->one("SELECT COUNT(*) n FROM `$table` WHERE tenant_id=?", [$tenant])['n'] === 0, "$table emptied");
     }
     check(!$db->one('SELECT 1 x FROM access_grants WHERE tenant_id=? OR admin_tenant_id=?', [$tenant, $tenant]) && !$db->one('SELECT 1 x FROM access_grant_units WHERE tenant_id=?', [$tenant]), 'access grants purged, also those in other companies');
+    check(!$db->one('SELECT 1 x FROM admin_account_roles WHERE tenant_id=? OR admin_tenant_id=?', [$tenant, $tenant]) && !$db->one('SELECT 1 x FROM user_roles WHERE tenant_id=?', [$tenant])
+        && !$db->one('SELECT 1 x FROM role_site_scopes WHERE tenant_id=?', [$tenant]), 'frozen old access tables purged too');
     check((int) $db->one('SELECT COUNT(*) n FROM audit_log WHERE tenant_id=?', [$tenant])['n'] >= $audit, 'audit kept');
     check((bool) $db->one('SELECT 1 x FROM tenants WHERE tenant_id=? AND deleted_at IS NOT NULL', [$tenant]), 'minimal record kept');
     check(!(bool) $db->one('SELECT 1 x FROM principals WHERE tenant_id=? AND detached=FALSE AND kind<>\'system\'', [$tenant]), 'identities detached');
