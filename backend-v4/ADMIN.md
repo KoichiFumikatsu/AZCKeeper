@@ -8,7 +8,7 @@ Implementa 47 operaciones administrativas y las cuatro de sesión bajo `/v1`, co
 | Empresas | `GET/POST /tenants`; `GET/PATCH /tenants/{id}`; `PATCH /tenants/{id}/rbac-gate` |
 | Organización | `GET/POST /organization`; `GET/PATCH /organization/{id}` |
 | Horarios | `GET/POST /schedules`; `GET/PUT /schedules/{id}` |
-| Miembros | `GET/POST /users`; `GET/PATCH /users/{id}`; `PUT /users/{id}/roles` |
+| Miembros | `GET/POST /users`; `GET/PATCH /users/{id}`; `PUT /users/{id}/access` |
 | Equipos | `GET /tenants/{id}/devices`; `GET/PATCH /devices/{id}`; `POST /devices/{id}/assignment`; `GET/POST /devices/{id}/commands`; `POST /enrollments` |
 | Políticas | `GET/POST /policies`; `GET/PATCH /policies/{id}` |
 | RBAC | `GET/POST /roles`; `GET/PATCH /roles/{id}`; `GET /permissions`; `GET/PATCH /permissions/{code}` |
@@ -21,11 +21,17 @@ Implementa 47 operaciones administrativas y las cuatro de sesión bajo `/v1`, co
 
 `Auth::admin()` integra `AdminAuth` en el router existente. Pre-sesión de cinco minutos, password hash, cookie Secure/HttpOnly/SameSite=Strict y CSRF HMAC-SHA256 ligado a la cookie, usando la clave de configuración fuera de BD. Login consume la pre-sesión y emite otra cookie. Todas las mutaciones exigen CSRF y Origin canónico. Cada petición comprueba cuenta, usuario y empresa activos, revisión de cuenta, revocación, ocho horas absolutas y treinta minutos de inactividad en `admin_sessions`. Reauth dura cinco minutos; logout revoca la sesión. No se habilita login al crear Colaboradores ni al asignar roles.
 
-`x-permission` del contrato selecciona el permiso; comandos usan la correspondencia exacta documentada por acción. `AdminAccess` consulta `user_roles`, `roles`, `role_permissions`, `permissions` y las tablas de alcance en cada petición. El atributo de plataforma está en `admin_accounts`: un nombre de rol nunca lo concede. Las capacidades de plataforma siguen exigiendo un permiso existente en el catálogo.
+`x-permission` del contrato selecciona el permiso; los comandos usan la correspondencia exacta documentada por acción. `AdminAccess` lee en cada petición el único acceso de la persona (`access_grants`: 1 rol + 1 alcance) o, para una cuenta de grupo, su acceso en esa empresa. El atributo de plataforma está en `admin_accounts`: un nombre de rol nunca lo concede.
 
-`X-Tenant-ID` es obligatorio donde lo exige el contrato; en rutas de empresa manda el ID del path. Se verifica contra la cuenta antes del handler. Las consultas por ID, joins, referencias de cuerpos, filtros, colas, auditoría e idempotencia incluyen tenant. Los listados/detalles de miembros y equipos aplican alcance de área/sede/propio; productividad usa la asignación organizativa histórica. Operaciones de configuración de toda la empresa requieren alcance tenant. IDs fuera del alcance devuelven 404.
+`X-Tenant-ID` es obligatorio donde lo exige el contrato; en rutas de empresa manda el ID del path. Se verifica contra la cuenta antes del handler. Las consultas por ID, joins, referencias de cuerpos, filtros, colas, auditoría e idempotencia incluyen tenant. Los listados y detalles de personas, equipos, actividad, reportes, ausencias, cobertura, señales de cumplimiento y logs aplican el alcance de la persona. Puede ser: todo; filtros Empresa/Ciudad/Sede/Área (O dentro de un filtro, Y entre filtros); su equipo; o solo lo propio. Productividad usa la asignación organizativa histórica.
 
-Autogestión de roles exige gate empresa y `roles.gestionar`; plataforma puede operar con el gate apagado. Solo plataforma activa el gate o concede el meta-permiso. Crear/clonar desde una definición, editar y asignar roles valida los permisos y el alcance contra los del actor; un delegado tampoco puede editar/asignar indirectamente un rol con `roles.gestionar`. No puede otorgar permisos de plataforma ni no delegables. Cambiar roles invalida sesiones de los afectados y revisiones de autorización; revocar el gate surte efecto en la petición siguiente.
+IDs fuera del alcance devuelven 404. Un filtro pedido, un objetivo de regla, una persona creada o movida fuera del alcance, o una pantalla de todo el cliente, devuelven 403 `scope_denied`. La API externa usa credenciales de todo el cliente y no tiene alcance de cuenta.
+
+Autogestión de accesos: exige la compuerta de la empresa, la función `autogestion_accesos` y `roles.gestionar`. Plataforma puede operar con la compuerta apagada.
+
+Crear o editar roles exige alcance «todo». Un rol nunca incluye permisos de funciones no contratadas (`feature_not_contracted:<f>`). Dar un acceso valida que el rol no tenga permisos que el actor no tiene (ni `roles.gestionar`, ni no delegables) y que el alcance no sea más amplio que el propio. Así nadie amplía su propio acceso (`delegation_exceeds_own_access`).
+
+La asignación por cargo propone el rol y nunca toca el alcance. Cambiar un acceso invalida las sesiones de la persona.
 
 Cuotas predeterminadas separadas de ingesta: admin 120/min, burst 30; tenant 600/min, burst 100. El harness configura cuotas mayores únicamente para pruebas. Auditoría append-only por actor real/tenant/recurso/request ID y nombres de campos; no contiene cuerpos, passwords, tokens, PIN o texto de motivos libre. `If-Match` obligatorio en las rutas indicadas; respuestas versionadas incluyen ETag. Idempotencia transaccional cifrada durante 24 horas para acciones, asignación de equipos y despliegues.
 
