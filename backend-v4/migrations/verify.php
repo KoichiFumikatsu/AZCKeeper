@@ -65,8 +65,12 @@ try {
     verify(countRows($pdo, "SELECT COUNT(*) FROM information_schema.events WHERE event_schema = DATABASE()
         AND event_name = 'maintain_episode_partitions' AND status = 'ENABLED'
         AND interval_value = '1' AND interval_field = 'DAY'") === 1, 'daily partition maintenance event enabled');
-    verify(countRows($pdo, 'SELECT COUNT(*) FROM role_templates') === 8, 'eight seed roles');
-    verify(countRows($pdo, 'SELECT COUNT(*) FROM roles') === 8, 'platform role plus seven demo roles');
+    verify(countRows($pdo, 'SELECT COUNT(*) FROM role_templates') === 9, 'nine seed roles (Corporativo added in 0043)');
+    verify(countRows($pdo, 'SELECT COUNT(*) FROM roles') === 9, 'platform role plus eight demo roles');
+    verify(countRows($pdo, 'SELECT COUNT(*) FROM role_templates WHERE platform_only = FALSE AND offered = TRUE') === 5, 'five templates offered to new clients');
+    verify(countRows($pdo, "SELECT COUNT(*) FROM role_templates WHERE seed_key IN ('gerencia','coordinacion') AND name IN ('Gerente','Coordinador')") === 2, 'templates renamed');
+    verify(countRows($pdo, "SELECT COUNT(*) FROM access_grants WHERE tenant_id = 0x00000000000040008000000000000002 AND user_id = 0x10000000000040008000000000000007
+        AND role_id = 0x1000000000004000800000000000006b AND scope_kind = 'self' AND source = 'default'") === 1, 'demo collaborator migrated to one default access');
     verify(countRows($pdo, 'SELECT COUNT(*) FROM tenants WHERE rbac_self_management <> 0') === 0, 'RBAC gate defaults OFF');
     verify(countRows($pdo, 'SELECT COUNT(*) FROM tier') === 3, 'three seed tiers');
     verify(countRows($pdo, "SELECT COUNT(*) FROM role_permissions WHERE tenant_id <> 0x00000000000040008000000000000001 AND permission_code = 'roles.gestionar'") === 0, 'meta-permission not delegated by seed');
@@ -90,6 +94,8 @@ try {
     rejected($pdo, "UPDATE users SET firm_id = NULL WHERE tenant_id = $tenant AND id = $user", 1048, 'mandatory firm');
     rejected($pdo, "UPDATE users SET firm_id = " . seedId(2) . " WHERE tenant_id = $tenant AND id = $user", 1452, 'site cannot masquerade as firm');
     rejected($pdo, "INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES ($other,$user," . seedId(107) . ')', 1452, 'cross-tenant role binding');
+    rejected($pdo, "INSERT INTO access_grants (tenant_id,id,user_id,role_id) VALUES ($other," . fixtureId(90) . ",$user," . seedId(107) . ')', 1452, 'cross-tenant access grant');
+    rejected($pdo, "INSERT INTO access_grants (tenant_id,id,role_id) VALUES ($tenant," . fixtureId(91) . ',' . seedId(107) . ')', 3819, 'access grant needs exactly one holder');
     rejected($pdo, "INSERT INTO role_permissions VALUES ($tenant," . seedId(104) . ",'empresas.rbac_habilitar')", 1644, 'tenant cannot receive platform permission');
     $pdo->exec("INSERT INTO device_assignments (tenant_id,id,device_id,user_id,starts_at,reason)
         VALUES ($tenant,$deviceAssignment,$device,$user,'2026-01-01','test')");
