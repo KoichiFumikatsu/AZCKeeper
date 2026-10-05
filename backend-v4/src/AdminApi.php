@@ -326,13 +326,13 @@ final class AdminApi
     private function filterUsers(string $alias='u'): array
     {
         [$where,$args]=$this->access->usersSql($alias);
-        if (isset($_GET['company_id'])) { $this->org(Util::bin($_GET['company_id']),'company'); $where.=" AND $alias.company_id=?"; $args[]=Util::bin($_GET['company_id']); }
+        if (isset($_GET['company_id'])) { $this->org(Util::bin($_GET['company_id']),'company'); $this->access->requireFilter('company',Util::bin($_GET['company_id'])); $where.=" AND $alias.company_id=?"; $args[]=Util::bin($_GET['company_id']); }
         if (isset($_GET['country'])) { $where.=" AND EXISTS (SELECT 1 FROM org_units cs WHERE cs.tenant_id=$alias.tenant_id AND cs.id=$alias.site_id AND cs.country_code=?)"; $args[]=$_GET['country']; }
-        if (isset($_GET['city'])) { $where.=" AND EXISTS (SELECT 1 FROM org_units cy WHERE cy.tenant_id=$alias.tenant_id AND cy.id=$alias.site_id AND cy.city=?)"; $args[]=trim($_GET['city']); }
+        if (isset($_GET['city'])) { $this->access->requireFilter('city',trim($_GET['city'])); $where.=" AND EXISTS (SELECT 1 FROM org_units cy WHERE cy.tenant_id=$alias.tenant_id AND cy.id=$alias.site_id AND cy.city=?)"; $args[]=trim($_GET['city']); }
         foreach (['area_id','site_id','user_id','status'] as $f) {
             if (!isset($_GET[$f])) { continue; }
             $column=$f==='user_id'?'id':$f;
-            if ($f==='area_id' || $f==='site_id') { $this->org(Util::bin($_GET[$f]),substr($f,0,-3)); }
+            if ($f==='area_id' || $f==='site_id') { $this->org(Util::bin($_GET[$f]),substr($f,0,-3)); $this->access->requireFilter(substr($f,0,-3),Util::bin($_GET[$f])); }
             if ($f==='user_id') { $this->access->user(Util::bin($_GET[$f])); }
             $where.=" AND $alias.$column=?"; $args[]=$f==='status'?$_GET[$f]:Util::bin($_GET[$f]);
         }
@@ -752,13 +752,13 @@ final class AdminApi
         $filters=''; $fargs=[];
         foreach (['area_id','site_id','user_id'] as $f) {
             if (!isset($_GET[$f])) { continue; } $id=Util::bin($_GET[$f]);
-            if ($f==='user_id') { $this->access->user($id); } else { $this->org($id,substr($f,0,-3)); }
+            if ($f==='user_id') { $this->access->user($id); } else { $this->org($id,substr($f,0,-3)); $this->access->requireFilter(substr($f,0,-3),$id); }
             $filters.=" AND a.$f=?"; $fargs[]=$id;
         }
         // Empresa del grupo y pais de la sede (sin filtro = todo el grupo).
-        if (isset($_GET['company_id'])) { $id=Util::bin($_GET['company_id']); $this->org($id,'company'); $filters.=' AND a.company_id=?'; $fargs[]=$id; }
+        if (isset($_GET['company_id'])) { $id=Util::bin($_GET['company_id']); $this->org($id,'company'); $this->access->requireFilter('company',$id); $filters.=' AND a.company_id=?'; $fargs[]=$id; }
         if (isset($_GET['country'])) { $filters.=' AND EXISTS (SELECT 1 FROM org_units cs WHERE cs.tenant_id=a.tenant_id AND cs.id=a.site_id AND cs.country_code=?)'; $fargs[]=$_GET['country']; }
-        if (isset($_GET['city'])) { $filters.=' AND EXISTS (SELECT 1 FROM org_units cy WHERE cy.tenant_id=a.tenant_id AND cy.id=a.site_id AND cy.city=?)'; $fargs[]=trim($_GET['city']); }
+        if (isset($_GET['city'])) { $this->access->requireFilter('city',trim($_GET['city'])); $filters.=' AND EXISTS (SELECT 1 FROM org_units cy WHERE cy.tenant_id=a.tenant_id AND cy.id=a.site_id AND cy.city=?)'; $fargs[]=trim($_GET['city']); }
         $base="FROM %s x JOIN user_assignments a ON a.tenant_id=x.tenant_id AND a.id=x.user_assignment_id AND a.user_id=x.user_id JOIN users u ON u.tenant_id=x.tenant_id AND u.id=x.user_id WHERE x.tenant_id=? AND x.day>=? AND x.day<? AND $scope$filters";
         $params=[$this->tenant,$from,$to,...$args,...$fargs];
         $summary=$this->db->run('SELECT x.day,SUM(x.active_seconds) active_seconds,SUM(x.idle_seconds) idle_seconds,SUM(x.productive_seconds) productive_seconds,SUM(COALESCE(x.window_active_seconds,x.active_seconds)) window_active_seconds,SUM(COALESCE(x.unproductive_seconds,0)) unproductive_seconds,SUM(x.unclassified_seconds) unclassified_seconds,SUM(x.expected_seconds) expected_seconds,MIN(x.calculated_at) calculated_at,MIN(x.data_through) data_through,GROUP_CONCAT(DISTINCT x.calculation_version) calculation_version '.sprintf($base,'day_summary').' GROUP BY x.day ORDER BY x.day',$params)->fetchAll();

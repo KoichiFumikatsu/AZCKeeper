@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-use Keeper\{AccessGrants,AccessScope,Database,Util};
+use Keeper\{AccessGrants,AccessScope,Config,Database,Util};
 
 // Fase 3 de v4-clientes-funciones-accesos: 1 rol + 1 alcance por persona (2026-10-05).
 
@@ -228,4 +228,61 @@ function accessEvaluationTests(Database $db): void
     $mine = expect(adminRequest($area, 'GET', '/me/access'), 200, 'my access');
     check(array_column($mine['permissions'], 'scopes', 'code') === ['equipos.ver' => ['filters'], 'reglas.ver' => ['filters'], 'usuarios.ver' => ['filters']], 'my access reports filters');
     echo 'PASS access evaluation (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}
+
+/** Cada login gasta el cupo de prelogin que comparte toda la suite (10 de golpe, 20/min); lo deja lleno antes de varios logins seguidos. */
+function accessResetPreloginQuota(): void
+{
+    $key = hash('sha256', 'bootstrap:admin-auth:' . hash('sha256', 'prelogin'));
+    @unlink(Config::get('RATE_DIR') . '/' . substr($key, 0, 2) . '/' . $key . '.json');
+}
+
+// Casos del §8 sobre listados reales: personas, equipos, reporte de personas, cobertura, actividad, reglas y API externa.
+function accessCaseTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $o = accessOrg($db); $tid = Util::id($o['tenant']);
+    $perms = ['usuarios.ver', 'equipos.ver', 'reportes.ver', 'cobertura.ver', 'reglas.ver', 'reglas.editar'];
+    accessResetPreloginQuota();
+    $zafra = accessAccount($db, $o, 'zafra', $perms, AccessScope::all());
+    $bl = accessAccount($db, $o, 'bl2', $perms, new AccessScope('filters', [$o['bl']]));
+    $juan = accessAccount($db, $o, 'juan', $perms, new AccessScope('filters', [], [], [], [$o['agentes']]));
+    $coord2 = accessAccount($db, $o, 'coord2', $perms, new AccessScope('filters', [], [], [$o['teq'], $o['med']], [$o['agentes']]));
+    $med = accessAccount($db, $o, 'jur808', $perms, new AccessScope('filters', [], ['Medellín']));
+    $cases = [
+        [$zafra, ['ag808', 'agTorre', 'base', 'bl1', 'bl2', 'coord2', 'juan', 'jur808', 'zafra'], 'Zafra ve todo'],
+        [$bl, ['bl1', 'bl2'], 'la gerente de BilingueLaw solo ve BilingueLaw'],
+        [$juan, ['ag808', 'agTorre', 'bl1', 'coord2', 'juan'], 'Juan solo ve Agentes de servicio, en todas las sedes'],
+        [$coord2, ['ag808', 'bl1', 'coord2', 'juan'], 'el coordinador de dos sedes solo ve esas dos'],
+    ];
+    $day = '?from=2026-09-10&to=2026-09-11';
+    foreach ($cases as [$a, $want, $label]) {
+        $active = array_values(array_diff($want, ['base'])); // base no tiene equipo ni actividad en el rango
+        check(accessSeen($o, $a, '/users?limit=100') === $want, "$label: personas");
+        check(accessSeen($o, $a, '/tenants/' . $tid . '/devices?limit=100', 'user_id') === $active, "$label: equipos");
+        check(accessSeen($o, $a, '/reports/people' . $day, 'user_id') === $active, "$label: reporte de personas");
+        check(accessSeen($o, $a, '/devices/install-coverage?limit=100', 'user_id') === $want, "$label: cobertura");
+    }
+    // Detalle fuera del alcance: 404; dentro: 200.
+    check(adminRequest($juan, 'GET', '/users/' . Util::id($o['jur808']['id']) . '/activity' . $day)[0] === 404, 'actividad fuera del alcance: 404');
+    check(adminRequest($juan, 'GET', '/users/' . Util::id($o['ag808']['id']) . '/activity' . $day)[0] === 200, 'actividad dentro del alcance');
+    // Filtro pedido fuera del alcance: scope_denied (§7). Dentro, o en un filtro «todas», acota.
+    $denied = fn (array $r) => $r[0] === 403 && ($r[1]['detail'] ?? null) === 'scope_denied';
+    check($denied(adminRequest($juan, 'GET', '/users?area_id=' . Util::id($o['juridica']))), 'Juan no filtra por otra área');
+    check(accessSeen($o, $juan, '/users?site_id=' . Util::id($o['torre'])) === ['agTorre'], 'filtrar dentro del alcance acota');
+    check($denied(adminRequest($bl, 'GET', '/users?company_id=' . Util::id($o['azc']))), 'BilingueLaw no filtra por AZC');
+    check($denied(adminRequest($juan, 'GET', '/reports/people' . $day . '&area_id=' . Util::id($o['juridica']))), 'reportes: área ajena');
+    check($denied(adminRequest($juan, 'GET', '/reports/productivity?from=2026-09-01&to=2026-10-01&area_id=' . Util::id($o['juridica']))), 'productividad: área ajena');
+    check(accessSeen($o, $med, '/users?limit=100') === ['ag808', 'coord2', 'jur808'], 'alcance por ciudad');
+    check($denied(adminRequest($med, 'GET', '/users?city=Cali')), 'ciudad ajena');
+    check(accessSeen($o, $med, '/users?city=MEDELLIN') === ['ag808', 'coord2', 'jur808'], 'ciudad propia sin mayúsculas ni tildes');
+    // Reglas: el objetivo debe estar dentro del alcance.
+    $rule = fn (string $type, string $target) => ['name' => 'Regla ' . $type, 'target_type' => $type, 'target_id' => Util::id($target), 'enabled' => true, 'rules' => []];
+    check(adminRequest($juan, 'POST', '/policies', $rule('area', $o['agentes']))[0] === 201, 'Juan pone reglas a su área');
+    check($denied(adminRequest($juan, 'POST', '/policies', $rule('site', $o['teq']))), 'Juan no pone reglas a una sede entera');
+    check($denied(adminRequest($juan, 'GET', '/policies')), 'pantallas de todo el cliente: scope_denied');
+    // API externa: la credencial es de todo el cliente (no hay alcance de cuenta).
+    $key = externalCredential($db, $o['base'], 'api_key', ['team:read']);
+    check(count(expect(externalRequest('/ext/v1/my-team' . $day . '&limit=100', $key['headers']), 200, 'external team')['data']) === 9, 'la API externa ve todo el cliente');
+    echo 'PASS access cases (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

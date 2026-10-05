@@ -90,6 +90,16 @@ final class AdminAccess
         return true;
     }
 
+    /** Filtro pedido en un listado (empresa, ciudad, sede o area): fuera del alcance, 403 scope_denied (§7). En «todas», acota. */
+    public function requireFilter(string $kind, string $value): void
+    {
+        if ($this->scope->kind !== 'filters' || !($list = $this->scope->list($kind))) { return; }
+        $inside = $kind === 'city'
+            ? in_array(AccessScope::cityKey($value), array_map([AccessScope::class, 'cityKey'], $list), true)
+            : in_array($value, $list, true);
+        if (!$inside) { throw new ApiError(403, 'permission_denied', [], 'scope_denied'); }
+    }
+
     /** Delegacion segura (§4): nadie da permisos que no tiene ni un alcance mas amplio que el propio. */
     public function delegate(array $permissions, AccessScope $scope, ?string $target): void
     {
