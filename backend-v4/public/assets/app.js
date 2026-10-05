@@ -4,6 +4,7 @@ import { coordinator } from './coordinator.js';
 import './tablekit.js';
 import { operations, operationPaths } from './operations.js';
 import { intake, intakeProbe } from './intake.js';
+import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings } from './hardening-settings.js';
 import './menu.js';
 
 const page = document.body.dataset.page;
@@ -411,6 +412,22 @@ async function hardeningSection(d) {
   const undo = node('button', 'Revertir'); undo.type = 'button';
   const fb = node('p', undefined, 'help'); fb.setAttribute('role', 'status');
   const problem = node('p', undefined, 'error-message'); problem.hidden = true; problem.setAttribute('role', 'alert');
+  // Cuenta de IT de la empresa: sin su contraseña la API niega "Endurecer" (409). Quien puede configurarla (permiso
+  // de endurecimiento sobre toda la empresa) ve el estado y el boton; para el resto se omite.
+  const itBar = node('div', undefined, 'toolbar'); itBar.hidden = true;
+  const itSummary = node('p', undefined, 'help');
+  const configure = node('button', 'Configurar cuenta de IT'); configure.type = 'button';
+  const canConfigure = canConfigureHardening(await loadHardeningAccess());
+  let settings = null;
+  if (canConfigure) { try { settings = await loadHardeningSettings(tenant); } catch { settings = null; } }
+  const drawIt = () => {
+    itSummary.textContent = settings ? hardeningSummary(settings) : '';
+    itBar.hidden = !canConfigure || !settings || settings.configured;
+  };
+  configure.addEventListener('click', () => openHardeningSettings(tenant, { onSaved: saved => {
+    settings = saved; drawIt(); showError(problem, null); fb.textContent = 'Cuenta de IT guardada. Ya puedes endurecer el equipo.';
+  } }));
+  itBar.append(configure); drawIt();
   const send = async (action, button) => {
     const verb = action === 'harden' ? 'endurecer' : 'revertir el endurecimiento de';
     if (prompt(`Vas a ${verb} ${d.hostname}. Escribe el nombre del equipo para confirmar.`) !== d.hostname) return;
@@ -420,12 +437,14 @@ async function hardeningSection(d) {
       fb.textContent = `Orden enviada. El equipo la ejecuta en su próxima sincronización (unos 2 minutos); el resultado aparece en su registro y en este estado.`;
     } catch (error) {
       showError(problem, error.code === 'agent_too_old' ? new Error('El agente de este equipo es anterior a 4.0.10: actualízalo antes de endurecerlo desde el panel.')
+        : error.status === 409 && action === 'harden' && settings?.configured ? new Error('No se puede endurecer: el equipo requiere revertir primero (o no está activo).')
         : error.status === 409 && action === 'harden' ? new Error('No se puede endurecer: falta cargar la clave de la cuenta de IT de la empresa, o el equipo requiere revertir primero.') : error);
+      if (error.status === 409 && error.code !== 'agent_too_old' && action === 'harden' && canConfigure && !settings?.configured) itBar.hidden = false;
     } finally { button.disabled = false; }
   };
   harden.addEventListener('click', () => send('harden', harden));
   undo.addEventListener('click', () => send('unharden', undo));
-  bar.append(harden, undo); section.append(bar, fb, problem);
+  bar.append(harden, undo); section.append(itSummary, bar, fb, problem, itBar);
   return section;
 }
 // Cambio del nombre de Windows del equipo (comando rename_computer). La placa de activo ACT_0015 se convierte a

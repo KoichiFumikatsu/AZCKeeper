@@ -2,6 +2,7 @@ import { api, isUuid, setTenant, readSession, refreshCsrf, goToLogin, errorMessa
 import './menu.js';
 import './tablekit.js';
 import { applyNavAccess } from './nav-access.js';
+import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings } from './hardening-settings.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
 // de la API; lo que la cuenta no puede ver se explica en vez de mostrarse vacío.
@@ -1767,9 +1768,24 @@ async function settingsPage() {
     catch (e) { msg.textContent = e.problem?.detail === 'raw_days_below_late_arrival' ? 'El detalle no puede guardarse menos días que el plazo en que llegan datos atrasados de los equipos (30).' : errorMessage(e); }
     finally { save.disabled = false; }
   });
+  // Cuenta de IT para endurecer equipos: ajuste de toda la empresa (permiso de endurecimiento con alcance empresa y
+  // funcion contratada). Sin el, la seccion no aparece.
+  if (canConfigureHardening(await loadHardeningAccess())) {
+    const settings = await loadHardeningSettings(tenant);
+    if (settings) {
+      const hs = surface('Seguridad de cuentas de Windows');
+      const state = el('p'); hs.append(badge(settings.configured ? 'Configurada' : 'Sin configurar', settings.configured ? 'good' : 'warn'), state);
+      state.textContent = hardeningSummary(settings);
+      hs.append(el('p', 'La cuenta de IT es la administradora que queda en cada equipo endurecido. Sin su contraseña no se puede endurecer ningún equipo.', 'help'));
+      const hmsg = el('p', '', 'help'); hmsg.setAttribute('role', 'status');
+      const open = el('button', settings.configured ? 'Cambiar cuenta de IT' : 'Configurar cuenta de IT', settings.configured ? undefined : 'primary'); open.type = 'button';
+      open.addEventListener('click', () => openHardeningSettings(tenant, { onSaved: saved => { state.textContent = hardeningSummary(saved); hs.querySelector('.badge').replaceWith(badge('Configurada', 'good')); open.textContent = 'Cambiar cuenta de IT'; open.className = ''; hmsg.textContent = 'Guardado.'; done(); } }));
+      const actions = el('div', undefined, 'actions'); actions.append(open); hs.append(actions, hmsg);
+    }
+  }
   const more = surface('Otros ajustes');
   const ul = el('ul');
-  [['Marca, logo y colores', '/empresas.php'], ['Horarios', '/horarios.php'], ['Festivos', '/festivos.php'], ['Clasificación de apps', '/clasificacion.php'], ['Planes', '/planes.php'], ['Fuentes de datos (AZC One)', '/fuentes.php'], ['Seguridad de cuentas de Windows', '/equipos.php']]
+  [['Marca, logo y colores', '/empresas.php'], ['Horarios', '/horarios.php'], ['Festivos', '/festivos.php'], ['Clasificación de apps', '/clasificacion.php'], ['Planes', '/planes.php'], ['Fuentes de datos (AZC One)', '/fuentes.php']]
     .forEach(([t, href]) => { const li = el('li'); const a = el('a', t); a.href = href; li.append(a); ul.append(li); });
   more.append(ul);
 }
