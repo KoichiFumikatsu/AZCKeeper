@@ -42,7 +42,7 @@ export async function openHardeningSettings(tenant, { onSaved } = {}) {
   const footer = el('div', undefined, 'dialog-footer'); const cancel = el('button', 'Cancelar'); cancel.type = 'button'; const ok = el('button', 'Guardar', 'primary'); ok.type = 'submit';
   footer.append(cancel, ok); form.append(error, footer); dialog.append(form); document.body.append(dialog);
   cancel.addEventListener('click', () => dialog.close()); dialog.addEventListener('close', () => dialog.remove());
-  const show = e => { error.textContent = typeof e === 'string' ? e : errorMessage(e); error.hidden = !e; };
+  const show = e => { error.textContent = !e ? '' : typeof e === 'string' ? e : errorMessage(e); error.hidden = !e; };
   const labeled = (text, input, help) => { const l = el('label', text); l.append(input); body.append(l); if (help) body.append(el('p', help, 'help')); return input; };
 
   body.append(el('p', current.configured
