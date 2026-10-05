@@ -767,7 +767,7 @@ async function tenantsPage() {
         if (status && status.value !== c.status) patch.status = status.value;
         let saved = await api('PATCH', `/tenants/${c.id}`, { tenant: c.id, body: patch, ifMatch: c.version });
         if (f) saved = await api('POST', `/tenants/${c.id}/logo`, { tenant: c.id, body: { content_type: f.type, data: await fileBase64(f) }, ifMatch: saved.version });
-        if (gate && gate.checked !== c.rbac_self_management) await api('PATCH', `/tenants/${c.id}/rbac-gate`, { tenant: c.id, body: { enabled: gate.checked }, ifMatch: saved.version });
+        if (gate && gate.checked !== c.rbac_self_management) await api('PATCH', `/tenants/${c.id}/rbac-gate`, { tenant: c.id, body: { enabled: gate.checked, reason: gate.checked ? 'Activada desde la ficha de la empresa' : 'Revocada desde la ficha de la empresa' }, ifMatch: saved.version });
         const from = groupOf(c.id)?.id || '';
         if (group && group.value !== from) {
           const move = async (g, ids) => api('PATCH', `/company-groups/${g.id}`, { tenant: PLATFORM_TENANT, body: { name: g.name, tenant_ids: ids }, ifMatch: g.version });
