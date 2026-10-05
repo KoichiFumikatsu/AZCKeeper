@@ -2,6 +2,7 @@ import { api, isUuid, setTenant, readSession, refreshCsrf, goToLogin, errorMessa
 import './menu.js';
 import './tablekit.js';
 import { applyNavAccess } from './nav-access.js';
+import { scopeSummary, sameAccess } from './access-scope.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings } from './hardening-settings.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
@@ -261,13 +262,54 @@ const moduleNames = { usuarios: 'Personas', equipos: 'Equipos', reglas: 'Reglas'
   organizacion: 'Organización', horarios: 'Horarios', festivos: 'Festivos', cumplimiento: 'Doble empleo y apps sospechosas', cobertura: 'Cobertura de instalación',
   hardening: 'Seguridad de cuentas de Windows', roles: 'Roles y permisos', tiers: 'Planes', empresas: 'Empresa', notificaciones: 'Notificaciones',
   integraciones: 'Integraciones', auditoria: 'Auditoría', operacion: 'Operación del panel', releases: 'Versiones del agente', migration: 'Migración desde K3', permisos: 'Catálogo de permisos' };
-// Un rol ya no tiene alcance (§4): se describe por sus permisos. El alcance va en el acceso de cada persona.
-const roleText = role => `${role.permissions.length} permisos`;
-// Hasta la Tarea 9 (editor de acceso): si la persona ya tenia ese rol se conserva su alcance; si no, el por defecto:
-// solo lo propio para una persona, toda la empresa para una cuenta de grupo (alli solo valen «todo» o filtros).
-const accessScopeText = (scope, n) => scope.kind === 'all' ? 'Toda la empresa' : scope.kind === 'self' ? 'Solo lo propio' : scope.kind === 'team' ? 'Su equipo (quienes le reportan)'
-  : [...scope.company_ids, ...scope.cities, ...scope.site_ids, ...scope.area_ids].map(id => n.get(id) || id).join(', ') || 'Nada';
-const defaultScope = group => ({ kind: group ? 'all' : 'self', company_ids: [], cities: [], site_ids: [], area_ids: [] });
+// Editor de un acceso: rol (qué puede hacer) + alcance (qué datos ve), con la frase legible al pie (§4 y §5).
+// El alcance siempre se muestra y se envía tal cual: cambiar el rol no lo toca, y ampliarlo exige elegirlo.
+// groupOnly: cuenta de grupo en otra empresa, solo «todo» o filtros; sin acceso previo no hay alcance por defecto.
+function accessEditor(parent, { roles, org, current = null, groupOnly = false }) {
+  const box = el('fieldset', undefined, 'perm-group'); box.append(el('legend', 'Acceso al panel')); parent.append(box);
+  const n = names(org);
+  const role = el('select'); role.append(new Option('Elige el rol…', ''));
+  roles.filter(r => r.active || r.id === current?.role_id).sort((a, b) => a.name.localeCompare(b.name, 'es'))
+    .forEach(r => role.append(new Option(r.active ? r.name : `${r.name} (inactivo)`, r.id)));
+  role.value = current?.role_id || ''; labeled(box, 'Rol (qué puede hacer)', role);
+  const kind = el('select');
+  if (groupOnly && !current) kind.append(new Option('Elige el alcance…', ''));
+  [['all', 'Todo el cliente'], ['filters', 'Solo ciertas empresas, ciudades, sedes o áreas'], ...(groupOnly ? [] : [['team', 'Su equipo (ella y quienes le reportan)'], ['self', 'Solo lo propio']])]
+    .forEach(([v, t]) => kind.append(new Option(t, v)));
+  kind.value = current?.scope.kind || (groupOnly ? '' : 'self'); labeled(box, 'Alcance (qué datos ve)', kind);
+  const filters = el('div'); box.append(filters);
+  const had = key => current?.scope[key] || [];
+  // Lo que ya tiene se conserva aunque la sede o el área esté inactiva: guardar no le quita alcance a escondidas.
+  const units = (k, key) => org.filter(o => o.kind === k && (o.active || had(key).includes(o.id))).sort((a, b) => a.name.localeCompare(b.name, 'es')).map(o => [o.id, o.name]);
+  const cities = [...new Set([...org.filter(o => o.kind === 'site' && o.city).map(o => o.city), ...had('cities')])].sort((a, b) => a.localeCompare(b, 'es')).map(c => [c, c]);
+  const picked = {};
+  for (const [key, title, items] of [['company_ids', 'Empresas', units('company', 'company_ids')], ['cities', 'Ciudades', cities], ['site_ids', 'Sedes', units('site', 'site_ids')], ['area_ids', 'Áreas', units('area', 'area_ids')]]) {
+    const fs = el('fieldset', undefined, 'perm-group'); fs.append(el('legend', `${title} (sin marcar = todas)`)); filters.append(fs);
+    if (items.length) picked[key] = checks(fs, items, had(key));
+    else { picked[key] = []; fs.append(el('p', `No hay ${title.toLowerCase()} creadas.`, 'help')); }
+  }
+  const line = el('p', '', 'help'); line.setAttribute('aria-live', 'polite'); box.append(line);
+  const read = () => {
+    if (!role.value) return null;
+    const scope = { kind: kind.value, company_ids: [], cities: [], site_ids: [], area_ids: [] };
+    if (kind.value === 'filters') for (const key of Object.keys(picked)) scope[key] = picked[key].filter(c => c.checked).map(c => c.value);
+    return { role_id: role.value, scope };
+  };
+  const problem = () => {
+    const a = read(); if (!a) return 'Elige el rol.';
+    if (!a.scope.kind) return 'Elige el alcance.';
+    return a.scope.kind === 'filters' && !['company_ids', 'cities', 'site_ids', 'area_ids'].some(k => a.scope[k].length) ? SCOPE_INCOMPLETE : null;
+  };
+  const valid = () => problem() === null;
+  const sync = () => {
+    filters.hidden = kind.value !== 'filters'; const a = read();
+    line.textContent = !a ? (current ? 'Sin rol elegido: conserva su acceso actual.' : 'Sin rol elegido: no tendrá acceso al panel.')
+      : !a.scope.kind ? 'Elige el alcance: qué datos verá.' : scopeSummary(role.selectedOptions[0].textContent, a.scope, n);
+  };
+  box.addEventListener('change', sync); sync();
+  return { read, valid, problem };
+}
+const SCOPE_INCOMPLETE = 'Marca al menos una empresa, ciudad, sede o área, o elige otro alcance.';
 function dialogShell(title) {
   const dialog = el('dialog'); const form = el('form'); form.noValidate = true; form.append(el('h2', title));
   const body = el('div', undefined, 'dialog-body'); form.append(body);
@@ -309,15 +351,14 @@ async function accounts() {
   const perCompany = new Map();
   const companyData = async id => {
     if (!perCompany.has(id)) perCompany.set(id, Promise.all([optional(allPages('/roles', id)), optional(allPages('/organization', id))])
-      .then(([roles, org]) => ({ roles: roles || [], n: names(org || []) })));
+      .then(([roles, org]) => ({ roles: roles || [], org: org || [], n: names(org || []) })));
     return perCompany.get(id);
   };
   const ids = [...new Set(list.data.filter(a => a.kind === 'company').map(a => a.tenant_id))];
   const data = new Map(await Promise.all(ids.map(async id => [id, await companyData(id)])));
-  const rolesText = a => {
+  const accessText = a => {
     if (a.kind === 'platform') return 'Todo, en todas las empresas';
-    const d = data.get(a.tenant_id);
-    const own = a.access ? `${a.access.role_name} (${accessScopeText(a.access.scope, d?.n || new Map())})` : 'Sin acceso: no verá nada';
+    const own = a.access ? scopeSummary(a.access.role_name, a.access.scope, data.get(a.tenant_id)?.n || new Map()) : 'Sin acceso: no verá nada';
     return a.group_id ? `${own} · Grupo ${a.group_name}: también ${a.group_access.map(g => g.tenant_name).join(', ') || 'ninguna otra empresa aún'}` : own;
   };
   const render = rows => {
@@ -327,11 +368,11 @@ async function accounts() {
       ['Pendientes de primer ingreso', String(rows.filter(a => a.must_change_password && a.active).length), 'Con contraseña temporal sin cambiar']]);
     const s = surface('Cuentas con acceso al panel');
     s.append(el('p', platform
-      ? `Las cuentas de ${ownerName()} son superadmin: administran todas las empresas. Las de una empresa pertenecen a una persona y ven lo que permitan sus roles (toda la empresa, ciertas sedes o áreas, o solo lo propio).`
-      : 'Cada cuenta pertenece a una persona de tu empresa y ve lo que permitan sus roles: toda la empresa, ciertas sedes o áreas, o solo lo propio.', 'help'));
+      ? `Las cuentas de ${ownerName()} son superadmin: administran todas las empresas. Las de una empresa pertenecen a una persona y ven lo que permita su acceso: un rol y un alcance (todo, ciertas empresas, ciudades, sedes o áreas, su equipo o solo lo propio).`
+      : 'Cada cuenta pertenece a una persona de tu empresa y ve lo que permita su acceso: un rol y un alcance (todo, ciertas empresas, ciudades, sedes o áreas, su equipo o solo lo propio).', 'help'));
     const columns = [['Cuenta', a => { const d = el('div'); d.append(el('strong', a.user_name || a.display_name || a.email), el('small', a.email)); return d; }]];
     if (platform) columns.push(['Empresa', a => a.kind === 'platform' ? badge(`${ownerName()} · superadmin`, 'info') : a.tenant_name]);
-    columns.push(['Roles y alcance', rolesText],
+    columns.push(['Acceso', accessText],
       ['Estado', a => badge(!a.active ? 'Desactivada' : a.must_change_password ? 'Debe crear su contraseña' : 'Activa', !a.active ? 'bad' : a.must_change_password ? 'warn' : 'good')],
       ['Último ingreso', a => when(a.last_login_at)], ['Acciones', a => actionsFor(a)]);
     table(s, 'Cuentas', columns, rows, { filters: platform ? [['Empresa', a => a.kind === 'platform' ? ownerName() : a.tenant_name]] : [] });
@@ -344,7 +385,7 @@ async function accounts() {
   const actionsFor = a => {
     const box = el('div', undefined, 'actions no-margin'); const opts = { tenant: a.tenant_id };
     const button = (text, fn) => { const b = el('button', text, 'link-button'); b.type = 'button'; b.addEventListener('click', fn); box.append(b); };
-    if (a.kind === 'company') button('Roles', () => editRoles(a));
+    if (a.kind === 'company') button('Acceso', () => editAccess(a));
     if (a.kind === 'company' && platform && groupOf(a.tenant_id)) button('Grupo', () => editGroup(a));
     button(a.active ? 'Desactivar' : 'Activar', async () => {
       if (a.active && !confirm(`¿Desactivar la cuenta ${a.email}? Se cierran sus sesiones.`)) return;
@@ -364,8 +405,8 @@ async function accounts() {
     });
     return box;
   };
-  const roleItems = d => d.roles.filter(r => r.active).map(r => [r.id, r.name, roleText(r)]);
-  // Cuenta de grupo (dueños y directivos): roles en las OTRAS empresas del grupo. Su empresa casa usa "Roles".
+  // Cuenta de grupo (dueños y directivos): un acceso (rol + alcance) en cada una de las OTRAS empresas del grupo.
+  // Su empresa casa usa "Acceso". Devuelve { read, problem } o null si la empresa no está en un grupo.
   const groupSection = async (parent, home, current) => {
     const g = groupOf(home); if (!g) return null;
     const box = el('fieldset', undefined, 'perm-group'); box.append(el('legend', `Grupo empresarial: ${g.name}`)); parent.append(box);
@@ -377,41 +418,55 @@ async function accounts() {
     for (const tid of g.tenant_ids.filter(t => t !== home)) {
       const d = await companyData(tid);
       inner.append(el('h3', companyName(tid)));
-      const given = current?.group_access?.find(x => x.tenant_id === tid);
-      if (!d.roles.length) inner.append(el('p', 'Esta empresa no tiene roles todavía.', 'help'));
-      picks.push([tid, checks(inner, roleItems(d), given ? [given.role_id] : []), d, given]);
+      const given = current?.group_access?.find(x => x.tenant_id === tid) || null;
+      const use = el('input'); use.type = 'checkbox'; use.checked = !!given;
+      const ul = el('label', undefined, 'check'); ul.append(use, ' Tiene acceso en esta empresa'); inner.append(ul);
+      const holder = el('div'); inner.append(holder);
+      const ed = d.roles.length ? accessEditor(holder, { roles: d.roles, org: d.org, current: given, groupOnly: true }) : (holder.append(el('p', 'Esta empresa no tiene roles todavía.', 'help')), null);
+      const syncUse = () => { holder.hidden = !use.checked; }; use.addEventListener('change', syncUse); syncUse();
+      picks.push([tid, use, ed]);
     }
     const sync = () => { inner.hidden = !on.checked; }; on.addEventListener('change', sync); sync();
-    // Un acceso por empresa: el primer rol marcado. Si es el que ya tenia, conserva su alcance.
-    const grant = ([tid, boxes, d, given]) => {
-      const id = boxes.find(b => b.checked)?.value; if (!id) return null;
-      return { tenant_id: tid, role_id: id, scope: given?.role_id === id ? given.scope : defaultScope(true) };
+    // Una empresa marcada sin rol o sin alcance completo no se descarta en silencio: se pide completarla.
+    const problem = () => {
+      if (!on.checked) return null;
+      for (const [tid, use, ed] of picks) {
+        if (!use.checked) continue;
+        const p = ed ? ed.problem() : 'Esta empresa no tiene roles todavía.';
+        if (p) return `${companyName(tid)}: ${p}`;
+      }
+      return null;
     };
-    return () => on.checked ? { group_id: g.id, group_access: picks.map(grant).filter(Boolean) } : { group_id: null, group_access: [] };
+    const read = () => on.checked
+      ? { group_id: g.id, group_access: picks.filter(([, use, ed]) => use.checked && ed?.read()).map(([tid, , ed]) => ({ tenant_id: tid, ...ed.read() })) }
+      : { group_id: null, group_access: [] };
+    return { read, problem };
   };
   const editGroup = async a => {
     const { dialog, body, ok, show } = dialogShell(`Grupo de ${a.user_name || a.email}`);
     dialog.classList.add('wide-dialog');
-    const read = await groupSection(body, a.tenant_id, a);
+    const group = await groupSection(body, a.tenant_id, a);
     dialog.querySelector('form').addEventListener('submit', async ev => {
-      ev.preventDefault(); ok.disabled = true;
-      try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, ...read() } }); dialog.close(); await refresh(); }
+      ev.preventDefault();
+      const p = group?.problem(); if (p) { show(p); return; }
+      ok.disabled = true;
+      try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, ...group.read() } }); dialog.close(); await refresh(); }
       catch (e) { show(e); ok.disabled = false; }
     });
     dialog.showModal();
   };
-  const editRoles = async a => {
+  const editAccess = async a => {
     const d = await companyData(a.tenant_id);
-    const { dialog, body, ok, show } = dialogShell(`Roles de ${a.user_name || a.email}`);
+    const { dialog, body, ok, show } = dialogShell(`Acceso de ${a.user_name || a.email}`);
+    dialog.classList.add('wide-dialog');
     if (!d.roles.length) body.append(el('p', 'Esta empresa aún no tiene roles: créalos en Roles y permisos.', 'help'));
-    const boxes = checks(body, roleItems(d), a.access ? [a.access.role_id] : []);
+    const ed = accessEditor(body, { roles: d.roles, org: d.org, current: a.access });
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
-      const picked = boxes.filter(b => b.checked).map(b => b.value);
-      if (picked.length !== 1) { show('Elige un solo rol: cada persona tiene un acceso.'); return; }
+      const p = ed.problem(); if (p) { show(p); return; }
+      if (sameAccess(ed.read(), a.access)) { dialog.close(); return; }
       ok.disabled = true;
-      const access = { role_id: picked[0], scope: a.access?.role_id === picked[0] ? a.access.scope : defaultScope(false) };
-      try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, access } }); dialog.close(); await refresh(); }
+      try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, access: ed.read() } }); dialog.close(); await refresh(); }
       catch (e) { show(e.code === 'tenant_rbac_disabled' ? 'La empresa no tiene habilitada la gestión de sus propios roles: pídesela a la plataforma.' : e); ok.disabled = false; }
     });
     dialog.showModal();
@@ -431,7 +486,7 @@ async function accounts() {
     const display = labeled(ownerBox, 'Nombre', el('input')); display.maxLength = 160;
     ownerBox.append(el('p', 'Superadmin: entra a todas las empresas, crea empresas y cuentas, y cambia la marca del producto.', 'help'));
     const companyBox = el('div'); body.append(companyBox);
-    let person = null, boxes = [], readGroup = null, companyRoles = [];
+    let person = null, accessEd = null, group = null;
     const drawCompany = async id => {
       companyBox.replaceChildren(el('p', 'Cargando personas y roles…', 'help'));
       const [users, d] = await Promise.all([allPages('/users', id), companyData(id)]);
@@ -442,10 +497,9 @@ async function accounts() {
         .forEach(u => person.append(new Option(`${u.display_name}${u.email ? ' · ' + u.email : ''}`, u.id)));
       labeled(companyBox, '¿A quién pertenece?', person, users.length ? 'Si la persona no aparece, créala primero en Personas (o ya tiene cuenta).' : 'Esta empresa aún no tiene personas: créalas primero en Personas.');
       person.addEventListener('change', () => { const u = users.find(x => x.id === person.value); if (u?.email && !email.value) email.value = u.email; });
-      companyBox.append(el('p', 'Roles: deciden qué puede ver y hacer, y en qué sedes o áreas.', 'help'));
-      boxes = checks(companyBox, roleItems(d)); companyRoles = d.roles;
-      if (!d.roles.length) companyBox.append(el('p', 'Aún no hay roles en esta empresa: créalos en Roles y permisos. Sin roles la cuenta no verá nada.', 'help'));
-      readGroup = platform ? await groupSection(companyBox, id, null) : null;
+      accessEd = d.roles.length ? accessEditor(companyBox, { roles: d.roles, org: d.org, current: null }) : null;
+      if (!d.roles.length) companyBox.append(el('p', 'Aún no hay roles en esta empresa: créalos en Roles y permisos. Sin rol, la cuenta no verá nada.', 'help'));
+      group = platform ? await groupSection(companyBox, id, null) : null;
     };
     const sync = () => {
       const owner = company.value === PLATFORM_TENANT; ownerBox.hidden = !owner; companyBox.hidden = owner;
@@ -461,15 +515,14 @@ async function accounts() {
       if (!owner && !person?.value) { show('Elige a qué persona pertenece la cuenta.'); return; }
       if (owner && !display.value.trim()) { show('Escribe el nombre de la cuenta.'); return; }
       if (!pw.value) { show('Escribe tu contraseña para confirmar.'); return; }
-      const picked = owner ? [] : boxes.filter(b => b.checked).map(b => b.value);
-      if (picked.length > 1) { show('Elige un solo rol: cada persona tiene un acceso.'); return; }
+      if (!owner && accessEd?.read() && !accessEd.valid()) { show(accessEd.problem()); return; }
+      const groupProblem = owner ? null : group?.problem(); if (groupProblem) { show(groupProblem); return; }
       ok.disabled = true;
       try {
         await reauth(pw.value);
         const payload = owner
           ? { kind: 'platform', email: email.value.trim(), display_name: display.value.trim(), user_id: null }
-          : { kind: 'company', email: email.value.trim(), display_name: null, user_id: person.value,
-            access: picked.length ? { role_id: picked[0], scope: defaultScope(false) } : null, ...(readGroup ? readGroup() : {}) };
+          : { kind: 'company', email: email.value.trim(), display_name: null, user_id: person.value, ...(accessEd?.read() ? { access: accessEd.read() } : {}), ...(group ? group.read() : {}) };
         const r = await api('POST', '/panel-accounts', { tenant: company.value, body: payload });
         dialog.close(); showSecret(r.account, r.temporary_password); await refresh();
       } catch (e) {
@@ -813,6 +866,10 @@ async function people() {
   const isSuper = !!readSession()?.is_platform_admin;
   const [avail, allPlans] = await Promise.all([optional(api('GET', '/person-plans/available')),
     isSuper ? optional(api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).then(r => r?.data || []) : []]);
+  // Acceso al panel en la ficha (§5): lo edita quien puede dar accesos (superadmin o roles.gestionar).
+  const myAccess = isSuper ? null : await optional(api('GET', '/me/access'));
+  const canAssign = isSuper || !!myAccess?.permissions?.some(p => p.code === 'roles.gestionar');
+  const roles = canAssign ? ((await optional(allPages('/roles'))) || []) : [];
   const planName = id => avail?.data.find(p => p.id === id)?.name || allPlans.find(p => p.id === id)?.name || null;
   const defaultLabel = avail ? `Por defecto (${planName(avail.default_plan_id) || 'sin plan'})` : '';
   const ownPlan = u => avail?.data.find(p => p.id === u.plan_id) || null;
@@ -839,6 +896,7 @@ async function people() {
     table(s, 'Personas', [
       ['Nombre', u => { const a = el('a', u.display_name); a.href = `/miembro.php?id=${encodeURIComponent(u.id)}`; const d = el('div'); d.append(a); if (u.email) d.append(el('small', u.email)); return d; }],
       ['Cédula', u => u.document || '—'], ['Empresa', u => n.get(u.company_id) || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'],
+      ['Acceso al panel', u => u.access ? scopeSummary(u.access.role_name, u.access.scope, n) : 'Sin acceso al panel'],
       ['Estado', u => { const d = el('div'); d.append(badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : '')); if (u.monitoring === 'excluded') d.append(' ', badge('No se monitorea', 'info')); return d; }],
       ...(avail ? [['Plan', u => ownPlan(u)?.name || defaultLabel]] : []),
       ['Acciones', u => { if (u.managed_by) return el('small', `Gestionada por ${u.managed_by}`); const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(u)); return b; }]],
@@ -851,7 +909,7 @@ async function people() {
     const email = labeled(body, 'Correo (opcional)', el('input')); email.type = 'email'; email.maxLength = 254; email.value = u?.email || '';
     const boss = el('select'); boss.append(new Option('Nadie', ''));
     list.filter(x => x.status === 'active' && x.id !== u?.id).sort((a, b) => a.display_name.localeCompare(b.display_name, 'es')).forEach(x => boss.append(new Option(x.display_name, x.id)));
-    boss.value = u?.reports_to_user_id || ''; labeled(body, 'Reporta a (jefe)', boss, 'Con esto el jefe puede ver a su equipo si tiene un rol de alcance "Su equipo".');
+    boss.value = u?.reports_to_user_id || ''; labeled(body, 'Reporta a (jefe)', boss, 'Con esto el jefe puede ver a su equipo si su acceso tiene el alcance "Su equipo".');
     const mon = el('select'); [['auto', 'Automático (según el cargo)'], ['monitored', 'Siempre monitorear'], ['excluded', 'No monitorear (directivo, dueño)']].forEach(([v, t]) => mon.append(new Option(t, v)));
     mon.value = u?.monitoring_override || 'auto'; labeled(body, 'Monitoreo', mon);
     const grid = el('div', undefined, 'form-grid'); body.append(grid);
@@ -880,6 +938,7 @@ async function people() {
       const sync = () => { summary.textContent = receives(planSel.value); };
       planSel.addEventListener('change', sync); sync();
     }
+    const accessEd = u && canAssign && roles.length ? accessEditor(body, { roles, org, current: u.access }) : null;
     ok.textContent = u ? 'Guardar' : 'Crear persona';
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
@@ -887,6 +946,7 @@ async function people() {
       // Firma y horario pueden ir vacíos ("Sin firma" / "Sin horario"); sede, área y cargo no.
       const missing = ORG_FIELDS.filter(([k]) => k !== 'firm' && !selects[k].value).map(([, label]) => label.toLowerCase());
       if (missing.length) { show(`Falta ${missing.join(', ')}: créalo primero en Organización.`); return; }
+      if (accessEd?.read() && !accessEd.valid()) { show(accessEd.problem()); return; }
       if (status?.value === 'inactive' && u.status === 'active' && !confirm(`¿Marcar a ${u.display_name} como inactiva? Sus equipos quedan revocados y dejan de reportar.`)) return;
       ok.disabled = true;
       const payload = { display_name: name.value.trim(), document: doc.value.trim() || null, email: email.value.trim() || null, schedule_id: sched.value || null, reports_to_user_id: boss.value || null, monitoring_override: mon.value };
@@ -909,6 +969,12 @@ async function people() {
             show('Los datos se guardaron, pero el plan no: ' + (d === 'unknown_plan' ? 'Ese plan está inactivo; actívalo o elige otro.' : e.status === 412 ? 'Alguien más la modificó: recarga la página.' : errorMessage(e)));
             ok.disabled = false; render(); return;
           }
+        }
+        // Tercer paso: el acceso al panel (PUT /users/{id}/access). Solo si cambió: rol y alcance van siempre explícitos.
+        const wanted = accessEd?.read();
+        if (wanted && !sameAccess(wanted, u.access ? { role_id: u.access.role_id, scope: u.access.scope } : null)) {
+          try { saved = await api('PUT', `/users/${u.id}/access`, { body: wanted, ifMatch: u.version }); list = list.map(x => x.id === saved.id ? saved : x); u = saved; }
+          catch (e) { show('Los datos se guardaron, pero el acceso no: ' + (e.status === 412 ? 'Alguien más la modificó: recarga la página.' : errorMessage(e))); ok.disabled = false; render(); return; }
         }
         dialog.close(); render(); done();
       } catch (e) {
@@ -1695,7 +1761,7 @@ const AUDIT_FIELDS = {
   name: 'nombre', display_name: 'nombre', email: 'correo', document: 'cédula', timezone: 'zona horaria', branding: 'marca', permissions: 'permisos', scope: 'alcance', active: 'activo',
   enabled: 'activa', status: 'estado', days: 'días', start_local: 'hora de entrada', end_local: 'hora de salida', lunch_start_local: 'inicio de almuerzo', lunch_end_local: 'fin de almuerzo',
   day_hours: 'horas por día', firm_id: 'firma', site_id: 'sede', area_id: 'área', position_id: 'cargo', schedule_id: 'horario', reports_to_user_id: 'jefe', monitoring_override: 'monitoreo',
-  role_ids: 'roles', kind: 'tipo', user_id: 'persona', group_id: 'grupo', group_roles: 'roles en el grupo', password: 'contraseña', session: 'sesión', reauthentication: 'confirmación de contraseña',
+  access: 'acceso', kind: 'tipo', user_id: 'persona', group_id: 'grupo', group_access: 'accesos en el grupo', password: 'contraseña', session: 'sesión', reauthentication: 'confirmación de contraseña',
   rules: 'reglas', target_type: 'a quién aplica', target_id: 'a quién aplica', entitlements: 'módulos', badge_label: 'descripción', category: 'clasificación', key: 'aplicación', label: 'etiqueta',
   pattern: 'texto a reconocer', app_pattern: 'texto a vigilar', description: 'descripción', day: 'fecha', society_ids: 'sociedades', counts_for_presence: 'cuenta para presencia', source_ref: 'referencia',
   base_url: 'dirección', company: 'empresa en la fuente', token: 'clave', mode: 'modo', interval_minutes: 'frecuencia', domains: 'dominios', approve: 'decisión', rows: 'filas', parent_id: 'depende de',
@@ -2023,7 +2089,7 @@ async function rolesPage() {
   const render = () => {
     $('page-content').replaceChildren();
     const s = surface('Roles de la empresa');
-    s.append(el('p', 'Un rol es un conjunto de permisos. Lo que cada persona ve (su alcance) va en su acceso, no en el rol. Asígnalo en Cuentas del panel.', 'help'));
+    s.append(el('p', 'Un rol es un conjunto de permisos. Qué datos ve cada persona (su alcance) se elige en su ficha de Personas o en Cuentas del panel.', 'help'));
     table(s, 'Roles', [['Rol', r => r.assignable_by_rule ? `${r.name} · automático` : r.name],
       ['Permisos', r => { const d = el('details'); d.append(el('summary', `${r.permissions.length} permisos`)); const ul = el('ul'); r.permissions.forEach(c => ul.append(el('li', labelOf.get(c) || c))); d.append(ul); return d; }],
       ['Estado', r => badge(r.active ? 'Activo' : 'Inactivo', r.active ? 'good' : '')], ['Acciones', r => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(r)); return b; }]], list);
@@ -2037,7 +2103,7 @@ async function rolesPage() {
   const renderRules = () => {
     if (rules === null) return;
     const s = surface('Asignación automática');
-    s.append(el('p', 'Cuando el cargo o la jefatura de una persona cambia (aquí o desde AZC One), estas reglas le dan o le quitan roles solas. Solo usan roles marcados como "se puede dar automáticamente" y solo quitan lo que ellas pusieron.', 'help'));
+    s.append(el('p', 'Cuando el cargo o la jefatura de una persona cambia (aquí o desde AZC One), estas reglas le dan o le quitan roles solas. Solo usan roles marcados como "se puede dar automáticamente" y solo quitan lo que ellas pusieron. La regla propone el rol; el alcance de cada persona no cambia.', 'help'));
     const add = el('button', 'Crear regla'); add.type = 'button'; add.addEventListener('click', () => ruleEditor(null)); s.append(add);
     if (!rules.length) { s.append(el('p', 'Aún no hay reglas.', 'help')); return; }
     table(s, 'Reglas', [['Regla', x => x.name], ['Cuándo', ruleText], ['Da el rol', x => list.find(r => r.id === x.role_id)?.name || '—'], ['Personas hoy', x => String(x.matches)],
@@ -2052,7 +2118,7 @@ async function rolesPage() {
     const posL = labeled(body, 'Cargo', pos); pos.value = x?.position_id || pos.value;
     const area = el('select'); (org || []).filter(o => o.kind === 'area' && o.active).sort((a, b) => a.name.localeCompare(b.name, 'es')).forEach(o => area.append(new Option(o.name, o.id)));
     const areaL = labeled(body, 'Área', area); area.value = x?.area_id || area.value;
-    const role = el('select'); list.filter(r => r.active && r.assignable_by_rule).forEach(r => role.append(new Option(`${r.name} (${roleText(r)})`, r.id))); role.value = x?.role_id || role.value;
+    const role = el('select'); list.filter(r => r.active && r.assignable_by_rule).forEach(r => role.append(new Option(r.name, r.id))); role.value = x?.role_id || role.value;
     labeled(body, 'Da el rol', role, list.some(r => r.assignable_by_rule) ? 'Solo aparecen los roles marcados "se puede dar automáticamente".' : 'Primero marca un rol como "se puede dar automáticamente".');
     const act = el('input'); act.type = 'checkbox'; act.checked = x ? x.active : true; const actL = el('label', undefined, 'check'); actL.append(act, ' Regla activa'); body.append(actL);
     const sync = () => { posL.hidden = cond.value === 'manages'; areaL.hidden = cond.value !== 'position_in_area'; };
@@ -2100,11 +2166,8 @@ async function rolesPage() {
         const saved = role ? await api('PATCH', `/roles/${role.id}`, { body: payload, ifMatch: role.version }) : await api('POST', '/roles', { body: payload });
         list = role ? list.map(r => r.id === role.id ? saved : r) : [...list, saved]; dialog.close(); render(); done();
       } catch (e) {
-        const detail = e.problem?.detail || '';
-        show(e.code === 'tenant_rbac_disabled' ? 'La empresa no tiene habilitada la gestión de sus propios roles: pídesela a la plataforma.'
-          : detail.startsWith('feature_not_contracted:') ? e
-          : detail === 'scope_denied' ? 'Solo quien ve toda la empresa puede crear o editar roles.'
-          : e.status === 403 ? 'No puedes dar permisos que tu cuenta no tiene, o tu cuenta no puede gestionar roles.' : e);
+        // errorMessage ya traduce delegation_exceeds_own_access, scope_denied y feature_not_contracted (§7).
+        show(e.code === 'tenant_rbac_disabled' ? 'La empresa no tiene habilitada la gestión de sus propios roles: pídesela a la plataforma.' : e);
         ok.disabled = false;
       }
     });

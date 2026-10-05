@@ -103,8 +103,11 @@ export function errorMessage(error) {
   let message = messages[error.code];
   // Dato gestionado por una fuente externa (One, BD de cliente): se cambia en la fuente, no en Keeper.
   if (error.problem?.detail === 'managed_by_source') message = 'Esto lo gestiona una fuente externa (ver Fuentes de datos): cámbialo en la fuente y se actualizará aquí.';
-  const feature = (error?.problem?.detail || '').match(/^feature_not_contracted:(.+)$/)?.[1];
-  if (feature) message = `La empresa no tiene contratada esta función (${feature}). Pídela a AZC Keeper.`;
+  // Errores de funciones y accesos (docs/architecture/v4-clientes-funciones-accesos.md §7): 403 con detail = código.
+  const detail = error?.problem?.detail || '';
+  if (/^feature_not_contracted:/.test(detail)) message = 'La función no está contratada por el cliente.';
+  if (detail === 'scope_denied') message = 'Tu alcance no incluye esa empresa, sede o área.';
+  if (detail === 'delegation_exceeds_own_access') message = 'No puedes dar un acceso más amplio que el tuyo.';
   if (!message) {
     if (error.status === 401) message = 'Tu sesión venció. Inicia sesión de nuevo.';
     else if (error.status === 403) message = 'No tienes permiso para consultar esta información.';
