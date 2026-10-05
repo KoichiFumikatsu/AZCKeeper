@@ -94,9 +94,9 @@ function adminTests(Database $db): void
     expect(adminRequest($delegate,'POST','/roles',array_replace($roleBody,['name'=>'Meta clone','permissions'=>['roles.gestionar']])),403,'cannot clone meta permission');
     $self=expect(adminRequest($delegate,'GET','/roles/'.Util::id($delegate['role'])),200,'read own role');
     expect(adminRequest($delegate,'PATCH','/roles/'.$self['id'],array_replace($roleBody,['name'=>'Own escalated','permissions'=>['roles.gestionar','usuarios.ver','equipos.apagar']]),['if-match'=>'"'.$self['version'].'"']),403,'editing own role cannot escalate');
-    expect(adminRequest($delegate,'PUT','/users/'.Util::id($delegateUser['id']).'/roles',['role_ids'=>[Util::id($admin['role'])]],['if-match'=>'"1"']),403,'indirect meta assignment blocked');
+    expect(adminRequest($delegate,'PUT','/users/'.Util::id($delegateUser['id']).'/access',['role_id'=>Util::id($admin['role']),'scope'=>accessScopeBody('all')],['if-match'=>'"1"']),403,'indirect meta assignment blocked');
     $u=expect(adminRequest($admin,'GET','/users/'.Util::id($readerUser['id'])),200,'read role recipient');
-    expect(adminRequest($platformTenant,'PUT','/users/'.Util::id($readerUser['id']).'/roles',['role_ids'=>[$role['id']]],['if-match'=>'"'.$u['version'].'"']),200,'platform assigns role');
+    expect(adminRequest($platformTenant,'PUT','/users/'.Util::id($readerUser['id']).'/access',['role_id'=>$role['id'],'scope'=>accessScopeBody('all')],['if-match'=>'"'.$u['version'].'"']),200,'platform assigns role');
     expect(adminRequest($reader,'GET','/users'),401,'privilege change revokes session'); $reader=adminLogin($reader);
     expect(adminRequest($delegate,'PATCH','/roles/'.$role['id'],array_replace($roleBody,['active'=>false]),['if-match'=>'"1"']),200,'deactivate role');
     expect(adminRequest($reader,'GET','/users'),401,'role edit revokes sessions');

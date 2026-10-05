@@ -128,7 +128,7 @@ final class AdminApi
             'listTenants','createTenant','getTenant','patchTenant','setRbacGate'=>$this->tenants($op,$b), 'uploadTenantLogo'=>$this->tenantLogo($b),
             'listOrganization','createOrgUnit','getOrgUnit','patchOrgUnit','deleteOrgUnit'=>$this->organization($op,$id,$b),
             'listSchedules','createSchedule','getSchedule','putSchedule'=>$this->schedules($op,$id,$b),
-            'listUsers','createUser','getUser','patchUser','setUserRoles'=>$this->users($op,$id,$b),
+            'listUsers','createUser','getUser','patchUser'=>$this->users($op,$id,$b),
             'listTenantDevices','getDevice','getDeviceSecurity','patchDevice','assignDevice','createDeviceCommand','listAdminCommands','createEnrollment'=>$this->devices($op,$id,$b),
             'listRoles','getRole','createRole','patchRole'=>$this->roles($op,$id,$b),
             'listPermissions','getPermission','patchPermission'=>$this->permissions($op,$b),
@@ -145,6 +145,7 @@ final class AdminApi
             'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getMyAccess'=>$this->myAccess(),
             'setUserPlan'=>$this->userPlan($id,$b),
+            'setUserAccess'=>$this->userAccess($id,$b),
             'listFeatures','listFeaturePackages','createFeaturePackage','patchFeaturePackage','getTenantFeatures','putTenantFeatures','listPersonPlans','createPersonPlan','patchPersonPlan','getTenantPlanUsage','listAvailablePersonPlans'=>(new FeatureAdmin($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
             'purgeTenant'=>$this->purgeTenant($b),
             'listCompanyGroups','createCompanyGroup','patchCompanyGroup','deleteCompanyGroup'=>(new CompanyGroups($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
@@ -308,11 +309,20 @@ final class AdminApi
         $this->audit('user',$id,['plan_id']); $this->dirty($this->userDevices($id));
         return $this->result($this->userDto($this->row('users',$id)));
     }
+    /** Acceso de una persona = 1 rol + 1 alcance (§4), con delegacion segura. */
+    private function userAccess(string $id, object $b): array
+    {
+        $this->access->user($id); $old=$this->row('users',$id); $this->match($old);
+        AccessGrants::assign($this->db,$this->access,$this->tenant,$id,$b);
+        $this->db->run('UPDATE users SET version=version+1 WHERE tenant_id=? AND id=?',[$this->tenant,$id]); $this->invalidateUser($id);
+        $this->audit('user',$id,['access']);
+        return $this->result($this->userDto($this->row('users',$id)));
+    }
     private function userDto(array $r): array
     {
         $grant=AccessGrants::forUser($this->db,$this->tenant,$r['id']);
         $sub=$this->currentSubscription($r['id']);
-        $out=['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'display_name'=>$r['display_name'],'email'=>$r['email'],'status'=>$r['status'],'role_ids'=>$grant===null?[]:[Util::id($grant['role_id'])],'panel_login_enabled'=>(bool)$r['panel_login_enabled'],'tier_id'=>$sub?Util::id($sub['tier_id']):null,'version'=>(int)$r['version']];
+        $out=['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'display_name'=>$r['display_name'],'email'=>$r['email'],'status'=>$r['status'],'access'=>AccessGrants::dto($grant),'panel_login_enabled'=>(bool)$r['panel_login_enabled'],'tier_id'=>$sub?Util::id($sub['tier_id']):null,'version'=>(int)$r['version']];
         foreach (['firm_id','site_id','area_id','position_id','schedule_id','company_id','holiday_calendar_id'] as $f) { $out[$f]=$r[$f]===null?null:Util::id($r[$f]); }
         // Cedula: la cargada en v4 ('document') o, si no hay, la importada de K3 ('k3:cc').
         $doc=$this->db->one("SELECT external_ref FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source IN ('document','k3:cc') ORDER BY source='document' DESC LIMIT 1",[$this->tenant,$r['id']]);
@@ -357,61 +367,55 @@ final class AdminApi
         $document=false; // false = no se envio; null = borrar la cedula
         if ($op==='listUsers') { [$where,$args]=$this->filterUsers(); return $this->page("SELECT u.* FROM users u WHERE u.tenant_id=? AND $where",[$this->tenant,...$args],fn($x)=>$this->userDto($x)); }
         if ($id) { $this->access->user($id); $old=$this->row('users',$id); if ($op==='getUser') { return $this->result($this->userDto($old)); } $this->match($old); }
-        if ($op==='setUserRoles') {
-            $this->unique($b->role_ids);
-            AccessGrants::assignLegacy($this->db,$this->access,$this->tenant,$id,$b->role_ids);
-            $this->db->run('UPDATE users SET version=version+1 WHERE tenant_id=? AND id=?',[$this->tenant,$id]); $this->invalidateUser($id);
-        } else {
-            DataSources::guardWrite($this->db,$this->tenant,'personas','user',$id);
-            $values=[]; $fields=get_object_vars($b);
-            $document=array_key_exists('document',$fields)?$fields['document']:false; unset($fields['document']);
-            if (array_key_exists('reports_to_user_id',$fields) && $fields['reports_to_user_id']!==null) { $this->managerOk(Util::bin($fields['reports_to_user_id']),$id); }
-            if (is_string($document)) { $document=DeviceIntake::document($document); $this->documentFree($document,$id); }
-            foreach ($fields as $f=>$value) { $values[$f]=$value!==null && str_ends_with($f,'_id')?Util::bin($value):$value; }
-            // Firma u horario vacios (directivos, personas sin jornada): "Sin firma" / "Sin horario"; se editan despues.
-            if (!$id || array_key_exists('firm_id',$values)) { $values['firm_id']??=$this->placeholderFirm(); }
-            if (!$id || array_key_exists('schedule_id',$values)) { $values['schedule_id']??=$this->placeholderSchedule(); }
-            foreach (['firm','site','area','position','company'] as $kind) { if (isset($values[$kind.'_id'])) { $this->org($values[$kind.'_id'],$kind); } }
-            if (isset($values['schedule_id'])) { $this->row('schedules',$values['schedule_id']); }
-            if (isset($values['holiday_calendar_id'])) { $this->row('holiday_calendars',$values['holiday_calendar_id']); }
-            $next=($values+($old??[]));
-            if (!$this->access->full()) {
-                // Crear o mover una persona: su ubicacion debe quedar dentro del alcance (§4). Equipo o propio no crean ni mueven.
-                if (!$this->access->allowsPlacement($next)) { throw new ApiError(403,'permission_denied',[],'scope_denied'); }
-                $p=$next['area_id']??null; $seen=[];
-                while ($p!==null) {
-                    if (in_array($p,$seen,true)) { throw new ApiError(422,'validation_failed'); } $seen[]=$p;
-                    $unit=$this->row('org_units',$p);
-                    if ($unit['kind']==='site' && $unit['id']!==($next['site_id']??null)) { throw new ApiError(422,'validation_failed'); }
-                    $p=$unit['parent_id'];
-                }
+        DataSources::guardWrite($this->db,$this->tenant,'personas','user',$id);
+        $values=[]; $fields=get_object_vars($b);
+        $document=array_key_exists('document',$fields)?$fields['document']:false; unset($fields['document']);
+        if (array_key_exists('reports_to_user_id',$fields) && $fields['reports_to_user_id']!==null) { $this->managerOk(Util::bin($fields['reports_to_user_id']),$id); }
+        if (is_string($document)) { $document=DeviceIntake::document($document); $this->documentFree($document,$id); }
+        foreach ($fields as $f=>$value) { $values[$f]=$value!==null && str_ends_with($f,'_id')?Util::bin($value):$value; }
+        // Firma u horario vacios (directivos, personas sin jornada): "Sin firma" / "Sin horario"; se editan despues.
+        if (!$id || array_key_exists('firm_id',$values)) { $values['firm_id']??=$this->placeholderFirm(); }
+        if (!$id || array_key_exists('schedule_id',$values)) { $values['schedule_id']??=$this->placeholderSchedule(); }
+        foreach (['firm','site','area','position','company'] as $kind) { if (isset($values[$kind.'_id'])) { $this->org($values[$kind.'_id'],$kind); } }
+        if (isset($values['schedule_id'])) { $this->row('schedules',$values['schedule_id']); }
+        if (isset($values['holiday_calendar_id'])) { $this->row('holiday_calendars',$values['holiday_calendar_id']); }
+        $next=($values+($old??[]));
+        if (!$this->access->full()) {
+            // Crear o mover una persona: su ubicacion debe quedar dentro del alcance (§4). Equipo o propio no crean ni mueven.
+            if (!$this->access->allowsPlacement($next)) { throw new ApiError(403,'permission_denied',[],'scope_denied'); }
+            $p=$next['area_id']??null; $seen=[];
+            while ($p!==null) {
+                if (in_array($p,$seen,true)) { throw new ApiError(422,'validation_failed'); } $seen[]=$p;
+                $unit=$this->row('org_units',$p);
+                if ($unit['kind']==='site' && $unit['id']!==($next['site_id']??null)) { throw new ApiError(422,'validation_failed'); }
+                $p=$unit['parent_id'];
             }
-            if (!$id) {
-                $id=Util::bin(Util::uuid()); $columns=implode(',',array_keys($values)); $marks=implode(',',array_fill(0,count($values),'?'));
-                $this->db->run("INSERT INTO users (tenant_id,id,$columns) VALUES (?,?,$marks)",[$this->tenant,$id,...array_values($values)]);
-                AccessGrants::grantDefault($this->db,$this->tenant,$id);
-                $this->assignment($id,$next);
-                // Tier por defecto del tenant: sin suscripción el compositor descarta toda regla
-                // (el módulo no está en el tier activo), así que el enforcement sería invisible.
-                $defaultTier=$this->db->one("SELECT id FROM tier WHERE tenant_id=? AND is_default=1 AND active=TRUE",[$this->tenant]);
-                if ($defaultTier) { $this->db->run("INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at,status) VALUES (?,?,?,?,UTC_TIMESTAMP(6),'active')",[$this->tenant,Util::bin(Util::uuid()),$id,$defaultTier['id']]); }
-            } else {
-                if ($values || $document===false) { $this->update('users',$id,$values); } else { $this->db->run('UPDATE users SET version=version+1 WHERE tenant_id=? AND id=?',[$this->tenant,$id]); }
-                if (array_intersect(array_keys($values),['firm_id','site_id','area_id','position_id','schedule_id','company_id'])) { $this->assignment($id,$next); }
-                if (($values['holiday_calendar_id']??$old['holiday_calendar_id'])!==$old['holiday_calendar_id'] || ($values['site_id']??$old['site_id'])!==$old['site_id'] || (array_key_exists('holiday_calendar_id',$values) && $values['holiday_calendar_id']===null && $old['holiday_calendar_id']!==null)) { (new HolidayCalendars($this->db,$this->c,$this->access,$this->r))->recompute(array_column($this->db->run('SELECT id FROM holiday_calendars WHERE tenant_id=?',[$this->tenant])->fetchAll(),'id')); }
-                $this->invalidateUser($id);
-                if (($b->status??null)==='inactive') {
-                    $this->db->run("UPDATE enrollments SET status='revoked' WHERE tenant_id=? AND user_id=? AND status='pending'",[$this->tenant,$id]);
-                    $this->db->run("UPDATE devices SET status='revoked',auth_version=auth_version+1,version=version+1 WHERE tenant_id=? AND user_id=? AND status='active'",[$this->tenant,$id]);
-                    $this->db->run("UPDATE device_command c JOIN devices d ON d.tenant_id=c.tenant_id AND d.id=c.device_id SET c.status='cancelled' WHERE d.tenant_id=? AND d.user_id=? AND c.status IN ('pending','delivered')",[$this->tenant,$id]);
-                }
+        }
+        if (!$id) {
+            $id=Util::bin(Util::uuid()); $columns=implode(',',array_keys($values)); $marks=implode(',',array_fill(0,count($values),'?'));
+            $this->db->run("INSERT INTO users (tenant_id,id,$columns) VALUES (?,?,$marks)",[$this->tenant,$id,...array_values($values)]);
+            AccessGrants::grantDefault($this->db,$this->tenant,$id);
+            $this->assignment($id,$next);
+            // Tier por defecto del tenant: sin suscripción el compositor descarta toda regla
+            // (el módulo no está en el tier activo), así que el enforcement sería invisible.
+            $defaultTier=$this->db->one("SELECT id FROM tier WHERE tenant_id=? AND is_default=1 AND active=TRUE",[$this->tenant]);
+            if ($defaultTier) { $this->db->run("INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at,status) VALUES (?,?,?,?,UTC_TIMESTAMP(6),'active')",[$this->tenant,Util::bin(Util::uuid()),$id,$defaultTier['id']]); }
+        } else {
+            if ($values || $document===false) { $this->update('users',$id,$values); } else { $this->db->run('UPDATE users SET version=version+1 WHERE tenant_id=? AND id=?',[$this->tenant,$id]); }
+            if (array_intersect(array_keys($values),['firm_id','site_id','area_id','position_id','schedule_id','company_id'])) { $this->assignment($id,$next); }
+            if (($values['holiday_calendar_id']??$old['holiday_calendar_id'])!==$old['holiday_calendar_id'] || ($values['site_id']??$old['site_id'])!==$old['site_id'] || (array_key_exists('holiday_calendar_id',$values) && $values['holiday_calendar_id']===null && $old['holiday_calendar_id']!==null)) { (new HolidayCalendars($this->db,$this->c,$this->access,$this->r))->recompute(array_column($this->db->run('SELECT id FROM holiday_calendars WHERE tenant_id=?',[$this->tenant])->fetchAll(),'id')); }
+            $this->invalidateUser($id);
+            if (($b->status??null)==='inactive') {
+                $this->db->run("UPDATE enrollments SET status='revoked' WHERE tenant_id=? AND user_id=? AND status='pending'",[$this->tenant,$id]);
+                $this->db->run("UPDATE devices SET status='revoked',auth_version=auth_version+1,version=version+1 WHERE tenant_id=? AND user_id=? AND status='active'",[$this->tenant,$id]);
+                $this->db->run("UPDATE device_command c JOIN devices d ON d.tenant_id=c.tenant_id AND d.id=c.device_id SET c.status='cancelled' WHERE d.tenant_id=? AND d.user_id=? AND c.status IN ('pending','delivered')",[$this->tenant,$id]);
             }
         }
         if ($document!==false) {
             $this->db->run("DELETE FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source='document'",[$this->tenant,$id]);
             if ($document!==null) { $this->db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,'document',?)",[$this->tenant,$id,$document]); }
         }
-        if ($op!=='setUserRoles') { RoleRules::apply($this->db,$this->tenant); }
+        RoleRules::apply($this->db,$this->tenant);
         $this->audit('user',$id,array_keys(get_object_vars($b))); $this->dirty($this->userDevices($id));
         return $this->result($this->userDto($this->row('users',$id)),$op==='createUser'?201:200);
     }

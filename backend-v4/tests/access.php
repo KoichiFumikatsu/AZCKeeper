@@ -286,3 +286,64 @@ function accessCaseTests(Database $db): void
     check(count(expect(externalRequest('/ext/v1/my-team' . $day . '&limit=100', $key['headers']), 200, 'external team')['data']) === 9, 'la API externa ve todo el cliente');
     echo 'PASS access cases (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+// Delegacion segura (§4): nadie da permisos que no tiene ni un alcance mas amplio que el propio; nadie amplia el suyo.
+function accessDelegationTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $o = accessOrg($db); $t = $o['tenant'];
+    $db->run('UPDATE tenants SET rbac_self_management=TRUE WHERE tenant_id=?', [$t]);
+    $perms = ['usuarios.ver', 'roles.ver', 'roles.gestionar'];
+    accessResetPreloginQuota();
+    $juan = accessAccount($db, $o, 'juan', $perms, new AccessScope('filters', [], [], [], [$o['agentes']]));
+    $bl = accessAccount($db, $o, 'bl2', $perms, new AccessScope('filters', [$o['bl']]));
+    $coord2 = accessAccount($db, $o, 'coord2', $perms, new AccessScope('filters', [], [], [$o['teq'], $o['med']], [$o['agentes']]));
+    $role = function (string $name, array $permissions) use ($db, $t): string {
+        $id = Util::bin(Util::uuid());
+        $db->run("INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,?,'self')", [$t, $id, $name]);
+        foreach ($permissions as $p) { $db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)', [$t, $id, $p]); }
+        return $id;
+    };
+    $viewer = $role('Solo ver personas', ['usuarios.ver']); $wider = $role('Ver equipos', ['equipos.ver']);
+    $put = function (array $a, string $who, string $roleId, array $scope) use ($db, $o): array {
+        $v = $db->one('SELECT version FROM users WHERE tenant_id=? AND id=?', [$o['tenant'], $o[$who]['id']])['version'];
+        return adminRequest($a, 'PUT', '/users/' . Util::id($o[$who]['id']) . '/access', ['role_id' => Util::id($roleId), 'scope' => $scope], ['if-match' => '"' . $v . '"']);
+    };
+    $exceeds = fn (array $r) => $r[0] === 403 && ($r[1]['detail'] ?? null) === 'delegation_exceeds_own_access';
+    $agentes = accessScopeBody('filters', ['area_ids' => [Util::id($o['agentes'])]]);
+    $ok = $put($juan, 'agTorre', $viewer, $agentes);
+    check($ok[0] === 200 && $ok[1]['access']['role_name'] === 'Solo ver personas' && $ok[1]['access']['scope'] === $agentes && $ok[1]['access']['source'] === 'manual', 'Juan da su mismo alcance');
+    check($exceeds($put($juan, 'agTorre', $viewer, accessScopeBody('all'))), 'Juan no da todo el cliente');
+    check($exceeds($put($juan, 'agTorre', $viewer, accessScopeBody('filters', ['area_ids' => [Util::id($o['juridica'])]]))), 'Juan no da otra área');
+    check($exceeds($put($juan, 'agTorre', $viewer, accessScopeBody('filters', ['site_ids' => [Util::id($o['torre'])]]))), 'quitar el filtro de área amplía');
+    check($put($juan, 'agTorre', $viewer, accessScopeBody('filters', ['site_ids' => [Util::id($o['torre'])], 'area_ids' => [Util::id($o['agentes'])]]))[0] === 200, 'acotar más es válido');
+    check($exceeds($put($juan, 'agTorre', $wider, $agentes)), 'Juan no da permisos que no tiene');
+    check($put($juan, 'jur808', $viewer, $agentes)[0] === 404, 'persona fuera del alcance: 404');
+    check($exceeds($put($juan, 'juan', $viewer, accessScopeBody('all'))), 'nadie amplía su propio acceso');
+    check($exceeds($put($bl, 'bl1', $viewer, accessScopeBody('filters', ['company_ids' => [Util::id($o['azc'])]]))), 'BilingueLaw no da AZC');
+    check($put($bl, 'bl1', $viewer, accessScopeBody('filters', ['company_ids' => [Util::id($o['bl'])]]))[0] === 200, 'BilingueLaw da BilingueLaw');
+    check($exceeds($put($coord2, 'ag808', $viewer, accessScopeBody('team'))), 'un alcance de filtros no da equipo');
+    check($put($coord2, 'ag808', $viewer, accessScopeBody('self'))[0] === 200, 'solo lo propio a alguien visible');
+    check($exceeds($put($coord2, 'juan', $viewer, accessScopeBody('self'))), 'no toca el acceso de quien tiene roles.gestionar');
+    // Forma del alcance y del rol (superadmin no pasa por la delegacion, si por la forma).
+    $platform = sharedPlatform($db); $platform['tenant'] = $t;
+    check($put($platform, 'jur808', $viewer, accessScopeBody('filters'))[1]['detail'] === 'scope_filters_empty', 'filtros sin valores');
+    check($put($platform, 'jur808', $viewer, accessScopeBody('self', ['area_ids' => [Util::id($o['agentes'])]]))[1]['detail'] === 'scope_lists_only_for_filters', 'listas solo con filtros');
+    // Cuerpo mal formado: lo rechaza el contrato (422 validation_failed) antes de AccessScope::fromInput, nunca 500.
+    $malformed = function (array $body) use ($db, $o, $platform): array {
+        $v = $db->one('SELECT version FROM users WHERE tenant_id=? AND id=?', [$o['tenant'], $o['jur808']['id']])['version'];
+        return adminRequest($platform, 'PUT', '/users/' . Util::id($o['jur808']['id']) . '/access', $body, ['if-match' => '"' . $v . '"']);
+    };
+    $invalid = fn (array $r) => $r[0] === 422 && ($r[1]['code'] ?? null) === 'validation_failed';
+    check($invalid($malformed(['role_id' => 'no-es-uuid', 'scope' => accessScopeBody('self')])), 'role_id que no es uuid: 422');
+    check($invalid($malformed(['role_id' => Util::id($viewer), 'scope' => accessScopeBody('everything')])), 'kind desconocido: 422');
+    check($invalid($malformed(['role_id' => Util::id($viewer), 'scope' => ['kind' => 'self']])), 'alcance sin las cuatro listas: 422');
+    check($invalid($malformed(['role_id' => Util::id($viewer), 'scope' => accessScopeBody('filters', ['area_ids' => ['x']])])), 'id de área que no es uuid: 422');
+    check($invalid($malformed(['role_id' => Util::id($viewer), 'scope' => accessScopeBody('filters', ['area_ids' => 'x'])])), 'lista que no es lista: 422');
+    check($invalid($malformed(['role_ids' => [Util::id($viewer)]])), 'cuerpo viejo (role_ids): 422');
+    $db->run('UPDATE roles SET active=FALSE WHERE tenant_id=? AND id=?', [$t, $wider]);
+    check($put($platform, 'jur808', $wider, accessScopeBody('self'))[1]['detail'] === 'role_inactive', 'rol inactivo');
+    $set = $put($platform, 'jur808', $viewer, accessScopeBody('all'));
+    check($set[0] === 200 && $set[1]['access']['scope']['kind'] === 'all', 'superadmin da cualquier alcance');
+    echo 'PASS access delegation (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}

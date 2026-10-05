@@ -1649,7 +1649,7 @@ const AUDIT_ACTIONS = {
   reportHardening: 'El equipo reportó su endurecimiento', reportSecurity: 'El equipo reportó su seguridad', reportCommandResult: 'El equipo respondió un comando',
   deviceLogin: 'El equipo se conectó', deviceChallenge: 'El equipo pidió conectarse', syncDevice: 'El equipo se sincronizó', ingestEpisodes: 'El equipo envió actividad', ingestLogs: 'El equipo envió registros',
   createCheckIn: 'Se registró una entrada', externalCheckInsBatch: 'El sistema de puertas envió entradas',
-  createUser: 'Creó una persona', patchUser: 'Editó una persona', setUserRoles: 'Cambió los roles de una persona', setSubscription: 'Cambió el plan de una persona',
+  createUser: 'Creó una persona', patchUser: 'Editó una persona', setUserAccess: 'Cambió el acceso de una persona', setSubscription: 'Cambió el plan de una persona',
   createPanelAccount: 'Creó una cuenta del panel', patchPanelAccount: 'Cambió una cuenta del panel', resetPanelAccountPassword: 'Restableció una contraseña',
   createRole: 'Creó un rol', patchRole: 'Editó un rol', patchPermission: 'Editó un permiso', setRbacGate: 'Cambió quién gestiona los roles de la empresa',
   createRoleRule: 'Creó una asignación automática', patchRoleRule: 'Editó una asignación automática', putMonitoringExclusions: 'Cambió los cargos que no se monitorean',

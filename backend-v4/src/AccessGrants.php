@@ -73,8 +73,23 @@ final class AccessGrants
         self::setForUser($db, $tenant, $user, $role, AccessScope::own(), 'default');
     }
 
+    /** Dar el acceso de una persona (AccessInput) con delegacion segura. Cambiar solo el alcance no le quita el rol a la regla que lo puso. */
+    public static function assign(Database $db, AdminAccess $by, string $tenant, string $user, object $input): void
+    {
+        $role = $db->one('SELECT * FROM roles WHERE tenant_id=? AND id=?', [$tenant, Util::bin($input->role_id)]);
+        if (!$role) { throw new ApiError(422, 'validation_failed', [], 'role_not_found'); }
+        if (!$role['active']) { throw new ApiError(409, 'invalid_transition', [], 'role_inactive'); }
+        $scope = AccessScope::fromInput($db, $tenant, $input->scope);
+        $current = self::forUser($db, $tenant, $user);
+        // Cambiar un acceso tambien es delegar: no se toca el de alguien con mas de lo que uno tiene.
+        if ($current !== null) { $by->delegate(self::permissions($db, $tenant, $current['role_id']), $current['scope'], $user); }
+        $by->delegate(self::permissions($db, $tenant, $role['id']), $scope, $user);
+        $keepRule = $current !== null && $current['source'] === 'rule' && $current['role_id'] === $role['id'];
+        self::setForUser($db, $tenant, $user, $role['id'], $scope, $keepRule ? 'rule' : 'manual', $keepRule ? $current['rule_id'] : null);
+    }
+
     /**
-     * PUENTE de las Tareas 3 a 7 (se borra en la Tarea 8). Atiende los role_ids viejos (0 o 1) de setUserRoles y de las cuentas.
+     * PUENTE de las Tareas 3 a 7 (se borra en la Tarea 8). Atiende los role_ids viejos (0 o 1) de las cuentas.
      * Copia el alcance viejo del rol a la persona. [] quita el acceso manual (vuelve al por defecto); lo que puso una regla se queda.
      */
     public static function assignLegacy(Database $db, AdminAccess $by, string $tenant, string $user, array $roleIds): void

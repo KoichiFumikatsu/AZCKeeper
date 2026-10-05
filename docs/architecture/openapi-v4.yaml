@@ -6179,14 +6179,13 @@ paths:
               $ref: '#/components/schemas/UserPatch'
       x-permission: usuarios.editar
       x-max-body-bytes: 65536
-  /users/{id}/roles:
+  /users/{id}/access:
     put:
       tags:
       - admin
-      operationId: setUserRoles
-      summary: Asignar roles sin autoescalada
-      description: Dos gates; solo Super admin concede roles.gestionar incluso indirectamente asignando rol. No
-        habilita login. Autorización de acción/objeto obligatoria además de CSRF; registrar auditoría.
+      operationId: setUserAccess
+      summary: Dar el acceso de una persona (1 rol + 1 alcance)
+      description: Delegación segura. Nadie da un rol con permisos que no tiene ni un alcance más amplio que el propio (403 delegation_exceeds_own_access). Invalida las sesiones de la persona y se audita.
       security:
       - adminSession: []
         csrfToken: []
@@ -6197,7 +6196,7 @@ paths:
       - AuditEntry
       responses:
         '200':
-          description: Asignar roles sin autoescalada
+          description: Acceso dado
           headers:
             X-Request-ID:
               $ref: '#/components/headers/X-Request-ID'
@@ -6253,7 +6252,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RoleBindings'
+              $ref: '#/components/schemas/AccessInput'
       x-permission: roles.gestionar
       x-max-body-bytes: 65536
   /users/{id}/dashboard:
@@ -16417,7 +16416,7 @@ components:
       - position_id
       - schedule_id
       - status
-      - role_ids
+      - access
       - panel_login_enabled
       - tier_id
       - version
@@ -16502,12 +16501,10 @@ components:
           enum:
           - active
           - inactive
-        role_ids:
-          type: array
-          items:
-            type: string
-            format: uuid
-          maxItems: 30
+        access:
+          anyOf:
+          - $ref: '#/components/schemas/Access'
+          - type: 'null'
         panel_login_enabled:
           type: boolean
         tier_id:
@@ -16590,18 +16587,6 @@ components:
           enum:
           - active
           - inactive
-    RoleBindings:
-      type: object
-      additionalProperties: false
-      required:
-      - role_ids
-      properties:
-        role_ids:
-          type: array
-          items:
-            type: string
-            format: uuid
-          maxItems: 30
     Device:
       type: object
       additionalProperties: false
@@ -16774,6 +16759,85 @@ components:
           maxLength: 160
         delegable:
           type: boolean
+    AccessScope:
+      type: object
+      additionalProperties: false
+      description: Qué datos ve la persona. all = todo el cliente; filters = empresa, ciudad, sede y área (lista vacía = todas; O dentro de un filtro, Y entre filtros); team = ella y quienes le reportan; self = solo ella.
+      required:
+      - kind
+      - company_ids
+      - cities
+      - site_ids
+      - area_ids
+      properties:
+        kind:
+          type: string
+          enum:
+          - all
+          - filters
+          - team
+          - self
+        company_ids:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            format: uuid
+        cities:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            minLength: 1
+            maxLength: 80
+        site_ids:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            format: uuid
+        area_ids:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            format: uuid
+    AccessInput:
+      type: object
+      additionalProperties: false
+      required:
+      - role_id
+      - scope
+      properties:
+        role_id:
+          type: string
+          format: uuid
+        scope:
+          $ref: '#/components/schemas/AccessScope'
+    Access:
+      type: object
+      additionalProperties: false
+      required:
+      - role_id
+      - role_name
+      - scope
+      - source
+      properties:
+        role_id:
+          type: string
+          format: uuid
+        role_name:
+          type: string
+          maxLength: 120
+        scope:
+          $ref: '#/components/schemas/AccessScope'
+        source:
+          type: string
+          description: manual = lo dio una persona; rule = lo propuso una regla por cargo; default = Colaborador por defecto.
+          enum:
+          - manual
+          - rule
+          - default
     RoleScope:
       type: object
       additionalProperties: false

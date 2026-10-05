@@ -111,7 +111,7 @@ function personLink(id) {
 }
 const resources = {
   devices: { title: 'Equipos', path: () => `/tenants/${tenant}/devices`, prepare: loadUserNames, columns: [['Equipo', r => { const a = node('a', r.hostname); a.href = `/equipo.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Estado', r => label(r.status)], ['Persona', r => personLink(r.user_id)], ['Sistema operativo', 'os_edition'], ['Agente', 'agent_version'], ['Última conexión', r => dateTime(r.last_seen_at)]], empty: 'Aún no hay equipos enrolados en tu alcance.' },
-  users: { title: 'Usuarios', path: () => '/users', columns: [['Nombre', r => { const a = node('a', r.display_name); a.href = `/miembro.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Correo', 'email'], ['Estado', r => label(r.status)], ['Acceso al portal', r => r.panel_login_enabled ? 'Habilitado' : 'Sin acceso'], ['Roles asignados', r => r.role_ids.length]], empty: 'Aún no hay usuarios en tu alcance.' },
+  users: { title: 'Usuarios', path: () => '/users', columns: [['Nombre', r => { const a = node('a', r.display_name); a.href = `/miembro.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Correo', 'email'], ['Estado', r => label(r.status)], ['Acceso al portal', r => r.panel_login_enabled ? 'Habilitado' : 'Sin acceso'], ['Acceso', r => r.access?.role_name || 'Sin acceso']], empty: 'Aún no hay usuarios en tu alcance.' },
   policies: { title: 'Reglas', path: () => '/policies', columns: [['Política', 'name'], ['Destino', r => label(r.target_type)], ['ID del destino', 'target_id'], ['Estado', r => r.enabled ? 'Habilitada' : 'Inactiva'], ['Reglas', r => r.rules.length], ['Versión', 'version']], empty: 'Aún no hay políticas configuradas en esta empresa.' },
   tenants: { title: 'Tenants', path: () => '/tenants', columns: [['Empresa', 'name'], ['ID', 'id'], ['Estado', r => label(r.status)], ['Zona horaria', 'timezone'], ['Autogestión de roles', r => r.rbac_self_management ? 'Habilitada' : 'Inactiva']], empty: 'No hay tenants accesibles.' },
   roles: { title: 'Roles de la empresa', path: () => '/roles', columns: [['Rol', 'name'], ['Alcance', r => label(r.scope.kind)], ['Recursos del alcance', r => r.scope.resource_ids.join(', ') || 'Sin restricción por ID'], ['Permisos', r => r.permissions.join(', ') || 'Sin permisos'], ['Estado', r => r.active ? 'Activo' : 'Inactivo']], empty: 'Aún no hay roles configurados en esta empresa.' },
@@ -336,7 +336,7 @@ async function member() {
   const user = await get(`/users/${id}`);
   const panel = node('section', undefined, 'work-surface');
   panel.append(node('h2', user.display_name));
-  details(panel, [['Correo', user.email], ['Estado', label(user.status)], ['Acceso al portal', user.panel_login_enabled ? 'Habilitado' : 'Sin acceso'], ['ID de firma', user.firm_id], ['ID de área', user.area_id], ['ID de sede', user.site_id], ['ID de cargo', user.position_id], ['ID de horario', user.schedule_id], ['Roles asignados (ID)', user.role_ids.join(', ') || 'Sin roles']]);
+  details(panel, [['Correo', user.email], ['Estado', label(user.status)], ['Acceso al portal', user.panel_login_enabled ? 'Habilitado' : 'Sin acceso'], ['ID de firma', user.firm_id], ['ID de área', user.area_id], ['ID de sede', user.site_id], ['ID de cargo', user.position_id], ['ID de horario', user.schedule_id], ['Acceso', user.access?.role_name || 'Sin acceso']]);
   $('content').append(panel);
   const subscription = node('section', undefined, 'work-surface'); subscription.append(node('h2', 'Suscripción'));
   try {
