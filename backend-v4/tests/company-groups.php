@@ -23,12 +23,20 @@ function companyGroupTests(Database $db): void
 
     expect(adminRequest($platform, 'POST', '/auth/reauth', ['password' => $platform['password']]), 200, 'platform reauth');
     $email = 'dueno.' . substr(Util::uuid(), 0, 8) . '@example.test';
-    $body = ['kind' => 'company', 'email' => $email, 'display_name' => null, 'user_id' => Util::id($a['id']), 'role_ids' => [$roleA],
-        'group_id' => $group['id'], 'group_roles' => [['tenant_id' => Util::id($tb), 'role_ids' => [$roleB]]]];
-    $bad = adminRequest($platform, 'POST', '/panel-accounts', ['group_roles' => [['tenant_id' => Util::id($c['tenant_id']), 'role_ids' => [$roleB]]]] + $body);
+    $body = ['kind' => 'company', 'email' => $email, 'display_name' => null, 'user_id' => Util::id($a['id']), 'access' => ['role_id' => $roleA, 'scope' => accessScopeBody('all')],
+        'group_id' => $group['id'], 'group_access' => [['tenant_id' => Util::id($tb), 'role_id' => $roleB, 'scope' => accessScopeBody('all')]]];
+    $bad = adminRequest($platform, 'POST', '/panel-accounts', ['group_access' => [['tenant_id' => Util::id($c['tenant_id']), 'role_id' => $roleB, 'scope' => accessScopeBody('all')]]] + $body);
     check($bad[0] === 422 && $bad[1]['detail'] === 'tenant_not_in_group', 'roles only in group companies');
     $created = expect(adminRequest($platform, 'POST', '/panel-accounts', $body), 201, 'create group account');
-    check($created['account']['group_name'] === 'Grupo AZC (holding)' && $created['account']['group_roles'][0]['role_ids'] === [$roleB], 'account carries group roles');
+    check($created['account']['group_name'] === 'Grupo AZC (holding)' && $created['account']['group_access'][0]['role_id'] === $roleB && $created['account']['group_access'][0]['scope']['kind'] === 'all', 'account carries group access');
+    $teamBad = adminRequest($platform, 'POST', '/panel-accounts', ['email' => 'otro.' . $email, 'user_id' => Util::id(adminMember($db, $a)['id']), 'group_access' => [['tenant_id' => Util::id($tb), 'role_id' => $roleB, 'scope' => accessScopeBody('team')]]] + $body);
+    check($teamBad[0] === 422 && $teamBad[1]['detail'] === 'group_scope_invalid', 'group access only all or filters');
+    $twice = ['tenant_id' => Util::id($tb), 'role_id' => $roleB, 'scope' => accessScopeBody('all')];
+    $dupBad = adminRequest($platform, 'POST', '/panel-accounts', ['email' => 'dup.' . $email, 'user_id' => Util::id(adminMember($db, $a)['id']), 'group_access' => [$twice, $twice]] + $body);
+    check($dupBad[0] === 422 && $dupBad[1]['detail'] === 'duplicate_tenant', 'one access per group company');
+    check(adminRequest($platform, 'POST', '/panel-accounts', ['email' => 'mal.' . $email, 'group_access' => [['tenant_id' => Util::id($tb), 'role_id' => $roleB]]] + $body)[0] === 422, 'group access without scope: 422');
+    check(adminRequest($platform, 'POST', '/panel-accounts', ['email' => 'mal2.' . $email, 'access' => ['role_id' => $roleA]] + $body)[0] === 422, 'access without scope: 422');
+    check(adminRequest($platform, 'POST', '/panel-accounts', ['email' => 'mal3.' . $email, 'role_ids' => [$roleA]] + $body)[0] === 422, 'old role_ids body: 422');
 
     $owner = panelLogin($email, $created['temporary_password']); $owner['tenant'] = $ta;
     $changed = expect(adminRequest($owner, 'POST', '/auth/password', ['current_password' => $created['temporary_password'], 'new_password' => 'Clave-del-dueno-1']), 200, 'owner sets password');

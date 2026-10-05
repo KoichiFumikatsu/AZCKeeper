@@ -4,8 +4,8 @@ namespace Keeper;
 
 // Cuentas de acceso al panel. Dos clases:
 // - superadmin (plataforma): administra todas las empresas; solo la crea otra cuenta de plataforma.
-// - de empresa: ligada a una persona de esa empresa; lo que ve lo deciden sus roles (permisos + alcance: toda la
-//   empresa, ciertas sedes o areas, o solo lo propio). Nunca ve otra empresa (AdminAuth::context lo impide).
+// - de empresa: ligada a una persona de esa empresa; lo que ve lo decide su acceso: 1 rol + 1 alcance. Nunca ve
+//   otra empresa (AdminAuth::context lo impide).
 // La contraseña inicial es temporal: se muestra una vez y la persona debe cambiarla al entrar.
 final class PanelAccounts
 {
@@ -70,7 +70,7 @@ final class PanelAccounts
         $id = Util::bin(Util::uuid()); $temporary = self::temporaryPassword();
         if ($b->kind === 'platform') {
             if (!$this->c['platform']) { throw new ApiError(403, 'permission_denied'); }
-            if ($b->role_ids || $b->user_id !== null) { throw new ApiError(422, 'validation_failed'); }
+            if (($b->access ?? null) !== null || $b->user_id !== null) { throw new ApiError(422, 'validation_failed'); }
             $this->db->run('INSERT INTO admin_accounts (tenant_id,id,user_id,email,display_name,password_hash,must_change_password,is_platform_admin) VALUES (?,?,NULL,?,?,?,TRUE,TRUE)',
                 [$this->platformTenant(), $id, $email, $b->display_name, password_hash($temporary, PASSWORD_DEFAULT)]);
             $tenant = $this->platformTenant();
@@ -82,19 +82,19 @@ final class PanelAccounts
             $this->db->run('INSERT INTO admin_accounts (tenant_id,id,user_id,email,display_name,password_hash,must_change_password,is_platform_admin) VALUES (?,?,?,?,?,?,TRUE,FALSE)',
                 [$this->tenant, $id, $user['id'], $email, $b->display_name, password_hash($temporary, PASSWORD_DEFAULT)]);
             $this->db->run('UPDATE users SET panel_login_enabled=TRUE,version=version+1 WHERE tenant_id=? AND id=?', [$this->tenant, $user['id']]);
-            if ($b->role_ids) { AccessGrants::assignLegacy($this->db, $this->delegator(), $this->tenant, $user['id'], $b->role_ids); }
+            if (($b->access ?? null) !== null) { AccessGrants::assign($this->db, $this->delegator(), $this->tenant, $user['id'], $b->access); }
             elseif (AccessGrants::forUser($this->db, $this->tenant, $user['id']) === null) { AccessGrants::grantDefault($this->db, $this->tenant, $user['id']); }
-            if (($b->group_id ?? null) !== null) { $this->setGroup($id, $b->group_id, $b->group_roles ?? []); }
+            if (($b->group_id ?? null) !== null) { $this->setGroup($id, $b->group_id, $b->group_access ?? []); }
             $tenant = $this->tenant;
         }
-        (new Audit($this->db))->record($this->c, $this->r, 'createPanelAccount', 'admin_account', $id, ['kind', 'email', 'user_id', 'role_ids']);
+        (new Audit($this->db))->record($this->c, $this->r, 'createPanelAccount', 'admin_account', $id, ['kind', 'email', 'user_id', 'access']);
         $a = $this->db->one('SELECT a.*,u.display_name user_name,t.name tenant_name FROM admin_accounts a JOIN tenants t ON t.tenant_id=a.tenant_id LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.user_id WHERE a.tenant_id=? AND a.id=?', [$tenant, $id]);
         return AdminApi::response(['account' => $this->dto($a), 'temporary_password' => $temporary], 201, ['Cache-Control' => 'no-store']);
     }
 
     /**
-     * Cuenta de grupo (§8.5): la empresa casa debe ser del grupo; en las demas empresas del grupo recibe solo los
-     * roles indicados. Solo la plataforma lo asigna. null quita el grupo y todos esos roles.
+     * Cuenta de grupo (§8.5): la empresa casa debe ser del grupo; en cada otra empresa del grupo recibe un acceso
+     * (1 rol + alcance "todo" o filtros). Solo la plataforma lo asigna. null quita el grupo y todos esos accesos.
      */
     private function setGroup(string $account, ?string $group, array $grants): void
     {
@@ -104,15 +104,15 @@ final class PanelAccounts
         $gid = Util::bin($group);
         $members = array_column($this->db->run('SELECT tenant_id FROM company_group_members WHERE group_id=?', [$gid])->fetchAll(), 'tenant_id');
         if (!in_array($this->tenant, $members, true)) { throw new ApiError(422, 'validation_failed', [], 'home_not_in_group'); }
+        $seen = [];
         foreach ($grants as $g) {
             $t = Util::bin($g->tenant_id);
             if ($t === $this->tenant || !in_array($t, $members, true)) { throw new ApiError(422, 'validation_failed', [], 'tenant_not_in_group'); }
-            $ids = array_values(array_unique($g->role_ids));
-            if (count($ids) > 1) { throw new ApiError(422, 'validation_failed', [], 'one_role_only'); }
-            foreach ($ids as $rid) {
-                if (!$this->db->one('SELECT id FROM roles WHERE tenant_id=? AND id=? AND active=TRUE', [$t, Util::bin($rid)])) { throw new ApiError(422, 'validation_failed', [], 'role_not_found'); }
-                AccessGrants::setForGroupAccount($this->db, $t, $this->tenant, $account, Util::bin($rid), AccessScope::fromLegacyRole($this->db, $t, Util::bin($rid)));
-            }
+            if (isset($seen[bin2hex($t)])) { throw new ApiError(422, 'validation_failed', [], 'duplicate_tenant'); }
+            $seen[bin2hex($t)] = true;
+            $role = $this->db->one('SELECT id FROM roles WHERE tenant_id=? AND id=? AND active=TRUE', [$t, Util::bin($g->role_id)]);
+            if (!$role) { throw new ApiError(422, 'validation_failed', [], 'role_not_found'); }
+            AccessGrants::setForGroupAccount($this->db, $t, $this->tenant, $account, $role['id'], AccessScope::fromInput($this->db, $t, $g->scope));
         }
         $this->db->run('UPDATE admin_accounts SET group_id=?,group_tenant_id=? WHERE tenant_id=? AND id=?', [$gid, Util::bin(AdminAuth::PLATFORM), $this->tenant, $account]);
     }
@@ -128,18 +128,18 @@ final class PanelAccounts
         $self = $a['id'] === $this->c['admin_id'] && $a['tenant_id'] === $this->c['admin_tenant_id'];
         if ($self && !$b->active) { throw new ApiError(409, 'invalid_transition', [], 'cannot_disable_self'); }
         if ($a['is_platform_admin']) {
-            if ($b->role_ids) { throw new ApiError(422, 'validation_failed'); }
+            if (($b->access ?? null) !== null) { throw new ApiError(422, 'validation_failed'); }
         } else {
             $this->access->user($a['user_id']);
-            AccessGrants::assignLegacy($this->db, $this->delegator(), $this->tenant, $a['user_id'], $b->role_ids);
-            if (property_exists($b, 'group_id')) { $this->setGroup($a['id'], $b->group_id, $b->group_roles ?? []); }
+            if (($b->access ?? null) !== null) { AccessGrants::assign($this->db, $this->delegator(), $this->tenant, $a['user_id'], $b->access); }
+            if (property_exists($b, 'group_id')) { $this->setGroup($a['id'], $b->group_id, $b->group_access ?? []); }
             $this->db->run('UPDATE users SET panel_login_enabled=?,version=version+1 WHERE tenant_id=? AND id=?', [(int) $b->active, $a['tenant_id'], $a['user_id']]);
         }
         if ((bool) $a['active'] !== $b->active) {
             $this->db->run('UPDATE admin_accounts SET active=? WHERE tenant_id=? AND id=?', [(int) $b->active, $a['tenant_id'], $a['id']]);
             if (!$b->active) { $this->revokeSessions($a); }
         }
-        (new Audit($this->db))->record($this->c, $this->r, 'patchPanelAccount', 'admin_account', $a['id'], ['active', 'role_ids']);
+        (new Audit($this->db))->record($this->c, $this->r, 'patchPanelAccount', 'admin_account', $a['id'], ['active', 'access']);
         return AdminApi::response($this->dto($this->find($a['id'])));
     }
 
@@ -155,20 +155,19 @@ final class PanelAccounts
 
     private function groupDto(array $a): array
     {
-        if (($a['group_id'] ?? null) === null) { return ['group_id' => null, 'group_name' => null, 'group_roles' => []]; }
-        $grants = [];
-        foreach ($this->db->run('SELECT g.tenant_id,t.name,g.role_id FROM access_grants g JOIN tenants t ON t.tenant_id=g.tenant_id WHERE g.admin_tenant_id=? AND g.admin_id=? ORDER BY t.name,g.role_id', [$a['tenant_id'], $a['id']])->fetchAll() as $r) {
-            $k = Util::id($r['tenant_id']);
-            $grants[$k] ??= ['tenant_id' => $k, 'tenant_name' => $r['name'], 'role_ids' => []];
-            $grants[$k]['role_ids'][] = Util::id($r['role_id']);
+        if (($a['group_id'] ?? null) === null) { return ['group_id' => null, 'group_name' => null, 'group_access' => []]; }
+        $access = [];
+        foreach ($this->db->run('SELECT g.tenant_id,t.name tenant_name,g.admin_tenant_id,g.admin_id FROM access_grants g JOIN tenants t ON t.tenant_id=g.tenant_id WHERE g.admin_tenant_id=? AND g.admin_id=? ORDER BY t.name', [$a['tenant_id'], $a['id']])->fetchAll() as $r) {
+            $g = AccessGrants::forGroupAccount($this->db, $r['tenant_id'], $r['admin_tenant_id'], $r['admin_id']);
+            $access[] = ['tenant_id' => Util::id($r['tenant_id']), 'tenant_name' => $r['tenant_name'], 'role_id' => Util::id($g['role_id']), 'role_name' => $g['role_name'], 'scope' => $g['scope']->dto()];
         }
-        return ['group_id' => Util::id($a['group_id']), 'group_name' => $this->db->one('SELECT name FROM company_groups WHERE id=?', [$a['group_id']])['name'] ?? null, 'group_roles' => array_values($grants)];
+        return ['group_id' => Util::id($a['group_id']), 'group_name' => $this->db->one('SELECT name FROM company_groups WHERE id=?', [$a['group_id']])['name'] ?? null, 'group_access' => $access];
     }
     private function dto(array $a): array
     {
-        $g = $a['is_platform_admin'] ? null : AccessGrants::forUser($this->db, $a['tenant_id'], $a['user_id']); $roles = $g === null ? [] : [Util::id($g['role_id'])];
         return ['tenant_id' => Util::id($a['tenant_id']), 'tenant_name' => $a['tenant_name'], 'id' => Util::id($a['id']), 'kind' => $a['is_platform_admin'] ? 'platform' : 'company', 'email' => $a['email'], 'display_name' => $a['display_name'],
-            'user_id' => $a['user_id'] === null ? null : Util::id($a['user_id']), 'user_name' => $a['user_name'] ?? null, 'role_ids' => $roles,
+            'user_id' => $a['user_id'] === null ? null : Util::id($a['user_id']), 'user_name' => $a['user_name'] ?? null,
+            'access' => $a['is_platform_admin'] ? null : AccessGrants::dto(AccessGrants::forUser($this->db, $a['tenant_id'], $a['user_id'])),
             'active' => (bool) $a['active'], 'must_change_password' => (bool) $a['must_change_password'], 'created_at' => Util::time($a['created_at']),
             'last_login_at' => $a['last_login_at'] === null ? null : Util::time($a['last_login_at'])] + $this->groupDto($a);
     }

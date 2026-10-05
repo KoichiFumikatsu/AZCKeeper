@@ -33,7 +33,7 @@ function roleRulesTests(Database $db): void
     // El jefe ve a su equipo (directos e indirectos) y a nadie mas.
     expect(adminRequest($platform, 'POST', '/auth/reauth', ['password' => $platform['password']]), 200, 'reauth');
     $email = 'jefe.' . substr(Util::uuid(), 0, 8) . '@example.test';
-    $acct = expect(adminRequest($platform, 'POST', '/panel-accounts', ['kind' => 'company', 'email' => $email, 'display_name' => null, 'user_id' => $boss, 'role_ids' => []]), 201, 'boss account');
+    $acct = expect(adminRequest($platform, 'POST', '/panel-accounts', ['kind' => 'company', 'email' => $email, 'display_name' => null, 'user_id' => $boss]), 201, 'boss account');
     $me = panelLogin($email, $acct['temporary_password']); $me['tenant'] = $tenant;
     $me['csrf'] = expect(adminRequest($me, 'POST', '/auth/password', ['current_password' => $acct['temporary_password'], 'new_password' => 'Clave-del-jefe-01']), 200, 'boss password')['csrf_token'];
     $seen = array_column(expect(adminRequest($me, 'GET', '/users'), 200, 'boss lists team')['data'], 'id');
@@ -41,7 +41,7 @@ function roleRulesTests(Database $db): void
     check($seen === $want, 'team scope = self + direct + indirect reports');
     expect(adminRequest($me, 'GET', '/users/' . $p4['id']), 404, 'person outside the team invisible');
     // Las cuentas guardan los roles de regla al cambiar sus roles manuales.
-    check(adminRequest($platform, 'PATCH', '/panel-accounts/' . $acct['account']['id'], ['active' => true, 'role_ids' => []])[0] === 200 && $byRule($boss), 'manual role edit keeps rule roles');
+    check(adminRequest($platform, 'PATCH', '/panel-accounts/' . $acct['account']['id'], ['active' => true])[0] === 200 && $byRule($boss), 'editing the account keeps the rule role');
 
     // Si p1 deja de tener a quien dirigir, la regla le quita el rol (y solo ese).
     $v3 = $db->one('SELECT version FROM users WHERE tenant_id=? AND id=?', [$tenant, Util::bin($p3['id'])])['version'];

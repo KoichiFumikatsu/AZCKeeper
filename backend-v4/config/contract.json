@@ -1,5 +1,5 @@
 {
-  "source_sha256": "97cb9e3b9c516deb97b848039e53a99f96fd390756361a601848c0056bba6330",
+  "source_sha256": "559161cce2d34a7bd0874a53d0aeac924536a0b6e434d276f6aece7e93ad8902",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -24432,25 +24432,25 @@
         }
       }
     },
-    "GroupRoleGrant": {
+    "GroupAccessGrant": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "tenant_id",
-        "role_ids"
+        "role_id",
+        "scope"
       ],
       "properties": {
         "tenant_id": {
           "type": "string",
           "format": "uuid"
         },
-        "role_ids": {
-          "type": "array",
-          "maxItems": 50,
-          "items": {
-            "type": "string",
-            "format": "uuid"
-          }
+        "role_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope": {
+          "$ref": "#/components/schemas/AccessScope"
         }
       }
     },
@@ -25811,7 +25811,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "group_roles",
+        "group_access",
         "group_name",
         "group_id",
         "id",
@@ -25820,7 +25820,7 @@
         "display_name",
         "user_id",
         "user_name",
-        "role_ids",
+        "access",
         "active",
         "must_change_password",
         "created_at",
@@ -25851,7 +25851,7 @@
             }
           ]
         },
-        "group_roles": {
+        "group_access": {
           "type": "array",
           "maxItems": 50,
           "items": {
@@ -25860,7 +25860,9 @@
             "required": [
               "tenant_id",
               "tenant_name",
-              "role_ids"
+              "role_id",
+              "role_name",
+              "scope"
             ],
             "properties": {
               "tenant_id": {
@@ -25871,13 +25873,16 @@
                 "type": "string",
                 "maxLength": 120
               },
-              "role_ids": {
-                "type": "array",
-                "maxItems": 50,
-                "items": {
-                  "type": "string",
-                  "format": "uuid"
-                }
+              "role_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "role_name": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "scope": {
+                "$ref": "#/components/schemas/AccessScope"
               }
             }
           }
@@ -25937,13 +25942,15 @@
             }
           ]
         },
-        "role_ids": {
-          "type": "array",
-          "maxItems": 50,
-          "items": {
-            "type": "string",
-            "format": "uuid"
-          }
+        "access": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Access"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "active": {
           "type": "boolean"
@@ -25975,8 +25982,7 @@
         "kind",
         "email",
         "display_name",
-        "user_id",
-        "role_ids"
+        "user_id"
       ],
       "properties": {
         "group_id": {
@@ -25990,11 +25996,11 @@
             }
           ]
         },
-        "group_roles": {
+        "group_access": {
           "type": "array",
           "maxItems": 50,
           "items": {
-            "$ref": "#/components/schemas/GroupRoleGrant"
+            "$ref": "#/components/schemas/GroupAccessGrant"
           }
         },
         "kind": {
@@ -26031,13 +26037,15 @@
             }
           ]
         },
-        "role_ids": {
-          "type": "array",
-          "maxItems": 50,
-          "items": {
-            "type": "string",
-            "format": "uuid"
-          }
+        "access": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/AccessInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -26060,8 +26068,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "active",
-        "role_ids"
+        "active"
       ],
       "properties": {
         "group_id": {
@@ -26075,23 +26082,25 @@
             }
           ]
         },
-        "group_roles": {
+        "group_access": {
           "type": "array",
           "maxItems": 50,
           "items": {
-            "$ref": "#/components/schemas/GroupRoleGrant"
+            "$ref": "#/components/schemas/GroupAccessGrant"
           }
         },
         "active": {
           "type": "boolean"
         },
-        "role_ids": {
-          "type": "array",
-          "maxItems": 50,
-          "items": {
-            "type": "string",
-            "format": "uuid"
-          }
+        "access": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/AccessInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },

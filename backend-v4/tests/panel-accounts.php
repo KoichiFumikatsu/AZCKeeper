@@ -24,13 +24,13 @@ function panelAccountsTests(Database $db): void
     $db->run("INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,'Solo equipos','tenant')", [$tenant, $role]);
     $db->run("INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,'equipos.ver')", [$tenant, $role]);
     $email = 'persona.' . substr(Util::uuid(), 0, 8) . '@example.test';
-    $body = ['kind' => 'company', 'email' => $email, 'display_name' => null, 'user_id' => Util::id($u['id']), 'role_ids' => [Util::id($role)]];
+    $body = ['kind' => 'company', 'email' => $email, 'display_name' => null, 'user_id' => Util::id($u['id']), 'access' => ['role_id' => Util::id($role), 'scope' => accessScopeBody('all')]];
 
     expect(adminRequest($platform, 'POST', '/panel-accounts', $body), 403, 'create account needs reauth');
     expect(adminRequest($platform, 'POST', '/auth/reauth', ['password' => $platform['password']]), 200, 'platform reauth');
     $created = expect(adminRequest($platform, 'POST', '/panel-accounts', $body), 201, 'create company account');
     check($created['account']['kind'] === 'company' && $created['account']['must_change_password'] && strlen($created['temporary_password']) === 16, 'company account with temporary password');
-    check($created['account']['role_ids'] === [Util::id($role)] && $created['account']['user_name'] === $u['display_name'], 'account linked to person and role');
+    check($created['account']['access']['role_id'] === Util::id($role) && $created['account']['access']['scope']['kind'] === 'all' && $created['account']['user_name'] === $u['display_name'], 'account linked to person and access');
     check(!str_contains(json_encode($db->one('SELECT password_hash FROM admin_accounts WHERE email=?', [$email])), $created['temporary_password']), 'only the hash is stored');
     $dup = adminRequest($platform, 'POST', '/panel-accounts', $body);
     check($dup[0] === 409 && ($dup[1]['detail'] ?? null) === 'email_in_use', 'email unique across the system');
@@ -54,7 +54,7 @@ function panelAccountsTests(Database $db): void
 
     // Superadmin nuevo (plataforma): lo crea solo la plataforma.
     $superEmail = 'super.' . substr(Util::uuid(), 0, 8) . '@example.test';
-    $super = expect(adminRequest($platform, 'POST', '/panel-accounts', ['kind' => 'platform', 'email' => $superEmail, 'display_name' => 'Superadmin de prueba', 'user_id' => null, 'role_ids' => []]), 201, 'create platform account');
+    $super = expect(adminRequest($platform, 'POST', '/panel-accounts', ['kind' => 'platform', 'email' => $superEmail, 'display_name' => 'Superadmin de prueba', 'user_id' => null]), 201, 'create platform account');
     check($super['account']['kind'] === 'platform' && $super['account']['user_id'] === null, 'platform account without person');
     $list = expect(adminRequest($platform, 'GET', '/panel-accounts'), 200, 'list accounts');
     $emails = array_column($list['data'], 'email');
@@ -74,9 +74,12 @@ function panelAccountsTests(Database $db): void
 
     // Desactivar corta la sesion; restablecer da una temporal nueva.
     $acct = $created['account']['id'];
-    expect(adminRequest($platform, 'PATCH', '/panel-accounts/' . $acct, ['active' => false, 'role_ids' => [Util::id($role)]]), 200, 'disable account');
+    expect(adminRequest($platform, 'PATCH', '/panel-accounts/' . $acct, ['active' => false]), 200, 'disable account');
     expect(adminRequest($person, 'GET', '/tenants/' . $tid . '/devices'), 401, 'disabled account session revoked');
-    expect(adminRequest($platform, 'PATCH', '/panel-accounts/' . $acct, ['active' => true, 'role_ids' => []]), 200, 'enable account without roles');
+    expect(adminRequest($platform, 'PATCH', '/panel-accounts/' . $acct, ['active' => true]), 200, 'enable account keeps its access');
+    $a2 = expect(adminRequest($platform, 'GET', '/panel-accounts'), 200, 'list again')['data'];
+    check(array_values(array_filter($a2, fn ($x) => $x['id'] === $acct))[0]['access']['role_id'] === Util::id($role), 'access survives enable/disable');
+    check(adminRequest($platform, 'POST', '/panel-accounts', ['kind' => 'platform', 'email' => 'x.' . $superEmail, 'display_name' => 'X', 'user_id' => null, 'access' => ['role_id' => Util::id($role), 'scope' => accessScopeBody('all')]])[0] === 422, 'platform accounts have no access');
     $reset = expect(adminRequest($platform, 'POST', '/panel-accounts/' . $acct . '/reset-password'), 200, 'reset password');
     check($reset['account']['must_change_password'] && $reset['temporary_password'] !== $created['temporary_password'], 'new temporary password');
     check(panelLoginStatus($email, 'Nueva-clave-segura-1') === 401 && panelLoginStatus($email, $reset['temporary_password']) === 200, 'only the new temporary password logs in');
@@ -91,6 +94,6 @@ function panelAccountsTests(Database $db): void
     check($cleared['document'] === null && $cleared['version'] > $made['version'], 'document cleared');
     // No puede desactivarse a si misma la cuenta de plataforma.
     $selfId = Util::id($platform['id']);
-    check(adminRequest($platform, 'PATCH', '/panel-accounts/' . $selfId, ['active' => false, 'role_ids' => []])[1]['detail'] === 'cannot_disable_self', 'cannot disable self');
+    check(adminRequest($platform, 'PATCH', '/panel-accounts/' . $selfId, ['active' => false])[1]['detail'] === 'cannot_disable_self', 'cannot disable self');
     echo 'PASS panel accounts (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

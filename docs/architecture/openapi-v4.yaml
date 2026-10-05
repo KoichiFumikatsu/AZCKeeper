@@ -13673,22 +13673,22 @@ components:
           items:
             type: string
             format: uuid
-    GroupRoleGrant:
+    GroupAccessGrant:
       type: object
       additionalProperties: false
       required:
       - tenant_id
-      - role_ids
+      - role_id
+      - scope
       properties:
         tenant_id:
           type: string
           format: uuid
-        role_ids:
-          type: array
-          maxItems: 50
-          items:
-            type: string
-            format: uuid
+        role_id:
+          type: string
+          format: uuid
+        scope:
+          $ref: '#/components/schemas/AccessScope'
     DataSource:
       type: object
       additionalProperties: false
@@ -14140,7 +14140,7 @@ components:
       type: object
       additionalProperties: false
       required:
-      - group_roles
+      - group_access
       - group_name
       - group_id
       - id
@@ -14149,7 +14149,7 @@ components:
       - display_name
       - user_id
       - user_name
-      - role_ids
+      - access
       - active
       - must_change_password
       - created_at
@@ -14167,7 +14167,7 @@ components:
           - type: string
             maxLength: 120
           - type: 'null'
-        group_roles:
+        group_access:
           type: array
           maxItems: 50
           items:
@@ -14176,7 +14176,9 @@ components:
             required:
             - tenant_id
             - tenant_name
-            - role_ids
+            - role_id
+            - role_name
+            - scope
             properties:
               tenant_id:
                 type: string
@@ -14184,12 +14186,14 @@ components:
               tenant_name:
                 type: string
                 maxLength: 120
-              role_ids:
-                type: array
-                maxItems: 50
-                items:
-                  type: string
-                  format: uuid
+              role_id:
+                type: string
+                format: uuid
+              role_name:
+                type: string
+                maxLength: 120
+              scope:
+                $ref: '#/components/schemas/AccessScope'
         tenant_id:
           type: string
           format: uuid
@@ -14221,12 +14225,10 @@ components:
           - type: string
             maxLength: 160
           - type: 'null'
-        role_ids:
-          type: array
-          maxItems: 50
-          items:
-            type: string
-            format: uuid
+        access:
+          anyOf:
+          - $ref: '#/components/schemas/Access'
+          - type: 'null'
         active:
           type: boolean
         must_change_password:
@@ -14257,18 +14259,17 @@ components:
       - email
       - display_name
       - user_id
-      - role_ids
       properties:
         group_id:
           anyOf:
           - type: string
             format: uuid
           - type: 'null'
-        group_roles:
+        group_access:
           type: array
           maxItems: 50
           items:
-            $ref: '#/components/schemas/GroupRoleGrant'
+            $ref: '#/components/schemas/GroupAccessGrant'
         kind:
           enum:
           - platform
@@ -14288,37 +14289,32 @@ components:
           - type: string
             format: uuid
           - type: 'null'
-        role_ids:
-          type: array
-          maxItems: 50
-          items:
-            type: string
-            format: uuid
+        access:
+          anyOf:
+          - $ref: '#/components/schemas/AccessInput'
+          - type: 'null'
     PanelAccountPatch:
       type: object
       additionalProperties: false
       required:
       - active
-      - role_ids
       properties:
         group_id:
           anyOf:
           - type: string
             format: uuid
           - type: 'null'
-        group_roles:
+        group_access:
           type: array
           maxItems: 50
           items:
-            $ref: '#/components/schemas/GroupRoleGrant'
+            $ref: '#/components/schemas/GroupAccessGrant'
         active:
           type: boolean
-        role_ids:
-          type: array
-          maxItems: 50
-          items:
-            type: string
-            format: uuid
+        access:
+          anyOf:
+          - $ref: '#/components/schemas/AccessInput'
+          - type: 'null'
     PanelAccountSecret:
       type: object
       additionalProperties: false

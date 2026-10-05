@@ -263,6 +263,16 @@ const moduleNames = { usuarios: 'Personas', equipos: 'Equipos', reglas: 'Reglas'
   integraciones: 'Integraciones', auditoria: 'Auditoría', operacion: 'Operación del panel', releases: 'Versiones del agente', migration: 'Migración desde K3', permisos: 'Catálogo de permisos' };
 const scopeText = (role, n) => role.scope.kind === 'tenant' ? 'Toda la empresa' : role.scope.kind === 'self' ? 'Solo lo propio' : role.scope.kind === 'team' ? 'Su equipo (quienes le reportan)'
   : `${role.scope.kind === 'site' ? 'Sedes' : 'Áreas'}: ${role.scope.resource_ids.map(id => n.get(id) || id).join(', ')}`;
+// PUENTE hasta la Tarea 9 (editor de acceso): las cuentas ya usan access/group_access; el alcance que se manda es el
+// equivalente al alcance viejo del rol elegido, como hacia el servidor antes.
+const accessScopeText = (scope, n) => scope.kind === 'all' ? 'Toda la empresa' : scope.kind === 'self' ? 'Solo lo propio' : scope.kind === 'team' ? 'Su equipo (quienes le reportan)'
+  : [...scope.company_ids, ...scope.cities, ...scope.site_ids, ...scope.area_ids].map(id => n.get(id) || id).join(', ') || 'Nada';
+const legacyScope = role => {
+  const s = { kind: 'filters', company_ids: [], cities: [], site_ids: [], area_ids: [] };
+  if (role.scope.kind === 'tenant') return { ...s, kind: 'all' };
+  if (role.scope.kind === 'self' || role.scope.kind === 'team') return { ...s, kind: role.scope.kind };
+  return { ...s, [role.scope.kind === 'site' ? 'site_ids' : 'area_ids']: [...role.scope.resource_ids] };
+};
 function dialogShell(title) {
   const dialog = el('dialog'); const form = el('form'); form.noValidate = true; form.append(el('h2', title));
   const body = el('div', undefined, 'dialog-body'); form.append(body);
@@ -311,9 +321,9 @@ async function accounts() {
   const data = new Map(await Promise.all(ids.map(async id => [id, await companyData(id)])));
   const rolesText = a => {
     if (a.kind === 'platform') return 'Todo, en todas las empresas';
-    const d = data.get(a.tenant_id); const byId = new Map((d?.roles || []).map(r => [r.id, r]));
-    const own = a.role_ids.map(id => byId.get(id)).filter(Boolean).map(r => `${r.name} (${scopeText(r, d.n)})`).join(' · ') || 'Sin roles: no verá nada';
-    return a.group_id ? `${own} · Grupo ${a.group_name}: también ${a.group_roles.map(g => g.tenant_name).join(', ') || 'ninguna otra empresa aún'}` : own;
+    const d = data.get(a.tenant_id);
+    const own = a.access ? `${a.access.role_name} (${accessScopeText(a.access.scope, d?.n || new Map())})` : 'Sin acceso: no verá nada';
+    return a.group_id ? `${own} · Grupo ${a.group_name}: también ${a.group_access.map(g => g.tenant_name).join(', ') || 'ninguna otra empresa aún'}` : own;
   };
   const render = rows => {
     $('page-content').replaceChildren();
@@ -343,7 +353,7 @@ async function accounts() {
     if (a.kind === 'company' && platform && groupOf(a.tenant_id)) button('Grupo', () => editGroup(a));
     button(a.active ? 'Desactivar' : 'Activar', async () => {
       if (a.active && !confirm(`¿Desactivar la cuenta ${a.email}? Se cierran sus sesiones.`)) return;
-      try { await api('PATCH', `/panel-accounts/${a.id}`, { ...opts, body: { active: !a.active, role_ids: a.role_ids } }); await refresh(); } catch (e) { fail(e); }
+      try { await api('PATCH', `/panel-accounts/${a.id}`, { ...opts, body: { active: !a.active } }); await refresh(); } catch (e) { fail(e); }
     });
     button('Restablecer contraseña', () => {
       const { dialog, body, ok, show } = dialogShell(`Restablecer contraseña de ${a.email}`);
@@ -372,12 +382,17 @@ async function accounts() {
     for (const tid of g.tenant_ids.filter(t => t !== home)) {
       const d = await companyData(tid);
       inner.append(el('h3', companyName(tid)));
-      const given = current?.group_roles?.find(x => x.tenant_id === tid)?.role_ids || [];
+      const given = current?.group_access?.find(x => x.tenant_id === tid);
       if (!d.roles.length) inner.append(el('p', 'Esta empresa no tiene roles todavía.', 'help'));
-      picks.push([tid, checks(inner, roleItems(d), given)]);
+      picks.push([tid, checks(inner, roleItems(d), given ? [given.role_id] : []), d, given]);
     }
     const sync = () => { inner.hidden = !on.checked; }; on.addEventListener('change', sync); sync();
-    return () => on.checked ? { group_id: g.id, group_roles: picks.map(([tid, boxes]) => ({ tenant_id: tid, role_ids: boxes.filter(b => b.checked).map(b => b.value) })).filter(x => x.role_ids.length) } : { group_id: null, group_roles: [] };
+    // Un acceso por empresa: el primer rol marcado. Si es el que ya tenia, conserva su alcance.
+    const grant = ([tid, boxes, d, given]) => {
+      const id = boxes.find(b => b.checked)?.value; if (!id) return null;
+      return { tenant_id: tid, role_id: id, scope: given?.role_id === id ? given.scope : legacyScope(d.roles.find(r => r.id === id)) };
+    };
+    return () => on.checked ? { group_id: g.id, group_access: picks.map(grant).filter(Boolean) } : { group_id: null, group_access: [] };
   };
   const editGroup = async a => {
     const { dialog, body, ok, show } = dialogShell(`Grupo de ${a.user_name || a.email}`);
@@ -385,7 +400,7 @@ async function accounts() {
     const read = await groupSection(body, a.tenant_id, a);
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault(); ok.disabled = true;
-      try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, role_ids: a.role_ids, ...read() } }); dialog.close(); await refresh(); }
+      try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, ...read() } }); dialog.close(); await refresh(); }
       catch (e) { show(e); ok.disabled = false; }
     });
     dialog.showModal();
@@ -394,10 +409,14 @@ async function accounts() {
     const d = await companyData(a.tenant_id);
     const { dialog, body, ok, show } = dialogShell(`Roles de ${a.user_name || a.email}`);
     if (!d.roles.length) body.append(el('p', 'Esta empresa aún no tiene roles: créalos en Roles y permisos.', 'help'));
-    const boxes = checks(body, roleItems(d), a.role_ids);
+    const boxes = checks(body, roleItems(d), a.access ? [a.access.role_id] : []);
     dialog.querySelector('form').addEventListener('submit', async ev => {
-      ev.preventDefault(); ok.disabled = true;
-      try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, role_ids: boxes.filter(b => b.checked).map(b => b.value) } }); dialog.close(); await refresh(); }
+      ev.preventDefault();
+      const picked = boxes.filter(b => b.checked).map(b => b.value);
+      if (picked.length !== 1) { show('Elige un solo rol: cada persona tiene un acceso.'); return; }
+      ok.disabled = true;
+      const access = { role_id: picked[0], scope: a.access?.role_id === picked[0] ? a.access.scope : legacyScope(d.roles.find(r => r.id === picked[0])) };
+      try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, access } }); dialog.close(); await refresh(); }
       catch (e) { show(e.code === 'tenant_rbac_disabled' ? 'La empresa no tiene habilitada la gestión de sus propios roles: pídesela a la plataforma.' : e); ok.disabled = false; }
     });
     dialog.showModal();
@@ -417,7 +436,7 @@ async function accounts() {
     const display = labeled(ownerBox, 'Nombre', el('input')); display.maxLength = 160;
     ownerBox.append(el('p', 'Superadmin: entra a todas las empresas, crea empresas y cuentas, y cambia la marca del producto.', 'help'));
     const companyBox = el('div'); body.append(companyBox);
-    let person = null, boxes = [], readGroup = null;
+    let person = null, boxes = [], readGroup = null, companyRoles = [];
     const drawCompany = async id => {
       companyBox.replaceChildren(el('p', 'Cargando personas y roles…', 'help'));
       const [users, d] = await Promise.all([allPages('/users', id), companyData(id)]);
@@ -429,7 +448,7 @@ async function accounts() {
       labeled(companyBox, '¿A quién pertenece?', person, users.length ? 'Si la persona no aparece, créala primero en Personas (o ya tiene cuenta).' : 'Esta empresa aún no tiene personas: créalas primero en Personas.');
       person.addEventListener('change', () => { const u = users.find(x => x.id === person.value); if (u?.email && !email.value) email.value = u.email; });
       companyBox.append(el('p', 'Roles: deciden qué puede ver y hacer, y en qué sedes o áreas.', 'help'));
-      boxes = checks(companyBox, roleItems(d));
+      boxes = checks(companyBox, roleItems(d)); companyRoles = d.roles;
       if (!d.roles.length) companyBox.append(el('p', 'Aún no hay roles en esta empresa: créalos en Roles y permisos. Sin roles la cuenta no verá nada.', 'help'));
       readGroup = platform ? await groupSection(companyBox, id, null) : null;
     };
@@ -447,12 +466,15 @@ async function accounts() {
       if (!owner && !person?.value) { show('Elige a qué persona pertenece la cuenta.'); return; }
       if (owner && !display.value.trim()) { show('Escribe el nombre de la cuenta.'); return; }
       if (!pw.value) { show('Escribe tu contraseña para confirmar.'); return; }
+      const picked = owner ? [] : boxes.filter(b => b.checked).map(b => b.value);
+      if (picked.length > 1) { show('Elige un solo rol: cada persona tiene un acceso.'); return; }
       ok.disabled = true;
       try {
         await reauth(pw.value);
         const payload = owner
-          ? { kind: 'platform', email: email.value.trim(), display_name: display.value.trim(), user_id: null, role_ids: [] }
-          : { kind: 'company', email: email.value.trim(), display_name: null, user_id: person.value, role_ids: boxes.filter(b => b.checked).map(b => b.value), ...(readGroup ? readGroup() : {}) };
+          ? { kind: 'platform', email: email.value.trim(), display_name: display.value.trim(), user_id: null }
+          : { kind: 'company', email: email.value.trim(), display_name: null, user_id: person.value,
+            access: picked.length ? { role_id: picked[0], scope: legacyScope(companyRoles.find(r => r.id === picked[0])) } : null, ...(readGroup ? readGroup() : {}) };
         const r = await api('POST', '/panel-accounts', { tenant: company.value, body: payload });
         dialog.close(); showSecret(r.account, r.temporary_password); await refresh();
       } catch (e) {
