@@ -297,17 +297,25 @@ async function keysAndSettings(content, tenant, rerender) {
     keyFb.clear(); reveal.replaceChildren();
     if (!password.value) { keyFb.fail('Escribe tu contraseña para confirmar.'); return; }
     go.disabled = true; download.disabled = true;
+    let keyId = null, delivered = false;
     try {
       await api('POST', '/auth/reauth', { tenant, body: { password: password.value } });
       password.value = '';
       const response = await api('POST', '/enrollments/keys/installer', { tenant, raw: true });
+      keyId = response.headers.get('X-Enrollment-Key-Id');
       const name = (response.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'AZCKeeper-instalador.zip';
       const url = URL.createObjectURL(await response.blob());
       const a = el('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
-      await drawKeys();
+      delivered = true;
       reveal.append(el('p', 'El instalador trae una clave de registro nueva. Trátalo como secreto: quien lo tenga puede pedir el alta de un equipo (queda pendiente hasta que se apruebe). Para invalidarlo, revoca su clave.', 'notice'));
+      await drawKeys();
+      go.textContent = active.length ? 'Crear otra clave' : 'Crear clave de alta';
     } catch (error) {
       password.value = '';
+      // La respuesta llegó pero el archivo no: esa clave nunca se entregó, se revoca (mejor esfuerzo).
+      if (keyId && !delivered) {
+        try { await api('DELETE', `/enrollments/keys/${keyId}`, { tenant }); await drawKeys(); } catch { /* queda visible en la lista para revocarla a mano */ }
+      }
       keyFb.fail(error?.problem?.detail === 'installer_unavailable' ? 'No hay un instalador publicado en el servidor.' : error);
     } finally { go.disabled = false; download.disabled = false; }
   });

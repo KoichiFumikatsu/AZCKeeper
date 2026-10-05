@@ -167,6 +167,9 @@ function installerTests(Database $db, array $admin, array $u): void
     $seq = (int) $db->one("SELECT COALESCE(MAX(sequence),0) s FROM client_releases WHERE channel='stable' AND architecture='x64'")['s'] + 1000;
     $version = '9.9.' . $seq; $name = "AZCKeeper_v4_bootstrap_$version.zip"; $file = "$dir/$name";
     $build = tempnam(sys_get_temp_dir(), 'kzip'); $got = tempnam(sys_get_temp_dir(), 'kzip');
+    // Temporales del servidor (en Windows tempnam recorta el prefijo a 3 letras: kee*.tmp, y libzip anade .XXXXXX).
+    $temps = fn (): array => glob(sys_get_temp_dir() . DIRECTORY_SEPARATOR . (PHP_OS_FAMILY === 'Windows' ? 'kee*' : 'keeper-installer*')) ?: [];
+    $tempsBefore = $temps(); $leftovers = fn (): array => array_values(array_diff($temps(), $tempsBefore));
     try {
         $none = adminRequest($admin, 'POST', '/enrollments/keys/installer');
         check($none[0] === 409 && ($none[1]['detail'] ?? null) === 'installer_unavailable' && $keys() === 0, 'no published installer: 409 and no key created');
@@ -181,16 +184,19 @@ function installerTests(Database $db, array $admin, array $u): void
         file_put_contents($file, $bytes . 'x');
         $wrong = adminRequest($admin, 'POST', '/enrollments/keys/installer');
         check($wrong[0] === 409 && ($wrong[1]['detail'] ?? null) === 'installer_unavailable' && $keys() === 0, 'file with another size: 409 and no key created');
+        check($leftovers() === [], 'no installer temp file left after the 409 paths');
         file_put_contents($file, $bytes);
         $r = adminRequest($admin, 'POST', '/enrollments/keys/installer');
         check($r[0] === 200 && $r[2]['content-type'] === 'application/zip' && $r[2]['cache-control'] === 'no-store', 'installer served as zip, no-store');
         check($r[2]['content-disposition'] === 'attachment; filename="AZCKeeper-' . $version . '-compania-nandu-s-a-s.zip"', 'installer file name: version and ascii tenant slug');
+        check($leftovers() === [], 'no installer temp file left after a download');
         file_put_contents($got, $r[3]); $out = new ZipArchive(); check($out->open($got, ZipArchive::RDONLY) === true, 'downloaded installer is a valid zip');
         $raw = $out->getFromName('installation.json'); $cfg = json_decode($raw, true);
         check(!str_starts_with($raw, "\xEF\xBB\xBF") && str_contains($raw, "\n    ") && array_keys($cfg) === ['api_base', 'enrollment_key', 'enable_hklm'] && $cfg['enable_hklm'] === true, 'installation.json pretty, no BOM, only the generic fields');
         check(str_starts_with($cfg['api_base'], 'https://') && str_ends_with($cfg['api_base'], '/v1/') && parse_url($cfg['api_base'], PHP_URL_HOST) === parse_url(Config::get('ORIGIN'), PHP_URL_HOST), 'api_base is this backend over https ending in /v1/');
         $k = $db->one('SELECT * FROM enrollment_keys WHERE tenant_id=? AND key_hash=?', [$tenant, hash('sha256', $cfg['enrollment_key'], true)]);
         check(str_starts_with($cfg['enrollment_key'], 'kek_') && $k && $k['revoked_at'] === null && $keys() === 1, 'installer key stored (hash) for this tenant and active');
+        check(($r[2]['x-enrollment-key-id'] ?? null) === Util::id($k['id']), 'installer response names the new key id (panel revokes it if the download fails)');
         check($out->getFromName('agent/x.txt') === 'contenido firmado' && $out->numFiles === 2, 'signed agent content untouched');
         $out->close();
         $audit = $db->one("SELECT changed_fields FROM audit_log WHERE tenant_id=? AND action='downloadInstaller' AND resource_id=?", [$tenant, $k['id']]);

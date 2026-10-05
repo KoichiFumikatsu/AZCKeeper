@@ -1,5 +1,5 @@
 {
-  "source_sha256": "8790a981c5abeea78d6271bffa6547d79920c9443f81106d2962fc13fb1dc511",
+  "source_sha256": "d459f09af61755385404baa512ab6543f0c070415d0c95822e0b0fc01f2a21e4",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -14526,8 +14526,7 @@
         ],
         "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
         "x-resources": [
-          "EnrollmentRequest",
-          "ExpectedDevice"
+          "EnrollmentKey"
         ],
         "responses": {
           "200": {
@@ -14559,6 +14558,13 @@
                   "type": "string"
                 },
                 "description": "attachment; filename=\"AZCKeeper-<versión>-<empresa>.zip\""
+              },
+              "X-Enrollment-Key-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "Id de la clave creada. Si la descarga no llega completa, el panel la revoca con DELETE /enrollments/keys/{id} y el servidor la revoca si el envío se corta."
               }
             },
             "content": {

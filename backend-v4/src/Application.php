@@ -37,7 +37,8 @@ final class Application
                     if ($r->method!=='GET') { AdminApi::validatePending($db,$context['tenant_id'],$admin->recompileScope()); }
                     return $result;
                 });
-                AdminApi::compilePending($db, $context['tenant_id'], $admin?->recompileScope());
+                try { AdminApi::compilePending($db, $context['tenant_id'], $admin?->recompileScope()); }
+                catch (\Throwable $e) { if (isset($response['undelivered'])) { $this->undelivered($response['undelivered'], $id); } throw $e; }
             }
             elseif ($r->route === '/client/auth/challenges') { $response = $this->ok($auth->challenge($r)); }
             elseif ($r->route === '/client/login') { $response = $this->ok($auth->login($r)); }
@@ -65,7 +66,7 @@ final class Application
                     catch (ApiError) { throw new \RuntimeException('Invalid response contract'); }
                 }
             }
-            $this->send($response['status'], $response['json'], $id, $response['headers'] ?? [], false, $response['file'] ?? null);
+            $this->send($response['status'], $response['json'], $id, $response['headers'] ?? [], false, $response['file'] ?? null, $response['undelivered'] ?? null);
         } catch (OAuthError $e) {
             $this->send($e->status, Util::json(['error'=>$e->errorCode]), $id, ['Cache-Control'=>'no-store', 'Pragma'=>'no-cache'] + ($e->status === 401 ? ['WWW-Authenticate'=>'Basic realm="keeper-oauth"'] : []));
         } catch (ApiError $e) {
@@ -81,6 +82,12 @@ final class Application
             $code = $status === 503 ? 'temporarily_unavailable' : 'internal_error';
             $this->send($status, Util::json(['type' => 'about:blank', 'title' => $code, 'status' => $status, 'code' => $code, 'request_id' => $id]), $id, $status === 503 ? ['Retry-After' => '5'] : [], true);
         }
+    }
+    // Revocacion tras commit de lo que no se entrego; nunca relanza (la respuesta ya pudo salir). Sin secretos en el log.
+    private function undelivered(callable $fn, string $id): void
+    {
+        try { $fn(); error_log('keeper request=' . $id . ' installer_undelivered key_revoked'); }
+        catch (\Throwable $e) { error_log('keeper request=' . $id . ' installer_undelivered revoke_failed=' . get_class($e)); }
     }
     private function ok(mixed $body, int $status = 200, array $headers = []): array { return ['status' => $status, 'json' => Util::json($body), 'headers' => $headers]; }
     private function dispatch(Database $db, Auth $auth, array $c, Request $r): array
@@ -154,15 +161,22 @@ final class Application
         throw new ApiError(404, 'resource_not_found');
     }
     // $file: descarga binaria (instalador) que se envia desde disco sin cargarla en memoria y se borra despues.
-    private function send(int $status, string $json, string $id, array $headers, bool $problem = false, ?string $file = null): void
+    // $undelivered: se llama si el archivo no llega completo (la peticion ya hizo commit).
+    private function send(int $status, string $json, string $id, array $headers, bool $problem = false, ?string $file = null, ?callable $undelivered = null): void
     {
         if ($file !== null) {
+            $size = filesize($file); $sent = false;
             try {
-                http_response_code($status); header('X-Request-ID: ' . $id); header('Content-Length: ' . filesize($file));
+                ignore_user_abort(true); // si el cliente corta, seguir hasta poder revocar la clave
+                http_response_code($status); header('X-Request-ID: ' . $id); header('Content-Length: ' . $size);
                 foreach ($headers + $this->limiter->headers as $key => $value) { foreach (is_array($value) ? $value : [$value] as $line) { header($key . ': ' . $line, $key !== 'Set-Cookie'); } }
                 while (ob_get_level() > 0) { ob_end_clean(); }
-                readfile($file);
-            } finally { if (is_file($file)) { unlink($file); } }
+                $sent = readfile($file) === $size; flush();
+                $sent = $sent && !connection_aborted();
+            } finally {
+                if (is_file($file)) { unlink($file); }
+                if (!$sent && $undelivered !== null) { $this->undelivered($undelivered, $id); }
+            }
             return;
         }
         http_response_code($status);

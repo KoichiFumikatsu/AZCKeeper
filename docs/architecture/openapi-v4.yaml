@@ -9933,8 +9933,7 @@ paths:
         csrfToken: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
-      - EnrollmentRequest
-      - ExpectedDevice
+      - EnrollmentKey
       responses:
         '200':
           description: Paquete de instalación (zip) con la clave nueva
@@ -9957,6 +9956,11 @@ paths:
               schema:
                 type: string
               description: attachment; filename="AZCKeeper-<versión>-<empresa>.zip"
+            X-Enrollment-Key-Id:
+              schema:
+                type: string
+                format: uuid
+              description: Id de la clave creada. Si la descarga no llega completa, el panel la revoca con DELETE /enrollments/keys/{id} y el servidor la revoca si el envío se corta.
           content:
             application/zip:
               schema:
