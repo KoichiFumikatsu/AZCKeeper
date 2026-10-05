@@ -38,7 +38,7 @@ final class Application
                     return $result;
                 });
                 try { AdminApi::compilePending($db, $context['tenant_id'], $admin?->recompileScope()); }
-                catch (\Throwable $e) { if (isset($response['undelivered'])) { $this->undelivered($response['undelivered'], $id); } throw $e; }
+                catch (\Throwable $e) { if (isset($response['file']) && is_file($response['file'])) { unlink($response['file']); } if (isset($response['undelivered'])) { $this->undelivered($response['undelivered'], $id); } throw $e; }
             }
             elseif ($r->route === '/client/auth/challenges') { $response = $this->ok($auth->challenge($r)); }
             elseif ($r->route === '/client/login') { $response = $this->ok($auth->login($r)); }
