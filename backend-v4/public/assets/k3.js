@@ -1,11 +1,11 @@
 import { api, isUuid, setTenant, readSession, refreshCsrf, goToLogin, errorMessage, PLATFORM_TENANT } from './api.js';
 import './menu.js';
 import './tablekit.js';
-import { applyNavAccess, loadAccess, allowed } from './nav-access.js';
+import { applyNavAccess, loadAccess, allowed, canSeeOnboarding } from './nav-access.js';
 import { scopeSummary, sameAccess, scopeConditions, SCOPE_RULE, TEAM_LABEL } from './access-scope.js';
 import { coordinator } from './coordinator.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings } from './hardening-settings.js';
-import { onboardingPage, returnBand } from './onboarding.js';
+import { onboardingPage, returnBand, AUDIT_LABELS as ONBOARDING_AUDIT } from './onboarding.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
 // de la API; lo que la cuenta no puede ver se explica en vez de mostrarse vacío.
@@ -664,13 +664,33 @@ const moduleNames = { usuarios: 'Personas', equipos: 'Equipos', reglas: 'Reglas'
 // Editor de un acceso: rol (qué puede hacer) + alcance (qué datos ve), con la frase legible al pie (§4 y §5).
 // El alcance siempre se muestra y se envía tal cual: cambiar el rol no lo toca, y ampliarlo exige elegirlo.
 // groupOnly: cuenta de grupo en otra empresa, solo «todo» o filtros; sin acceso previo no hay alcance por defecto.
-function accessEditor(parent, { roles, org, current = null, groupOnly = false }) {
+// newRole ({ company }): ofrece «+ Nuevo rol» con el editor de Roles. El rol creado se agrega a la lista pero no se
+// elige: crear un rol no se lo da a nadie (F11); el borrador del acceso sigue igual.
+function accessEditor(parent, { roles, org, current = null, groupOnly = false, newRole = null }) {
   const box = el('fieldset', undefined, 'perm-group'); box.append(el('legend', 'Acceso al panel')); parent.append(box);
   const n = names(org);
-  const role = el('select'); role.append(new Option('Elige el rol…', ''));
-  roles.filter(r => r.active || r.id === current?.role_id).sort((a, b) => a.name.localeCompare(b.name, 'es'))
-    .forEach(r => role.append(new Option(r.active ? r.name : `${r.name} (inactivo)`, r.id)));
-  role.value = current?.role_id || ''; labeled(box, 'Rol (qué puede hacer)', role);
+  const role = el('select');
+  const fillRoles = () => {
+    const v = role.value || current?.role_id || '';
+    role.replaceChildren(new Option('Elige el rol…', ''));
+    roles.filter(r => r.active || r.id === current?.role_id).sort((a, b) => a.name.localeCompare(b.name, 'es'))
+      .forEach(r => role.append(new Option(r.active ? r.name : `${r.name} (inactivo)`, r.id)));
+    role.value = v;
+  };
+  fillRoles();
+  labeled(box, 'Rol (qué puede hacer)', role);
+  if (newRole) {
+    const add = el('button', '+ Nuevo rol', 'link-button new-role'); add.type = 'button';
+    const made = el('div', '', 'help new-role-note'); made.setAttribute('aria-live', 'polite'); made.hidden = true; box.append(add, made);
+    add.addEventListener('click', () => {
+      add.disabled = true;
+      openRoleEditor(null, { company: newRole.company || null, note: 'Se crea en Roles y permisos. No se le da a nadie al crearlo: después elígelo en «Rol» si quieres darlo aquí.',
+        onSaved: created => {
+          roles.push(created); fillRoles();
+          made.textContent = `Rol «${created.name}» creado. No quedó elegido: elígelo en «Rol» si quieres darlo.`; made.hidden = false; role.focus();
+        } }).catch(e => { made.textContent = `No se pudo abrir el editor de roles: ${errorMessage(e)}`; made.hidden = false; }).finally(() => { add.disabled = false; });
+    });
+  }
   const kind = el('select');
   if (groupOnly && !current) kind.append(new Option('Elige el alcance…', ''));
   [['all', 'Todo el cliente'], ['filters', 'Solo ciertas empresas, ciudades, sedes o áreas'], ...(groupOnly ? [] : [['team', TEAM_LABEL], ['self', 'Solo lo propio']])]
@@ -758,6 +778,10 @@ async function accounts() {
   const list = await api('GET', '/panel-accounts');
   const groups = platform ? ((await optional(api('GET', '/company-groups')))?.data || []) : [];
   const groupOf = tenantId => groups.find(g => g.tenant_ids.includes(tenantId)) || null;
+  // «+ Nuevo rol» en el acceso (F11): superadmin en cualquier cliente; una cuenta de cliente, con roles.gestionar y la
+  // autogestión de accesos contratada (la API valida igual).
+  const mine = platform ? null : await loadAccess();
+  const rolesCreatable = company => platform || (mine?.permissions?.some(p => p.code === 'roles.gestionar') && (mine.features || []).includes('autogestion_accesos')) ? { company } : null;
   // Roles y nombres de sedes/areas por empresa (una cuenta solo tiene roles de su empresa).
   const perCompany = new Map();
   const companyData = async id => {
@@ -882,7 +906,7 @@ async function accounts() {
     const { dialog, body, ok, show } = dialogShell(`Acceso de ${a.user_name || a.email}`);
     dialog.classList.add('wide-dialog');
     if (!d.roles.length) body.append(el('p', 'Esta empresa aún no tiene roles: créalos en Roles y permisos.', 'help'));
-    const ed = accessEditor(body, { roles: d.roles, org: d.org, current: a.access });
+    const ed = accessEditor(body, { roles: d.roles, org: d.org, current: a.access, newRole: await rolesCreatable(a.tenant_id) });
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
       const p = ed.problem(); if (p) { show(p); return; }
@@ -931,7 +955,7 @@ async function accounts() {
         else companyBox.prepend(el('p', 'Esa persona no está disponible para una cuenta nueva: ya tiene cuenta o está inactiva.', 'notice'));
         wanted = null;
       }
-      accessEd = d.roles.length ? accessEditor(companyBox, { roles: d.roles, org: d.org, current: null }) : null;
+      accessEd = d.roles.length ? accessEditor(companyBox, { roles: d.roles, org: d.org, current: null, newRole: await rolesCreatable(id) }) : null;
       if (!d.roles.length) companyBox.append(el('p', 'Aún no hay roles en esta empresa: créalos en Roles y permisos. Sin rol, la cuenta no verá nada.', 'help'));
       group = platform ? await groupSection(companyBox, id, null) : null;
     };
@@ -1350,14 +1374,21 @@ async function people() {
       ['Con cuenta del panel', String(list.filter(u => u.panel_login_enabled).length)]]);
     const s = surface('Personas de la empresa');
     renderExclusions();
+    // Origen y plan por defecto (F7): el plan solo se nombra si la cuenta puede verlo; nunca se infiere «sin plan» de un 403.
+    s.append(el('p', `Origen de las personas: ${owner ? `${owner} (se corrigen allá)` : 'Keeper (se crean y editan aquí)'}${avail ? ` · Plan por defecto del cliente: ${planName(avail.default_plan_id) || 'sin plan'}` : ''}.`, 'help people-origin'));
     if (owner) s.append(el('p', `Las personas las gestiona ${owner}: las altas, cambios y retiros se hacen allá y llegan solos. Solo las que no vienen de ${owner} se editan aquí.`, 'notice'));
-    else {
+    else if (canCreatePeople) {
       const tools = el('div', undefined, 'actions no-margin');
       const imp = el('button', 'Importar desde CSV'); imp.type = 'button'; imp.addEventListener('click', importer);
       const tpl = el('button', 'Descargar plantilla CSV'); tpl.type = 'button'; tpl.addEventListener('click', template);
       tools.append(imp, tpl); s.append(tools);
     }
-    if (!list.length) { empty(s, 'Aún no hay personas', 'Créalas una a una con "Crear persona" o impórtalas desde un CSV (descarga la plantilla).'); return; }
+    if (!list.length) {
+      if (owner) empty(s, `Aún no llegan personas desde ${owner}`, `Llegan con la próxima carga aplicada de ${owner}; una simulación no las crea. Revisa la carga en Fuentes de datos.`);
+      else if (!canCreatePeople) empty(s, 'Aún no hay personas', 'Tu cuenta no puede crear personas: pídeselo a quien administra Personas.');
+      else empty(s, 'Aún no hay personas', 'Créalas una a una con "Crear persona" o impórtalas desde un CSV (descarga la plantilla).');
+      return;
+    }
     // Selección para editar en lote: casillas por fila, «Seleccionar las N filtradas» (búsqueda y filtros aplicados).
     let selection = null;
     if (canBatch) {
@@ -1401,72 +1432,156 @@ async function people() {
       try { excluded = (await api('PUT', '/monitoring-exclusions', { body: { position_ids: boxes.filter(b => b.checked).map(b => b.value) } })).position_ids; list = await allPages('/users'); render(); done(); } catch (e) { fail(e); }
     });
   };
+  // Plantilla e importación CSV (F7). Las unidades se buscan por nombre (o por su ruta «Padre › Unidad» si hay dos con el
+  // mismo nombre); un nombre ambiguo o parecido nunca se resuelve eligiendo el primero: la fila queda con error y sugerencias.
+  const CSV_COLUMNS = [['nombre', 'Obligatorio.'], ['cedula', 'Documento de identificación. Si ya existe en el cliente, la fila se omite (no se actualiza).'],
+    ['correo', 'Opcional.'], ['firma', 'Legado, opcional: solo si el cliente todavía usa firmas.'],
+    ['sede', 'Nombre de la sede. Si hay dos con el mismo nombre, escribe su ruta: «Padre › Sede».'], ['area', 'Nombre del área (o su ruta).'], ['cargo', 'Nombre del cargo (o su ruta).'],
+    ['horario', 'Nombre del horario. Vacío: el horario sugerido, que conviene revisar.'], ['empresa', 'Empresa del grupo, opcional. Vacío: sin empresa (todo el grupo).']];
   const template = () => {
     const ex = k => fallback(k)?.name || units(k)[0]?.name || '';
-    const csv = 'nombre;cedula;correo;firma;sede;area;cargo;horario;empresa\r\n' + `Ana María Pérez;1234567890;ana.perez@empresa.com;${ex('firm')};${ex('site')};${ex('area')};${ex('position')};${defaultSchedule()?.name || ''};${units('company')[0]?.name || ''}\r\n`;
+    const csv = `${CSV_COLUMNS.map(([c]) => c).join(';')}\r\n` + `Ana María Pérez;1234567890;ana.perez@empresa.com;${ex('firm')};${ex('site')};${ex('area')};${ex('position')};${defaultSchedule()?.name || ''};${units('company')[0]?.name || ''}\r\n`;
     const a = el('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })); a.download = 'plantilla-personas.csv'; a.click();
   };
+  const orgMap = new Map(org.map(o => [o.id, o]));
+  const pathFold = v => fold(v).replace(/\s*(›|>|\/)\s*/g, ' › ');
+  const distance = (a, b) => {
+    if (Math.abs(a.length - b.length) > 2) return 3;
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      const cur = [i];
+      for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+    return prev[b.length];
+  };
+  const similar = (a, b) => a.length >= 3 && b.length >= 3 && (a.includes(b) || b.includes(a) || distance(a, b) <= (Math.min(a.length, b.length) >= 6 ? 2 : 1));
+  // { item } si hay una sola coincidencia; { ambiguous } si varias; { inactive } si solo coincide una inactiva; { near } si ninguna.
+  const resolve = (pool, inactive, value, label) => {
+    const v = pathFold(value);
+    const exact = pool.filter(x => fold(x.name) === v || pathFold(label(x)) === v);
+    if (exact.length === 1) return { item: exact[0] };
+    if (exact.length > 1) return { ambiguous: exact.map(label) };
+    if (inactive.some(x => fold(x.name) === v || pathFold(label(x)) === v)) return { inactive: true };
+    return { near: pool.filter(x => similar(fold(x.name), fold(value).replace(/.*›\s*/, ''))).map(label).slice(0, 3) };
+  };
+  const unitLabel = o => orgPath(o, orgMap);
+  const unitIssue = (label, v, r) => r.ambiguous ? `${label} «${v}» coincide con ${r.ambiguous.length}: ${r.ambiguous.map(x => `«${x}»`).join(', ')} (escribe la ruta para elegir una)`
+    : r.inactive ? `${label} «${v}» está inactiva` : `${label} «${v}» no existe${r.near.length ? `; ¿quisiste decir ${r.near.map(x => `«${x}»`).join(' o ')}?` : ''}`;
   const importer = () => {
     const { dialog, body, ok, show } = dialogShell('Importar personas desde CSV');
     dialog.classList.add('wide-dialog');
-    body.append(el('p', 'Columnas: nombre, cedula, correo, firma, sede, area, cargo, horario (la primera fila son los títulos). Firma, sede, área, cargo y horario se buscan por nombre; si van vacíos se usa "Sin …" o el horario por defecto. Las cédulas que ya existen se omiten.'));
+    body.append(el('p', 'La primera fila son los títulos. Separador coma o punto y coma. Cada fila crea una persona con su propio guardado: si alguna falla, las demás quedan creadas y puedes reintentar solo las fallidas.'));
+    const cols = el('details', undefined, 'more-options'); cols.append(el('summary', 'Columnas de la plantilla'));
+    const dl = el('dl', undefined, 'details csv-columns'); CSV_COLUMNS.forEach(([c, t]) => { const r = el('div'); r.append(el('dt', c), el('dd', t)); dl.append(r); }); cols.append(dl); body.append(cols);
     const file = labeled(body, 'Archivo CSV (exportado de Excel o Google Sheets)', el('input')); file.type = 'file'; file.accept = '.csv,text/csv';
-    const preview = el('div'); body.append(preview);
-    let ready = [];
+    const preview = el('div', undefined, 'import-preview'); preview.setAttribute('aria-live', 'polite'); body.append(preview);
+    let rows = []; let tries = 0; const initialIds = new Set(list.map(u => u.id));
+    const group = (title, items, tone) => {
+      if (!items.length) return;
+      const box = el('div', undefined, `import-group ${tone || ''}`.trim()); box.append(el('h3', `${title} (${items.length})`));
+      const ul = el('ul', undefined, 'import-issues'); items.slice(0, 60).forEach(x => ul.append(x instanceof Node ? x : el('li', x)));
+      if (items.length > 60) ul.append(el('li', `y ${items.length - 60} más.`)); box.append(ul); preview.append(box);
+    };
+    const who = x => `Fila ${x.line} (${x.payload.display_name || 'sin nombre'})`;
+    const skippedItem = x => {
+      const li = el('li', `${who(x)}: ${x.skip}`);
+      const existing = x.payload.document && list.find(u => u.document === x.payload.document);
+      if (existing) { const a = el('a', 'abrir persona'); a.href = personUrl(existing); li.append(' · ', a); }
+      return li;
+    };
     file.addEventListener('change', async () => {
-      preview.replaceChildren(); ready = []; ok.disabled = true;
+      preview.replaceChildren(); rows = []; tries = 0; ok.disabled = true; ok.hidden = false;
+      dialog.querySelector('form > .error-text').hidden = true;
       const f = file.files[0]; if (!f) return;
-      const rows = csvRows(await f.text());
-      if (rows.length < 2) { show('El archivo no tiene filas de personas.'); return; }
-      const head = rows[0].map(fold);
+      const lines = csvRows(await f.text());
+      if (lines.length < 2) { show('El archivo no tiene filas de personas.'); return; }
+      const head = lines[0].map(fold);
       const col = (...keys) => head.findIndex(h => keys.includes(h));
-      const idx = { name: col('nombre', 'name', 'nombre completo'), doc: col('cedula', 'documento', 'cc'), email: col('correo', 'email', 'e-mail'),
+      const idx = { name: col('nombre', 'name', 'nombre completo'), doc: col('cedula', 'documento', 'cc', 'identificacion'), email: col('correo', 'email', 'e-mail'),
         firm: col('firma'), site: col('sede'), area: col('area'), position: col('cargo'), schedule: col('horario'), company: col('empresa', 'empresa del grupo') };
       if (idx.name < 0) { show('Falta la columna "nombre".'); return; }
       const known = new Set(list.map(u => u.document).filter(Boolean));
-      const seen = new Set(); const results = [];
-      for (const [i, r] of rows.slice(1).entries()) {
+      const seen = new Set();
+      const schedPool = scheduleList;
+      for (const [i, r] of lines.slice(1).entries()) {
         const get = k => idx[k] >= 0 ? (r[idx[k]] || '').trim() : '';
-        const problems = []; const payload = { display_name: get('name'), document: get('doc').replace(/[\s.\-]/g, '') || null, email: get('email') || null };
+        const problems = []; const assumes = []; const assume = (key, text) => assumes.push([key, text]); const payload = { display_name: get('name'), document: get('doc').replace(/[\s.\-]/g, '') || null, email: get('email') || null };
         if (!payload.display_name) problems.push('sin nombre');
         if (payload.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(payload.email)) problems.push('correo inválido');
         for (const [kind, label] of ORG_FIELDS) {
-          const v = get(kind); const unit = v ? units(kind).find(o => fold(o.name) === fold(v)) : fallback(kind);
-          if (!unit) { if (v || kind !== 'firm') problems.push(v ? `${label} "${v}" no existe` : `${label} vacía y no hay "Sin …"`); } else payload[`${kind}_id`] = unit.id;
+          const v = get(kind);
+          if (!v) {
+            const fb = fallback(kind);
+            if (fb) { payload[`${kind}_id`] = fb.id; if (kind !== 'firm') assume(`${kind}:${fb.id}`, `${label} vacía: se usa «${fb.name}»`); }
+            else if (kind !== 'firm') problems.push(`${label} vacía y no hay «Sin …» ni una única opción`);
+            continue;
+          }
+          const res = resolve(units(kind), org.filter(o => o.kind === kind && !o.active), v, unitLabel);
+          if (res.item) payload[`${kind}_id`] = res.item.id; else problems.push(unitIssue(label, v, res));
         }
-        const sv = get('schedule'); const sc = sv ? scheduleList.find(x => fold(x.name) === fold(sv)) : defaultSchedule();
-        if (!sc) { if (sv) problems.push(`horario "${sv}" no existe`); } else payload.schedule_id = sc.id;
-        const cv = get('company'); if (cv) { const co = units('company').find(o => fold(o.name) === fold(cv)); if (!co) problems.push(`empresa "${cv}" no existe`); else payload.company_id = co.id; }
+        const sv = get('schedule');
+        if (!sv) { const sc = defaultSchedule(); if (sc) { payload.schedule_id = sc.id; assume(`schedule:${sc.id}`, `Horario vacío: se usa «${sc.name}» (sugerido, no revisado)`); } }
+        else { const res = resolve(schedPool, [], sv, s => s.name); if (res.item) payload.schedule_id = res.item.id; else problems.push(unitIssue('Horario', sv, res).replace('está inactiva', 'está inactivo')); }
+        const cv = get('company');
+        if (cv) { const res = resolve(units('company'), org.filter(o => o.kind === 'company' && !o.active), cv, unitLabel); if (res.item) payload.company_id = res.item.id; else problems.push(unitIssue('Empresa', cv, res)); }
         let skip = null;
-        if (payload.document && known.has(payload.document)) skip = 'ya existe';
+        if (payload.document && known.has(payload.document)) skip = 'la cédula ya existe en el cliente (no se actualiza)';
         else if (payload.document && seen.has(payload.document)) skip = 'cédula repetida en el archivo';
         if (payload.document) seen.add(payload.document);
-        results.push({ line: i + 2, payload, problems, skip });
+        rows.push({ line: i + 2, payload, problems, skip, assumes, state: problems.length ? 'error' : skip ? 'skipped' : 'ready' });
       }
-      ready = results.filter(x => !x.problems.length && !x.skip);
-      const bad = results.filter(x => x.problems.length), skipped = results.filter(x => x.skip && !x.problems.length);
-      preview.append(el('p', `${ready.length} listas para crear · ${skipped.length} omitidas · ${bad.length} con errores.`, 'help'));
-      if (bad.length || skipped.length) {
-        const ul = el('ul', undefined, 'import-issues');
-        [...bad, ...skipped].slice(0, 60).forEach(x => ul.append(el('li', `Fila ${x.line} (${x.payload.display_name || 'sin nombre'}): ${x.problems.length ? x.problems.join(', ') : x.skip}`)));
-        preview.append(ul);
-      }
-      ok.disabled = !ready.length; ok.textContent = `Crear ${ready.length} personas`;
+      const ready = rows.filter(x => x.state === 'ready'), bad = rows.filter(x => x.state === 'error'), skipped = rows.filter(x => x.state === 'skipped');
+      // Supuestos («Sin …», horario sugerido) de las filas que sí se crearán: no equivalen a una asignación revisada.
+      const assumed = new Map(); ready.flatMap(x => x.assumes).forEach(([key, text]) => assumed.set(key, { text, count: (assumed.get(key)?.count || 0) + 1 }));
+      preview.append(el('p', `${ready.length} listas para crear · ${skipped.length} omitidas · ${bad.length} con errores.`, 'import-summary'));
+      group('Con errores: no se crearán', bad.map(x => `${who(x)}: ${x.problems.join('; ')}`), 'bad');
+      group('Omitidas', skipped.map(skippedItem));
+      if (assumed.size && ready.length) group('Valores supuestos: revísalos', [...assumed.values()].map(a => `${a.text} en ${a.count} fila${a.count === 1 ? '' : 's'}.`), 'warn');
+      ok.disabled = !ready.length; ok.textContent = `Crear ${ready.length} persona${ready.length === 1 ? '' : 's'}`;
     });
     ok.disabled = true; ok.textContent = 'Crear personas';
     dialog.querySelector('form').addEventListener('submit', async ev => {
-      ev.preventDefault(); ok.disabled = true; file.disabled = true;
-      const progress = el('p', '', 'help'); preview.append(progress); const failed = [];
-      for (const [i, x] of ready.entries()) {
-        progress.textContent = `Creando ${i + 1} de ${ready.length}…`;
-        try { list = [...list, await patient(() => api('POST', '/users', { body: x.payload }))]; }
-        catch (e) { failed.push(`Fila ${x.line} (${x.payload.display_name}): ${e.problem?.detail === 'document_in_use' ? 'cédula ya usada' : errorMessage(e)}`); }
+      ev.preventDefault();
+      const todo = rows.filter(x => x.state === 'ready' || x.state === 'failed');
+      if (!todo.length) return;
+      ok.disabled = true; file.disabled = true;
+      // Reintento: antes de repetir se relee Personas; lo que ya quedó creado (respuesta perdida) no se vuelve a crear.
+      if (tries > 0) {
+        try {
+          list = await allPages('/users');
+          for (const x of todo) {
+            const d = x.payload.document;
+            const made = d ? list.find(u => u.document === d) : list.find(u => !initialIds.has(u.id) && fold(u.display_name) === fold(x.payload.display_name) && (u.email || null) === x.payload.email && !rows.some(y => y.created === u.id));
+            if (made) { x.state = 'created'; x.created = made.id; x.note = 'ya estaba creada (intento anterior)'; }
+          }
+        } catch (e) { show(e); ok.disabled = false; file.disabled = false; return; }
+      }
+      tries++;
+      preview.replaceChildren();
+      const progress = el('p', '', 'help'); progress.setAttribute('role', 'status'); preview.append(progress);
+      const pending = todo.filter(x => x.state !== 'created');
+      for (const [i, x] of pending.entries()) {
+        progress.textContent = `Creando ${i + 1} de ${pending.length}…`;
+        try { const u = await patient(() => api('POST', '/users', { body: x.payload })); list = [...list, u]; x.state = 'created'; x.created = u.id; }
+        catch (e) {
+          if (e.problem?.detail === 'document_in_use') { x.state = 'skipped'; x.skip = 'la cédula ya existe en el cliente (no se actualiza)'; }
+          else { x.state = 'failed'; x.error = personError(e); }
+        }
       }
       render(); done();
-      if (!failed.length) { dialog.close(); return; }
-      progress.textContent = `Terminado: ${ready.length - failed.length} creadas, ${failed.length} con error.`;
-      const ul = el('ul', undefined, 'import-issues'); failed.forEach(t => ul.append(el('li', t))); preview.append(ul);
-      ok.hidden = true;
+      const created = rows.filter(x => x.state === 'created'), failed = rows.filter(x => x.state === 'failed'), skipped = rows.filter(x => x.state === 'skipped'), bad = rows.filter(x => x.state === 'error');
+      progress.textContent = `Resultado: ${created.length} creada${created.length === 1 ? '' : 's'} · ${skipped.length} omitida${skipped.length === 1 ? '' : 's'} · ${failed.length} con error al crear · ${bad.length} no enviada${bad.length === 1 ? '' : 's'} por errores del archivo.`;
+      $('page-status').textContent = `${created.length} persona${created.length === 1 ? '' : 's'} creada${created.length === 1 ? '' : 's'} desde CSV${failed.length ? `; ${failed.length} con error` : ''}.`;
+      if (!failed.length && !bad.length && !skipped.length) { dialog.close(); return; }
+      group('Con error al crear: puedes reintentarlas', failed.map(x => `${who(x)}: ${x.error}`), 'bad');
+      group('Con errores del archivo: corrige el CSV y vuelve a cargarlo', bad.map(x => `${who(x)}: ${x.problems.join('; ')}`), 'bad');
+      group('Omitidas', skipped.map(skippedItem));
+      group('Creadas', created.map(x => `${who(x)}${x.note ? `: ${x.note}` : ''}`), 'good');
+      if (failed.length) { ok.textContent = `Reintentar ${failed.length} fallida${failed.length === 1 ? '' : 's'}`; ok.disabled = false; ok.hidden = false; }
+      else ok.hidden = true;
+      file.disabled = false;
+      dialog.querySelector('.dialog-footer button[type=button]').textContent = 'Cerrar';
     });
     dialog.showModal();
   };
@@ -1638,8 +1753,13 @@ async function personContext() {
     optional(api('GET', '/person-plans/available')), isSuper ? optional(api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).then(r => r?.data || []) : [],
     optional(api('GET', '/data-domains')), optional(api('GET', '/data-sources')), canAssign ? optional(allPages('/roles')).then(r => r || []) : []]);
   const ownerId = domains?.data?.find(d => d.domain === 'personas')?.source_id || null;
+  // Un dominio que trae una fuente externa (p. ej. horarios desde AZC One) no se crea aquí.
+  const externalOwner = domain => !!domains?.data?.find(d => d.domain === domain)?.source_id;
   const ctx = {
     isSuper, me, has, org: org || [], orgDenied: !org, users: users || [], roles, avail,
+    canSchedules: has('horarios.editar') && !!schedules && !externalOwner('horarios'),
+    // + Nuevo rol (F11) desde el acceso: quien gestiona roles y, en un cliente, con la autogestión contratada.
+    canRoles: canAssign && (isSuper || (me?.features || []).includes('autogestion_accesos')),
     schedules: (schedules || []).sort((a, b) => a.name.localeCompare(b.name, 'es')), calendarPage, calendars: (calendarPage?.data || []).filter(c => c.active),
     owner: ownerId ? (sources?.data?.find(x => x.id === ownerId)?.name || 'una fuente externa') : null,
     canEdit: has('usuarios.editar'), canCreate: has('usuarios.crear'), canAssign: canAssign && roles.length > 0, canUnits: has('organizacion.editar'),
@@ -1721,13 +1841,32 @@ function laborFields(parent, ctx, u, extras = parent) {
   const selects = { site: unitField(grid, ctx, 'site', 'Sede', pick('site')), area: unitField(grid, ctx, 'area', 'Área', pick('area')), position: unitField(grid, ctx, 'position', 'Cargo', pick('position')) };
   // Firmas: solo mientras existan (no se crean nuevas; las reemplazan las empresas del grupo).
   if (ctx.units('firm').length || u?.firm_id) selects.firm = unitField(grid, ctx, 'firm', 'Firma', pick('firm'), { optionalText: 'Sin firma (se asigna después)' });
-  const sched = el('select'); sched.append(new Option('Sin horario (no se espera jornada)', '')); ctx.schedules.forEach(x => sched.append(new Option(x.name, x.id)));
+  const sched = el('select');
+  const fillSchedules = v => {
+    sched.replaceChildren(new Option('Sin horario (no se espera jornada)', '')); ctx.schedules.forEach(x => sched.append(new Option(x.name, x.id)));
+    if (v && ![...sched.options].some(o => o.value === v)) sched.append(new Option('Horario no disponible', v));
+    sched.value = v || '';
+  };
   const named = ctx.schedules.find(s => fold(s.name).includes('por defecto'));
   const suggested = u ? null : named || ctx.schedules[0] || null;
-  sched.value = u ? (u.schedule_id || '') : (suggested?.id || '');
-  const schedWrap = el('div'); grid.append(schedWrap);
-  labeled(schedWrap, 'Horario', sched, !ctx.schedules.length ? 'Aún no hay horarios: sin horario no se espera jornada (puedes crearlos en Horarios).'
-    : suggested ? `Sugerido: «${suggested.name}» (${named ? 'el horario llamado «por defecto»' : 'el primero de la lista'}). Elige otro o «Sin horario» si no aplica.` : null);
+  fillSchedules(u ? (u.schedule_id || '') : (suggested?.id || ''));
+  const schedWrap = el('div', undefined, 'unit-field'); grid.append(schedWrap);
+  labeled(schedWrap, 'Horario', sched);
+  const schedHint = el('p', !ctx.schedules.length ? `Aún no hay horarios: sin horario no se espera jornada${ctx.canSchedules ? '.' : ' (pide a quien administra Horarios que lo cree).'}`
+    : suggested ? `Sugerido: «${suggested.name}» (${named ? 'el horario llamado «por defecto»' : 'el primero de la lista'}). Elige otro o «Sin horario» si no aplica.` : '', 'help');
+  schedHint.hidden = !schedHint.textContent; schedWrap.append(schedHint);
+  // + Nuevo horario (F6): el mismo editor de Horarios; el creado queda elegido y el resto del formulario no se toca.
+  if (ctx.canSchedules) {
+    const add = el('button', '+ Nuevo horario', 'link-button'); add.type = 'button'; schedWrap.append(add);
+    add.addEventListener('click', () => openScheduleEditor(null, {
+      note: 'Se crea en Horarios y queda elegido para esta persona. Lo que ya escribiste en el formulario no se pierde.',
+      onSaved: created => {
+        ctx.schedules = [...ctx.schedules, created].sort((a, b) => a.name.localeCompare(b.name, 'es'));
+        fillSchedules(created.id); sched.dispatchEvent(new Event('change', { bubbles: true }));
+        schedHint.textContent = `Horario «${created.name}» creado y elegido (${scheduleSummary(created)}, ${created.timezone}).`; schedHint.hidden = false;
+        sched.focus();
+      } }));
+  }
   let holidays = null;
   if (ctx.calendarPage) {
     holidays = el('select'); holidays.append(new Option('Automático (festivos del país de su sede)', '')); ctx.calendars.forEach(c => holidays.append(new Option(c.name, c.id)));
@@ -1933,7 +2072,7 @@ function accessPanel(panel, ctx, getUser, onSaved, draft) {
   let accessDirty = () => false;
   if (ctx.canAssign) {
     const form = el('form', undefined, 'person-form'); form.noValidate = true; s.append(form);
-    const ed = accessEditor(form, { roles: ctx.roles, org: ctx.org, current: draft?.access || u.access });
+    const ed = accessEditor(form, { roles: ctx.roles, org: ctx.org, current: draft?.access || u.access, newRole: ctx.canRoles ? {} : null });
     const foot = blockFooter(form, 'Guardar acceso');
     const saved = () => { const x = getUser(); return x.access ? { role_id: x.access.role_id, scope: x.access.scope } : null; };
     accessDirty = () => { const w = ed.read(); return !!w && !sameAccess(w, saved()); };
@@ -2044,7 +2183,7 @@ function personCreate(ctx) {
   if (ctx.canAssign) {
     custom = el('input'); custom.type = 'checkbox';
     const l = el('label', undefined, 'check'); l.append(custom, ' Darle otro acceso ahora'); a.append(l);
-    const holder = el('div'); a.append(holder); accessEd = accessEditor(holder, { roles: ctx.roles, org: ctx.org, current: null });
+    const holder = el('div'); a.append(holder); accessEd = accessEditor(holder, { roles: ctx.roles, org: ctx.org, current: null, newRole: ctx.canRoles ? {} : null });
     const sync = () => { holder.hidden = !custom.checked; }; custom.addEventListener('change', sync); sync();
   } else a.append(el('p', 'Tu cuenta no puede asignar accesos: quedará con el acceso por defecto.', 'help'));
   let planSel = null;
@@ -2124,6 +2263,62 @@ function scheduleSummary(s) {
   for (const d of s.day_hours || []) parts.push(`${WEEKDAYS[d.weekday - 1].slice(0, 3)}: ${d.start_local}–${d.end_local}`);
   return parts.join(' · ') || 'Sin días laborables';
 }
+// Editor único de horarios (fase 4, F6): lo usan Horarios y el «+ Nuevo horario» de la ficha y del alta de personas,
+// sin un segundo formulario. onSaved recibe el horario que devolvió la API; cancelar solo cierra el diálogo.
+function openScheduleEditor(x, { onSaved, note = null } = {}) {
+  const { dialog, body, ok, show } = dialogShell(x ? `Editar ${x.name}` : 'Crear horario');
+  dialog.classList.add('wide-dialog');
+  if (note) body.append(el('p', note, 'help'));
+  const name = labeled(body, 'Nombre', el('input')); name.maxLength = 120; name.value = x?.name || '';
+  // La zona es la de la jornada, no la del navegador: por defecto la del cliente (o Bogotá si no se conoce).
+  const zone = tenantZone && tenantZone !== 'UTC' ? tenantZone : 'America/Bogota';
+  const tz = labeled(body, 'Zona horaria', el('input'), x ? 'Ejemplo: America/Bogota' : `Ejemplo: America/Bogota. Sugerida: la zona del cliente (${zone}).`); tz.maxLength = 64; tz.value = x?.timezone || zone;
+  const grid = el('div', undefined, 'form-grid'); body.append(grid);
+  const start = labeled(grid, 'Entrada', timeInput(x?.start_local || '08:00')); const end = labeled(grid, 'Salida', timeInput(x?.end_local || '17:00'));
+  const lunchStart = labeled(grid, 'Inicio de almuerzo (opcional)', timeInput(x?.lunch_start_local)); const lunchEnd = labeled(grid, 'Fin de almuerzo (opcional)', timeInput(x?.lunch_end_local));
+  body.append(el('h3', 'Días laborables'));
+  body.append(el('p', 'Marca los días que se trabaja. Si un día tiene horas distintas, actívalo en "Horas propias".', 'help'));
+  const own = new Map((x?.day_hours || []).map(d => [d.weekday, d]));
+  const rows = WEEKDAYS.map((label, i) => {
+    const weekday = i + 1; const row = el('div', undefined, 'day-row'); body.append(row);
+    const works = el('input'); works.type = 'checkbox'; works.checked = x ? x.days.includes(weekday) : weekday <= 5;
+    const wl = el('label', undefined, 'check'); wl.append(works, ` ${label}`); row.append(wl);
+    const special = el('input'); special.type = 'checkbox'; special.checked = own.has(weekday);
+    const sl = el('label', undefined, 'check'); sl.append(special, ' Horas propias'); row.append(sl);
+    const d = own.get(weekday);
+    const box = el('div', undefined, 'day-hours'); row.append(box);
+    const ds = timeInput(d?.start_local || start.value), de = timeInput(d?.end_local || end.value), dls = timeInput(d?.lunch_start_local), dle = timeInput(d?.lunch_end_local);
+    [['Entrada', ds], ['Salida', de], ['Almuerzo desde', dls], ['hasta', dle]].forEach(([t, inp]) => { const l = el('label', t); l.append(inp); box.append(l); });
+    const sync = () => { special.disabled = !works.checked; box.hidden = !(works.checked && special.checked); };
+    works.addEventListener('change', sync); special.addEventListener('change', sync); sync();
+    return { weekday, label, works, special, ds, de, dls, dle };
+  });
+  dialog.querySelector('form').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const days = rows.filter(r => r.works.checked).map(r => r.weekday);
+    if (!name.value.trim()) { show('Escribe el nombre del horario.'); return; }
+    if (!start.value || !end.value) { show('Escribe la hora de entrada y de salida.'); return; }
+    if (!!lunchStart.value !== !!lunchEnd.value || (lunchStart.value && lunchStart.value >= lunchEnd.value)) { show('El almuerzo necesita inicio y fin, y el inicio debe ser antes del fin.'); return; }
+    const dayHours = [];
+    for (const r of rows.filter(r => r.works.checked && r.special.checked)) {
+      if (!r.ds.value || !r.de.value) { show(`${r.label}: escribe entrada y salida.`); return; }
+      if (!!r.dls.value !== !!r.dle.value || (r.dls.value && r.dls.value >= r.dle.value)) { show(`${r.label}: el almuerzo necesita inicio y fin, en orden.`); return; }
+      dayHours.push({ weekday: r.weekday, start_local: r.ds.value, end_local: r.de.value, lunch_start_local: r.dls.value || null, lunch_end_local: r.dle.value || null });
+    }
+    ok.disabled = true;
+    const payload = { name: name.value.trim(), timezone: tz.value.trim(), days, start_local: start.value, end_local: end.value,
+      lunch_start_local: lunchStart.value || null, lunch_end_local: lunchEnd.value || null, day_hours: dayHours };
+    try {
+      const saved = x ? await api('PUT', `/schedules/${x.id}`, { body: payload, ifMatch: x.version }) : await api('POST', '/schedules', { body: payload });
+      dialog.close(); onSaved?.(saved);
+    } catch (e) {
+      const d = e.problem?.detail;
+      show(d === 'invalid_day_hours' ? 'Las horas propias solo pueden ir en días laborables.' : d === 'invalid_lunch' ? 'Revisa el almuerzo: inicio y fin, en orden.' : e.status === 412 ? 'Alguien más lo cambió: recarga la página.' : e.status === 422 ? 'Revisa la zona horaria (ejemplo: America/Bogota) y las horas.' : e);
+      ok.disabled = false;
+    }
+  });
+  dialog.showModal(); name.focus();
+}
 async function schedulesPage() {
   const [list0, users] = await Promise.all([allPages('/schedules'), optional(allPages('/users'))]);
   let list = list0;
@@ -2138,57 +2333,9 @@ async function schedulesPage() {
       ['Personas', x => users ? String(people(x.id)) : '—'],
       ['Acciones', x => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(x)); return b; }]], list);
   };
-  const editor = x => {
-    const { dialog, body, ok, show } = dialogShell(x ? `Editar ${x.name}` : 'Crear horario');
-    dialog.classList.add('wide-dialog');
-    const name = labeled(body, 'Nombre', el('input')); name.maxLength = 120; name.value = x?.name || '';
-    const tz = labeled(body, 'Zona horaria', el('input'), 'Ejemplo: America/Bogota'); tz.maxLength = 64; tz.value = x?.timezone || 'America/Bogota';
-    const grid = el('div', undefined, 'form-grid'); body.append(grid);
-    const start = labeled(grid, 'Entrada', timeInput(x?.start_local || '08:00')); const end = labeled(grid, 'Salida', timeInput(x?.end_local || '17:00'));
-    const lunchStart = labeled(grid, 'Inicio de almuerzo (opcional)', timeInput(x?.lunch_start_local)); const lunchEnd = labeled(grid, 'Fin de almuerzo (opcional)', timeInput(x?.lunch_end_local));
-    body.append(el('h3', 'Días laborables'));
-    body.append(el('p', 'Marca los días que se trabaja. Si un día tiene horas distintas, actívalo en "Horas propias".', 'help'));
-    const own = new Map((x?.day_hours || []).map(d => [d.weekday, d]));
-    const rows = WEEKDAYS.map((label, i) => {
-      const weekday = i + 1; const row = el('div', undefined, 'day-row'); body.append(row);
-      const works = el('input'); works.type = 'checkbox'; works.checked = x ? x.days.includes(weekday) : weekday <= 5;
-      const wl = el('label', undefined, 'check'); wl.append(works, ` ${label}`); row.append(wl);
-      const special = el('input'); special.type = 'checkbox'; special.checked = own.has(weekday);
-      const sl = el('label', undefined, 'check'); sl.append(special, ' Horas propias'); row.append(sl);
-      const d = own.get(weekday);
-      const box = el('div', undefined, 'day-hours'); row.append(box);
-      const ds = timeInput(d?.start_local || start.value), de = timeInput(d?.end_local || end.value), dls = timeInput(d?.lunch_start_local), dle = timeInput(d?.lunch_end_local);
-      [['Entrada', ds], ['Salida', de], ['Almuerzo desde', dls], ['hasta', dle]].forEach(([t, inp]) => { const l = el('label', t); l.append(inp); box.append(l); });
-      const sync = () => { special.disabled = !works.checked; box.hidden = !(works.checked && special.checked); };
-      works.addEventListener('change', sync); special.addEventListener('change', sync); sync();
-      return { weekday, label, works, special, ds, de, dls, dle };
-    });
-    dialog.querySelector('form').addEventListener('submit', async ev => {
-      ev.preventDefault();
-      const days = rows.filter(r => r.works.checked).map(r => r.weekday);
-      if (!name.value.trim()) { show('Escribe el nombre del horario.'); return; }
-      if (!start.value || !end.value) { show('Escribe la hora de entrada y de salida.'); return; }
-      if (!!lunchStart.value !== !!lunchEnd.value || (lunchStart.value && lunchStart.value >= lunchEnd.value)) { show('El almuerzo necesita inicio y fin, y el inicio debe ser antes del fin.'); return; }
-      const dayHours = [];
-      for (const r of rows.filter(r => r.works.checked && r.special.checked)) {
-        if (!r.ds.value || !r.de.value) { show(`${r.label}: escribe entrada y salida.`); return; }
-        if (!!r.dls.value !== !!r.dle.value || (r.dls.value && r.dls.value >= r.dle.value)) { show(`${r.label}: el almuerzo necesita inicio y fin, en orden.`); return; }
-        dayHours.push({ weekday: r.weekday, start_local: r.ds.value, end_local: r.de.value, lunch_start_local: r.dls.value || null, lunch_end_local: r.dle.value || null });
-      }
-      ok.disabled = true;
-      const payload = { name: name.value.trim(), timezone: tz.value.trim(), days, start_local: start.value, end_local: end.value,
-        lunch_start_local: lunchStart.value || null, lunch_end_local: lunchEnd.value || null, day_hours: dayHours };
-      try {
-        const saved = x ? await api('PUT', `/schedules/${x.id}`, { body: payload, ifMatch: x.version }) : await api('POST', '/schedules', { body: payload });
-        list = x ? list.map(y => y.id === x.id ? saved : y) : [...list, saved]; dialog.close(); render(); done();
-      } catch (e) {
-        const d = e.problem?.detail;
-        show(d === 'invalid_day_hours' ? 'Las horas propias solo pueden ir en días laborables.' : d === 'invalid_lunch' ? 'Revisa el almuerzo: inicio y fin, en orden.' : e.status === 412 ? 'Alguien más lo cambió: recarga la página.' : e.status === 422 ? 'Revisa la zona horaria (ejemplo: America/Bogota) y las horas.' : e);
-        ok.disabled = false;
-      }
-    });
-    dialog.showModal();
-  };
+  const editor = x => openScheduleEditor(x, {
+    note: x && users && people(x.id) ? (people(x.id) === 1 ? 'Lo usa 1 persona activa: el cambio se le aplica.' : `Lo usan ${people(x.id)} personas activas: el cambio se aplica a todas.`) : null,
+    onSaved: saved => { list = x ? list.map(y => y.id === x.id ? saved : y) : [...list, saved]; render(); done(); } });
   const action = $('page-action'); action.textContent = 'Crear horario'; action.hidden = false; action.addEventListener('click', () => editor(null));
   render();
 }
@@ -2568,23 +2715,51 @@ async function classificationPage() {
 // (bloquear todo o permitir como excepcion) y USB (bloquear, solo lectura o permitir). Gana lo mas especifico:
 // equipo > persona > area > sede > empresa.
 const SCOPE_LABEL = { tenant: 'Toda la empresa', site: 'Sede', area: 'Área', user: 'Persona', device: 'Equipo' };
+const RULE_KIND = { web: 'sitios web', download: 'descargas', installation: 'instalaciones', usb: 'USB', schedule: 'horario', os: 'sistema operativo', encryption: 'cifrado' };
+// Lo que el editor simplificado no sabe mostrar (F11): horarios, prioridades, varias entradas del mismo tipo, tipos o
+// destinos que no tiene. Una regla así no se reescribe al guardar: solo cambian nombre, destino y estado.
+function unsupportedRules(rules) {
+  const why = new Set(); const seen = new Set();
+  for (const r of rules || []) {
+    if (r.schedule_id) why.add('horarios');
+    if (r.priority) why.add('prioridades');
+    const key = r.kind === 'web' ? `web:${r.effect}` : r.kind;
+    if (seen.has(key)) why.add('varias entradas del mismo tipo'); seen.add(key);
+    const one = t => r.targets.length === 1 && r.targets[0] === t;
+    if (!['web', 'download', 'installation', 'usb'].includes(r.kind)) why.add(`reglas de ${RULE_KIND[r.kind] || r.kind}`);
+    else if (!['allow', 'deny'].includes(r.effect)) why.add('efectos que no son bloquear o permitir');
+    else if ((r.kind === 'download' || r.kind === 'installation') && !one('*')) why.add(`destinos específicos de ${RULE_KIND[r.kind]}`);
+    else if (r.kind === 'usb' && !(one('*') || (r.effect === 'deny' && one('write')))) why.add('destinos específicos de USB');
+  }
+  return [...why];
+}
 async function policiesPage() {
-  const [org, users, devices] = await Promise.all([optional(allPages('/organization')), optional(allPages('/users')), optional(allPages(`/tenants/${tenant}/devices`))]);
+  const isSuper = !!readSession()?.is_platform_admin;
+  const [org0, users, devices, schedules, me] = await Promise.all([optional(allPages('/organization')), optional(allPages('/users')), optional(allPages(`/tenants/${tenant}/devices`)),
+    optional(allPages('/schedules')), isSuper ? null : loadAccess()]);
   let list = await allPages('/policies');
-  const n = names(org || []); const who = new Map((users || []).map(u => [u.id, u.display_name])); const dev = new Map((devices || []).map(d => [d.id, d.hostname]));
+  const org = org0 || [];
+  const n = names(org); const who = new Map((users || []).map(u => [u.id, u.display_name])); const dev = new Map((devices || []).map(d => [d.id, d.hostname]));
+  // + Nueva sede / + Nueva área en el destino (F11): el editor de Organización, sin cerrar la regla.
+  const canUnits = !!org0 && (isSuper || !!me?.permissions?.some(p => p.code === 'organizacion.editar'));
   const targetName = p => p.target_type === 'tenant' ? 'Toda la empresa' : p.target_type === 'user' ? `Persona: ${who.get(p.target_id) || '—'}` : p.target_type === 'device' ? `Equipo: ${dev.get(p.target_id) || '—'}` : `${SCOPE_LABEL[p.target_type]}: ${n.get(p.target_id) || '—'}`;
+  const scheduleName = id => (schedules || []).find(s => s.id === id)?.name || 'un horario';
   const describe = r => {
-    if (r.kind === 'web') return `${r.effect === 'deny' ? 'Bloquea' : 'Permite (excepción)'} ${r.targets.join(', ')}`;
-    if (r.kind === 'download') return r.effect === 'deny' ? 'Bloquea las descargas' : 'Permite las descargas (excepción)';
-    if (r.kind === 'installation') return r.effect === 'deny' ? 'Bloquea instalar programas' : 'Permite instalar programas (excepción)';
-    if (r.kind === 'usb') return r.effect === 'allow' ? 'Permite USB (excepción)' : r.targets[0] === 'write' ? 'USB solo lectura' : 'Bloquea USB';
-    return `${r.kind} ${r.effect} ${r.targets.join(', ')}`;
+    let text;
+    if (r.kind === 'web') text = `${r.effect === 'deny' ? 'Bloquea' : r.effect === 'allow' ? 'Permite (excepción)' : 'Exige'} ${r.targets.join(', ')}`;
+    else if (r.kind === 'download' && r.targets.length === 1 && r.targets[0] === '*') text = r.effect === 'deny' ? 'Bloquea las descargas' : 'Permite las descargas (excepción)';
+    else if (r.kind === 'installation' && r.targets.length === 1 && r.targets[0] === '*') text = r.effect === 'deny' ? 'Bloquea instalar programas' : 'Permite instalar programas (excepción)';
+    else if (r.kind === 'usb' && ['*', 'write'].includes(r.targets[0]) && r.targets.length === 1) text = r.effect === 'allow' ? 'Permite USB (excepción)' : r.targets[0] === 'write' ? 'USB solo lectura' : 'Bloquea USB';
+    else text = `${{ deny: 'Bloquea', allow: 'Permite', require: 'Exige' }[r.effect] || r.effect} ${RULE_KIND[r.kind] || r.kind}: ${r.targets.join(', ') || '—'}`;
+    if (r.schedule_id) text += ` · solo en el horario «${scheduleName(r.schedule_id)}»`;
+    if (r.priority) text += ` · prioridad ${r.priority}`;
+    return text;
   };
   const render = () => {
     $('page-content').replaceChildren();
     const s = surface('Reglas de los equipos');
     s.append(el('p', 'Una regla dice qué se bloquea o se permite y a quién aplica. Si dos reglas chocan, gana la más específica: equipo, luego persona, área, sede y por último la empresa. Así se hacen excepciones: la empresa bloquea Facebook y una persona de Mercadeo lo tiene permitido.', 'help'));
-    if (!list.length) { empty(s, 'Aún no hay reglas', 'Crea la primera con "Crear regla".'); return; }
+    if (!list.length) { empty(s, 'Aún no hay reglas', 'Puedes empezar a monitorear sin bloqueos y añadirlos después de probar el primer equipo. Crea la primera con "Crear regla".'); return; }
     table(s, 'Reglas', [['Nombre', p => p.name], ['Aplica a', targetName], ['Qué hace', p => { const ul = el('ul'); p.rules.forEach(r => ul.append(el('li', describe(r)))); return ul; }],
       ['Estado', p => badge(p.enabled ? 'Activa' : 'Inactiva', p.enabled ? 'good' : '')],
       ['', p => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(p)); return b; }]], list,
@@ -2596,56 +2771,89 @@ async function policiesPage() {
     dialog.classList.add('wide-dialog');
     const name = labeled(body, 'Nombre', el('input'), 'Ej.: Bloqueos generales, Excepción Mercadeo'); name.maxLength = 120; name.value = p?.name || '';
     const scope = el('select'); Object.entries(SCOPE_LABEL).forEach(([v, t]) => scope.append(new Option(t, v))); scope.value = p?.target_type || 'tenant'; labeled(body, '¿A quién aplica?', scope);
-    const target = el('select'); const targetLabel = labeled(body, 'Cuál', target);
+    const targetWrap = el('div', undefined, 'unit-field'); body.append(targetWrap);
+    const target = el('select'); labeled(targetWrap, 'Cuál', target);
+    const targetHint = el('p', '', 'help'); targetWrap.append(targetHint);
+    const addUnit = el('button', '', 'link-button'); addUnit.type = 'button'; targetWrap.append(addUnit);
     const fill = () => {
-      target.replaceChildren(); targetLabel.hidden = scope.value === 'tenant';
-      const items = scope.value === 'site' || scope.value === 'area' ? (org || []).filter(o => o.kind === scope.value && o.active).map(o => [o.id, o.name])
+      target.replaceChildren(); targetWrap.hidden = scope.value === 'tenant';
+      const items = scope.value === 'site' || scope.value === 'area' ? org.filter(o => o.kind === scope.value && o.active).map(o => [o.id, o.name])
         : scope.value === 'user' ? (users || []).filter(u => u.status === 'active').map(u => [u.id, u.display_name])
         : scope.value === 'device' ? (devices || []).filter(d => d.status === 'active').map(d => [d.id, `${d.hostname} (${who.get(d.user_id) || 'sin persona'})`]) : [];
       items.sort((a, b) => a[1].localeCompare(b[1], 'es')).forEach(([v, t]) => target.append(new Option(t, v)));
-      if (p && p.target_type === scope.value) target.value = p.target_id;
+      // El destino guardado se conserva aunque ya no esté en la lista (inactivo o fuera de alcance): guardar no lo cambia a escondidas.
+      if (p && p.target_type === scope.value && p.target_type !== 'tenant') {
+        if (![...target.options].some(o => o.value === p.target_id)) target.append(new Option(`${targetName(p).replace(/^[^:]+: /, '')} (actual, no disponible en la lista)`, p.target_id));
+        target.value = p.target_id;
+      }
+      const unitKind = scope.value === 'site' || scope.value === 'area' ? scope.value : null;
+      targetHint.textContent = unitKind && !items.length ? `Aún no hay ${unitKind === 'site' ? 'sedes' : 'áreas'} activas${canUnits ? `: créala con «${ORG_TABS.find(t => t.kind === unitKind).create}».` : '.'}` : '';
+      targetHint.hidden = !targetHint.textContent;
+      addUnit.hidden = !(unitKind && canUnits); if (unitKind) addUnit.textContent = ORG_TABS.find(t => t.kind === unitKind).create;
     };
     fill(); scope.addEventListener('change', fill);
-    const rule = kind => p?.rules.find(r => r.kind === kind);
+    addUnit.addEventListener('click', () => openOrgCreate({ kind: scope.value, org, onCreated: created => {
+      org.push(created); n.set(created.id, created.name); fill(); target.value = created.id; target.focus();
+    } }));
     const rules = p?.rules || [];
-    body.append(el('h3', 'Sitios web'));
-    const block = labeled(body, 'Bloquear estos sitios (uno por línea)', el('textarea'), 'Ej.: facebook.com, youtube.com. Bloquea también sus subdominios.');
-    block.value = rules.filter(r => r.kind === 'web' && r.effect === 'deny').flatMap(r => r.targets).join('\n');
-    const allow = labeled(body, 'Permitir estos sitios (excepción a un bloqueo más general)', el('textarea'), 'Úsalo en reglas de persona, área o sede: quita el sitio del bloqueo de la empresa solo para ellos.');
-    allow.value = rules.filter(r => r.kind === 'web' && r.effect === 'allow').flatMap(r => r.targets).join('\n');
-    body.append(el('h3', 'Equipo'));
-    const choice = (label, options, current) => { const sel = el('select'); options.forEach(([v, t]) => sel.append(new Option(t, v))); sel.value = current; labeled(body, label, sel); return sel; };
-    const effectOf = kind => rule(kind) ? rule(kind).effect : '';
-    const download = choice('Descargas desde el navegador', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['allow', 'Permitir (excepción)']], effectOf('download'));
-    const install = choice('Instalar programas', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['allow', 'Permitir (excepción)']], effectOf('installation'));
-    const usbRule = rule('usb');
-    const usb = choice('Memorias USB', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['write', 'Solo lectura (no copiar a la USB)'], ['allow', 'Permitir (excepción)']], usbRule ? (usbRule.effect === 'allow' ? 'allow' : usbRule.targets[0] === 'write' ? 'write' : 'deny') : '');
+    const locked = p ? unsupportedRules(rules) : [];
+    let read;
+    if (locked.length) {
+      // Regla con contenido que este editor no representa: se muestra y se conserva tal cual.
+      const keep = el('div', undefined, 'notice policy-locked'); keep.setAttribute('role', 'note');
+      keep.append(el('strong', 'El contenido de esta regla se conserva tal cual'),
+        el('p', `Usa ${locked.join(', ')}, que este editor no muestra. Para no perder nada, aquí solo cambias el nombre, a quién aplica y si está activa.`));
+      const ul = el('ul'); rules.forEach(r => ul.append(el('li', describe(r)))); keep.append(ul); body.append(keep);
+      read = () => [null, rules];
+    } else {
+      // Se reutilizan los id de las entradas existentes para no reemplazarlas en cada guardado.
+      const prev = new Map(rules.map(r => [r.kind === 'web' ? `web:${r.effect}` : r.kind, r.id]));
+      const idFor = key => prev.get(key) || crypto.randomUUID();
+      const rule = kind => rules.find(r => r.kind === kind);
+      body.append(el('h3', 'Sitios web'));
+      const block = labeled(body, 'Bloquear estos sitios (uno por línea)', el('textarea'), 'Ej.: facebook.com, youtube.com. Bloquea también sus subdominios.');
+      block.value = rules.filter(r => r.kind === 'web' && r.effect === 'deny').flatMap(r => r.targets).join('\n');
+      const allow = labeled(body, 'Permitir estos sitios (excepción a un bloqueo más general)', el('textarea'), 'Úsalo en reglas de persona, área o sede: quita el sitio del bloqueo de la empresa solo para ellos.');
+      allow.value = rules.filter(r => r.kind === 'web' && r.effect === 'allow').flatMap(r => r.targets).join('\n');
+      body.append(el('h3', 'Equipo'));
+      const choice = (label, options, current) => { const sel = el('select'); options.forEach(([v, t]) => sel.append(new Option(t, v))); sel.value = current; labeled(body, label, sel); return sel; };
+      const effectOf = kind => rule(kind) ? rule(kind).effect : '';
+      const download = choice('Descargas desde el navegador', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['allow', 'Permitir (excepción)']], effectOf('download'));
+      const install = choice('Instalar programas', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['allow', 'Permitir (excepción)']], effectOf('installation'));
+      const usbRule = rule('usb');
+      const usb = choice('Memorias USB', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['write', 'Solo lectura (no copiar a la USB)'], ['allow', 'Permitir (excepción)']], usbRule ? (usbRule.effect === 'allow' ? 'allow' : usbRule.targets[0] === 'write' ? 'write' : 'deny') : '');
+      read = () => {
+        const out = [];
+        const blocked = domains(block.value), allowed = domains(allow.value);
+        const bad = [...blocked, ...allowed].find(d => !/^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(d));
+        if (bad) return [`"${bad}" no parece un sitio (escribe solo el dominio, p. ej. facebook.com).`];
+        if (blocked.some(d => allowed.includes(d))) return ['Un mismo sitio no puede estar bloqueado y permitido en la misma regla.'];
+        if (blocked.length) out.push({ id: idFor('web:deny'), kind: 'web', effect: 'deny', targets: blocked, schedule_id: null, priority: 0 });
+        if (allowed.length) out.push({ id: idFor('web:allow'), kind: 'web', effect: 'allow', targets: allowed, schedule_id: null, priority: 0 });
+        if (download.value) out.push({ id: idFor('download'), kind: 'download', effect: download.value, targets: ['*'], schedule_id: null, priority: 0 });
+        if (install.value) out.push({ id: idFor('installation'), kind: 'installation', effect: install.value, targets: ['*'], schedule_id: null, priority: 0 });
+        if (usb.value) out.push({ id: idFor('usb'), kind: 'usb', effect: usb.value === 'allow' ? 'allow' : 'deny', targets: [usb.value === 'write' ? 'write' : '*'], schedule_id: null, priority: 0 });
+        if (!out.length) return ['La regla no hace nada: agrega al menos un bloqueo o permiso.'];
+        return [null, out];
+      };
+    }
     const enabled = el('input'); enabled.type = 'checkbox'; enabled.checked = p ? p.enabled : true;
     const el2 = el('label', undefined, 'check'); el2.append(enabled, ' Regla activa'); body.append(el2);
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
       if (!name.value.trim()) { show('Escribe el nombre.'); return; }
       if (scope.value !== 'tenant' && !target.value) { show('Elige a quién aplica.'); return; }
-      const out = []; const id = () => crypto.randomUUID();
-      const blocked = domains(block.value), allowed = domains(allow.value);
-      const bad = [...blocked, ...allowed].find(d => !/^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(d));
-      if (bad) { show(`"${bad}" no parece un sitio (escribe solo el dominio, p. ej. facebook.com).`); return; }
-      if (blocked.some(d => allowed.includes(d))) { show('Un mismo sitio no puede estar bloqueado y permitido en la misma regla.'); return; }
-      if (blocked.length) out.push({ id: id(), kind: 'web', effect: 'deny', targets: blocked, schedule_id: null, priority: 0 });
-      if (allowed.length) out.push({ id: id(), kind: 'web', effect: 'allow', targets: allowed, schedule_id: null, priority: 0 });
-      if (download.value) out.push({ id: id(), kind: 'download', effect: download.value, targets: ['*'], schedule_id: null, priority: 0 });
-      if (install.value) out.push({ id: id(), kind: 'installation', effect: install.value, targets: ['*'], schedule_id: null, priority: 0 });
-      if (usb.value) out.push({ id: id(), kind: 'usb', effect: usb.value === 'allow' ? 'allow' : 'deny', targets: [usb.value === 'write' ? 'write' : '*'], schedule_id: null, priority: 0 });
-      if (!out.length) { show('La regla no hace nada: agrega al menos un bloqueo o permiso.'); return; }
+      const [problem, out] = read();
+      if (problem) { show(problem); return; }
       ok.disabled = true;
       const payload = { name: name.value.trim(), target_type: scope.value, target_id: scope.value === 'tenant' ? tenant : target.value, enabled: enabled.checked, rules: out };
       try {
         const saved = p ? await api('PATCH', `/policies/${p.id}`, { body: payload, ifMatch: p.version }) : await api('POST', '/policies', { body: payload });
         list = p ? list.map(x => x.id === p.id ? saved : x) : [...list, saved]; dialog.close(); render(); done();
       } catch (e) {
-        const detail = String(e.problem?.detail || ''); const kindName = { web: 'sitios web', download: 'descargas', installation: 'instalaciones', usb: 'USB' };
+        const detail = String(e.problem?.detail || '');
         show(e.code === 'invalid_transition' || e.status === 409 ? 'Choca con otra regla del mismo nivel (una bloquea y otra permite lo mismo). Ponlas en niveles distintos o únelas.'
-          : detail.startsWith('invalid_target:') ? `El valor "${detail.split(':').slice(2).join(':')}" no es válido en ${kindName[detail.split(':')[1]] || detail.split(':')[1]}.`
+          : detail.startsWith('invalid_target:') ? `El valor "${detail.split(':').slice(2).join(':')}" no es válido en ${RULE_KIND[detail.split(':')[1]] || detail.split(':')[1]}.`
           : detail.startsWith('blocks_panel:') ? `No puedes bloquear ${detail.slice(13)}: dejaría a los equipos sin acceso al panel de Keeper.` : e);
         ok.disabled = false;
       }
@@ -2811,6 +3019,8 @@ const AUDIT_ACTIONS = {
   registerRelease: 'Registró una versión del agente', deployRelease: 'Desplegó una versión del agente',
   issueMigrationAuthorization: 'Autorizó una migración desde K3', validateMigrationAuthorization: 'Validó una autorización de migración', setDeviceMigration: 'Cambió la migración de un equipo',
   persistDeviceEscrow: 'Guardó la llave de migración', recoverDeviceEscrow: 'Recuperó la llave de migración', verifyDeviceEscrow: 'Verificó la llave de migración',
+  // Puesta en marcha guardada (piloto, revisiones y cierre): etiquetas de onboarding.js.
+  ...ONBOARDING_AUDIT,
 };
 const AUDIT_VERBS = { create: 'Creó', put: 'Editó', patch: 'Editó', delete: 'Quitó', set: 'Cambió', approve: 'Aprobó', reject: 'Rechazó', revoke: 'Revocó', register: 'Registró', deploy: 'Desplegó', upload: 'Subió', run: 'Ejecutó', resolve: 'Resolvió', import: 'Importó' };
 const auditAction = a => AUDIT_ACTIONS[a] || (() => {
@@ -2958,6 +3168,8 @@ async function settingsPage() {
   const shortcuts = [['Horarios', '/horarios.php', 'schedules'], ['Festivos', '/festivos.php', 'holidays'], ['Clasificación de apps', '/clasificacion.php', 'classification'],
     ['Fuentes de datos (AZC One)', '/fuentes.php', 'sources']].filter(([, , key]) => !access || allowed(access, key));
   if (platform) { shortcuts.unshift(['Marca, logo y colores', '/empresas.php']); shortcuts.push(['Planes y paquetes', '/planes.php']); }
+  // Puesta en marcha: solo para quien puede verla (misma regla que el menú); sin acceso legible no se ofrece.
+  if (access && canSeeOnboarding(access)) shortcuts.push(['Revisar configuración inicial', '/puesta-en-marcha.php']);
   const more = surface('Otros ajustes');
   if (shortcuts.length) {
     const ul = el('ul');
@@ -3217,39 +3429,45 @@ async function rolesPage() {
     });
     dialog.showModal();
   };
-  const editor = role => {
-    const { dialog, body, ok, show } = dialogShell(role ? `Editar ${role.name}` : 'Crear rol');
-    dialog.classList.add('wide-dialog');
-    const name = labeled(body, 'Nombre del rol', el('input')); name.maxLength = 120; name.value = role?.name || '';
-    body.append(el('h3', 'Permisos'));
-    const groups = new Map(); visible.forEach(p => { if (!groups.has(p.resource)) groups.set(p.resource, []); groups.get(p.resource).push(p); });
-    const all = [];
-    [...groups.entries()].sort((a, b) => (moduleNames[a[0]] || a[0]).localeCompare(moduleNames[b[0]] || b[0], 'es')).forEach(([resource, perms]) => {
-      const fs = el('fieldset', undefined, 'perm-group'); fs.append(el('legend', moduleNames[resource] || resource)); body.append(fs);
-      all.push(...checks(fs, perms.map(p => [p.code, p.label, p.platform_only ? 'Solo plataforma' : null]), role?.permissions || []));
-    });
-    const active = el('input'); active.type = 'checkbox'; active.checked = role ? role.active : true;
-    const al = el('label', undefined, 'check'); al.append(active, ' Rol activo'); body.append(al);
-    const auto = el('input'); auto.type = 'checkbox'; auto.checked = !!role?.assignable_by_rule;
-    const autol = el('label', undefined, 'check'); autol.append(auto, ' Se puede dar automáticamente (por cargo o jefatura, en "Asignación automática")'); body.append(autol);
-    dialog.querySelector('form').addEventListener('submit', async ev => {
-      ev.preventDefault();
-      if (!name.value.trim()) { show('Escribe el nombre del rol.'); return; }
-      ok.disabled = true;
-      const payload = { name: name.value.trim(), permissions: all.filter(b => b.checked).map(b => b.value), active: active.checked, assignable_by_rule: auto.checked };
-      try {
-        const saved = role ? await api('PATCH', `/roles/${role.id}`, { body: payload, ifMatch: role.version }) : await api('POST', '/roles', { body: payload });
-        list = role ? list.map(r => r.id === role.id ? saved : r) : [...list, saved]; dialog.close(); render(); done();
-      } catch (e) {
-        // errorMessage ya traduce delegation_exceeds_own_access, scope_denied y feature_not_contracted (§7).
-        show(e.code === 'tenant_rbac_disabled' ? 'La empresa no tiene habilitada la gestión de sus propios roles: pídesela a la plataforma.' : e);
-        ok.disabled = false;
-      }
-    });
-    dialog.showModal();
-  };
+  const editor = role => openRoleEditor(role, { permissions: visible, onSaved: saved => { list = role ? list.map(r => r.id === role.id ? saved : r) : [...list, saved]; render(); done(); } });
   const action = $('page-action'); action.textContent = 'Crear rol'; action.hidden = false; action.addEventListener('click', () => editor(null));
   render();
+}
+// Editor único de roles (fase 4, F11): Roles y el «+ Nuevo rol» del editor de acceso. permissions: catálogo ya filtrado;
+// si falta se lee de la empresa `company` (superadmin creando para otro cliente). onSaved recibe el rol guardado.
+async function openRoleEditor(role, { company = null, permissions = null, onSaved, note = null } = {}) {
+  const opts = company ? { tenant: company } : {};
+  const catalog = permissions || (await allPages('/permissions', company)).filter(p => readSession()?.is_platform_admin || !p.platform_only);
+  const { dialog, body, ok, show } = dialogShell(role ? `Editar ${role.name}` : 'Crear rol');
+  dialog.classList.add('wide-dialog');
+  if (note) body.append(el('p', note, 'help'));
+  const name = labeled(body, 'Nombre del rol', el('input')); name.maxLength = 120; name.value = role?.name || '';
+  body.append(el('h3', 'Permisos'));
+  const groups = new Map(); catalog.forEach(p => { if (!groups.has(p.resource)) groups.set(p.resource, []); groups.get(p.resource).push(p); });
+  const all = [];
+  [...groups.entries()].sort((a, b) => (moduleNames[a[0]] || a[0]).localeCompare(moduleNames[b[0]] || b[0], 'es')).forEach(([resource, perms]) => {
+    const fs = el('fieldset', undefined, 'perm-group'); fs.append(el('legend', moduleNames[resource] || resource)); body.append(fs);
+    all.push(...checks(fs, perms.map(p => [p.code, p.label, p.platform_only ? 'Solo plataforma' : null]), role?.permissions || []));
+  });
+  const active = el('input'); active.type = 'checkbox'; active.checked = role ? role.active : true;
+  const al = el('label', undefined, 'check'); al.append(active, ' Rol activo'); body.append(al);
+  const auto = el('input'); auto.type = 'checkbox'; auto.checked = !!role?.assignable_by_rule;
+  const autol = el('label', undefined, 'check'); autol.append(auto, ' Se puede dar automáticamente (por cargo o jefatura, en "Asignación automática")'); body.append(autol);
+  dialog.querySelector('form').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    if (!name.value.trim()) { show('Escribe el nombre del rol.'); return; }
+    ok.disabled = true;
+    const payload = { name: name.value.trim(), permissions: all.filter(b => b.checked).map(b => b.value), active: active.checked, assignable_by_rule: auto.checked };
+    try {
+      const saved = role ? await api('PATCH', `/roles/${role.id}`, { ...opts, body: payload, ifMatch: role.version }) : await api('POST', '/roles', { ...opts, body: payload });
+      dialog.close(); onSaved?.(saved);
+    } catch (e) {
+      // errorMessage ya traduce delegation_exceeds_own_access, scope_denied y feature_not_contracted (§7).
+      show(e.code === 'tenant_rbac_disabled' ? 'La empresa no tiene habilitada la gestión de sus propios roles: pídesela a la plataforma.' : e);
+      ok.disabled = false;
+    }
+  });
+  dialog.showModal(); name.focus();
 }
 
 async function start() {
