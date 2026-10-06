@@ -2,7 +2,7 @@ import { api, isUuid, setTenant, readSession, refreshCsrf, goToLogin, errorMessa
 import './menu.js';
 import './tablekit.js';
 import { applyNavAccess, loadAccess, allowed } from './nav-access.js';
-import { scopeSummary, sameAccess } from './access-scope.js';
+import { scopeSummary, sameAccess, scopeConditions, SCOPE_RULE, TEAM_LABEL } from './access-scope.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings } from './hardening-settings.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
@@ -443,10 +443,12 @@ function accessEditor(parent, { roles, org, current = null, groupOnly = false })
   role.value = current?.role_id || ''; labeled(box, 'Rol (qué puede hacer)', role);
   const kind = el('select');
   if (groupOnly && !current) kind.append(new Option('Elige el alcance…', ''));
-  [['all', 'Todo el cliente'], ['filters', 'Solo ciertas empresas, ciudades, sedes o áreas'], ...(groupOnly ? [] : [['team', 'Su equipo (ella y quienes le reportan)'], ['self', 'Solo lo propio']])]
+  [['all', 'Todo el cliente'], ['filters', 'Solo ciertas empresas, ciudades, sedes o áreas'], ...(groupOnly ? [] : [['team', TEAM_LABEL], ['self', 'Solo lo propio']])]
     .forEach(([v, t]) => kind.append(new Option(t, v)));
   kind.value = current?.scope.kind || (groupOnly ? '' : 'self'); labeled(box, 'Alcance (qué datos ve)', kind);
   const filters = el('div'); box.append(filters);
+  // Revisión UX ACC-1: la intersección se explica y se lee con la selección actual, no se deja a la intuición.
+  filters.append(el('p', SCOPE_RULE, 'help'));
   const had = key => current?.scope[key] || [];
   // Lo que ya tiene se conserva aunque la sede o el área esté inactiva: guardar no le quita alcance a escondidas.
   const units = (k, key) => org.filter(o => o.kind === k && (o.active || had(key).includes(o.id))).sort((a, b) => a.name.localeCompare(b.name, 'es')).map(o => [o.id, o.name]);
@@ -457,6 +459,7 @@ function accessEditor(parent, { roles, org, current = null, groupOnly = false })
     if (items.length) picked[key] = checks(fs, items, had(key));
     else { picked[key] = []; fs.append(el('p', `No hay ${title.toLowerCase()} creadas.`, 'help')); }
   }
+  const conditions = el('p', '', 'help'); filters.append(conditions);
   const line = el('p', '', 'help'); line.setAttribute('aria-live', 'polite'); box.append(line);
   const read = () => {
     if (!role.value) return null;
@@ -474,6 +477,9 @@ function accessEditor(parent, { roles, org, current = null, groupOnly = false })
     filters.hidden = kind.value !== 'filters'; const a = read();
     line.textContent = !a ? (current ? 'Sin rol elegido: conserva su acceso actual.' : 'Sin rol elegido: no tendrá acceso al panel.')
       : !a.scope.kind ? 'Elige el alcance: qué datos verá.' : scopeSummary(role.selectedOptions[0].textContent, a.scope, n);
+    // Se calcula aunque falte el rol: la combinación depende solo de las casillas.
+    const marked = { kind: 'filters' }; for (const key of Object.keys(picked)) marked[key] = picked[key].filter(c => c.checked).map(c => c.value);
+    conditions.textContent = scopeConditions(marked, n) || SCOPE_INCOMPLETE;
   };
   box.addEventListener('change', sync); sync();
   return { read, valid, problem };
