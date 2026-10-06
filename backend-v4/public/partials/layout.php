@@ -71,7 +71,7 @@ require_once __DIR__ . '/brand.php';
     <?php endif; ?>
     <div id="content" aria-busy="true"></div>
   </div>
-  <footer><span><?= $h($brand['name']) ?> · v4</span><span>Fechas en la zona horaria del navegador</span></footer>
+  <footer><span><?= $h($brand['name']) ?> · v4</span><span id="tz-note">Fechas en la zona horaria del navegador</span></footer>
 </main>
 <?php endif; ?>
 <noscript><p class="error-message">Activa JavaScript para usar el panel.</p></noscript>

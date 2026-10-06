@@ -68,7 +68,7 @@ function chart(parent, series) {
   }
   svg.append(svgEl('text', { x: 42, y: 240 }, series[0].day), svgEl('text', { x: 738, y: 240, 'text-anchor': 'end' }, series.at(-1).day));
   const frame = el('div', undefined, 'chart-frame'); frame.tabIndex = 0; frame.setAttribute('role', 'region'); frame.setAttribute('aria-label', 'Gráfico de tendencia; desplazable en pantallas pequeñas'); frame.append(svg);
-  parent.append(frame, el('p', 'Línea continua azul: productividad (%) · Línea discontinua roja: focus (/100).', 'help'));
+  parent.append(frame, el('p', 'Línea continua índigo oscuro: productividad (%) · Línea discontinua índigo claro: focus (/100). Cada punto es un día; los huecos son días sin dato.', 'help'));
 }
 const COUNTRY_NAMES = { CO: 'Colombia', US: 'Estados Unidos', HN: 'Honduras', MX: 'México', PE: 'Perú', EC: 'Ecuador', PA: 'Panamá', CR: 'Costa Rica', GT: 'Guatemala', SV: 'El Salvador', ES: 'España', DO: 'República Dominicana', NI: 'Nicaragua', VE: 'Venezuela', BO: 'Bolivia', CL: 'Chile', AR: 'Argentina', UY: 'Uruguay', PY: 'Paraguay', BR: 'Brasil', PR: 'Puerto Rico', CA: 'Canadá' };
 async function pool(items, task, alive = () => true) {
@@ -136,7 +136,7 @@ export async function coordinator(ctx) {
       ['Registro vs. jornada', series.length ? percent(data.coverage_percent) : 'Sin datos', 'Tiempo con el equipo encendido y Keeper registrando ÷ horas de jornada esperadas (horario menos festivos y ausencias). Bajo = equipos apagados o sin reportar.']]);
     const unclassified = avg('unclassified_percent');
     if (numeric(unclassified) && unclassified > 20) { const n = el('p', undefined, 'notice'); n.append(`El ${percent(unclassified)} del uso está en apps sin clasificar: productividad y distracción son poco confiables. `, link('Clasificar aplicaciones', '/clasificacion.php')); p.append(n); }
-    p.append(el('p', `${data.from} → ${data.to} (fin excluido) · ${data.timezone} · Datos hasta: ${time(data.data_through)}`, 'help')); chart(p, series);
+    p.append(el('p', `${data.from} → ${data.to} (fin excluido) · Zona horaria: ${data.timezone || ctx.timezone} · Datos hasta: ${time(data.data_through)}`, 'help')); chart(p, series);
     return series;
   }
   async function migration(parent, devices) {
@@ -237,12 +237,12 @@ export async function coordinator(ctx) {
     const previous = dateForm.dataset.tenant === tenant ? JSON.parse(dateForm.dataset.filters || '{}') : {};
     Object.entries(controls).forEach(([k, c]) => { c.value = previous[k] || ''; c.onchange = () => { dateForm.dataset.filters = JSON.stringify(selected(controls)); }; });
     dateForm.dataset.tenant = tenant; dateForm.append(filters); dependency(host, org, 'Filtros de organización no disponibles'); dependency(host, users, 'Filtro de personas no disponible');
-    host.append(el('p', 'Máximo 31 días. Las tablas y el CSV reflejan el rango y los filtros consultados. Hasta es excluyente.', 'help'));
+    host.append(el('p', `Máximo 31 días. Las tablas y el CSV reflejan el rango y los filtros consultados. Hasta es excluyente. Días y horas en la zona horaria de la empresa: ${ctx.timezone}.`, 'help'));
     const range = { from, to }, values = selected(controls);
     await Promise.all([
       section(host, 'Productividad', async p => { const data = await report('productivity', range, values); const list = productivity(p, data); pagedTable(p, 'Serie diaria', productColumns, list); csvButton(p, `productividad-${from}-${to}`, productColumns, list); }),
       apps(host, range, values, true),
-      section(host, 'Presencia', async p => { const list = rows(await report('presence', range, values)); p.append(el('p', 'Los estados proceden del horario; no incluyen calendario de festivos.', 'help')); pagedTable(p, 'Presencia diaria', presenceColumns, list); csvButton(p, `presencia-${from}-${to}`, presenceColumns, list); }),
+      section(host, 'Presencia', async p => { const list = rows(await report('presence', range, values)); p.append(el('p', `Los estados salen del horario de cada persona y de su calendario de festivos: un festivo o una ausencia aprobada cuentan como «No laborable». Horas en la zona horaria de la empresa (${ctx.timezone}).`, 'help')); pagedTable(p, 'Presencia diaria', presenceColumns, list); csvButton(p, `presencia-${from}-${to}`, presenceColumns, list); }),
     ]);
   } else if (page === 'member') {
     const id = new URLSearchParams(location.search).get('id'); if (!isUuid(id)) throw new Error('Selecciona una persona desde Usuarios.');

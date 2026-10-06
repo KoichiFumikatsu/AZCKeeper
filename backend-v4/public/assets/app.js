@@ -565,7 +565,11 @@ async function load() {
     else if (page === 'device') await device();
     else if (page === 'reports') await reports();
     else await listing(page);
-    $('page-status').textContent = `Consulta finalizada a las ${new Intl.DateTimeFormat('es-CO', { timeStyle: 'medium' }).format(new Date())}. Fechas de eventos en la zona horaria del navegador.`;
+    // Las pantallas del coordinador fechan en la zona de la empresa; las demás, en la del navegador. Se dice cuál.
+    const companyZone = surface === 'portal' && ['home', 'users', 'member', 'reports', 'policies'].includes(page);
+    const zoneText = companyZone ? `Fechas y horas en la zona horaria de la empresa (${timezone})` : 'Fechas de eventos en la zona horaria del navegador';
+    if ($('tz-note')) $('tz-note').textContent = zoneText;
+    $('page-status').textContent = `Consulta finalizada a las ${new Intl.DateTimeFormat('es-CO', { timeStyle: 'medium' }).format(new Date())}. ${zoneText}.`;
   } catch (error) {
     showError($('page-error'), error); $('page-status').textContent = 'No se pudo completar la consulta.';
   } finally {
