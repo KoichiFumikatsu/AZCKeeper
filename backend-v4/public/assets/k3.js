@@ -2806,17 +2806,82 @@ async function policiesPage() {
       { filters: [['Aplica a', p => SCOPE_LABEL[p.target_type]], ['Estado', p => p.enabled ? 'Activa' : 'Inactiva']] });
   };
   const domains = text => [...new Set(text.split(/[\s,;]+/).map(x => x.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')).filter(Boolean))];
+  // Alcance de un destino con los datos cargados (personas y equipos que la cuenta puede ver). null: no se puede contar.
+  const activeUsers = (users || []).filter(u => u.status === 'active');
+  const activeDevices = (devices || []).filter(d => d.status === 'active');
+  const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  const reach = (type, id) => {
+    if (type === 'device') return { people: null, devices: 1 };
+    if (type === 'user') return { people: 1, devices: devices ? activeDevices.filter(d => d.user_id === id).length : null };
+    const members = type === 'tenant' ? activeUsers : activeUsers.filter(u => u[`${type}_id`] === id);
+    if (type !== 'tenant' && !users) return { people: null, devices: null };
+    const ids = new Set(members.map(u => u.id));
+    return { people: users ? members.length : null, devices: devices ? (type === 'tenant' ? activeDevices.length : activeDevices.filter(d => ids.has(d.user_id)).length) : null };
+  };
+  const reachText = (type, id) => {
+    if (type === 'device') return 'un equipo';
+    const r = reach(type, id); const parts = [];
+    if (r.people !== null) parts.push(plural(r.people, 'persona activa', 'personas activas'));
+    if (r.devices !== null) parts.push(plural(r.devices, 'equipo activo', 'equipos activos'));
+    return parts.join(' y ');
+  };
+  const reachNote = (type, id) => {
+    if (type === 'device') return '';
+    const r = reach(type, id);
+    if (r.people === null && r.devices === null) return 'No se puede calcular a cuántas personas y equipos alcanza: tu cuenta no puede ver las personas.';
+    if (r.devices === null) return 'No se pueden contar los equipos: tu cuenta no puede verlos.';
+    return 'Conteo con las personas y equipos que tu cuenta puede ver; el equipo de una persona sigue a su sede y área.';
+  };
+  // Otras reglas activas que alcanzan a alguien del mismo destino y quién gana si chocan (equipo > persona > área > sede > empresa).
+  const LEVEL = { tenant: 0, site: 1, area: 2, user: 3, device: 4 };
+  const related = (type, id, selfId) => {
+    const user = type === 'user' ? (users || []).find(u => u.id === id) : type === 'device' ? (users || []).find(u => u.id === (devices || []).find(d => d.id === id)?.user_id) : null;
+    const memberIds = type === 'site' || type === 'area' ? new Set(activeUsers.filter(u => u[`${type}_id`] === id).map(u => u.id)) : null;
+    const devOwner = new Map((devices || []).map(d => [d.id, d.user_id]));
+    return list.filter(x => x.enabled && x.id !== selfId).filter(x => {
+      if (x.target_type === type && x.target_id === id) return true;
+      if (type === 'tenant' || x.target_type === 'tenant') return true;
+      if (user) return (x.target_type === 'site' && x.target_id === user.site_id) || (x.target_type === 'area' && x.target_id === user.area_id) || (x.target_type === 'user' && x.target_id === user.id)
+        || (type === 'user' && x.target_type === 'device' && devOwner.get(x.target_id) === user.id);
+      if (memberIds) return (x.target_type === 'user' && memberIds.has(x.target_id)) || (x.target_type === 'device' && memberIds.has(devOwner.get(x.target_id)));
+      return false;
+    }).map(x => ({ policy: x, rel: x.target_type === type && (x.target_id === id || type === 'tenant') ? 'same' : LEVEL[x.target_type] < LEVEL[type] ? 'broader' : 'narrower' }));
+  };
+  const REL_TEXT = { same: 'mismo nivel: no pueden bloquear y permitir lo mismo', broader: 'más general: esta gana donde choquen', narrower: 'más específica: gana sobre esta donde choquen' };
+  // Lo que hace una lista de entradas, una línea por sitio o control, para comparar con lo guardado.
+  const itemize = rules => rules.flatMap(r => r.kind === 'web' && ['deny', 'allow'].includes(r.effect) && !r.schedule_id && !r.priority
+    ? r.targets.map(t => `${r.effect === 'deny' ? 'Bloquea' : 'Permite (excepción)'} ${t}`) : [describe(r)]);
+  const STEPS = ['Qué controlar', 'A quién aplica', 'Cuándo y excepciones', 'Revisar el efecto'];
+  // Editor por pasos (revisión UX M6): qué controlar → a quién → cuándo y excepciones → revisar el efecto antes de guardar.
   const editor = p => {
-    const { dialog, body, ok, show } = dialogShell(p ? `Editar ${p.name}` : 'Crear regla');
-    dialog.classList.add('wide-dialog');
-    const name = labeled(body, 'Nombre', el('input'), 'Ej.: Bloqueos generales, Excepción Mercadeo'); name.maxLength = 120; name.value = p?.name || '';
-    const scope = el('select'); Object.entries(SCOPE_LABEL).forEach(([v, t]) => scope.append(new Option(t, v))); scope.value = p?.target_type || 'tenant'; labeled(body, '¿A quién aplica?', scope);
-    const targetWrap = el('div', undefined, 'unit-field'); body.append(targetWrap);
+    const { dialog, form, body, ok, show } = dialogShell(p ? `Editar ${p.name}` : 'Crear regla');
+    dialog.classList.add('wide-dialog', 'rule-editor');
+    const errorBox = form.querySelector('.error-text'); errorBox.setAttribute('role', 'alert');
+    const nav = el('ol', undefined, 'rule-steps'); nav.setAttribute('aria-label', 'Pasos de la regla'); body.append(nav);
+    const panes = STEPS.map((t, i) => { const sec = el('section', undefined, 'rule-step'); sec.dataset.step = String(i + 1); sec.append(el('h3', `${i + 1}. ${t}`)); body.append(sec); return sec; });
+    const stepButtons = STEPS.map((t, i) => { const li = el('li'); const b = el('button', undefined, 'rule-step-tab'); b.type = 'button'; b.append(el('span', String(i + 1), 'step-number'), ` ${t}`); li.append(b); nav.append(li); return b; });
+    const [whatPane, whoPane, whenPane, reviewPane] = panes;
+    const name = labeled(whatPane, 'Nombre', el('input'), 'Ej.: Bloqueos generales, Excepción Mercadeo'); name.maxLength = 120; name.value = p?.name || '';
+    // Al crear no hay destino elegido: el alcance (incluida toda la empresa) se elige a conciencia.
+    const scope = el('select'); if (!p) scope.append(new Option('Elige a quién aplica…', ''));
+    Object.entries(SCOPE_LABEL).forEach(([v, t]) => scope.append(new Option(t, v))); scope.value = p?.target_type || ''; labeled(whoPane, '¿A quién aplica?', scope);
+    const targetWrap = el('div', undefined, 'unit-field'); whoPane.append(targetWrap);
     const target = el('select'); labeled(targetWrap, 'Cuál', target);
     const targetHint = el('p', '', 'help'); targetWrap.append(targetHint);
     const addUnit = el('button', '', 'link-button'); addUnit.type = 'button'; targetWrap.append(addUnit);
+    const whoSummary = el('div', undefined, 'notice rule-reach'); whoSummary.setAttribute('role', 'status'); whoPane.append(whoSummary);
+    const destination = () => scope.value === 'tenant' ? 'Toda la empresa' : scope.value && target.value ? `${SCOPE_LABEL[scope.value]}: ${target.selectedOptions[0]?.textContent.replace(/ \(actual, no disponible en la lista\)$/, '') || '—'}` : '';
+    const targetId = () => scope.value === 'tenant' ? tenant : target.value;
+    const summarize = () => {
+      whoSummary.replaceChildren();
+      if (!destination()) { whoSummary.append(el('p', scope.value ? 'Elige cuál.' : 'Elige a quién aplica la regla.')); return; }
+      const reachNow = reachText(scope.value, targetId());
+      whoSummary.append(el('strong', destination()), el('p', reachNow ? `Alcanza a ${reachNow}.` : ''));
+      const note = reachNote(scope.value, targetId()); if (note) whoSummary.append(el('small', note));
+      if (scope.value === 'tenant') whoSummary.append(el('p', 'Es el alcance más amplio: vale para todas las personas y equipos del cliente, salvo donde una regla más específica diga otra cosa.'));
+    };
     const fill = () => {
-      target.replaceChildren(); targetWrap.hidden = scope.value === 'tenant';
+      target.replaceChildren(); targetWrap.hidden = scope.value === 'tenant' || !scope.value;
       const items = scope.value === 'site' || scope.value === 'area' ? org.filter(o => o.kind === scope.value && o.active).map(o => [o.id, o.name])
         : scope.value === 'user' ? (users || []).filter(u => u.status === 'active').map(u => [u.id, u.display_name])
         : scope.value === 'device' ? (devices || []).filter(d => d.status === 'active').map(d => [d.id, `${d.hostname} (${who.get(d.user_id) || 'sin persona'})`]) : [];
@@ -2830,38 +2895,44 @@ async function policiesPage() {
       targetHint.textContent = unitKind && !items.length ? `Aún no hay ${unitKind === 'site' ? 'sedes' : 'áreas'} activas${canUnits ? `: créala con «${ORG_TABS.find(t => t.kind === unitKind).create}».` : '.'}` : '';
       targetHint.hidden = !targetHint.textContent;
       addUnit.hidden = !(unitKind && canUnits); if (unitKind) addUnit.textContent = ORG_TABS.find(t => t.kind === unitKind).create;
+      summarize();
     };
-    fill(); scope.addEventListener('change', fill);
+    fill(); scope.addEventListener('change', fill); target.addEventListener('change', summarize);
     addUnit.addEventListener('click', () => openOrgCreate({ kind: scope.value, org, onCreated: created => {
-      org.push(created); n.set(created.id, created.name); fill(); target.value = created.id; target.focus();
+      org.push(created); n.set(created.id, created.name); fill(); target.value = created.id; summarize(); target.focus();
     } }));
     const rules = p?.rules || [];
     const locked = p ? unsupportedRules(rules) : [];
-    let read;
+    let read; let stepOf = () => 1;
+    const whenText = el('p', 'Cuándo: mientras esté activa, la regla vale todo el tiempo. Las reglas por horario no se crean desde este editor.', 'help'); whenPane.append(whenText);
     if (locked.length) {
       // Regla con contenido que este editor no representa: se muestra y se conserva tal cual.
       const keep = el('div', undefined, 'notice policy-locked'); keep.setAttribute('role', 'note');
       keep.append(el('strong', 'El contenido de esta regla se conserva tal cual'),
         el('p', `Usa ${locked.join(', ')}, que este editor no muestra. Para no perder nada, aquí solo cambias el nombre, a quién aplica y si está activa.`));
-      const ul = el('ul'); rules.forEach(r => ul.append(el('li', describe(r)))); keep.append(ul); body.append(keep);
+      const ul = el('ul'); rules.forEach(r => ul.append(el('li', describe(r)))); keep.append(ul); whatPane.append(keep);
+      if (rules.some(r => r.schedule_id)) whenText.textContent = 'Cuándo: esta regla usa horarios. Se conservan tal cual; aquí solo decides si está activa.';
       read = () => [null, rules];
     } else {
       // Se reutilizan los id de las entradas existentes para no reemplazarlas en cada guardado.
       const prev = new Map(rules.map(r => [r.kind === 'web' ? `web:${r.effect}` : r.kind, r.id]));
       const idFor = key => prev.get(key) || crypto.randomUUID();
       const rule = kind => rules.find(r => r.kind === kind);
-      body.append(el('h3', 'Sitios web'));
-      const block = labeled(body, 'Bloquear estos sitios (uno por línea)', el('textarea'), 'Ej.: facebook.com, youtube.com. Bloquea también sus subdominios.');
+      whatPane.append(el('h4', 'Sitios web'));
+      const block = labeled(whatPane, 'Bloquear estos sitios (uno por línea)', el('textarea'), 'Ej.: facebook.com, youtube.com. Bloquea también sus subdominios.');
       block.value = rules.filter(r => r.kind === 'web' && r.effect === 'deny').flatMap(r => r.targets).join('\n');
-      const allow = labeled(body, 'Permitir estos sitios (excepción a un bloqueo más general)', el('textarea'), 'Úsalo en reglas de persona, área o sede: quita el sitio del bloqueo de la empresa solo para ellos.');
+      const allow = labeled(whenPane, 'Permitir estos sitios (excepción a un bloqueo más general)', el('textarea'), 'Úsalo en reglas de persona, área o sede: quita el sitio del bloqueo de la empresa solo para ellos.');
       allow.value = rules.filter(r => r.kind === 'web' && r.effect === 'allow').flatMap(r => r.targets).join('\n');
-      body.append(el('h3', 'Equipo'));
-      const choice = (label, options, current) => { const sel = el('select'); options.forEach(([v, t]) => sel.append(new Option(t, v))); sel.value = current; labeled(body, label, sel); return sel; };
+      whatPane.append(el('h4', 'Equipo'));
+      const choice = (label, options, current) => { const sel = el('select'); options.forEach(([v, t]) => sel.append(new Option(t, v))); sel.value = current; labeled(whatPane, label, sel); return sel; };
       const effectOf = kind => rule(kind) ? rule(kind).effect : '';
       const download = choice('Descargas desde el navegador', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['allow', 'Permitir (excepción)']], effectOf('download'));
       const install = choice('Instalar programas', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['allow', 'Permitir (excepción)']], effectOf('installation'));
       const usbRule = rule('usb');
       const usb = choice('Memorias USB', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['write', 'Solo lectura (no copiar a la USB)'], ['allow', 'Permitir (excepción)']], usbRule ? (usbRule.effect === 'allow' ? 'allow' : usbRule.targets[0] === 'write' ? 'write' : 'deny') : '');
+      // Paso de cada problema: un sitio mal escrito se corrige donde está escrito; el choque bloquear/permitir, en excepciones.
+      stepOf = problem => problem.startsWith('La regla no hace nada') ? 1 : problem.startsWith('Un mismo sitio') ? 3
+        : domains(block.value).some(d => problem.startsWith(`"${d}"`)) ? 1 : 3;
       read = () => {
         const out = [];
         const blocked = domains(block.value), allowed = domains(allow.value);
@@ -2878,15 +2949,79 @@ async function policiesPage() {
       };
     }
     const enabled = el('input'); enabled.type = 'checkbox'; enabled.checked = p ? p.enabled : true;
-    const el2 = el('label', undefined, 'check'); el2.append(enabled, ' Regla activa'); body.append(el2);
+    const el2 = el('label', undefined, 'check'); el2.append(enabled, ' Regla activa'); whenPane.append(el2);
+    const others = el('div', undefined, 'rule-related'); whenPane.append(others);
+    const showRelated = () => {
+      others.replaceChildren();
+      if (!destination()) { others.append(el('p', 'Elige a quién aplica (paso 2) para ver qué otras reglas lo alcanzan.', 'help')); return; }
+      const rel = related(scope.value, targetId(), p?.id);
+      others.append(el('h4', 'Otras reglas activas que también lo alcanzan'));
+      if (!rel.length) others.append(el('p', 'Ninguna: esta regla sería la única.', 'help'));
+      else { const ul = el('ul'); rel.forEach(({ policy, rel: kind }) => ul.append(el('li', `${policy.name} (${targetName(policy)}): ${REL_TEXT[kind]}.`))); others.append(ul); }
+      if (!users && scope.value !== 'tenant') others.append(el('p', 'Tu cuenta no puede ver las personas: pueden faltar reglas de personas o equipos de este destino.', 'help'));
+    };
+    // Paso 4: el efecto en palabras, con el alcance calculado y, al editar, lo que cambia respecto a lo guardado.
+    const review = out => {
+      reviewPane.querySelectorAll(':scope > :not(h3)').forEach(x => x.remove());
+      const box = el('div', undefined, 'rule-review'); reviewPane.append(box);
+      const actions = out.map(describe);
+      const reachNow = reachText(scope.value, targetId());
+      box.append(el('p', `«${name.value.trim()}» ${actions.length === 1 ? actions[0].charAt(0).toLowerCase() + actions[0].slice(1) : 'hará esto'} en ${destination()}${reachNow ? ` (${reachNow})` : ''}.`, 'rule-sentence'));
+      if (actions.length > 1) { const ul = el('ul'); actions.forEach(a => ul.append(el('li', a))); box.append(ul); }
+      const note = reachNote(scope.value, targetId()); if (note) box.append(el('p', note, 'help'));
+      if (locked.length) box.append(el('p', `Su contenido se conserva tal cual (${plural(rules.length, 'entrada', 'entradas')}): no se reescribe al guardar.`));
+      const rel = related(scope.value, targetId(), p?.id);
+      box.append(el('p', rel.length ? `Las demás reglas se mantienen. ${rel.length === 1 ? 'Otra regla activa también lo alcanza' : `Otras ${rel.length} reglas activas también lo alcanzan`}: ${rel.map(x => `${x.policy.name} (${REL_TEXT[x.rel].split(':')[0]})`).join(', ')}.` : 'Las demás reglas se mantienen; ninguna otra regla activa alcanza a este destino.'));
+      box.append(el('p', enabled.checked ? 'Queda activa: los equipos la reciben en su próxima sincronización. Activa no significa aplicada: cada equipo aplica solo las funciones que el cliente contrató y que el plan de la persona incluye.' : 'Queda inactiva: se guarda, pero ningún equipo la aplica hasta activarla.', enabled.checked ? 'help' : 'notice'));
+      if (p) {
+        const before = itemize(p.rules), after = itemize(out);
+        const changes = [];
+        if (p.name !== name.value.trim()) changes.push(`Nombre: «${p.name}» → «${name.value.trim()}»`);
+        if (p.target_type !== scope.value || (p.target_type !== 'tenant' && p.target_id !== targetId())) changes.push(`A quién aplica: ${targetName(p)} → ${destination()}`);
+        after.filter(x => !before.includes(x)).forEach(x => changes.push(`Se agrega: ${x}`));
+        before.filter(x => !after.includes(x)).forEach(x => changes.push(`Se quita: ${x}`));
+        if (p.enabled !== enabled.checked) changes.push(enabled.checked ? 'Se activa' : 'Se desactiva');
+        const c = el('div', undefined, 'rule-changes'); c.append(el('h4', 'Cambios respecto a lo guardado'));
+        if (!changes.length) c.append(el('p', 'Sin cambios.', 'help')); else { const ul = el('ul'); changes.forEach(x => ul.append(el('li', x))); c.append(ul); }
+        box.append(c);
+      }
+    };
+    // Validación: el primer problema de los pasos hasta `upto`, como [paso, mensaje], o null. «La regla no hace nada» solo
+    // se revisa al llegar a Revisar: una regla puede ser solo de excepciones (paso 3).
+    const problemAt = upto => {
+      const found = [];
+      if (!name.value.trim()) found.push([1, 'Escribe el nombre.']);
+      if (!scope.value || (scope.value !== 'tenant' && !target.value)) found.push([2, 'Elige a quién aplica.']);
+      const [problem] = read();
+      if (problem && (upto >= 3 || !problem.startsWith('La regla no hace nada'))) found.push([stepOf(problem), problem]);
+      return found.filter(([at]) => at <= upto).sort((a, b) => a[0] - b[0])[0] || null;
+    };
+    let step = 1;
+    const back = el('button', 'Atrás'); back.type = 'button'; ok.before(back);
+    const go = to => {
+      errorBox.hidden = true;
+      if (to > step) {
+        const bad = problemAt(to - 1);
+        if (bad) { to = bad[0]; show(bad[1]); }
+      }
+      if (to === 3) showRelated();
+      if (to === 4) { const [, out] = read(); review(out); }
+      step = to;
+      panes.forEach((x, i) => { x.hidden = i + 1 !== step; });
+      stepButtons.forEach((b, i) => { if (i + 1 === step) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current'); b.parentElement.classList.toggle('done', i + 1 < step); });
+      back.hidden = step === 1; ok.textContent = step === 4 ? (p ? 'Guardar cambios' : 'Crear regla') : 'Siguiente';
+    };
+    stepButtons.forEach((b, i) => b.addEventListener('click', () => { go(i + 1); panes[step - 1].querySelector('input, select, textarea')?.focus(); }));
+    back.addEventListener('click', () => go(step - 1));
+    go(1);
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
-      if (!name.value.trim()) { show('Escribe el nombre.'); return; }
-      if (scope.value !== 'tenant' && !target.value) { show('Elige a quién aplica.'); return; }
-      const [problem, out] = read();
-      if (problem) { show(problem); return; }
+      if (step < 4) { go(step + 1); return; }
+      const bad = problemAt(3);
+      if (bad) { go(bad[0]); show(bad[1]); return; }
+      const [, out] = read();
       ok.disabled = true;
-      const payload = { name: name.value.trim(), target_type: scope.value, target_id: scope.value === 'tenant' ? tenant : target.value, enabled: enabled.checked, rules: out };
+      const payload = { name: name.value.trim(), target_type: scope.value, target_id: targetId(), enabled: enabled.checked, rules: out };
       try {
         const saved = p ? await api('PATCH', `/policies/${p.id}`, { body: payload, ifMatch: p.version }) : await api('POST', '/policies', { body: payload });
         list = p ? list.map(x => x.id === p.id ? saved : x) : [...list, saved]; dialog.close(); render(); done();

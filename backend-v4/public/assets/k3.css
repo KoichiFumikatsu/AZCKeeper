@@ -126,3 +126,10 @@ tr.group-row th{background:#d6d6d6;color:var(--ink);white-space:normal;padding:4
 .perm-group>.new-role{display:block;min-height:0;font-size:12px;margin:-4px 0 8px}
 /* M2 · Tablas: «Limpiar filtros» en la barra y en el estado vacío. */
 .toolbar>.table-clear{flex:none;align-self:end;min-height:38px;padding:6px 2px}.toolbar>.table-clear:disabled{text-decoration:none;color:var(--muted)}.empty>button{margin-top:4px}
+/* M6 · Editor de reglas por pasos y revisión del efecto. */
+.rule-steps{display:flex;flex-wrap:wrap;gap:6px 14px;list-style:none;margin:0 0 18px;padding:0 0 12px;border-bottom:1px solid #aaa}.rule-step-tab{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:4px 10px 4px 4px;border:0;background:none;box-shadow:none;font-size:13px;color:var(--muted);font-weight:600}.rule-step-tab[aria-current=step]{color:var(--accent);font-weight:700}.rule-step-tab[aria-current=step] .step-number{border-color:var(--accent);box-shadow:var(--pressed)}.rule-steps li.done .step-number{background:var(--p-100);border-color:var(--p-200);color:var(--accent)}.rule-step-tab:focus-visible{outline:3px solid var(--p-400);outline-offset:2px}
+.rule-step>h3{font-size:16px;margin:0 0 12px}.rule-step h4{font-size:14px;margin:18px 0 6px}.rule-step label{margin:10px 0}
+.rule-reach{margin:14px 0 0}.rule-reach strong,.rule-reach p,.rule-reach small{display:block}.rule-reach p{margin:4px 0 0}.rule-reach small{margin-top:4px;color:var(--muted)}
+.rule-related ul,.rule-review ul,.rule-changes ul{margin:6px 0 0;padding-left:20px;font-size:13px}.rule-related li,.rule-review li,.rule-changes li{margin:3px 0;overflow-wrap:anywhere}
+.rule-review{display:grid;gap:10px}.rule-review p{margin:0}.rule-review .notice{margin:0}.rule-sentence{font-size:16px;font-weight:650;overflow-wrap:anywhere}.rule-changes{border-top:1px solid var(--line);padding-top:10px}.rule-changes h4{margin:0 0 4px}
+@media(max-width:600px){.rule-steps{gap:4px}.rule-step-tab{font-size:12px}}
