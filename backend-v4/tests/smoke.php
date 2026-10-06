@@ -13,6 +13,7 @@ require __DIR__ . '/intake.php';
 require __DIR__ . '/panel-accounts.php';
 require __DIR__ . '/schedules.php';
 require __DIR__ . '/data-sync.php';
+require __DIR__ . '/one-import.php';
 require __DIR__ . '/company-groups.php';
 require __DIR__ . '/role-rules.php';
 require __DIR__ . '/doors.php';
@@ -369,6 +370,7 @@ try {
     panelAccountsTests($db);
     scheduleDayHoursTests($db);
     dataSyncTests($db);
+    oneImportTests($db);
     companyGroupTests($db);
     roleRulesTests($db);
     doorEventTests($db);
