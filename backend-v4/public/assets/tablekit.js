@@ -2,6 +2,9 @@
 // paginacion de 50 filas y, si la tabla tiene fechas, la mas reciente primero. Trabaja sobre el DOM ya dibujado, asi
 // sirve a las cuatro formas de dibujar tablas que tiene el panel. Las tablas con buscador propio (data-kit="own")
 // solo reciben orden y paginacion.
+// Estado compartido (M2): quien dibuja la tabla puede dejar en table.kitInit = { sort: { name, dir }, page } el orden y la
+// pagina a recuperar, y escucha 'kit:change' (detail = { sort, page }) para guardarlos. El orden se identifica por el
+// texto del encabezado, no por su posicion, para que sobreviva a columnas nuevas (p. ej. la de casillas de seleccion).
 const PAGE = 50;
 const MONTHS = { ene: 0, feb: 1, mar: 2, abr: 3, may: 4, jun: 5, jul: 6, ago: 7, sep: 8, sept: 8, oct: 9, nov: 10, dic: 11 };
 const DATE_HEADER = /fecha|^d[ií]a|cu[aá]ndo|[uú]ltim|registrad|cread|publicad|inicio|desde|ocurri|hora|vez|actualiz/i;
@@ -26,7 +29,7 @@ function compare(a, b) {
   return a.kind === 'text' ? a.v.localeCompare(b.v, 'es') : a.v - b.v;
 }
 
-function enhance(table) {
+export function enhance(table) {
   const body = table.tBodies[0]; const head = table.tHead;
   if (!body || !head || table.dataset.kit === 'done') return;
   const rows = [...body.rows];
@@ -37,6 +40,13 @@ function enhance(table) {
   // Orden por defecto: la primera columna de fecha, mas reciente primero.
   const dateCol = headers.findIndex((th, i) => DATE_HEADER.test(th.textContent) && rows.slice(0, 5).every(r => key(r.cells[i]?.textContent || '').kind === 'date' || !r.cells[i]?.textContent.trim()));
   if (dateCol >= 0) { state.col = dateCol; state.dir = -1; }
+  const init = table.kitInit;
+  if (init?.sort?.name) {
+    const i = headers.findIndex(th => th.textContent.trim() === init.sort.name);
+    if (i >= 0) { state.col = i; state.dir = init.sort.dir > 0 ? 1 : -1; }
+  }
+  if (Number.isInteger(init?.page) && init.page > 0) state.page = init.page;
+  const announce = () => table.dispatchEvent(new CustomEvent('kit:change', { detail: { sort: state.col >= 0 && headers[state.col].textContent.trim() ? { name: headers[state.col].textContent.trim(), dir: state.dir } : null, page: state.page } }));
   const own = table.closest('[data-kit="own"]') || table.parentElement?.previousElementSibling?.classList?.contains('toolbar');
   const tools = document.createElement('div'); tools.className = 'tablekit';
   let search = null;
@@ -50,6 +60,8 @@ function enhance(table) {
   pager.append(prev, status, next);
   const region = table.closest('.table-region, .table-wrap') || table;
   if (tools.childElementCount) region.before(tools);
+  // Una tabla redibujada en el mismo contenedor reemplaza su paginador anterior en vez de sumar otro.
+  if (region.nextElementSibling?.classList?.contains('tablekit-pager')) region.nextElementSibling.remove();
   region.after(pager);
   const keys = new Map(rows.map(r => [r, [...r.cells].map(c => key(c.textContent || ''))]));
   const render = () => {
@@ -69,7 +81,7 @@ function enhance(table) {
   headers.forEach((th, i) => {
     if (!th.textContent.trim()) return;
     th.classList.add('sortable'); th.tabIndex = 0; th.title = 'Ordenar';
-    const sort = () => { state.dir = state.col === i ? -state.dir : (DATE_HEADER.test(th.textContent) ? -1 : 1); state.col = i; state.page = 0; render(); };
+    const sort = () => { state.dir = state.col === i ? -state.dir : (DATE_HEADER.test(th.textContent) ? -1 : 1); state.col = i; state.page = 0; render(); announce(); };
     th.addEventListener('click', sort); th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sort(); } });
   });
   // Filas que la pantalla agrega despues ("Cargar mas"): se incorporan y se vuelve a ordenar y paginar.
@@ -81,8 +93,8 @@ function enhance(table) {
     render();
   }).observe(body, { childList: true });
   search?.addEventListener('input', () => { state.term = search.value.trim().toLocaleLowerCase('es'); state.page = 0; render(); });
-  prev.addEventListener('click', () => { state.page--; render(); });
-  next.addEventListener('click', () => { state.page++; render(); });
+  prev.addEventListener('click', () => { state.page--; render(); announce(); });
+  next.addEventListener('click', () => { state.page++; render(); announce(); });
   render();
 }
 

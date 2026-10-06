@@ -1,6 +1,6 @@
 import { api, isUuid, setTenant, readSession, refreshCsrf, goToLogin, errorMessage, PLATFORM_TENANT } from './api.js';
 import './menu.js';
-import './tablekit.js';
+import { enhance } from './tablekit.js';
 import { applyNavAccess, loadAccess, allowed, canSeeOnboarding } from './nav-access.js';
 import { scopeSummary, sameAccess, scopeConditions, SCOPE_RULE, TEAM_LABEL } from './access-scope.js';
 import { coordinator } from './coordinator.js';
@@ -55,11 +55,20 @@ function cellText(v) {
   if (c.querySelectorAll) c.querySelectorAll('button, select, input, textarea, .actions').forEach(x => x.remove());
   return c.matches?.('button, select, input, textarea') ? '' : (c.textContent || '');
 }
+// Estado de cada tabla por pantalla y cliente (revisión UX M2): búsqueda, filtros, orden y página se guardan en
+// localStorage y se recuperan al volver a la pantalla o al redibujarla después de guardar. Sin almacenamiento (o con un
+// valor dañado) la tabla arranca como siempre.
+const tableKey = name => `keeper.table.${page}.${tenant || '-'}.${name}`;
+function readTableState(key) { try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch { return {}; } }
+function writeTableState(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* sin almacenamiento */ } }
 // Tabla con filtro de texto y, opcionalmente, un select por columna. `search` (fila → textos) agrega
 // campos de la entidad que la búsqueda debe encontrar aunque no se vean o se dibujen como nodos.
 // `selection` ({ set, key, label, bar, onChange }) agrega una casilla por fila y otra en el encabezado que marca o
 // desmarca las filas visibles (con búsqueda y filtros aplicados); `bar` se agrega a la barra y onChange(visibles) avisa.
-function table(parent, caption, columns, rows, { filters = [], search: searchFields, selection = null } = {}) {
+// `stateKey` nombra el estado guardado (por defecto el título); null no guarda nada (tablas dentro de diálogos).
+// Cambiar búsqueda o filtros vuelve a la primera página y conserva el orden; «Limpiar filtros» vuelve a los valores
+// iniciales de los filtros y también conserva el orden.
+function table(parent, caption, columns, rows, { filters = [], search: searchFields, selection = null, stateKey = caption } = {}) {
   if (selection) {
     const { set, key, label } = selection;
     // Casillas por clave (tablekit ordena y pagina moviendo las filas: el orden del DOM no sirve para ubicarlas).
@@ -67,18 +76,30 @@ function table(parent, caption, columns, rows, { filters = [], search: searchFie
     columns = [['', r => { const c = el('input'); c.type = 'checkbox'; c.checked = set.has(key(r)); c.setAttribute('aria-label', `Seleccionar a ${label(r)}`); selection.boxes.set(key(r), c);
       c.addEventListener('change', () => { if (c.checked) set.add(key(r)); else set.delete(key(r)); selection.sync?.(); }); return c; }], ...columns];
   }
+  const key = stateKey ? tableKey(stateKey) : null;
+  const saved = key ? readTableState(key) : {};
+  const savedFilters = saved.filters && typeof saved.filters === 'object' && !Array.isArray(saved.filters) ? saved.filters : {};
+  const st = { sort: saved.sort && typeof saved.sort.name === 'string' ? { name: saved.sort.name, dir: saved.sort.dir > 0 ? 1 : -1 } : null, page: Number.isInteger(saved.page) && saved.page > 0 ? saved.page : 0 };
   const bar = el('div', undefined, 'toolbar');
   const search = el('input'); search.type = 'search'; search.placeholder = 'Buscar';
+  if (typeof saved.term === 'string') search.value = saved.term;
   const searchLabel = el('label', 'Buscar'); searchLabel.append(search); bar.append(searchLabel);
   // Un filtro puede traer valor inicial ([etiqueta, getter, inicial]); si no hay filas con ese valor queda en Todos.
+  // Un valor guardado que ya no existe en las filas se ignora.
   const selects = filters.map(([label, getter, initial]) => {
     const l = el('label', label); const s = el('select'); s.append(new Option('Todos', ''));
     [...new Set(rows.map(getter).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es')).forEach(v => s.append(new Option(v, v)));
-    if (initial && [...s.options].some(o => o.value === initial)) s.value = initial;
-    l.append(s); bar.append(l); return [s, getter];
+    const has = v => [...s.options].some(o => o.value === v);
+    const start = initial && has(initial) ? initial : '';
+    s.value = typeof savedFilters[label] === 'string' && has(savedFilters[label]) ? savedFilters[label] : start;
+    l.append(s); bar.append(l); return [s, getter, label, start];
   });
+  const clear = el('button', 'Limpiar filtros', 'link-button table-clear'); clear.type = 'button';
+  bar.append(clear);
   if (selection?.bar) bar.append(selection.bar);
   parent.append(bar);
+  const filtered = () => !!search.value.trim() || selects.some(([s, , , start]) => s.value !== start);
+  const persist = () => { if (key) writeTableState(key, { term: search.value, filters: Object.fromEntries(selects.map(([s, , label]) => [label, s.value])), sort: st.sort, page: st.page }); };
   const wrap = el('div', undefined, 'table-wrap'); wrap.tabIndex = 0; parent.append(wrap);
   let all = null, shownNow = [];
   if (selection) {
@@ -102,7 +123,13 @@ function table(parent, caption, columns, rows, { filters = [], search: searchFie
     const term = searchFold(search.value);
     const shown = rows.filter(r => selects.every(([s, g]) => !s.value || g(r) === s.value) && (!term || haystack(r).includes(term)));
     wrap.replaceChildren(); shownNow = shown; all = null; selection?.boxes.clear();
-    if (!shown.length) { empty(wrap, 'Sin resultados', 'No hay filas que coincidan con la búsqueda o los filtros.'); selection?.sync(); return; }
+    clear.disabled = !filtered();
+    if (wrap.nextElementSibling?.classList?.contains('tablekit-pager')) wrap.nextElementSibling.remove();
+    if (!shown.length) {
+      empty(wrap, 'Sin resultados', 'No hay resultados con estos filtros.');
+      if (filtered()) { const again = el('button', 'Limpiar filtros'); again.type = 'button'; again.addEventListener('click', reset); wrap.querySelector('.empty').append(again); }
+      selection?.sync(); return;
+    }
     const t = el('table'); t.append(el('caption', `${caption} · ${shown.length} de ${rows.length}`));
     const head = el('thead'); const hr = el('tr'); columns.forEach(([name]) => { const th = el('th', name); th.scope = 'col'; hr.append(th); }); head.append(hr);
     if (selection) {
@@ -117,9 +144,19 @@ function table(parent, caption, columns, rows, { filters = [], search: searchFie
       body.append(tr);
     }
     t.append(head, body); wrap.append(t);
+    // Orden y página los maneja tablekit: recibe lo guardado y avisa cada cambio.
+    t.kitInit = { sort: st.sort, page: st.page };
+    t.addEventListener('kit:change', e => { st.sort = e.detail.sort; st.page = e.detail.page; persist(); });
+    enhance(t);
     selection?.sync();
   };
-  search.addEventListener('input', render); selects.forEach(([s]) => s.addEventListener('change', render)); render();
+  const changed = () => { st.page = 0; render(); persist(); };
+  function reset() {
+    search.value = ''; selects.forEach(([s, , , start]) => { s.value = start; });
+    changed(); search.focus();
+  }
+  clear.addEventListener('click', reset);
+  search.addEventListener('input', changed); selects.forEach(([s]) => s.addEventListener('change', changed)); render();
 }
 async function allPages(path, company) {
   const out = []; let cursor = null;
@@ -1043,6 +1080,9 @@ async function tenantsPage() {
   const catalog = (await api('GET', '/features', { tenant: PLATFORM_TENANT })).data;
   const packages = (await api('GET', '/feature-packages', { tenant: PLATFORM_TENANT })).data;
   let personPlans = (await api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).data;
+  // «Mostrar empresas archivadas» se recuerda como el resto del estado de la tabla (M2).
+  const archivedKey = tableKey('Empresas:archivadas');
+  if (!showArchived && readTableState(archivedKey).show === true) { showArchived = true; companies = sortCompanies(await allPages('/tenants?include_archived=true', PLATFORM_TENANT)); }
   const render = () => {
     $('page-content').replaceChildren();
     const s = surface('Empresas');
@@ -1053,7 +1093,7 @@ async function tenantsPage() {
     // Archivadas: ocultas por defecto en todo el panel y de solo lectura (nadie las modifica hasta desarchivarlas).
     const toggle = el('label', undefined, 'check'); const box = el('input'); box.type = 'checkbox'; box.checked = showArchived;
     toggle.append(box, ' Mostrar empresas archivadas'); s.append(toggle);
-    box.addEventListener('change', async () => { showArchived = box.checked; try { await reload(); } catch (e) { fail(e); } });
+    box.addEventListener('change', async () => { showArchived = box.checked; writeTableState(archivedKey, { show: showArchived }); try { await reload(); } catch (e) { fail(e); } });
     renderTree();
     table(s, 'Empresas', [
       ['Empresa', c => { const d = el('div', undefined, 'company-cell'); const t = el('div'); t.append(el('strong', c.branding?.display_name || c.name), el('small', c.name)); d.append(logoImage(c), t); return d; }],
@@ -2389,7 +2429,7 @@ async function sourcesPage() {
       const t = el('div'); body.append(t);
       const action = { create: 'Nueva', update: 'Cambio', link: 'Vinculada', deactivate: 'Retiro / baja', error: 'Error', pending: 'Pendiente' };
       table(t, 'Detalle', [['Qué', i => action[i.action] || i.action], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain], ['Nombre', i => i.label || i.external_id || '—'],
-        ['Detalle', i => i.reason || (i.fields ? Object.keys(i.fields).join(', ') : '')]], items, { filters: [['Qué', i => action[i.action] || i.action], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain]] });
+        ['Detalle', i => i.reason || (i.fields ? Object.keys(i.fields).join(', ') : '')]], items, { filters: [['Qué', i => action[i.action] || i.action], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain]], stateKey: null });
     } catch (e) { body.append(el('p', errorMessage(e), 'error-text')); }
     if (r.status === 'blocked' && manage) {
       const b = el('button', 'Aplicar igualmente (vuelve a leer la fuente)', 'danger'); b.type = 'button';

@@ -124,3 +124,5 @@ tr.group-row th{background:#d6d6d6;color:var(--ink);white-space:normal;padding:4
 .install-check-list{margin:6px 0 0;padding-left:20px;font-size:14px}.install-check-list li{margin:4px 0}
 .decision-follow{margin:0 0 8px}.devices-csv{margin-top:16px}.devices-csv>summary{cursor:pointer;font-weight:600}
 .perm-group>.new-role{display:block;min-height:0;font-size:12px;margin:-4px 0 8px}
+/* M2 · Tablas: «Limpiar filtros» en la barra y en el estado vacío. */
+.toolbar>.table-clear{flex:none;align-self:end;min-height:38px;padding:6px 2px}.toolbar>.table-clear:disabled{text-decoration:none;color:var(--muted)}.empty>button{margin-top:4px}
