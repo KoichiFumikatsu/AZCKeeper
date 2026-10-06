@@ -1287,6 +1287,7 @@ async function patient(fn) {
 async function people() {
   const [users, org, schedules, domains, sources, calendarPage] = await Promise.all([allPages('/users'), allPages('/organization'), optional(allPages('/schedules')), optional(api('GET', '/data-domains')), optional(api('GET', '/data-sources')), optional(api('GET', '/schedules/holiday-calendars?limit=100'))]);
   let list = users; const n = names(org);
+  const personUrl = u => `/miembro.php?id=${encodeURIComponent(u.id)}&tab=datos`;
   const calendars = (calendarPage?.data || []).filter(c => c.active);
   const siteCountry = u => org.find(o => o.id === u.site_id)?.country_code || null;
   // Si una fuente (p. ej. AZC One) manda en "personas", aqui no se crean ni editan: se cambian en la fuente.
@@ -1303,17 +1304,10 @@ async function people() {
     isSuper ? optional(api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).then(r => r?.data || []) : []]);
   // Acceso al panel en la ficha (§5): lo edita quien puede dar accesos (superadmin o roles.gestionar).
   const myAccess = isSuper ? null : await optional(api('GET', '/me/access'));
-  const canAssign = isSuper || !!myAccess?.permissions?.some(p => p.code === 'roles.gestionar');
   const canCreatePeople = isSuper || !myAccess || !!myAccess.permissions?.some(p => p.code === 'usuarios.crear');
-  const roles = canAssign ? ((await optional(allPages('/roles'))) || []) : [];
   const planName = id => avail?.data.find(p => p.id === id)?.name || allPlans.find(p => p.id === id)?.name || null;
   const defaultLabel = avail ? `Por defecto (${planName(avail.default_plan_id) || 'sin plan'})` : '';
   const ownPlan = u => avail?.data.find(p => p.id === u.plan_id) || null;
-  const receives = planId => {
-    const plan = avail.data.find(p => p.id === planId) || avail.data.find(p => p.id === avail.default_plan_id);
-    const names = plan ? avail.features.filter(f => plan.features.includes(f.code)).map(f => f.name) : [];
-    return `Recibe: ${names.length ? names.join(', ') : 'ninguna función de persona'}.`;
-  };
   const render = () => {
     $('page-content').replaceChildren();
     kpis([['Personas', String(list.length)], ['Activas', String(list.filter(u => u.status === 'active').length)],
@@ -1330,97 +1324,14 @@ async function people() {
     }
     if (!list.length) { empty(s, 'Aún no hay personas', 'Créalas una a una con "Crear persona" o impórtalas desde un CSV (descarga la plantilla).'); return; }
     table(s, 'Personas', [
-      ['Nombre', u => { const a = el('a', u.display_name); a.href = `/miembro.php?id=${encodeURIComponent(u.id)}`; const d = el('div'); d.append(a); if (u.email) d.append(el('small', u.email)); return d; }],
+      ['Nombre', u => { const a = el('a', u.display_name); a.href = personUrl(u); const d = el('div'); d.append(a); if (u.email) d.append(el('small', u.email)); return d; }],
       ['Cédula', u => u.document || '—'], ['Empresa', u => n.get(u.company_id) || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'],
       ['Acceso al panel', u => u.access ? scopeSummary(u.access.role_name, u.access.scope, n) : 'Sin acceso al panel'],
       ['Estado', u => { const d = el('div'); d.append(badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : '')); if (u.monitoring === 'excluded') d.append(' ', badge('No se monitorea', 'info')); return d; }],
       ...(avail ? [['Plan', u => ownPlan(u)?.name || defaultLabel]] : []),
-      ['Acciones', u => { if (u.managed_by) return el('small', `Gestionada por ${u.managed_by}`); const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(u)); return b; }]],
+      ['Acciones', u => { if (u.managed_by) return el('small', `Gestionada por ${u.managed_by}`); const b = el('a', 'Editar', 'link-button'); b.href = personUrl(u); return b; }]],
       list, { filters: [['Empresa', u => n.get(u.company_id) || 'Sin empresa'], ['País', u => countryName(siteCountry(u))], ['Ciudad', u => org.find(o => o.id === u.site_id)?.city || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']],
         search: u => [u.display_name, u.email, u.document] });
-  };
-  const editor = u => {
-    const { dialog, body, ok, show } = dialogShell(u ? `Editar ${u.display_name}` : 'Crear persona');
-    const name = labeled(body, 'Nombre completo', el('input')); name.maxLength = 160; name.value = u?.display_name || '';
-    const doc = labeled(body, 'Cédula', el('input'), 'Con ella, al instalar Keeper en su PC, el equipo queda asignado a esta persona.'); doc.maxLength = 40; doc.inputMode = 'numeric'; doc.value = u?.document || '';
-    const email = labeled(body, 'Correo (opcional)', el('input')); email.type = 'email'; email.maxLength = 254; email.value = u?.email || '';
-    const boss = el('select'); boss.append(new Option('Nadie', ''));
-    list.filter(x => x.status === 'active' && x.id !== u?.id).sort((a, b) => a.display_name.localeCompare(b.display_name, 'es')).forEach(x => boss.append(new Option(x.display_name, x.id)));
-    boss.value = u?.reports_to_user_id || ''; labeled(body, 'Reporta a (jefe)', boss, 'Con esto el jefe puede ver a su equipo si su acceso tiene el alcance "Su equipo".');
-    const mon = el('select'); [['auto', 'Automático (según el cargo)'], ['monitored', 'Siempre monitorear'], ['excluded', 'No monitorear (directivo, dueño)']].forEach(([v, t]) => mon.append(new Option(t, v)));
-    mon.value = u?.monitoring_override || 'auto'; labeled(body, 'Monitoreo', mon);
-    const grid = el('div', undefined, 'form-grid'); body.append(grid);
-    const selects = {};
-    for (const [kind, label] of ORG_FIELDS) {
-      const sel = el('select'); if (kind === 'firm') sel.append(new Option('Sin firma (se asigna después)', '')); units(kind).forEach(o => sel.append(new Option(o.name, o.id)));
-      sel.value = u?.[`${kind}_id`] || fallback(kind)?.id || ''; labeled(grid, label, sel); selects[kind] = sel;
-    }
-    const sched = el('select'); sched.append(new Option('Sin horario (no se espera jornada)', '')); scheduleList.forEach(x => sched.append(new Option(x.name, x.id))); sched.value = u?.schedule_id || defaultSchedule()?.id || '';
-    labeled(grid, 'Horario', sched);
-    const company = el('select'); company.append(new Option('Sin empresa (todo el grupo)', '')); units('company').forEach(o => company.append(new Option(o.name, o.id)));
-    company.value = u?.company_id || ''; labeled(grid, 'Empresa del grupo', company);
-    const holidays = el('select'); holidays.append(new Option('Automático (festivos del país de su sede)', '')); calendars.forEach(c => holidays.append(new Option(c.name, c.id)));
-    holidays.value = u?.holiday_calendar_id || ''; labeled(grid, 'Festivos', holidays);
-    let status = null;
-    if (u) { status = el('select'); status.append(new Option('Activa', 'active'), new Option('Inactiva (retirada)', 'inactive')); status.value = u.status; labeled(body, 'Estado', status); }
-    let planSel = null;
-    if (avail) {
-      planSel = el('select'); planSel.append(new Option(defaultLabel, ''));
-      avail.data.forEach(x => planSel.append(new Option(x.name, x.id)));
-      // Plan propio inactivo: se conserva en el select, pero la persona ya usa el por defecto.
-      if (u?.plan_id && !ownPlan(u)) planSel.append(new Option(`${planName(u.plan_id) || 'Plan'} (inactivo: usa el por defecto)`, u.plan_id));
-      planSel.value = u?.plan_id || '';
-      labeled(body, 'Plan', planSel, 'Define qué funciones de persona recibe. Sin plan propio usa el del cliente; nunca recibe lo que el cliente no compró.');
-      const summary = el('p', '', 'help'); summary.setAttribute('aria-live', 'polite'); body.append(summary);
-      const sync = () => { summary.textContent = receives(planSel.value); };
-      planSel.addEventListener('change', sync); sync();
-    }
-    const accessEd = u && canAssign && roles.length ? accessEditor(body, { roles, org, current: u.access }) : null;
-    ok.textContent = u ? 'Guardar' : 'Crear persona';
-    dialog.querySelector('form').addEventListener('submit', async ev => {
-      ev.preventDefault();
-      if (!name.value.trim()) { show('Escribe el nombre.'); return; }
-      // Firma y horario pueden ir vacíos ("Sin firma" / "Sin horario"); sede, área y cargo no.
-      const missing = ORG_FIELDS.filter(([k]) => k !== 'firm' && !selects[k].value).map(([, label]) => label.toLowerCase());
-      if (missing.length) { show(`Falta ${missing.join(', ')}: créalo primero en Organización.`); return; }
-      if (accessEd?.read() && !accessEd.valid()) { show(accessEd.problem()); return; }
-      if (status?.value === 'inactive' && u.status === 'active' && !confirm(`¿Marcar a ${u.display_name} como inactiva? Sus equipos quedan revocados y dejan de reportar.`)) return;
-      ok.disabled = true;
-      const payload = { display_name: name.value.trim(), document: doc.value.trim() || null, email: email.value.trim() || null, schedule_id: sched.value || null, reports_to_user_id: boss.value || null, monitoring_override: mon.value };
-      if (!u || (company.value || null) !== (u.company_id || null)) payload.company_id = company.value || null;
-      if (calendarPage && (!u || (holidays.value || null) !== (u.holiday_calendar_id || null))) payload.holiday_calendar_id = holidays.value || null;
-      for (const [k] of ORG_FIELDS) payload[`${k}_id`] = selects[k].value || null;
-      if (status && status.value !== u.status) payload.status = status.value;
-      try {
-        let saved = u ? await api('PATCH', `/users/${u.id}`, { body: payload, ifMatch: u.version }) : await api('POST', '/users', { body: payload });
-        // Desde aquí la persona ya está guardada: el estado local usa la versión nueva, para que un reintento no choque
-        // con un 412 ni cree la persona otra vez (el diálogo pasa a editar la recién creada).
-        list = u ? list.map(x => x.id === saved.id ? saved : x) : [...list, saved];
-        if (!u) ok.textContent = 'Guardar';
-        u = saved;
-        // Segundo paso: el plan propio (PUT /users/{id}/plan, permiso planes.asignar).
-        if (planSel && (planSel.value || null) !== (u.plan_id || null)) {
-          try { saved = await api('PUT', `/users/${u.id}/plan`, { body: { plan_id: planSel.value || null }, ifMatch: u.version }); list = list.map(x => x.id === saved.id ? saved : x); u = saved; }
-          catch (e) {
-            const d = e.problem?.detail;
-            show('Los datos se guardaron, pero el plan no: ' + (d === 'unknown_plan' ? 'Ese plan está inactivo; actívalo o elige otro.' : e.status === 412 ? 'Alguien más la modificó: recarga la página.' : errorMessage(e)));
-            ok.disabled = false; render(); return;
-          }
-        }
-        // Tercer paso: el acceso al panel (PUT /users/{id}/access). Solo si cambió: rol y alcance van siempre explícitos.
-        const wanted = accessEd?.read();
-        if (wanted && !sameAccess(wanted, u.access ? { role_id: u.access.role_id, scope: u.access.scope } : null)) {
-          try { saved = await api('PUT', `/users/${u.id}/access`, { body: wanted, ifMatch: u.version }); list = list.map(x => x.id === saved.id ? saved : x); u = saved; }
-          catch (e) { show('Los datos se guardaron, pero el acceso no: ' + (e.status === 412 ? 'Alguien más la modificó: recarga la página.' : errorMessage(e))); ok.disabled = false; render(); return; }
-        }
-        dialog.close(); render(); done();
-      } catch (e) {
-        const d = e.problem?.detail;
-        show(d === 'hierarchy_cycle' ? 'Ese jefe reporta (directa o indirectamente) a esta persona: no puede ser su jefe.' : d === 'document_in_use' ? 'Esa cédula ya pertenece a otra persona de la empresa.' : d === 'invalid_document' ? 'La cédula no es válida.' : e.status === 412 ? 'Alguien más la modificó: recarga la página.' : e);
-        ok.disabled = false;
-      }
-    });
-    dialog.showModal();
   };
   // Cargos que no se monitorean (directivos y dueños): sus equipos nunca se aprueban solos en el alta.
   let excluded = (await optional(api('GET', '/monitoring-exclusions')))?.position_ids || null;
@@ -1503,7 +1414,7 @@ async function people() {
     });
     dialog.showModal();
   };
-  // Revisión UX M3: el alta es por bloques en su propia pantalla (miembro.php?nueva=1); «Editar» sigue siendo el atajo.
+  // Revisión UX M3: el alta es por bloques en su propia pantalla (miembro.php?nueva=1); «Editar» de cada fila abre su ficha.
   const action = $('page-action'); action.textContent = 'Crear persona'; action.hidden = !!owner || !canCreatePeople; action.addEventListener('click', () => { location.href = '/miembro.php?nueva=1'; });
   render();
 }
@@ -1674,6 +1585,12 @@ let tenantZone = 'UTC';
 const zoneToday = () => { const p = new Intl.DateTimeFormat('en', { timeZone: tenantZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date()); const g = t => p.find(x => x.type === t).value; return `${g('year')}-${g('month')}-${g('day')}`; };
 const shiftDay = (day, days) => { const d = new Date(`${day}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
 const withQuery = (path, values) => { const url = new URL(path, location.origin); Object.entries(values).forEach(([k, v]) => { if (v !== null && v !== undefined) url.searchParams.set(k, v); }); return url.pathname + url.search; };
+
+// Una ficha de persona pertenece a un cliente: al cambiar de empresa se vuelve a la lista de Personas de la nueva
+// (recargar daría «Persona no encontrada»). El resto de pantallas se recargan donde están.
+function leaveOtherClient() {
+  if (/\/miembro\.php$/.test(location.pathname)) location.assign('/usuarios.php'); else location.reload();
+}
 
 async function personPage() {
   const params = new URLSearchParams(location.search);
@@ -3167,7 +3084,7 @@ async function start() {
         const select = $('tenant-select');
         companies.forEach(c => select.append(new Option(c.id === PLATFORM_TENANT ? `${c.branding?.display_name || c.name} (dueña)` : (c.branding?.display_name || c.name), c.id)));
         select.value = tenant; $('tenant-control').hidden = false;
-        select.addEventListener('change', () => { try { sessionStorage.setItem('keeper.presentation.tenant', select.value); } catch { /* sin almacenamiento */ } location.reload(); });
+        select.addEventListener('change', () => { try { sessionStorage.setItem('keeper.presentation.tenant', select.value); } catch { /* sin almacenamiento */ } leaveOtherClient(); });
       }
     } else if (session.group?.tenants?.length > 1) {
       // Cuenta de grupo: selector con las empresas de su grupo (la API valida cada una).
@@ -3177,7 +3094,7 @@ async function start() {
         const select = $('tenant-select');
         session.group.tenants.forEach(c => select.append(new Option(c.name, c.id)));
         select.value = tenant; $('tenant-control').hidden = false;
-        select.addEventListener('change', () => { try { sessionStorage.setItem('keeper.presentation.tenant', select.value); } catch { /* sin almacenamiento */ } location.reload(); });
+        select.addEventListener('change', () => { try { sessionStorage.setItem('keeper.presentation.tenant', select.value); } catch { /* sin almacenamiento */ } leaveOtherClient(); });
       }
     } else tenant = session.tenant_id;
     if ($('group-group')) $('group-group').hidden = !(session.group?.tenants?.length > 1);
