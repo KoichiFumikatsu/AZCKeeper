@@ -1390,6 +1390,10 @@ const runCounts = r => {
   return parts.join(' · ') || 'Sin cambios';
 };
 async function sourcesPage() {
+  // Crear, editar, sincronizar, aprobar y elegir dueños es solo de la plataforma (la API responde 403 a los clientes):
+  // a una cuenta de cliente se le muestra la lista en solo lectura y se le dice quién lo hace.
+  const manage = !!readSession()?.is_platform_admin;
+  const READ_ONLY_NOTE = 'Solo AZC Keeper configura y sincroniza fuentes de datos.';
   let [sources, domains, runs, pending] = await Promise.all([api('GET', '/data-sources'), api('GET', '/data-domains'), api('GET', '/sync-runs'), optional(api('GET', '/sync-items/pending'))]);
   const name = id => sources.data.find(s => s.id === id)?.name || 'Fuente';
   const reload = async () => {
@@ -1415,7 +1419,7 @@ async function sourcesPage() {
       table(t, 'Detalle', [['Qué', i => action[i.action] || i.action], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain], ['Nombre', i => i.label || i.external_id || '—'],
         ['Detalle', i => i.reason || (i.fields ? Object.keys(i.fields).join(', ') : '')]], items, { filters: [['Qué', i => action[i.action] || i.action], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain]] });
     } catch (e) { body.append(el('p', errorMessage(e), 'error-text')); }
-    if (r.status === 'blocked') {
+    if (r.status === 'blocked' && manage) {
       const b = el('button', 'Aplicar igualmente (vuelve a leer la fuente)', 'danger'); b.type = 'button';
       b.addEventListener('click', async () => {
         if (!confirm('Se aplicarán los retiros sin frenos. ¿Seguro?')) return;
@@ -1467,9 +1471,9 @@ async function sourcesPage() {
     // Pendientes primero: es lo que requiere a alguien.
     if (pending?.data?.length) {
       const p = surface(`Pendientes de aprobación (${pending.data.length})`);
-      p.append(el('p', 'La sincronización no adivina: estas decisiones las toma una persona.', 'help'));
+      p.append(el('p', manage ? 'La sincronización no adivina: estas decisiones las toma una persona.' : `La sincronización no adivina: estas decisiones las toma una persona. ${READ_ONLY_NOTE}`, 'help'));
       table(p, 'Pendientes', [['Qué pasa', i => (PENDING[i.reason] || [i.reason])[0]], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain], ['Nombre', i => i.label || '—'],
-        ['Decisión', i => {
+        ...(!manage ? [] : [['Decisión', i => {
           const box = el('div', undefined, 'actions no-margin'); const [, yes, no] = PENDING[i.reason] || ['', 'Aprobar', 'Rechazar'];
           for (const [text, approve] of [[yes, true], [no, false]]) {
             const b = el('button', text, approve ? 'link-button' : 'link-button'); b.type = 'button';
@@ -1481,15 +1485,17 @@ async function sourcesPage() {
             box.append(b);
           }
           return box;
-        }]], pending.data);
+        }]])], pending.data);
     }
     const s = surface('Fuentes conectadas');
-    if (!sources.data.length) empty(s, 'Sin fuentes', 'Keeper es el dueño de todos los datos de esta empresa (se cargan a mano o por CSV). Conecta una fuente como AZC One para que los mantenga al día.');
+    if (!manage) s.append(el('p', READ_ONLY_NOTE, 'notice'));
+    if (!sources.data.length) empty(s, 'Sin fuentes', manage ? 'Keeper es el dueño de todos los datos de esta empresa (se cargan a mano o por CSV). Conecta una fuente como AZC One para que los mantenga al día.'
+      : 'Keeper es el dueño de todos los datos de esta empresa (se cargan a mano o por CSV). Para conectar una fuente como AZC One, pídeselo a AZC Keeper.');
     else table(s, 'Fuentes', [['Fuente', x => { const d = el('div'); d.append(el('strong', x.name), el('small', `${x.base_url || ''}${x.company ? ' · ' + x.company : ''}`)); return d; }],
       ['Modo', x => badge(x.mode === 'live' ? 'Real' : 'Simulación', x.mode === 'live' ? 'good' : 'info')],
       ['Manda en', x => x.domains.map(d => DOMAIN_LABELS[d]).join(', ') || 'Nada aún'],
       ['Última vuelta exitosa', x => when(x.last_success_at)],
-      ['Acciones', x => {
+      ...(!manage ? [] : [['Acciones', x => {
         const box = el('div', undefined, 'actions no-margin');
         const add = (t, fn) => { const b = el('button', t, 'link-button'); b.type = 'button'; b.addEventListener('click', fn); box.append(b); };
         add('Simular ahora', () => runNow(x, true));
@@ -1497,29 +1503,36 @@ async function sourcesPage() {
         add(x.mode === 'live' ? 'Volver a simulación' : 'Pasar a real', () => setMode(x, x.mode === 'live' ? 'simulate' : 'live'));
         add('Editar', () => editor(x));
         return box;
-      }]], sources.data);
+      }]])], sources.data);
     const d = surface('¿Quién manda en cada dato?');
     d.append(el('p', 'Cada tipo de dato tiene un solo dueño. Lo que manda una fuente no se edita en Keeper; lo que manda Keeper se edita aquí o por CSV.', 'help'));
-    const selects = domains.data.map(row => {
+    if (!manage) {
+      const dl = el('dl', undefined, 'facts');
+      domains.data.forEach(row => { const box = el('div'); box.append(el('dt', DOMAIN_LABELS[row.domain] || row.domain), el('dd', row.source_id ? name(row.source_id) : 'Keeper (se edita aquí)')); dl.append(box); });
+      d.append(dl);
+    }
+    const selects = !manage ? [] : domains.data.map(row => {
       const sel = el('select'); sel.append(new Option('Keeper (se edita aquí)', ''));
       sources.data.forEach(x => sel.append(new Option(x.name, x.id))); sel.value = row.source_id || '';
       labeled(d, DOMAIN_LABELS[row.domain] || row.domain, sel); return [row, sel];
     });
-    const save = el('button', 'Guardar dueños', 'primary'); save.type = 'button'; d.append(save);
-    save.addEventListener('click', async () => {
-      const changed = selects.filter(([row, sel]) => (row.source_id || '') !== sel.value);
-      if (!changed.length) return;
-      const toKeeper = changed.filter(([, sel]) => !sel.value).map(([row]) => DOMAIN_LABELS[row.domain]);
-      if (!confirm(toKeeper.length ? `${toKeeper.join(', ')} volverán a editarse en Keeper y la fuente dejará de actualizarlos. ¿Continuar?` : 'Esos datos pasarán a editarse solo en la fuente. ¿Continuar?')) return;
-      try { await api('PUT', '/data-domains', { body: { domains: changed.map(([row, sel]) => ({ domain: row.domain, source_id: sel.value || null })) } }); await reload(); } catch (e) { fail(e); }
-    });
+    if (manage) {
+      const save = el('button', 'Guardar dueños', 'primary'); save.type = 'button'; d.append(save);
+      save.addEventListener('click', async () => {
+        const changed = selects.filter(([row, sel]) => (row.source_id || '') !== sel.value);
+        if (!changed.length) return;
+        const toKeeper = changed.filter(([, sel]) => !sel.value).map(([row]) => DOMAIN_LABELS[row.domain]);
+        if (!confirm(toKeeper.length ? `${toKeeper.join(', ')} volverán a editarse en Keeper y la fuente dejará de actualizarlos. ¿Continuar?` : 'Esos datos pasarán a editarse solo en la fuente. ¿Continuar?')) return;
+        try { await api('PUT', '/data-domains', { body: { domains: changed.map(([row, sel]) => ({ domain: row.domain, source_id: sel.value || null })) } }); await reload(); } catch (e) { fail(e); }
+      });
+    }
     const h = surface('Historial de sincronización');
-    if (!runs.data.length) empty(h, 'Aún no hay vueltas', 'Corre una simulación para ver qué haría la fuente.');
+    if (!runs.data.length) empty(h, 'Aún no hay vueltas', manage ? 'Corre una simulación para ver qué haría la fuente.' : 'Todavía no se ha sincronizado ninguna fuente.');
     else table(h, 'Vueltas', [['Cuándo', r => when(r.started_at)], ['Fuente', r => name(r.source_id)], ['Tipo', r => `${r.kind === 'full' ? 'Completa' : 'Cambios'}${r.trigger === 'manual' ? ' (manual)' : r.trigger === 'approval' ? ' (aprobada)' : ''}`],
       ['Resultado', r => { const [t, tone] = RUN_STATUS[r.status] || [r.status, '']; return badge(t, tone); }], ['Resumen', runCounts],
       ['Detalle', r => { const b = el('button', 'Ver', 'link-button'); b.type = 'button'; b.addEventListener('click', () => showRun(r)); return b; }]], runs.data);
   };
-  const action = $('page-action'); action.textContent = 'Conectar fuente'; action.hidden = false; action.addEventListener('click', () => editor(null));
+  const action = $('page-action'); action.textContent = 'Conectar fuente'; action.hidden = !manage; if (manage) action.addEventListener('click', () => editor(null));
   render();
 }
 
