@@ -83,8 +83,10 @@ export function parseCsv(text) {
 export async function intake({ tenant, content }) {
   const rerender = () => intake({ tenant, content });
   content.replaceChildren();
+  // El instalador va primero (revisión UX ALT-1); se llena al final porque depende del alcance y de las reglas.
+  const installSlot = el('div'); content.append(installSlot);
   const intro = el('div', undefined, 'notice');
-  intro.append(el('strong', '¿Qué es esto?'), el('p', 'Es la puerta de entrada de los computadores a Keeper. Cuando instalas Keeper en un equipo, el equipo pide permiso para empezar a reportar. Aquí decides a qué persona pertenece y lo apruebas.'),
+  intro.append(el('strong', '¿Qué es esto?'), el('p', 'Es la puerta de entrada de los computadores a Keeper. Cuando instalas Keeper en un equipo, el equipo pide permiso para empezar a reportar. Según las reglas de aprobación de la empresa se aprueba solo o queda aquí para que decidas a qué persona pertenece.'),
     el('p', 'Para no aprobar uno por uno: carga antes la lista de "equipos esperados" (persona + placa + número de serie). Si un equipo que se instala coincide con uno esperado, se asigna solo. También puedes dejar que la persona escriba su cédula al instalar.'));
   content.append(intro);
 
@@ -92,7 +94,65 @@ export async function intake({ tenant, content }) {
   try { await requests(content, tenant, rerender); }
   catch (error) { if (error.status === 403) fullScope = false; else throw error; }
   await expected(content, tenant, rerender);
-  if (fullScope) await keysAndSettings(content, tenant, rerender);
+  if (fullScope) installer(installSlot, tenant, await keysAndSettings(content, tenant, rerender));
+}
+
+// Frase que respeta las reglas de aprobación del cliente (enrollment_settings): no promete «pendiente» si se aprueba solo.
+export function approvalNote(rules) {
+  const auto = [rules?.auto_approve_serial_match && 'los equipos cuya serie coincide con un equipo esperado', rules?.self_identify_auto_confirm && 'los que se identifican con la cédula de una persona'].filter(Boolean);
+  return auto.length
+    ? `El registro seguirá las reglas de aprobación de este cliente: ${auto.join(' y ')} se aprueban solos; el resto queda en Solicitudes de alta hasta que lo apruebes.`
+    : 'El registro seguirá las reglas de aprobación de este cliente: ningún equipo se aprueba solo, cada uno queda en Solicitudes de alta hasta que lo apruebes.';
+}
+
+function installer(parent, tenant, keys) {
+  const s = section(parent, 'Instalar Keeper en los equipos');
+  const steps = el('ol', undefined, 'next-steps');
+  [['Prepara a las personas', 'Registra los equipos esperados (persona + serie) o pide la cédula al instalar: así el alta se asigna sola.'],
+    ['Descarga el instalador', 'Es el paquete de esta empresa.'],
+    ['Ejecútalo en cada equipo Windows', 'Descargarlo no instala nada: falta ejecutarlo en cada equipo.'],
+    ['Comprueba el registro', 'Cuando el equipo se conecta aparece en Solicitudes de alta o, si cruzó con uno esperado, en Equipos esperados como enrolado.']]
+    .forEach(([title, help]) => { const li = el('li'); li.append(el('strong', title), el('small', help, 'help')); steps.append(li); });
+  s.append(steps);
+  const form = el('form', undefined, 'toolbar'); form.noValidate = true;
+  const password = field(form, 'Tu contraseña (confirmación)', 'password', { type: 'password', required: true });
+  password.autocomplete = 'current-password';
+  const download = el('button', 'Descargar instalador', 'primary'); download.type = 'submit'; form.append(download); s.append(form);
+  s.append(el('p', 'Cada descarga crea una clave de registro nueva dentro del paquete. Trátalo como secreto: quien lo tenga puede pedir el alta de un equipo. Para invalidarlo, revoca su clave en «Claves de alta».', 'help'));
+  const fb = feedback(s);
+  const result = el('div'); result.setAttribute('role', 'status'); s.append(result);
+  // El servidor crea una clave nueva y la mete en installation.json del paquete publicado.
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); fb.clear(); result.replaceChildren();
+    if (!password.value) { fb.fail('Escribe tu contraseña para confirmar.'); return; }
+    download.disabled = true;
+    let keyId = null, delivered = false;
+    try {
+      await api('POST', '/auth/reauth', { tenant, body: { password: password.value } });
+      password.value = '';
+      const response = await api('POST', '/enrollments/keys/installer', { tenant, raw: true });
+      keyId = response.headers.get('X-Enrollment-Key-Id');
+      const name = (response.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'AZCKeeper-instalador.zip';
+      const url = URL.createObjectURL(await response.blob());
+      const a = el('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+      delivered = true;
+      let hint = null;
+      try { hint = (await keys.refresh()).find(k => k.id === keyId)?.hint || null; } catch { /* la lista se actualiza al recargar */ }
+      // Éxito persistente: queda visible hasta la próxima descarga, aunque se actualice la lista de claves.
+      const done = el('div', undefined, 'notice');
+      done.append(el('strong', `Instalador descargado: ${name}`),
+        el('p', `Trae la clave de registro nueva${hint ? ` kek_${hint}…` : ''}, ya visible en «Claves de alta». Siguiente paso: ejecútalo en cada equipo Windows.`),
+        el('p', approvalNote(keys.rules())));
+      result.append(done);
+    } catch (error) {
+      password.value = '';
+      // La respuesta llegó pero el archivo no: esa clave nunca se entregó, se revoca (mejor esfuerzo).
+      if (keyId && !delivered) {
+        try { await api('DELETE', `/enrollments/keys/${keyId}`, { tenant }); await keys.refresh(); } catch { /* queda visible en la lista para revocarla a mano */ }
+      }
+      fb.fail(error?.problem?.detail === 'installer_unavailable' ? 'No hay un instalador publicado en el servidor.' : error);
+    } finally { download.disabled = false; }
+  });
 }
 
 async function requests(content, tenant, rerender) {
@@ -237,8 +297,8 @@ async function expected(content, tenant, rerender) {
 }
 
 async function keysAndSettings(content, tenant, rerender) {
-  const s = section(content, 'Clave de alta y reglas', 'La clave de alta va dentro del paquete de instalación de la empresa. Si se filtra, revócala y crea otra: los equipos ya enrolados no se afectan.');
-  const settings = await api('GET', '/enrollments/settings', { tenant });
+  const s = section(content, 'Reglas de aprobación y claves de alta', 'La clave de alta va dentro del paquete de instalación de la empresa. Si se filtra, revócala y crea otra: los equipos ya enrolados no se afectan.');
+  let settings = await api('GET', '/enrollments/settings', { tenant });
   const form = el('form'); form.noValidate = true;
   const check = (name, text, help) => {
     const label = el('label'); const input = el('input'); input.type = 'checkbox'; input.name = name; input.checked = settings[name];
@@ -253,19 +313,27 @@ async function keysAndSettings(content, tenant, rerender) {
   const fb = feedback(s);
   form.addEventListener('submit', async event => {
     event.preventDefault(); save.disabled = true; fb.clear();
-    try { await api('PUT', '/enrollments/settings', { tenant, body: { auto_approve_serial_match: auto.checked, self_identify: self.checked, self_identify_auto_confirm: confirmSelf.checked } }); fb.ok('Reglas guardadas.'); }
+    const body = { auto_approve_serial_match: auto.checked, self_identify: self.checked, self_identify_auto_confirm: confirmSelf.checked };
+    try { await api('PUT', '/enrollments/settings', { tenant, body }); settings = { ...settings, ...body }; fb.ok('Reglas guardadas.'); }
     catch (error) { fb.fail(error); } finally { save.disabled = false; }
   });
 
   s.append(el('h3', 'Claves de alta'));
   const list = el('div'); s.append(list);
-  let active = [];
-  // Se vuelve a dibujar tras descargar el instalador (trae una clave nueva) sin perder el aviso de abajo.
-  const drawKeys = async () => {
+  // Clave manual: secundaria, para IT que arma su propio paquete. Lo habitual es «Descargar instalador», arriba.
+  const manual = el('div'); s.append(manual);
+  manual.append(el('p', 'Crear una clave manual solo hace falta si IT arma su propio paquete de instalación: la clave se pega en installation.json. Para instalar Keeper basta «Descargar instalador».', 'help'));
+  const create = el('form', undefined, 'toolbar'); create.noValidate = true;
+  const password = field(create, 'Tu contraseña (confirmación)', 'password', { type: 'password', required: true });
+  password.autocomplete = 'current-password';
+  const go = el('button', 'Crear clave manual'); go.type = 'submit';
+  create.append(go); manual.append(create);
+  const keyFb = feedback(manual); const reveal = el('div'); manual.append(reveal);
+  // Se vuelve a dibujar tras descargar el instalador o crear una clave, sin tocar los avisos ni la clave revelada.
+  const refresh = async () => {
     const keys = await api('GET', '/enrollments/keys', { tenant });
-    active = keys.data.filter(k => !k.revoked_at);
     list.replaceChildren();
-    if (!keys.data.length) list.append(el('p', 'Aún no hay clave de alta: créala o descarga el instalador para generar el paquete genérico de la empresa.', 'empty-state'));
+    if (!keys.data.length) list.append(el('p', 'Aún no hay clave de alta: al descargar el instalador se crea una dentro del paquete.', 'empty-state'));
     else {
       const body = table(list, 'Claves de alta', ['Clave', 'Creada', 'Estado', '']);
       keys.data.forEach(k => {
@@ -283,42 +351,10 @@ async function keysAndSettings(content, tenant, rerender) {
         tr.append(cell); body.append(tr);
       });
     }
+    go.textContent = keys.data.some(k => !k.revoked_at) ? 'Crear otra clave manual' : 'Crear clave manual';
+    return keys.data;
   };
-  await drawKeys();
-  const create = el('form', undefined, 'toolbar'); create.noValidate = true;
-  const password = field(create, 'Tu contraseña (confirmación)', 'password', { type: 'password', required: true });
-  password.autocomplete = 'current-password';
-  const go = el('button', active.length ? 'Crear otra clave' : 'Crear clave de alta', 'primary'); go.type = 'submit';
-  const download = el('button', 'Descargar instalador', 'primary'); download.type = 'button';
-  create.append(go, download); s.append(create);
-  const keyFb = feedback(s); const reveal = el('div'); s.append(reveal);
-  // Instalador listo: el servidor crea una clave nueva y la mete en installation.json del paquete publicado.
-  download.addEventListener('click', async () => {
-    keyFb.clear(); reveal.replaceChildren();
-    if (!password.value) { keyFb.fail('Escribe tu contraseña para confirmar.'); return; }
-    go.disabled = true; download.disabled = true;
-    let keyId = null, delivered = false;
-    try {
-      await api('POST', '/auth/reauth', { tenant, body: { password: password.value } });
-      password.value = '';
-      const response = await api('POST', '/enrollments/keys/installer', { tenant, raw: true });
-      keyId = response.headers.get('X-Enrollment-Key-Id');
-      const name = (response.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'AZCKeeper-instalador.zip';
-      const url = URL.createObjectURL(await response.blob());
-      const a = el('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
-      delivered = true;
-      reveal.append(el('p', 'El instalador trae una clave de registro nueva. Trátalo como secreto: quien lo tenga puede pedir el alta de un equipo (queda pendiente hasta que se apruebe). Para invalidarlo, revoca su clave.', 'notice'));
-      await drawKeys();
-      go.textContent = active.length ? 'Crear otra clave' : 'Crear clave de alta';
-    } catch (error) {
-      password.value = '';
-      // La respuesta llegó pero el archivo no: esa clave nunca se entregó, se revoca (mejor esfuerzo).
-      if (keyId && !delivered) {
-        try { await api('DELETE', `/enrollments/keys/${keyId}`, { tenant }); await drawKeys(); } catch { /* queda visible en la lista para revocarla a mano */ }
-      }
-      keyFb.fail(error?.problem?.detail === 'installer_unavailable' ? 'No hay un instalador publicado en el servidor.' : error);
-    } finally { go.disabled = false; download.disabled = false; }
-  });
+  await refresh();
   create.addEventListener('submit', async event => {
     event.preventDefault(); keyFb.clear(); reveal.replaceChildren();
     if (!password.value) { keyFb.fail('Escribe tu contraseña para confirmar.'); return; }
@@ -332,6 +368,9 @@ async function keysAndSettings(content, tenant, rerender) {
       const copy = el('button', 'Copiar clave'); copy.type = 'button';
       copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(key.key); copy.textContent = 'Copiada'; } catch { copy.textContent = 'Selecciónala y cópiala a mano'; } });
       reveal.append(copy);
+      keyFb.ok(`Clave kek_${key.hint}… creada y añadida a la lista. ${approvalNote(settings)}`);
+      try { await refresh(); } catch { reveal.append(el('p', 'La lista de claves no se pudo actualizar: recarga la página para verla.', 'help')); }
     } catch (error) { password.value = ''; keyFb.fail(error); } finally { go.disabled = false; }
   });
+  return { refresh, rules: () => settings };
 }
