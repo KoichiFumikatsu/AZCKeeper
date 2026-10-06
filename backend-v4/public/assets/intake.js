@@ -1,4 +1,5 @@
 import { api, errorMessage } from './api.js';
+import { loadHardeningSettings } from './hardening-settings.js';
 
 // Alta de equipos a escala (docs/architecture/v4-alta-equipos.md): cola de solicitudes, equipos esperados (manual
 // y CSV) y claves de alta/configuracion. Todo lo que cruza por serie se aprueba solo; aqui llega lo que no cruzo.
@@ -94,7 +95,39 @@ export async function intake({ tenant, content }) {
   try { await requests(content, tenant, rerender); }
   catch (error) { if (error.status === 403) fullScope = false; else throw error; }
   await expected(content, tenant, rerender);
-  if (fullScope) installer(installSlot, tenant, await keysAndSettings(content, tenant, rerender));
+  if (fullScope) installer(installSlot, tenant, await keysAndSettings(content, tenant, rerender), await protection(tenant));
+}
+
+// Antes de instalar (fase 4, F8): modo de endurecimiento y cuenta de IT. Solo se leen (la contraseña nunca se revela).
+// na = endurecimiento no contratado; denied = la cuenta no puede leerlo; error = no se pudo consultar.
+async function protection(tenant) {
+  let access;
+  try { access = await api('GET', '/me/access', { tenant }); } catch (error) { return { kind: 'error', error }; }
+  if (!(access.features || []).includes('endurecimiento')) return { kind: 'na' };
+  try { const settings = await loadHardeningSettings(tenant); return settings ? { kind: 'ok', settings } : { kind: 'denied' }; }
+  catch (error) { return { kind: 'error', error }; }
+}
+function protectionNotice(parent, state) {
+  if (state.kind === 'na') return;
+  const settingsLink = text => { const a = el('a', text); a.href = '/ajustes.php'; return a; };
+  if (state.kind === 'denied') { parent.append(el('p', 'No se pudo revisar el modo de endurecimiento ni la cuenta de IT: tu cuenta no tiene permiso para verlos.', 'help')); return; }
+  if (state.kind === 'error') { parent.append(el('p', `No se pudo revisar el endurecimiento antes de instalar: ${message(state.error)}`, 'error-message')); return; }
+  const s = state.settings;
+  if (s.hardening_mode === 'auto') {
+    const n = el('div', undefined, 'notice install-warning'); n.setAttribute('role', 'note');
+    n.append(el('strong', 'Endurecimiento automático activo'),
+      el('p', `Al instalar Keeper, cada equipo se endurece solo: sus cuentas administradoras pasan a usuario estándar y solo la cuenta de IT${s.configured ? ` (${s.admin_name})` : ''} conserva la administración. Para el primer equipo se recomienda «desde el panel».`));
+    if (!s.configured) n.append(el('p', 'Además la cuenta de IT no tiene contraseña: configúrala antes de instalar.'));
+    const p = el('p'); p.append(settingsLink('Revisar en Ajustes › Seguridad de cuentas de Windows')); n.append(p);
+    parent.append(n); return;
+  }
+  if (!s.configured) {
+    const n = el('div', undefined, 'notice install-warning'); n.setAttribute('role', 'note');
+    n.append(el('strong', 'Cuenta de IT sin configurar'), el('p', 'Puedes instalar y monitorear, pero no endurecer equipos hasta definir la cuenta de IT y su contraseña.'));
+    const p = el('p'); p.append(settingsLink('Configurarla en Ajustes')); n.append(p);
+    parent.append(n); return;
+  }
+  parent.append(el('p', `Endurecimiento: desde el panel, equipo por equipo · cuenta de IT ${s.admin_name} configurada.`, 'help install-protection'));
 }
 
 // Frase que respeta las reglas de aprobación del cliente (enrollment_settings): no promete «pendiente» si se aprueba solo.
@@ -105,8 +138,9 @@ export function approvalNote(rules) {
     : 'El registro seguirá las reglas de aprobación de este cliente: ningún equipo se aprueba solo, cada uno queda en Solicitudes de alta hasta que lo apruebes.';
 }
 
-function installer(parent, tenant, keys) {
+function installer(parent, tenant, keys, guard = { kind: 'na' }) {
   const s = section(parent, 'Instalar Keeper en los equipos');
+  protectionNotice(s, guard);
   const steps = el('ol', undefined, 'next-steps');
   [['Prepara a las personas', 'Registra los equipos esperados (persona + serie) o pide la cédula al instalar: así el alta se asigna sola.'],
     ['Descarga el instalador', 'Es el paquete de esta empresa.'],
@@ -125,6 +159,8 @@ function installer(parent, tenant, keys) {
   form.addEventListener('submit', async event => {
     event.preventDefault(); fb.clear(); result.replaceChildren();
     if (!password.value) { fb.fail('Escribe tu contraseña para confirmar.'); return; }
+    if (guard.kind === 'ok' && guard.settings.hardening_mode === 'auto'
+      && !confirm('El endurecimiento está en modo automático: los equipos donde se instale este paquete se endurecerán solos. ¿Descargar igualmente?')) return;
     download.disabled = true;
     let keyId = null, delivered = false;
     try {
@@ -155,6 +191,31 @@ function installer(parent, tenant, keys) {
   });
 }
 
+// «Cargar 100 más» (fase 4, F9): las listas de alta pasan de 100 filas sin perder las ya mostradas.
+function morePager(parent) {
+  const box = el('div', undefined, 'toolbar list-more'); box.hidden = true;
+  const info = el('p', '', 'help'); info.setAttribute('role', 'status');
+  const more = el('button', 'Cargar 100 más'); more.type = 'button';
+  const error = el('p', '', 'error-message'); error.hidden = true; error.setAttribute('role', 'alert');
+  box.append(info, more); parent.append(box, error);
+  let shown = 0; let handler = null;
+  const pager = {
+    next: null,
+    reset() { shown = 0; pager.next = null; box.hidden = true; error.hidden = true; },
+    update(result, noun) {
+      shown += result.data.length; pager.next = result.next_offset ?? null;
+      box.hidden = shown === 0; more.hidden = pager.next === null;
+      info.textContent = pager.next === null ? `${shown} ${noun} en total.` : `Se muestran ${shown} ${noun}; hay más.`;
+    },
+    onMore(fn) { handler = fn; },
+  };
+  more.addEventListener('click', async () => {
+    more.disabled = true; error.hidden = true;
+    try { await handler?.(); } catch (e) { error.textContent = message(e); error.hidden = false; } finally { more.disabled = false; }
+  });
+  return pager;
+}
+
 async function requests(content, tenant, rerender) {
   const box = el('div'); content.append(box);
   const s = section(box, 'Solicitudes de alta', 'Equipos que se instalaron y no cruzaron con un equipo esperado. Aprueba escribiendo la cédula o el correo de la persona; la placa es opcional.');
@@ -163,11 +224,13 @@ async function requests(content, tenant, rerender) {
   // Resultado de la última decisión fuera de la tabla: recargarla ya no lo borra.
   const decision = feedback(s);
   const holder = el('div'); s.append(holder);
-  async function load() {
-    const result = await api('GET', `/enrollments/requests?status=${status.value}&limit=100`, { tenant });
-    holder.replaceChildren();
-    if (!result.data.length) { holder.append(el('p', status.value === 'pending' ? 'No hay equipos esperando aprobación.' : 'No hay solicitudes en este estado.', 'empty-state')); return; }
-    const body = table(holder, 'Solicitudes de alta', ['Equipo', 'Serie', 'Coincidencia', 'Persona', 'Última vez', status.value === 'pending' ? 'Decisión' : 'Estado']);
+  const pager = morePager(s);
+  let body = null;
+  async function load(append = false) {
+    const result = await api('GET', `/enrollments/requests?status=${status.value}&limit=100${append ? `&offset=${pager.next}` : ''}`, { tenant });
+    if (!append) { holder.replaceChildren(); body = null; pager.reset(); }
+    if (!append && !result.data.length) { holder.append(el('p', status.value === 'pending' ? 'No hay equipos esperando aprobación.' : 'No hay solicitudes en este estado.', 'empty-state')); return; }
+    body ??= table(holder, 'Solicitudes de alta', ['Equipo', 'Serie', 'Coincidencia', 'Persona', 'Última vez', status.value === 'pending' ? 'Decisión' : 'Estado']);
     result.data.forEach(r => {
       const tr = el('tr');
       const hostCell = el('td'); hostCell.append(el('strong', r.hostname), el('br'), el('small', `Agente ${r.agent_version}`)); tr.append(hostCell);
@@ -210,8 +273,9 @@ async function requests(content, tenant, rerender) {
       }
       tr.append(action); body.append(tr);
     });
-    if (result.next_offset !== null) holder.append(el('p', 'Se muestran las 100 más recientes.', 'help'));
+    pager.update(result, 'solicitudes');
   }
+  pager.onMore(() => load(true));
   status.addEventListener('change', () => load().catch(error => { holder.replaceChildren(el('p', message(error), 'error-message')); }));
   await load();
 }
@@ -272,11 +336,13 @@ async function expected(content, tenant, rerender) {
   const filter = el('div', undefined, 'toolbar'); s.append(filter);
   const status = select(filter, 'Mostrar', { pending: 'Pendientes de instalar', enrolled: 'Ya enrolados', cancelled: 'Cancelados' }, 'pending');
   const holder = el('div'); s.append(holder);
-  async function load() {
-    const result = await api('GET', `/enrollments/expected-devices?status=${status.value}&limit=100`, { tenant });
-    holder.replaceChildren();
-    if (!result.data.length) { holder.append(el('p', 'No hay equipos en este estado.', 'empty-state')); return; }
-    const body = table(holder, 'Equipos esperados', ['Persona', 'Placa', 'Serie', 'Origen', 'Registrado', '']);
+  const pager = morePager(s);
+  let body = null;
+  async function load(append = false) {
+    const result = await api('GET', `/enrollments/expected-devices?status=${status.value}&limit=100${append ? `&offset=${pager.next}` : ''}`, { tenant });
+    if (!append) { holder.replaceChildren(); body = null; pager.reset(); }
+    if (!append && !result.data.length) { holder.append(el('p', 'No hay equipos en este estado.', 'empty-state')); return; }
+    body ??= table(holder, 'Equipos esperados', ['Persona', 'Placa', 'Serie', 'Origen', 'Registrado', '']);
     result.data.forEach(e => {
       const tr = el('tr');
       [e.user_name, e.asset_code || '—', e.serial_number || '—', { manual: 'Manual', csv: 'CSV', api: 'API', connector: 'Conector' }[e.source] || e.source, when(e.created_at)].forEach(v => tr.append(el('td', v)));
@@ -292,8 +358,9 @@ async function expected(content, tenant, rerender) {
       } else if (e.device_id) { const a = el('a', 'Ver equipo'); a.href = `/equipo.php?id=${encodeURIComponent(e.device_id)}`; cell.append(a); }
       tr.append(cell); body.append(tr);
     });
-    if (result.next_offset !== null) holder.append(el('p', 'Se muestran los 100 más recientes.', 'help'));
+    pager.update(result, 'equipos');
   }
+  pager.onMore(() => load(true));
   status.addEventListener('change', () => load().catch(error => { holder.replaceChildren(el('p', message(error), 'error-message')); }));
   await load();
 }
