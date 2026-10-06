@@ -2372,6 +2372,49 @@ function scheduleSummary(s) {
   for (const d of s.day_hours || []) parts.push(`${WEEKDAYS[d.weekday - 1].slice(0, 3)}: ${d.start_local}–${d.end_local}`);
   return parts.join(' · ') || 'Sin días laborables';
 }
+// Revisión UX M9 / CAL-3: la semana que resulta del horario general y de los días con horas propias, día por día.
+// Igual que el servidor (ActivityCalendar): una salida menor o igual que la entrada termina al día siguiente y el tiempo
+// esperado del día va de la entrada a la salida (el almuerzo queda dentro). Un día con horas propias usa su almuerzo.
+const minutesOf = t => { const [h, m] = String(t || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const hoursText = min => { const h = Math.floor(min / 60), m = min % 60; return m ? `${h} h ${m} min` : `${h} h`; };
+function scheduleWeek(s) {
+  const own = new Map((s.day_hours || []).map(d => [d.weekday, d]));
+  return WEEKDAYS.map((label, i) => {
+    const weekday = i + 1;
+    if (!(s.days || []).includes(weekday)) return { weekday, label, works: false };
+    const d = own.get(weekday); const start = d?.start_local || s.start_local, end = d?.end_local || s.end_local;
+    const lunch = d ? (d.lunch_start_local ? [d.lunch_start_local, d.lunch_end_local] : null) : (s.lunch_start_local ? [s.lunch_start_local, s.lunch_end_local] : null);
+    let span = minutesOf(end) - minutesOf(start); const overnight = !!start && !!end && span <= 0; if (overnight) span += 1440;
+    return { weekday, label, works: true, own: !!d, start, end, overnight, lunch, minutes: start && end ? span : 0 };
+  });
+}
+const weekTotal = week => week.reduce((t, d) => t + (d.works ? d.minutes : 0), 0);
+const dayText = d => !d.works ? 'No laborable' : `${d.start}–${d.end}${d.overnight ? ' (sale al día siguiente)' : ''}`;
+const lunchText = d => !d.works ? '—' : d.lunch ? `${d.lunch[0]}–${d.lunch[1]}` : 'Sin almuerzo';
+// Lista compacta para la tabla de horarios: «Lun 08:00–17:00 · almuerzo 12:00–13:00 · 9 h».
+function weekList(s) {
+  const week = scheduleWeek(s);
+  const d = el('details', undefined, 'week-details'); d.append(el('summary', `Ver semana · ${hoursText(weekTotal(week))}`));
+  const ul = el('ul', undefined, 'week-list');
+  week.forEach(x => ul.append(el('li', x.works ? `${x.label.slice(0, 3)} ${dayText(x)} · ${x.lunch ? `almuerzo ${lunchText(x)}` : 'sin almuerzo'} · ${hoursText(x.minutes)}${x.own ? ' · horas propias' : ''}` : `${x.label.slice(0, 3)} no laborable`, x.works ? '' : 'muted')));
+  d.append(ul); return d;
+}
+// Tabla de la semana (editor de horarios): se vuelve a pintar con cada cambio del formulario.
+function weekTable(parent, s) {
+  const week = scheduleWeek(s);
+  const t = el('table', undefined, 'week-table'); t.append(el('caption', 'Semana efectiva'));
+  const head = el('thead'); const hr = el('tr'); ['Día', 'Jornada', 'Almuerzo', 'Tiempo esperado'].forEach(h => { const th = el('th', h); th.scope = 'col'; hr.append(th); }); head.append(hr);
+  const body = el('tbody');
+  for (const d of week) {
+    const tr = el('tr'); if (!d.works) tr.className = 'off';
+    const th = el('th', d.label); th.scope = 'row'; if (d.own) th.append(' ', badge('Horas propias', 'info'));
+    tr.append(th, el('td', dayText(d)), el('td', lunchText(d)), el('td', d.works ? hoursText(d.minutes) : '—')); body.append(tr);
+  }
+  const foot = el('tfoot'); const fr = el('tr'); const ft = el('th', 'Total semanal'); ft.scope = 'row'; const n = week.filter(d => d.works).length;
+  const fd = el('td', `${hoursText(weekTotal(week))} en ${n === 1 ? '1 día laborable' : `${n} días laborables`}`); fd.colSpan = 3; fr.append(ft, fd); foot.append(fr);
+  t.append(head, body, foot); parent.replaceChildren(t);
+  if (week.some(d => d.overnight)) parent.append(el('p', 'Turno nocturno: una salida igual o anterior a la entrada termina al día siguiente.', 'help'));
+}
 // Editor único de horarios (fase 4, F6): lo usan Horarios y el «+ Nuevo horario» de la ficha y del alta de personas,
 // sin un segundo formulario. onSaved recibe el horario que devolvió la API; cancelar solo cierra el diálogo.
 function openScheduleEditor(x, { onSaved, note = null } = {}) {
@@ -2402,16 +2445,22 @@ function openScheduleEditor(x, { onSaved, note = null } = {}) {
     works.addEventListener('change', sync); special.addEventListener('change', sync); sync();
     return { weekday, label, works, special, ds, de, dls, dle };
   });
+  // La semana que quedaría con lo escrito, antes de guardar (revisión UX CAL-3).
+  const preview = el('div', undefined, 'week-preview'); preview.setAttribute('aria-live', 'polite'); body.append(el('h3', 'Así queda la semana'), preview);
+  const draft = () => ({ days: rows.filter(r => r.works.checked).map(r => r.weekday), start_local: start.value, end_local: end.value, lunch_start_local: lunchStart.value || null, lunch_end_local: lunchEnd.value || null,
+    day_hours: rows.filter(r => r.works.checked && r.special.checked).map(r => ({ weekday: r.weekday, start_local: r.ds.value, end_local: r.de.value, lunch_start_local: r.dls.value || null, lunch_end_local: r.dle.value || null })) });
+  const redraw = () => weekTable(preview, draft());
+  body.addEventListener('input', redraw); body.addEventListener('change', redraw); redraw();
   dialog.querySelector('form').addEventListener('submit', async ev => {
     ev.preventDefault();
     const days = rows.filter(r => r.works.checked).map(r => r.weekday);
-    if (!name.value.trim()) { show('Escribe el nombre del horario.'); return; }
-    if (!start.value || !end.value) { show('Escribe la hora de entrada y de salida.'); return; }
-    if (!!lunchStart.value !== !!lunchEnd.value || (lunchStart.value && lunchStart.value >= lunchEnd.value)) { show('El almuerzo necesita inicio y fin, y el inicio debe ser antes del fin.'); return; }
+    if (!name.value.trim()) { show('Escribe el nombre del horario.', name); return; }
+    if (!start.value || !end.value) { show('Escribe la hora de entrada y de salida.', start.value ? end : start); return; }
+    if (!!lunchStart.value !== !!lunchEnd.value || (lunchStart.value && lunchStart.value >= lunchEnd.value)) { show('El almuerzo necesita inicio y fin, y el inicio debe ser antes del fin.', lunchStart.value ? lunchEnd : lunchStart); return; }
     const dayHours = [];
     for (const r of rows.filter(r => r.works.checked && r.special.checked)) {
-      if (!r.ds.value || !r.de.value) { show(`${r.label}: escribe entrada y salida.`); return; }
-      if (!!r.dls.value !== !!r.dle.value || (r.dls.value && r.dls.value >= r.dle.value)) { show(`${r.label}: el almuerzo necesita inicio y fin, en orden.`); return; }
+      if (!r.ds.value || !r.de.value) { show(`${r.label}: escribe entrada y salida.`, r.ds.value ? r.de : r.ds); return; }
+      if (!!r.dls.value !== !!r.dle.value || (r.dls.value && r.dls.value >= r.dle.value)) { show(`${r.label}: el almuerzo necesita inicio y fin, en orden.`, r.dls); return; }
       dayHours.push({ weekday: r.weekday, start_local: r.ds.value, end_local: r.de.value, lunch_start_local: r.dls.value || null, lunch_end_local: r.dle.value || null });
     }
     ok.disabled = true;
@@ -2426,6 +2475,7 @@ function openScheduleEditor(x, { onSaved, note = null } = {}) {
       ok.disabled = false;
     }
   });
+  ok.textContent = x ? 'Guardar horario' : 'Crear horario';
   dialog.showModal(); name.focus();
 }
 async function schedulesPage() {
@@ -2438,13 +2488,13 @@ async function schedulesPage() {
     s.append(el('p', 'La jornada de cada persona: con ella se calcula la puntualidad, el tiempo esperado y qué actividad es laboral, almuerzo o fuera de horario. Un día puede tener horas propias (por ejemplo, sábado medio día).', 'help'));
     if (!list.length) { empty(s, 'Aún no hay horarios', 'Crea el primero con "Crear horario".'); return; }
     table(s, 'Horarios', [['Horario', x => x.name], ['Días y horas', scheduleSummary],
-      ['Almuerzo', x => x.lunch_start_local ? `${x.lunch_start_local}–${x.lunch_end_local}` : 'Sin almuerzo'], ['Zona horaria', x => x.timezone],
+      ['Almuerzo', x => x.lunch_start_local ? `${x.lunch_start_local}–${x.lunch_end_local}` : 'Sin almuerzo'], ['Semana', weekList], ['Zona horaria', x => x.timezone],
       ['Personas', x => users ? String(people(x.id)) : '—'],
       ['Acciones', x => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(x)); return b; }]], list);
   };
   const editor = x => openScheduleEditor(x, {
     note: x && users && people(x.id) ? (people(x.id) === 1 ? 'Lo usa 1 persona activa: el cambio se le aplica.' : `Lo usan ${people(x.id)} personas activas: el cambio se aplica a todas.`) : null,
-    onSaved: saved => { list = x ? list.map(y => y.id === x.id ? saved : y) : [...list, saved]; render(); done(); } });
+    onSaved: saved => { list = x ? list.map(y => y.id === x.id ? saved : y) : [...list, saved]; render(); announce(x ? `Horario «${saved.name}» guardado.` : `Horario «${saved.name}» creado.`); } });
   const action = $('page-action'); action.textContent = 'Crear horario'; action.hidden = false; action.addEventListener('click', () => editor(null));
   render();
 }
@@ -3544,34 +3594,75 @@ async function holidaysPage() {
   };
   const reload = async () => { [calendars, list, users] = await Promise.all([pageAll('/schedules/holiday-calendars'), pageAll('/schedules/holidays'), optional(allPages('/users'))]); render(); done(); };
   const link = (text, fn) => { const b = el('button', text, 'link-button'); b.type = 'button'; b.addEventListener('click', fn); return b; };
-  const render = () => {
+  const usersOf = x => users ? users.filter(u => u.status === 'active' && effective(u)[0]?.id === x.id).length : null;
+  // Revisión UX M9 / CAL-1: los festivos se ven de un calendario y un año a la vez (elegidos al entrar: el calendario
+  // por defecto y el año actual) y los calendarios con sus asignaciones van en otra pestaña.
+  let pickedCalendar = null, pickedYear = today.slice(0, 4);
+  const currentCalendar = () => calendars.find(c => c.id === pickedCalendar)
+    || calendars.find(c => c.is_default && c.active) || calendars.find(c => c.active) || calendars[0] || null;
+  const render = (tab = null) => {
     $('page-content').replaceChildren();
     $('page-action').textContent = calendars.length ? 'Agregar festivo' : 'Crear calendario';
     const upcoming = list.filter(h => h.day >= today).sort((a, b) => a.day.localeCompare(b.day));
     kpis([['Calendarios', String(calendars.filter(c => c.active).length)], ['Festivos este año', String(list.filter(h => h.day.startsWith(today.slice(0, 4))).length)],
       ['Próximo festivo', upcoming[0] ? upcoming[0].name : 'Ninguno', upcoming[0] ? `${fmt(upcoming[0].day)} · ${cname(upcoming[0].calendar_id)}` : '']]);
-    const c = surface('Calendarios');
-    c.append(el('p', 'Cada persona usa el calendario que se le asigne aquí (o en su ficha de Personas). Si no tiene uno, usa el del país de su sede; si su sede no tiene país, el calendario por defecto. En un festivo la persona no tiene jornada: no cuenta como ausencia ni tardanza.', 'help'));
-    if (owner) c.append(el('p', `Los festivos llegan de ${owner}.`, 'notice'));
-    else if (calendars.length) { const tools = el('div', undefined, 'actions no-margin'); const add = el('button', 'Crear calendario'); add.type = 'button'; add.addEventListener('click', () => calendarEditor(null)); tools.append(add); c.append(tools); }
     if (!calendars.length) {
+      const c = surface('Calendarios');
+      c.append(el('p', 'Cada persona usa el calendario que se le asigne (o en su ficha de Personas). Si no tiene uno, usa el del país de su sede; si su sede no tiene país, el calendario por defecto. En un festivo la persona no tiene jornada: no cuenta como ausencia ni tardanza.', 'help'));
+      if (owner) c.append(el('p', `Los festivos llegan de ${owner}.`, 'notice'));
       empty(c, 'Sin calendarios', owner ? `Los calendarios llegan de ${owner}.` : 'Crea un calendario y después agrega sus festivos. Lo normal es uno por país (Colombia, Estados Unidos, Honduras…).');
       if (!owner) { const add = el('button', 'Crear calendario', 'primary'); add.type = 'button'; add.addEventListener('click', () => calendarEditor(null)); c.querySelector('.empty').append(add); }
+      return;
     }
-    else table(c, 'Calendarios', [['Calendario', x => x.name], ['País', x => countryName(x.country_code)], ['Festivos', x => String(x.holidays)],
-      ['Personas que lo usan', x => users ? String(users.filter(u => u.status === 'active' && effective(u)[0]?.id === x.id).length) : '—'], ['Asignadas a mano', x => String(x.people)],
-      ['Estado', x => { const d = el('div'); d.append(badge(x.active ? 'Activo' : 'Inactivo', x.active ? 'good' : '')); if (x.is_default) d.append(' ', badge('Por defecto', 'info')); return d; }],
-      ['Acciones', x => { if (owner) return ''; const box = el('div', undefined, 'actions no-margin'); box.append(link('Editar', () => calendarEditor(x))); if (x.active) box.append(link('Agregar festivo', () => editor(null, x.id))); if (users && x.active) box.append(link('Asignar a personas', () => assign(x))); return box; }]], calendars);
-    const s = surface('Festivos');
-    if (!calendars.length) { empty(s, 'Sin festivos', 'Los festivos se agregan a un calendario: primero crea uno con «Crear calendario».'); return; }
-    if (!list.length) { empty(s, 'Sin festivos', 'Agrega los festivos con "Agregar festivo".'); return; }
-    table(s, 'Festivos', [['Fecha', h => h.day], ['Día', h => fmt(h.day)], ['Festivo', h => h.name], ['Calendario', h => cname(h.calendar_id)],
+    const { panels } = tabSet($('page-content'), { id: 'holidays', label: 'Festivos y calendarios', initial: tab,
+      tabs: [['festivos', 'Festivos', null], ['calendarios', 'Calendarios y asignaciones', calendars.length]] });
+    renderDays(panels.festivos); renderCalendars(panels.calendarios);
+  };
+  const renderDays = parent => {
+    const cal = currentCalendar(); pickedCalendar = cal.id;
+    const s = surface('Festivos', parent);
+    if (owner) s.append(el('p', `Los festivos llegan de ${owner}: aquí solo se consultan.`, 'notice'));
+    const bar = el('div', undefined, 'toolbar calendar-pick'); s.append(bar);
+    const calSel = el('select'); calendars.forEach(c => calSel.append(new Option(c.active ? c.name : `${c.name} (inactivo)`, c.id))); calSel.value = cal.id; labeled(bar, 'Calendario', calSel);
+    const own = list.filter(h => h.calendar_id === cal.id);
+    const years = [...new Set([today.slice(0, 4), String(Number(today.slice(0, 4)) + 1), ...own.map(h => h.day.slice(0, 4))])].sort();
+    if (!years.includes(pickedYear)) pickedYear = today.slice(0, 4);
+    const yearSel = el('select'); years.forEach(y => yearSel.append(new Option(y, y))); yearSel.value = pickedYear; labeled(bar, 'Año', yearSel);
+    calSel.addEventListener('change', () => { pickedCalendar = calSel.value; render('festivos'); $('holidays-panel-festivos').querySelector('select')?.focus(); });
+    yearSel.addEventListener('change', () => { pickedYear = yearSel.value; render('festivos'); $('holidays-panel-festivos').querySelectorAll('select')[1]?.focus(); });
+    // Qué es este calendario y a quién aplica, antes de agregar nada.
+    const facts = el('p', undefined, 'calendar-facts');
+    const n2 = usersOf(cal);
+    facts.append(el('strong', cal.name), ` · ${cal.country_code ? `por país de sede: ${countryName(cal.country_code)}` : 'especial: se asigna a mano'}`,
+      cal.is_default ? ' · por defecto' : '', cal.active ? '' : ' · inactivo (no se aplica)', n2 === null ? '' : ` · lo usan ${n2 === 1 ? '1 persona activa' : `${n2} personas activas`}`);
+    s.append(facts);
+    const next = own.filter(h => h.day >= today).sort((a, b) => a.day.localeCompare(b.day))[0];
+    s.append(el('p', next ? `Próximo festivo en ${cal.name}: ${next.name}, ${fmt(next.day)}.` : `${cal.name} no tiene festivos próximos.`, 'help'));
+    if (!owner && cal.active) {
+      const tools = el('div', undefined, 'actions no-margin'); tools.append(link(`+ Agregar festivo en ${cal.name}`, () => editor(null, cal.id))); s.append(tools);
+    }
+    const rows = own.filter(h => h.day.startsWith(pickedYear)).sort((a, b) => a.day.localeCompare(b.day));
+    if (!rows.length) { empty(s, 'Sin festivos', `${cal.name} no tiene festivos en ${pickedYear}.${owner || !cal.active ? '' : ' Agrégalos con «Agregar festivo».'}`); return; }
+    table(s, `Festivos de ${cal.name} en ${pickedYear}`, [['Fecha', h => h.day], ['Día', h => fmt(h.day)], ['Festivo', h => h.name],
       ['', h => {
         if (owner) return '';
         const box = el('div', undefined, 'actions no-margin');
-        box.append(link('Editar', () => editor(h)), link('Quitar', async () => { if (!confirm(`¿Quitar ${h.name} (${cname(h.calendar_id)})?`)) return; try { await api('DELETE', `/schedules/holidays/${h.id}`); list = list.filter(x => x.id !== h.id); render(); done(); } catch (er) { fail(er); } }));
+        box.append(link('Editar', () => editor(h)), link('Quitar', async () => {
+          if (!await confirmBox({ title: 'Quitar festivo', message: `¿Quitar ${h.name} (${cname(h.calendar_id)})?`, details: [`${fmt(h.day)} vuelve a ser día laboral para quienes usan ${cname(h.calendar_id)}.`], okText: 'Quitar festivo', danger: true })) return;
+          try { await api('DELETE', `/schedules/holidays/${h.id}`); list = list.filter(x => x.id !== h.id); render('festivos'); announce(`Festivo «${h.name}» quitado.`); } catch (er) { fail(er); }
+        }));
         return box;
-      }]], list, { filters: [['Calendario', h => cname(h.calendar_id)], ['Año', h => h.day.slice(0, 4), today.slice(0, 4)]] });
+      }]], rows, { stateKey: 'Festivos' });
+  };
+  const renderCalendars = parent => {
+    const c = surface('Calendarios', parent);
+    c.append(el('p', 'Cada persona usa el calendario que se le asigne aquí (o en su ficha de Personas). Si no tiene uno, usa el del país de su sede; si su sede no tiene país, el calendario por defecto. En un festivo la persona no tiene jornada: no cuenta como ausencia ni tardanza.', 'help'));
+    if (owner) c.append(el('p', `Los festivos llegan de ${owner}.`, 'notice'));
+    else { const tools = el('div', undefined, 'actions no-margin'); const add = el('button', 'Crear calendario'); add.type = 'button'; add.addEventListener('click', () => calendarEditor(null)); tools.append(add); c.append(tools); }
+    table(c, 'Calendarios', [['Calendario', x => x.name], ['Cómo se aplica', x => x.country_code ? `${countryName(x.country_code)} · por país de sede` : 'Especial · asignado'], ['Festivos', x => String(x.holidays)],
+      ['Personas que lo usan', x => { const k = usersOf(x); return k === null ? '—' : String(k); }], ['Asignadas a mano', x => String(x.people)],
+      ['Estado', x => { const d = el('div'); d.append(badge(x.active ? 'Activo' : 'Inactivo', x.active ? 'good' : '')); if (x.is_default) d.append(' ', badge('Por defecto', 'info')); return d; }],
+      ['Acciones', x => { if (owner) return ''; const box = el('div', undefined, 'actions no-margin'); box.append(link('Editar', () => calendarEditor(x))); if (x.active) box.append(link('Agregar festivo', () => editor(null, x.id))); if (users && x.active) box.append(link('Asignar a personas', () => assign(x))); return box; }]], calendars);
   };
   const editor = (h, presetCalendar) => {
     if (!calendars.length) { calendarEditor(null); return; }
@@ -3579,12 +3670,21 @@ async function holidaysPage() {
     const name = labeled(body, 'Nombre', el('input')); name.maxLength = 160; name.value = h?.name || '';
     const dayIn = labeled(body, 'Fecha', el('input')); dayIn.type = 'date'; dayIn.value = h?.day || '';
     const cal = el('select'); calendars.filter(x => x.active || x.id === h?.calendar_id).forEach(x => cal.append(new Option(x.name, x.id)));
-    cal.value = h?.calendar_id || presetCalendar || calendars.find(x => x.is_default && x.active)?.id || cal.options[0]?.value || ''; labeled(body, 'Calendario', cal, 'El festivo aplica a las personas que usan este calendario.');
+    cal.value = h?.calendar_id || presetCalendar || currentCalendar()?.id || calendars.find(x => x.is_default && x.active)?.id || cal.options[0]?.value || '';
+    if (!cal.value) cal.value = cal.options[0]?.value || '';
+    labeled(body, 'Calendario', cal, 'El festivo aplica a las personas que usan este calendario.');
+    ok.textContent = h ? 'Guardar festivo' : 'Agregar festivo';
     dialog.querySelector('form').addEventListener('submit', async ev => {
-      ev.preventDefault(); if (!name.value.trim() || !dayIn.value) { show('Escribe el nombre y la fecha.'); return; }
+      ev.preventDefault();
+      if (!name.value.trim()) { show('Escribe el nombre y la fecha.', name); return; }
+      if (!dayIn.value) { show('Escribe el nombre y la fecha.', dayIn); return; }
       ok.disabled = true;
       const payload = { name: name.value.trim(), day: dayIn.value, calendar_id: cal.value, society_ids: [] };
-      try { h ? await api('PUT', `/schedules/holidays/${h.id}`, { body: payload }) : await api('POST', '/schedules/holidays', { body: payload }); dialog.close(); await reload(); }
+      try {
+        h ? await api('PUT', `/schedules/holidays/${h.id}`, { body: payload }) : await api('POST', '/schedules/holidays', { body: payload });
+        dialog.close(); pickedCalendar = cal.value; pickedYear = dayIn.value.slice(0, 4);
+        await reload(); announce(h ? `Festivo «${payload.name}» guardado.` : `Festivo «${payload.name}» agregado a ${cname(cal.value)}.`);
+      }
       catch (e) { show(e); ok.disabled = false; }
     });
     dialog.showModal();
@@ -3595,24 +3695,35 @@ async function holidaysPage() {
     const country = labeled(body, 'País', countrySelect(x ? x.country_code : 'CO', 'Ninguno (calendario especial)'), 'Las personas sin calendario propio usan el del país de su sede.');
     const [isDefault] = checks(body, [['default', 'Calendario por defecto', 'Lo usan quienes no tienen calendario propio ni sede con país.']], x?.is_default ? ['default'] : []);
     const state = el('select'); state.append(new Option('Activo', '1'), new Option('Inactivo (no se aplica)', '0')); state.value = x && !x.active ? '0' : '1'; labeled(body, 'Estado', state);
-    ok.textContent = x ? 'Guardar' : 'Crear calendario';
+    ok.textContent = x ? 'Guardar calendario' : 'Crear calendario';
     dialog.querySelector('form').addEventListener('submit', async ev => {
-      ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
-      if (isDefault.checked && state.value === '0') { show('El calendario por defecto debe estar activo.'); return; }
+      ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.', name); return; }
+      if (isDefault.checked && state.value === '0') { show('El calendario por defecto debe estar activo.', state); return; }
       ok.disabled = true;
       const payload = { name: name.value.trim(), country_code: country.value || null, is_default: isDefault.checked, active: state.value === '1' };
-      try { x ? await api('PUT', `/schedules/holiday-calendars/${x.id}`, { body: payload }) : await api('POST', '/schedules/holiday-calendars', { body: payload }); dialog.close(); await reload(); }
-      catch (e) { show(e.problem?.detail === 'duplicate_name' ? 'Ya hay un calendario con ese nombre.' : e); ok.disabled = false; }
+      try {
+        const saved = x ? await api('PUT', `/schedules/holiday-calendars/${x.id}`, { body: payload }) : await api('POST', '/schedules/holiday-calendars', { body: payload });
+        dialog.close(); if (!x && saved?.id) pickedCalendar = saved.id;
+        await reload(); announce(x ? `Calendario «${payload.name}» guardado.` : `Calendario «${payload.name}» creado.`);
+      }
+      catch (e) { show(e.problem?.detail === 'duplicate_name' ? 'Ya hay un calendario con ese nombre.' : e, name); ok.disabled = false; }
     });
     dialog.showModal();
   };
   // Asignar en grupo, como los horarios: se filtra por empresa, país, sede o área y se marcan las personas.
+  // Revisión UX M9 / CAL-2: lo marcado fuera de los filtros se cuenta aparte y nada se aplica sin revisar antes quién
+  // cambia. El endpoint solo asigna a las personas enviadas: desmarcar no quita el calendario (eso es «Volver a
+  // automático», persona por persona, con el resultado de cada una).
   const assign = x => {
     const { dialog, body, ok, show } = dialogShell(`Asignar "${x.name}" a personas`);
     dialog.classList.add('wide-dialog');
-    body.append(el('p', 'Filtra y marca a quiénes aplica este calendario. Reemplaza el que tenían asignado. "Volver a automático" les quita el calendario propio y vuelven a usar el del país de su sede.', 'help'));
-    const bar = el('div', undefined, 'form-grid'); body.append(bar);
-    const active = (users || []).filter(u => u.status === 'active').sort((a, b) => a.display_name.localeCompare(b.display_name, 'es'));
+    // Al cerrar después de cambiar algo se recarga la página y luego se anuncia el resultado (reload pinta «Actualizado»).
+    let changed = false, message = null;
+    dialog.addEventListener('close', () => { if (changed) reload().then(() => { if (message) announce(message); }).catch(fail); });
+    const pickArea = el('div'); const reviewArea = el('div', undefined, 'assign-review'); reviewArea.hidden = true; body.append(pickArea, reviewArea);
+    pickArea.append(el('p', 'Filtra y marca a quiénes aplica este calendario. Reemplaza el que tenían asignado. Desmarcar a quien ya lo tiene no se lo quita: para eso, márcala y usa «Volver a automático».', 'help'));
+    const bar = el('div', undefined, 'form-grid'); pickArea.append(bar);
+    const active = (users || []).filter(u => u.status === 'active').sort((a, b) => a.display_name.localeCompare(b.display_name, 'es')).map(u => ({ ...u }));
     const pick = (label, values) => { const sel = el('select'); sel.append(new Option('Todas', '')); values.forEach(([v, t]) => sel.append(new Option(t, v))); labeled(bar, label, sel); return sel; };
     const unitsOf = kind => (org || []).filter(o => o.kind === kind && o.active).sort((a, b) => a.name.localeCompare(b.name, 'es')).map(o => [o.id, o.name]);
     const fCompany = pick('Empresa', unitsOf('company'));
@@ -3621,47 +3732,87 @@ async function holidaysPage() {
     const fCity = pick('Ciudad', [...new Set(active.map(siteCity).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es')).map(c => [c, c]));
     const fSite = pick('Sede', unitsOf('site')); const fArea = pick('Área', unitsOf('area'));
     const search = labeled(bar, 'Buscar nombre', el('input')); search.type = 'search';
-    const marks = el('div', undefined, 'actions no-margin'); const all = el('button', 'Marcar las mostradas'); all.type = 'button'; const none = el('button', 'Desmarcar todas'); none.type = 'button'; marks.append(all, none); body.append(marks);
-    const status = el('p', '', 'help'); status.setAttribute('role', 'status'); body.append(status);
-    const box = el('div', undefined, 'check-list'); body.append(box);
+    const marks = el('div', undefined, 'actions no-margin'); const all = el('button', 'Marcar las mostradas'); all.type = 'button'; const none = el('button', 'Desmarcar todas'); none.type = 'button'; marks.append(all, none); pickArea.append(marks);
+    const status = el('p', '', 'help assign-count'); status.setAttribute('role', 'status'); pickArea.append(status);
+    const box = el('div', undefined, 'check-list'); pickArea.append(box);
     const chosen = new Set(active.filter(u => u.holiday_calendar_id === x.id).map(u => u.id));
     const shown = () => active.filter(u => (!fCompany.value || u.company_id === fCompany.value) && (!fCountry.value || siteCountry(u) === fCountry.value) && (!fCity.value || siteCity(u) === fCity.value) && (!fSite.value || u.site_id === fSite.value) && (!fArea.value || u.area_id === fArea.value)
       && (!search.value.trim() || fold(u.display_name).includes(fold(search.value))));
+    const today2 = u => { const [cal, why] = effective(u); return `${cal ? cal.name : 'sin festivos'} (${why})`; };
     const draw = () => {
       box.replaceChildren(); const rows = shown();
       for (const u of rows) {
         const l = el('label', undefined, 'check'); const c = el('input'); c.type = 'checkbox'; c.checked = chosen.has(u.id);
         c.addEventListener('change', () => { c.checked ? chosen.add(u.id) : chosen.delete(u.id); count(); });
-        const [cal, why] = effective(u);
-        l.append(c, ` ${u.display_name}`, el('small', `${[n.get(u.company_id), n.get(u.site_id)].filter(Boolean).join(' · ') || 'Sin empresa ni sede'} — hoy: ${cal ? cal.name : 'sin festivos'} (${why})`)); box.append(l);
+        l.append(c, ` ${u.display_name}`, el('small', `${[n.get(u.company_id), n.get(u.site_id)].filter(Boolean).join(' · ') || 'Sin empresa ni sede'} — hoy: ${today2(u)}${u.holiday_calendar_id === x.id ? ' · ya lo tiene asignado' : ''}`)); box.append(l);
       }
       if (!rows.length) box.append(el('p', 'Nadie coincide con los filtros.', 'help'));
       count();
     };
-    const count = () => { status.textContent = `${chosen.size} personas marcadas · ${shown().length} mostradas.`; ok.disabled = !chosen.size; };
+    const count = () => {
+      const visible = shown().filter(u => chosen.has(u.id)).length;
+      status.textContent = `${chosen.size} ${chosen.size === 1 ? 'seleccionada' : 'seleccionadas'}: ${visible} ${visible === 1 ? 'visible' : 'visibles'} y ${chosen.size - visible} fuera de estos filtros · ${shown().length} mostradas.`;
+      ok.disabled = !chosen.size;
+    };
     [fCompany, fCountry, fCity, fSite, fArea].forEach(f => f.addEventListener('change', draw)); search.addEventListener('input', draw);
     all.addEventListener('click', () => { shown().forEach(u => chosen.add(u.id)); draw(); });
     none.addEventListener('click', () => { chosen.clear(); draw(); });
     const reset = el('button', 'Volver a automático'); reset.type = 'button'; ok.before(reset);
+    const back = el('button', 'Volver a la selección'); back.type = 'button'; back.hidden = true; ok.before(back);
+    let reviewing = false, changes = [];
+    const showPick = () => { reviewing = false; pickArea.hidden = false; reviewArea.hidden = true; back.hidden = true; reset.hidden = false; ok.textContent = 'Revisar asignación'; count(); search.focus(); };
+    const showReview = () => {
+      reviewing = true;
+      const picked = active.filter(u => chosen.has(u.id));
+      changes = picked.filter(u => u.holiday_calendar_id !== x.id);
+      const same = picked.length - changes.length; const outside = picked.length - shown().filter(u => chosen.has(u.id)).length;
+      reviewArea.replaceChildren(el('h3', 'Revisa antes de asignar'));
+      reviewArea.append(el('p', changes.length ? `${changes.length === 1 ? '1 persona pasará' : `${changes.length} personas pasarán`} a usar ${x.name}:` : `Nadie cambia: todas las seleccionadas ya tienen ${x.name} asignado.`, 'assign-sentence'));
+      if (changes.length) {
+        const ul = el('ul'); changes.slice(0, 50).forEach(u => ul.append(el('li', `${u.display_name} — hoy: ${today2(u)}`)));
+        if (changes.length > 50) ul.append(el('li', `y ${changes.length - 50} más`)); reviewArea.append(ul);
+      }
+      if (same) reviewArea.append(el('p', `${same === 1 ? '1 ya lo tenía asignado' : `${same} ya lo tenían asignado`}: no cambian.`, 'help'));
+      if (outside) reviewArea.append(el('p', `${outside === 1 ? '1 de las seleccionadas no se ve' : `${outside} de las seleccionadas no se ven`} con los filtros actuales: también ${outside === 1 ? 'se incluye' : 'se incluyen'}.`, 'notice'));
+      reviewArea.append(el('p', 'Quien no está en la lista conserva su calendario actual.', 'help'));
+      pickArea.hidden = true; reviewArea.hidden = false; back.hidden = false; reset.hidden = true;
+      ok.textContent = changes.length === 1 ? 'Asignar a 1 persona' : `Asignar a ${changes.length} personas`; ok.disabled = !changes.length;
+      (changes.length ? ok : back).focus();
+    };
+    back.addEventListener('click', showPick);
     reset.addEventListener('click', async () => {
       const target = active.filter(u => chosen.has(u.id) && u.holiday_calendar_id);
       if (!target.length) { show('Ninguna de las marcadas tiene calendario propio.'); return; }
-      if (!confirm(`¿Quitar el calendario propio a ${target.length} personas? Usarán el del país de su sede.`)) return;
+      const sample = target.slice(0, 10).map(u => `${u.display_name} (hoy: ${cname(u.holiday_calendar_id)})`).join(', ') + (target.length > 10 ? ` y ${target.length - 10} más` : '');
+      if (!await confirmBox({ title: 'Volver a automático', message: `¿Quitar el calendario propio a ${target.length} personas? Usarán el del país de su sede.`, details: [sample], okText: 'Volver a automático' })) return;
       reset.disabled = ok.disabled = true;
-      try { for (const u of target) await patient(() => api('PATCH', `/users/${u.id}`, { body: { holiday_calendar_id: null }, ifMatch: u.version })); dialog.close(); await reload(); }
-      catch (e) { show(e.status === 412 ? 'Alguien modificó a una de estas personas: recarga la página.' : e); reset.disabled = ok.disabled = false; }
+      // Una petición por persona: se informa cuántas quedaron y cuáles no, sin repetir las que ya se hicieron.
+      const failed = [];
+      for (const u of target) {
+        try { const saved = await patient(() => api('PATCH', `/users/${u.id}`, { body: { holiday_calendar_id: null }, ifMatch: u.version })); Object.assign(u, saved || { holiday_calendar_id: null }); changed = true; }
+        catch (e) { failed.push(`${u.display_name} (${e.status === 412 ? 'alguien la modificó: recarga la página' : errorMessage(e)})`); }
+      }
+      if (!failed.length) { message = `${target.length === 1 ? '1 persona volvió' : `${target.length} personas volvieron`} al calendario automático.`; dialog.close(); return; }
+      message = `Volvieron a automático ${target.length - failed.length} de ${target.length}.`;
+      show(`Volvieron a automático ${target.length - failed.length} de ${target.length}. No se pudo con: ${failed.join('; ')}.`);
+      reset.disabled = false; draw();
     });
-    ok.textContent = 'Asignar calendario';
+    ok.textContent = 'Revisar asignación';
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault(); if (!chosen.size) return;
-      ok.disabled = true;
-      try { await api('POST', `/schedules/holiday-calendars/${x.id}/people`, { body: { user_ids: [...chosen] } }); dialog.close(); await reload(); }
-      catch (e) { show(e); ok.disabled = false; }
+      if (!reviewing) { showReview(); return; }
+      if (!changes.length) return;
+      ok.disabled = back.disabled = true;
+      try {
+        await api('POST', `/schedules/holiday-calendars/${x.id}/people`, { body: { user_ids: changes.map(u => u.id) } });
+        changed = true; message = `«${x.name}» asignado a ${changes.length === 1 ? '1 persona' : `${changes.length} personas`}.`; dialog.close();
+      }
+      catch (e) { show(e); ok.disabled = back.disabled = false; }
     });
     draw(); dialog.showModal();
   };
   // Sin calendarios la acción principal es crear uno (un festivo siempre pertenece a un calendario).
-  const action = $('page-action'); action.hidden = !!owner; action.addEventListener('click', () => calendars.length ? editor(null) : calendarEditor(null));
+  const action = $('page-action'); action.hidden = !!owner; action.addEventListener('click', () => calendars.length ? editor(null, currentCalendar()?.id) : calendarEditor(null));
   render();
 }
 
