@@ -127,40 +127,174 @@ async function sites() {
     ['En línea', r => devices ? String(r.online) : '—'], ['Uso real, horas (7 días)', r => people ? r.hours.toFixed(1) : '—'], ['Productividad', r => people ? pct(r.productivity) : '—']], rows);
 }
 
+// Organización: una pestaña por tipo, activas por defecto y "+ Nueva …" con el tipo de la pestaña (revisión UX ORG-1/3/4/5).
+// Firmas solo aparece mientras existan: no se migran a empresas del grupo. La pestaña elegida se recuerda por cliente.
+const ORG_TABS = [
+  { kind: 'company', label: 'Empresas del grupo', create: '+ Nueva empresa', title: 'Nueva empresa del grupo', submit: 'Crear empresa', plural: 'empresas del grupo',
+    help: 'Las empresas que emplean a las personas (AZC Legal, BilingueLaw…). Pueden compartir sedes. En Inicio y Reportes, sin filtro se ve todo el grupo; con filtro, solo una empresa, un país o una sede.' },
+  { kind: 'site', label: 'Sedes', create: '+ Nueva sede', title: 'Nueva sede', submit: 'Crear sede', plural: 'sedes',
+    help: 'Las sedes pueden ser compartidas por varias empresas del grupo. El país de la sede define el calendario automático de festivos de sus personas.' },
+  { kind: 'area', label: 'Áreas', create: '+ Nueva área', title: 'Nueva área', submit: 'Crear área', plural: 'áreas',
+    help: 'Las personas apuntan a la unidad, no a su nombre: si renombras un área, todas las personas de esa área la ven con el nombre nuevo.' },
+  { kind: 'position', label: 'Cargos', create: '+ Nuevo cargo', title: 'Nuevo cargo', submit: 'Crear cargo', plural: 'cargos',
+    help: 'Las personas apuntan al cargo, no a su nombre: si renombras un cargo, todas las personas con ese cargo lo ven con el nombre nuevo.' },
+  { kind: 'firm', label: 'Firmas', create: null, plural: 'firmas',
+    help: 'Firmas registradas antes de las empresas del grupo. Se conservan mientras existan; para una unidad nueva que emplea personas usa Empresas del grupo.' },
+];
+const orgFold = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('es').trim();
+const NO_COUNTRY = '-';
+
 async function organization() {
   let org = await allPages('/organization');
-  const users = (await optional(allPages('/users'))) || [];
-  const usedBy = o => users.filter(u => u.status === 'active' && [u.firm_id, u.company_id, u.site_id, u.area_id, u.position_id].includes(o.id)).length;
-  const byId = () => names(org);
+  // null = la cuenta no puede consultar Personas: el conteo es "No disponible", nunca cero.
+  const users = await optional(allPages('/users'));
+  const usedBy = o => users ? users.filter(u => u.status === 'active' && [u.firm_id, u.company_id, u.site_id, u.area_id, u.position_id].includes(o.id)).length : null;
+  const storeKey = `keeper.organization.tab.${tenant}`;
+  const state = { tab: null, inactive: false, term: '', country: '', city: '' };
+  try { state.tab = localStorage.getItem(storeKey); } catch { /* sin almacenamiento */ }
+  const tabsShown = () => ORG_TABS.filter(t => t.kind !== 'firm' || org.some(o => o.kind === 'firm'));
+  const current = () => tabsShown().find(t => t.kind === state.tab) || tabsShown()[0];
+  const action = $('page-action');
+  let notice = null;
+  const tell = text => { if (!notice) { fail(new Error(text)); return; } notice.textContent = text; notice.hidden = false; notice.scrollIntoView?.({ block: 'nearest' }); };
+  const quiet = () => { if (notice) notice.hidden = true; $('page-error').hidden = true; };
+  const sitesIn = country => org.filter(o => o.kind === 'site' && (!country || (country === NO_COUNTRY ? !o.country_code : o.country_code === country)));
+  const citiesOf = country => [...new Set(sitesIn(country).map(o => o.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+  const fillCities = (list, country) => { list.replaceChildren(); citiesOf(country).forEach(c => list.append(new Option(c))); };
+
   const render = () => {
-    $('page-content').replaceChildren();
-    const count = k => org.filter(o => o.kind === k && o.active).length;
-    kpis([['Empresas del grupo', String(count('company')), 'AZC Legal, BilingueLaw…: quién emplea a cada persona'], ['Sedes', String(count('site'))], ['Áreas', String(count('area'))], ['Cargos', String(count('position'))]]);
-    const s = surface('Unidades de la empresa');
-    s.append(el('p', 'Las personas apuntan a la unidad, no a su nombre: si renombras un cargo, todas las personas con ese cargo lo ven con el nombre nuevo. Desactivar solo es posible cuando nadie la usa.', 'help'));
-    s.append(el('p', 'Empresas del grupo: las empresas que emplean a las personas (pueden compartir sedes). En Inicio y Reportes, sin filtro se ve todo el grupo; con filtro, solo una empresa, un país o una sede.', 'help'));
-    const n = byId();
-    table(s, 'Organización', [['Unidad', o => o.name], ['Tipo', o => kinds[o.kind] || o.kind], ['Ubicación', o => o.kind === 'site' ? placeOf(o) : '—'], ['Depende de', o => o.parent_id ? (n.get(o.parent_id) || '—') : '—'], ['Personas', o => String(usedBy(o))],
-      ['Estado', o => badge(o.active ? 'Activa' : 'Inactiva', o.active ? 'good' : '')], ['Acciones', o => actions(o)]], org,
-      { filters: [['Tipo', o => kinds[o.kind]], ['Estado', o => o.active ? 'Activa' : 'Inactiva']] });
+    const tab = current(); state.tab = tab.kind;
+    try { localStorage.setItem(storeKey, tab.kind); } catch { /* sin almacenamiento */ }
+    action.textContent = tab.create || ''; action.hidden = !tab.create;
+    const content = $('page-content'); content.replaceChildren();
+    const active = org.filter(o => o.active);
+    kpis([['Unidades activas', String(active.length), 'Las mismas que listan las pestañas (sin inactivas)'],
+      ['Unidades inactivas', String(org.length - active.length), 'Se ven con «Incluir inactivas»'],
+      ['Personas activas', users ? String(users.filter(u => u.status === 'active').length) : 'No disponible', users ? 'Visibles para tu cuenta' : 'Tu cuenta no puede consultar Personas'],
+      ['Sedes activas sin país', String(active.filter(o => o.kind === 'site' && !o.country_code).length), 'Usan el calendario de festivos predeterminado del cliente']]);
+    const tabs = el('div', undefined, 'tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Tipo de unidad'); content.append(tabs);
+    const shownTabs = tabsShown();
+    for (const t of shownTabs) {
+      const n = active.filter(o => o.kind === t.kind).length;
+      const b = el('button', `${t.label} `); b.type = 'button'; b.id = `org-tab-${t.kind}`; b.dataset.kind = t.kind;
+      b.append(el('span', String(n), 'tab-count'));
+      b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(t === tab)); b.setAttribute('aria-controls', 'org-panel'); b.tabIndex = t === tab ? 0 : -1;
+      b.setAttribute('aria-label', `${t.label}: ${n} activas`);
+      b.addEventListener('click', () => { if (t === current()) return; state.tab = t.kind; state.term = state.country = state.city = ''; quiet(); render(); $(`org-tab-${t.kind}`)?.focus(); });
+      b.addEventListener('keydown', e => {
+        const i = shownTabs.indexOf(t); const next = e.key === 'ArrowRight' ? shownTabs[(i + 1) % shownTabs.length] : e.key === 'ArrowLeft' ? shownTabs[(i - 1 + shownTabs.length) % shownTabs.length] : null;
+        if (next) { e.preventDefault(); $(`org-tab-${next.kind}`).click(); }
+      });
+      tabs.append(b);
+    }
+    const s = surface(tab.label); s.id = 'org-panel'; s.setAttribute('role', 'tabpanel'); s.setAttribute('aria-labelledby', `org-tab-${tab.kind}`);
+    s.append(el('p', tab.help, 'help'));
+    notice = el('p', '', 'error-text'); notice.setAttribute('role', 'alert'); notice.hidden = true; s.append(notice);
+
+    const bar = el('div', undefined, 'toolbar');
+    const search = el('input'); search.type = 'search'; search.value = state.term; search.placeholder = 'Nombre o dependencia';
+    const searchLabel = el('label', 'Buscar'); searchLabel.append(search); bar.append(searchLabel);
+    let country = null, city = null;
+    if (tab.kind === 'site') {
+      country = el('select'); country.append(new Option('Todos', ''), new Option('Sin país', NO_COUNTRY));
+      [...new Set(sitesIn('').map(o => o.country_code).filter(Boolean))].map(c => [c, countryName(c)]).sort((a, b) => a[1].localeCompare(b[1], 'es')).forEach(([c, n]) => country.append(new Option(n, c)));
+      country.value = state.country; const cl = el('label', 'País'); cl.append(country); bar.append(cl);
+      city = el('input'); city.type = 'search'; city.value = state.city; city.placeholder = 'Cualquiera'; city.maxLength = 80;
+      const list = el('datalist'); list.id = 'org-city-filter'; city.setAttribute('list', list.id); fillCities(list, state.country);
+      const ci = el('label', 'Ciudad'); ci.append(city, list); bar.append(ci);
+      country.addEventListener('change', () => { state.country = country.value; state.city = city.value = ''; fillCities(list, state.country); renderTable(); });
+      city.addEventListener('input', () => { state.city = city.value; renderTable(); });
+    }
+    const inactiveBox = el('input'); inactiveBox.type = 'checkbox'; inactiveBox.checked = state.inactive;
+    const il = el('label', undefined, 'check'); il.append(inactiveBox, ' Incluir inactivas'); bar.append(il);
+    const clear = el('button', 'Limpiar filtros'); clear.type = 'button'; bar.append(clear);
+    s.append(bar);
+    const wrap = el('div', undefined, 'table-wrap'); wrap.tabIndex = 0; s.append(wrap);
+    s.append(el('p', users ? '«Personas activas»: personas activas con esta unidad que tu cuenta puede ver. Desactivar o eliminar revisa además personas inactivas y otros usos.'
+      : 'Tu cuenta no puede consultar Personas: el número de personas no está disponible (no significa que la unidad esté libre).', 'help'));
+    search.addEventListener('input', () => { state.term = search.value; renderTable(); });
+    inactiveBox.addEventListener('change', () => { state.inactive = inactiveBox.checked; renderTable(); });
+    clear.addEventListener('click', () => {
+      state.term = state.country = state.city = ''; state.inactive = false; search.value = ''; inactiveBox.checked = false;
+      if (country) { country.value = city.value = ''; fillCities($('org-city-filter'), ''); }
+      renderTable();
+    });
+
+    const n = names(org);
+    const parentName = o => o.parent_id ? (n.get(o.parent_id) || '—') : 'Sin dependencia';
+    const peopleCell = o => users ? String(usedBy(o)) : 'No disponible';
+    const columns = [[tab.kind === 'site' ? 'Sede' : 'Nombre', o => o.name], ...(tab.kind === 'site' ? [['Ciudad y país', o => placeOf(o)]] : []),
+      ['Depende de', parentName], ['Personas activas', peopleCell], ['Estado', o => badge(o.active ? 'Activa' : 'Inactiva', o.active ? 'good' : '')], ['Acciones', o => actions(o)]];
+    const matches = o => {
+      if (tab.kind === 'site') {
+        if (state.country === NO_COUNTRY ? o.country_code : state.country && o.country_code !== state.country) return false;
+        if (orgFold(state.city) && !orgFold(o.city).includes(orgFold(state.city))) return false;
+      }
+      const term = orgFold(state.term);
+      return !term || [o.name, parentName(o), tab.kind === 'site' ? placeOf(o) : ''].some(v => orgFold(v).includes(term));
+    };
+    const renderTable = () => {
+      clear.hidden = !(state.term || state.country || state.city || state.inactive);
+      const ofKind = org.filter(o => o.kind === tab.kind);
+      const pool = ofKind.filter(o => state.inactive || o.active);
+      const rows = pool.filter(matches).sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name, 'es'));
+      wrap.replaceChildren();
+      if (!rows.length) {
+        const box = el('div', undefined, 'empty');
+        const inactiveOnly = ofKind.length - pool.length;
+        if (!ofKind.length) box.append(el('h2', `Aún no hay ${tab.plural}`), el('p', tab.create ? `Crea la primera para asignarla a las personas con «${tab.create}».` : 'No hay registros de este tipo.'));
+        else if (!pool.length) box.append(el('h2', `No hay ${tab.plural} activas`), el('p', `Hay ${inactiveOnly} inactiva${inactiveOnly === 1 ? '' : 's'}: marca «Incluir inactivas» para verlas.`));
+        else {
+          box.append(el('h2', 'Sin resultados'), el('p', 'No hay resultados con estos filtros.'));
+          const again = el('button', 'Limpiar filtros'); again.type = 'button'; again.addEventListener('click', () => clear.click()); box.append(again);
+        }
+        wrap.append(box); return;
+      }
+      const t = el('table'); t.append(el('caption', `${rows.length} de ${pool.length} ${tab.plural} ${state.inactive ? '(activas e inactivas)' : 'activas'}`));
+      const head = el('thead'); const hr = el('tr'); columns.forEach(([name]) => { const th = el('th', name); th.scope = 'col'; hr.append(th); }); head.append(hr);
+      const body = el('tbody');
+      for (const r of rows) {
+        const tr = el('tr'); tr.dataset.id = r.id;
+        for (const [, get] of columns) { const v = get(r); const td = el('td'); if (v instanceof Node) td.append(v); else td.textContent = v ?? '—'; tr.append(td); }
+        body.append(tr);
+      }
+      t.append(head, body); wrap.append(t);
+    };
+    renderTable();
   };
   const save = async (o, changes) => {
     const body = { kind: o.kind, name: o.name, parent_id: o.parent_id, active: o.active, ...changes };
     const updated = await api('PATCH', `/organization/${o.id}`, { body, ifMatch: o.version });
     org = org.map(x => x.id === o.id ? updated : x); render();
   };
+  // Dependencia: unidades activas agrupadas por tipo (sin la propia unidad al editar).
+  const parentSelect = (value, exclude) => {
+    const parent = el('select'); parent.append(new Option('Sin dependencia', ''));
+    for (const t of ORG_TABS) {
+      const opts = org.filter(x => x.active && x.kind === t.kind && x.id !== exclude).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+      if (!opts.length) continue;
+      const g = document.createElement('optgroup'); g.label = t.label; opts.forEach(x => g.append(new Option(x.name, x.id))); parent.append(g);
+    }
+    parent.value = value || ''; return parent;
+  };
+  const countryHint = 'El país define el calendario automático de festivos de las personas de esta sede (salvo quien tenga un calendario propio). Sin país, usan el calendario predeterminado del cliente.';
   const actions = o => {
-    const box = el('div', undefined, 'actions no-margin');
+    const box = el('div', undefined, 'row-actions');
     const rename = el('button', 'Editar', 'link-button'); rename.type = 'button';
     rename.addEventListener('click', () => {
       const { dialog, body, ok, show } = dialogShell(`Editar ${o.name}`);
       const name = labeled(body, 'Nombre', el('input')); name.maxLength = 120; name.value = o.name;
-      const count = usedBy(o); if (count) body.append(el('p', `${count} personas tienen esta unidad: verán el nombre nuevo.`, 'help'));
-      const parent = el('select'); parent.append(new Option('No depende de otra', ''));
-      org.filter(x => x.active && x.id !== o.id).sort((a, b) => a.name.localeCompare(b.name, 'es')).forEach(x => parent.append(new Option(`${x.name} (${kinds[x.kind]})`, x.id)));
-      parent.value = o.parent_id || ''; labeled(body, 'Depende de', parent, 'Por ejemplo, un área que pertenece a una sede, o un cargo que depende de un área.');
-      const country = o.kind === 'site' ? labeled(body, 'País', countrySelect(o.country_code), 'Define los festivos de quienes trabajan en esta sede.') : null;
-      const city = o.kind === 'site' ? labeled(body, 'Ciudad', cityInput(o.city, org)) : null;
+      const count = usedBy(o);
+      if (count) body.append(el('p', `${count} personas activas tienen esta unidad: verán el nombre nuevo.`, 'help'));
+      else if (count === null) body.append(el('p', 'No se puede consultar cuántas personas tienen esta unidad: todas las que la tengan verán el nombre nuevo.', 'help'));
+      const parent = labeled(body, 'Depende de', parentSelect(o.parent_id, o.id), 'Por ejemplo, un área que pertenece a una sede, o un cargo que depende de un área.');
+      let country = null, city = null;
+      if (o.kind === 'site') {
+        country = labeled(body, 'País', countrySelect(o.country_code), countryHint);
+        const warn = el('p', 'Cambiar el país puede cambiar el calendario automático de festivos de las personas de esta sede.', 'help'); warn.setAttribute('role', 'status'); warn.hidden = true; body.append(warn);
+        city = labeled(body, 'Ciudad', cityInput(o.city, sitesIn(o.country_code || NO_COUNTRY)));
+        country.addEventListener('change', () => { warn.hidden = country.value === (o.country_code || ''); fillCities($(city.getAttribute('list')), country.value || NO_COUNTRY); });
+      }
       dialog.querySelector('form').addEventListener('submit', async ev => {
         ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
         ok.disabled = true;
@@ -169,49 +303,58 @@ async function organization() {
       });
       dialog.showModal();
     });
+    // Desactivar y eliminar quedan en "Más": no son la acción frecuente y la API puede negarlas por usos que el panel no ve.
+    const more = el('details', undefined, 'row-more'); more.append(el('summary', 'Más'));
+    const menu = el('div'); more.append(menu);
+    more.addEventListener('toggle', () => { if (more.open) document.querySelectorAll('details.row-more[open]').forEach(d => { if (d !== more) d.open = false; }); });
     const toggle = el('button', o.active ? 'Desactivar' : 'Activar', 'link-button'); toggle.type = 'button';
     toggle.addEventListener('click', async () => {
       if (o.active && !confirm(`¿Desactivar ${o.name}?`)) return;
-      try { await save(o, { active: !o.active }); }
+      try { quiet(); await save(o, { active: !o.active }); }
       catch (e) {
         const count = usedBy(o);
-        fail(e.code === 'org_unit_in_use' ? new Error(`No se puede desactivar "${o.name}": ${count ? `${count} personas la tienen asignada (cámbialas primero en Personas)` : 'otras unidades activas dependen de ella, o la usa un rol o una política'}.`) : e);
+        if (e.code === 'org_unit_in_use') tell(`No se puede desactivar «${o.name}». La API indica que todavía la usan personas (activas o inactivas), unidades activas que dependen de ella, alcances de roles o reglas de los equipos${count ? ` (${count} personas activas visibles la tienen asignada)` : ''}. Cámbialo primero en Personas, Roles o Reglas y vuelve a intentarlo.`);
+        else if (e.code === 'inactive_org_ancestor') tell(`No se puede activar «${o.name}»: la unidad de la que depende está inactiva. Actívala primero o cambia la dependencia.`);
+        else tell(errorMessage(e));
       }
     });
     // Eliminar: desaparece del panel; si el historial la menciona se conserva como eliminada para ese historial.
-    const remove = el('button', 'Eliminar', 'link-button'); remove.type = 'button';
+    const remove = el('button', 'Eliminar', 'link-button danger'); remove.type = 'button';
     remove.addEventListener('click', async () => {
       if (!confirm(`¿Eliminar "${o.name}"? Desaparece de Organización y de las listas. El historial de quien la tuvo se conserva.`)) return;
-      try { await api('DELETE', `/organization/${o.id}`, { ifMatch: o.version }); org = org.filter(x => x.id !== o.id); render(); done(); }
+      try { quiet(); await api('DELETE', `/organization/${o.id}`, { ifMatch: o.version }); org = org.filter(x => x.id !== o.id); render(); $('page-status').textContent = `«${o.name}» eliminada.`; }
       catch (e) {
         const uses = (e.problem?.detail || '').match(/^org_unit_in_use:(.+)$/)?.[1];
-        fail(uses ? new Error(`No se puede eliminar "${o.name}": la usan ${uses}. Cámbialos primero y vuelve a intentar.`) : e.problem?.detail === 'managed_by_source' ? new Error(`"${o.name}" viene de una fuente externa: elimínala allá.`) : e);
+        tell(uses ? `No se puede eliminar «${o.name}»: la usan ${uses}. Cámbialos primero y vuelve a intentar.` : errorMessage(e));
       }
     });
-    box.append(rename, toggle, remove); return box;
+    menu.append(toggle, remove); box.append(rename, more); return box;
   };
-  const action = $('page-action'); action.textContent = 'Crear unidad'; action.hidden = false;
   action.addEventListener('click', () => {
-    const dialog = el('dialog'); const form = el('form'); form.method = 'dialog';
-    form.append(el('h2', 'Crear unidad'));
-    const kind = el('select'); Object.entries(kinds).forEach(([k, v]) => kind.append(new Option(v, k))); kind.value = 'site';
-    const name = el('input'); name.required = true; name.maxLength = 160;
-    const parent = el('select'); parent.append(new Option('Sin unidad superior', '')); org.filter(o => o.active).forEach(o => parent.append(new Option(`${o.name} (${kinds[o.kind]})`, o.id)));
-    const country = countrySelect('CO'); const city = cityInput('', org);
-    const labels = [];
-    for (const [label, input] of [['Tipo', kind], ['Nombre', name], ['Depende de', parent], ['País (solo sedes)', country], ['Ciudad (solo sedes)', city]]) { const l = el('label', label); l.append(input); form.append(l); labels.push(l); }
-    const syncKind = () => { labels[3].hidden = labels[4].hidden = kind.value !== 'site'; }; kind.addEventListener('change', syncKind); syncKind();
-    const error = el('p', '', 'error-text'); error.hidden = true;
-    const footer = el('div', undefined, 'dialog-footer'); const cancel = el('button', 'Cancelar'); cancel.type = 'button'; const ok = el('button', 'Crear', 'primary'); ok.type = 'submit';
-    footer.append(cancel, ok); form.append(error, footer); dialog.append(form); document.body.append(dialog);
-    cancel.addEventListener('click', () => dialog.close()); dialog.addEventListener('close', () => dialog.remove());
-    form.addEventListener('submit', async ev => {
-      ev.preventDefault(); if (!name.value.trim()) { error.textContent = 'Escribe el nombre.'; error.hidden = false; return; }
+    const tab = current(); if (!tab.create) return;
+    const { dialog, body, ok, show } = dialogShell(tab.title); ok.textContent = tab.submit;
+    const name = labeled(body, 'Nombre', el('input')); name.maxLength = 120;
+    let country = null, city = null;
+    if (tab.kind === 'site') {
+      // Sin país por defecto: solo se sugiere el del filtro actual, y se dice.
+      const suggested = state.country && state.country !== NO_COUNTRY ? state.country : '';
+      country = labeled(body, 'País', countrySelect(suggested), countryHint);
+      city = labeled(body, 'Ciudad', cityInput(suggested && state.city.trim() ? state.city.trim() : '', sitesIn(suggested || NO_COUNTRY)), 'Ciudades sugeridas del país elegido; también puedes escribir una nueva.');
+      if (suggested) body.append(el('p', 'País y ciudad sugeridos por el filtro actual: revísalos antes de crear.', 'help'));
+      country.addEventListener('change', () => fillCities($(city.getAttribute('list')), country.value || NO_COUNTRY));
+    }
+    const parent = labeled(body, 'Depende de', parentSelect(''), 'Opcional. Por ejemplo, un área que pertenece a una sede, o un cargo que depende de un área.');
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
       ok.disabled = true;
-      try { const created = await api('POST', '/organization', { body: { kind: kind.value, name: name.value.trim(), parent_id: parent.value || null, active: true, ...(kind.value === 'site' ? { country_code: country.value || null, city: city.value.trim() || null } : {}) } }); org = [...org, created]; dialog.close(); render(); }
-      catch (e) { error.textContent = errorMessage(e); error.hidden = false; ok.disabled = false; }
+      try {
+        const created = await api('POST', '/organization', { body: { kind: tab.kind, name: name.value.trim(), parent_id: parent.value || null, active: true, ...(country ? { country_code: country.value || null, city: city.value.trim() || null } : {}) } });
+        org = [...org, created]; dialog.close(); quiet(); render();
+        const visible = document.querySelector(`#org-panel tr[data-id="${created.id}"]`);
+        $('page-status').textContent = visible ? `«${created.name}» creada.` : `«${created.name}» creada, pero no coincide con los filtros de esta vista.`;
+      } catch (e) { show(e); ok.disabled = false; }
     });
-    dialog.showModal();
+    dialog.showModal(); name.focus();
   });
   render();
 }
