@@ -18,6 +18,8 @@ final class AdminApi
         if ($r->operation['operationId']==='createDeviceCommand') {
             $permission=match($r->body->type) { 'lock'=>'equipos.bloquear','unlock'=>'equipos.desbloquear','restart'=>'equipos.reiniciar','shutdown'=>'equipos.apagar','wipe'=>'equipos.borrar','refresh_policy'=>'reglas.aplicar','rename_computer'=>'equipos.editar',default=>throw new ApiError(422,'validation_failed') };
         }
+        // Lote de personas: el permiso del paso principal (datos > acceso > plan); los demas pasos se exigen en batchUsers().
+        if ($r->operation['operationId']==='batchUpdateUsers' && !isset($r->body->changes)) { $permission=isset($r->body->access)?'roles.gestionar':(isset($r->body->plan)?'planes.asignar':$permission); }
         $this->access=new AdminAccess($db,$c,$permission,$r->operation['operationId']);
         if ($permission==='roles.gestionar') { $this->access->rolesGate(); }
         if (in_array($r->operation['operationId'],['createDeviceCommand','createHardeningCommand','assignDevice'],true)) { $this->authorizedDevice=$this->row('devices',Util::bin($r->resourceId)); $this->deviceUser=$this->access->user($this->authorizedDevice['user_id']); }
@@ -71,11 +73,15 @@ final class AdminApi
         $row=$this->db->one("SELECT * FROM $table WHERE tenant_id=? AND $key=? FOR UPDATE",[$this->tenant,$id]);
         if (!$row) { throw new ApiError(404,'resource_not_found'); } return $row;
     }
+    // En lote (batchUsers) no hay If-Match: la version de cada persona se compara alli, una vez, antes de sus pasos.
+    private bool $batch=false; private ?string $auditOp=null; private bool $batchCalendars=false;
     private function match(array $row): void
     {
+        if ($this->batch) { return; }
         if ($this->r->header('if-match') !== '"' . $row['version'] . '"') { throw new ApiError(412,'version_conflict'); }
     }
-    private function audit(string $type,string $id,array $fields): void { (new Audit($this->db))->record($this->c,$this->r,$this->r->operation['operationId'],$type,$id,$fields); }
+    // En lote cada persona queda auditada con la operacion individual equivalente (patchUser, setUserPlan, setUserAccess).
+    private function audit(string $type,string $id,array $fields): void { (new Audit($this->db))->record($this->c,$this->r,$this->auditOp??$this->r->operation['operationId'],$type,$id,$fields); }
     private function result(array $row, int $status=200): array { return self::response($row,$status,isset($row['version'])?['ETag'=>'"'.$row['version'].'"']:[]); }
     private function unique(array $items): void { if (count(array_unique($items))!==count($items)) { throw new ApiError(422,'validation_failed'); } }
     private function timezone(string $zone): void { try { new \DateTimeZone($zone); } catch (\Exception) { throw new ApiError(422,'validation_failed'); } }
@@ -106,11 +112,13 @@ final class AdminApi
         if ($more) { $last=end($rows); $next=$resources->encodeCursor(['at'=>$last[$at],'id'=>$key==='code'?$last[$key]:Util::id($last[$key]),'snapshot'=>$page['snapshot'],'exp'=>$page['exp']]); }
         return self::response(['data'=>array_map($map,$rows),'next_cursor'=>$next,'generated_at'=>Util::now(),'data_through'=>Util::time($page['snapshot'])]);
     }
+    // Errores de MySQL que son conflicto de datos (duplicado, clave foranea, SIGNAL, CHECK): 409 invalid_transition.
+    private const CONFLICT_ERRORS=[1062,1451,1452,1644,3819,4025];
     public function dispatch(): array
     {
         try { return $this->handle(); }
         catch (\PDOException $e) {
-            if (in_array($e->errorInfo[1]??0,[1062,1451,1452,1644,3819,4025],true)) { throw new ApiError(409,'invalid_transition'); }
+            if (in_array($e->errorInfo[1]??0,self::CONFLICT_ERRORS,true)) { throw new ApiError(409,'invalid_transition'); }
             throw $e;
         }
     }
@@ -129,6 +137,7 @@ final class AdminApi
             'listOrganization','createOrgUnit','getOrgUnit','patchOrgUnit','deleteOrgUnit'=>$this->organization($op,$id,$b),
             'listSchedules','createSchedule','getSchedule','putSchedule'=>$this->schedules($op,$id,$b),
             'listUsers','createUser','getUser','patchUser'=>$this->users($op,$id,$b),
+            'batchUpdateUsers'=>$this->batchUsers($b),
             'listTenantDevices','getDevice','getDeviceSecurity','patchDevice','assignDevice','createDeviceCommand','listAdminCommands','createEnrollment'=>$this->devices($op,$id,$b),
             'listRoles','getRole','createRole','patchRole'=>$this->roles($op,$id,$b),
             'listPermissions','getPermission','patchPermission'=>$this->permissions($op,$b),
@@ -323,6 +332,47 @@ final class AdminApi
         $this->audit('user',$id,['access']);
         return $this->result($this->userDto($this->row('users',$id)));
     }
+    /**
+     * Edicion en lote (POST /users/batch). Cada persona pasa por los mismos metodos que PATCH /users/{id}, PUT …/plan y
+     * PUT …/access (validaciones, alcance, bloqueo por fuente, delegacion, reglas por cargo, auditoria) dentro de su propio
+     * savepoint: lo que falle deja a esa persona como estaba y se informa; las demas siguen. dry_run deshace todo.
+     */
+    private function batchUsers(object $b): array
+    {
+        $changes=isset($b->changes) && get_object_vars($b->changes)?$b->changes:null; $plan=$b->plan??null; $grant=$b->access??null; $dry=$b->dry_run??false;
+        if ($changes===null && $plan===null && $grant===null) { throw new ApiError(422,'validation_failed',[],'nothing_to_change'); }
+        $this->unique(array_map(static fn($x)=>strtolower($x->id),$b->users));
+        // Cada paso con el permiso de su endpoint (sin el, 403 para todo el lote); el acceso, ademas, con la compuerta de roles.
+        $gate=function (string $permission,string $op): AdminAccess {
+            if ($permission===$this->access->permission) { return $this->access; }
+            $a=new AdminAccess($this->db,$this->c,$permission,$op); if ($permission==='roles.gestionar') { $a->rolesGate(); } return $a;
+        };
+        $steps=[];
+        if ($changes!==null) { $steps[]=[$gate('usuarios.editar','patchUser'),'patchUser',fn(string $id)=>$this->users('patchUser',$id,clone $changes)]; }
+        if ($plan!==null) { $steps[]=[$gate('planes.asignar','setUserPlan'),'setUserPlan',fn(string $id)=>$this->userPlan($id,$plan)]; }
+        if ($grant!==null) { $steps[]=[$gate('roles.gestionar','setUserAccess'),'setUserAccess',fn(string $id)=>$this->userAccess($id,$grant)]; }
+        $own=$this->access; $results=[]; $applied=0;
+        foreach ($b->users as $item) {
+            $id=Util::bin($item->id); $error=null;
+            $this->db->run('SAVEPOINT keeper_batch_user');
+            try {
+                $current=$this->access->user($id); // fuera del alcance: resource_not_found, como el 404 individual
+                if (isset($item->version) && (int)$current['version']!==$item->version) { throw new ApiError(412,'version_conflict'); }
+                $this->batch=true;
+                foreach ($steps as [$access,$op,$run]) { $this->access=$access; $this->auditOp=$op; $run($id); }
+            }
+            catch (ApiError $e) { $error=$e; }
+            catch (\PDOException $e) { if (!in_array($e->errorInfo[1]??0,self::CONFLICT_ERRORS,true)) { throw $e; } $error=new ApiError(409,'invalid_transition'); }
+            finally { $this->access=$own; $this->batch=false; $this->auditOp=null; }
+            $this->db->run($error!==null || $dry?'ROLLBACK TO SAVEPOINT keeper_batch_user':'RELEASE SAVEPOINT keeper_batch_user');
+            if ($error===null) { $applied++; }
+            $message=$error?->errors[0]['message']??null;
+            $results[]=['id'=>Util::id($id),'ok'=>$error===null,'error_code'=>$error?->errorCode,'detail'=>$error?->detail,'message'=>is_string($message)?mb_substr($message,0,500):null];
+        }
+        if ($this->batchCalendars && !$dry) { (new HolidayCalendars($this->db,$this->c,$this->access,$this->r))->recompute(array_column($this->db->run('SELECT id FROM holiday_calendars WHERE tenant_id=?',[$this->tenant])->fetchAll(),'id')); }
+        $this->batchCalendars=false;
+        return self::response(['dry_run'=>$dry,'applied'=>$applied,'failed'=>count($results)-$applied,'results'=>$results]);
+    }
     private function userDto(array $r): array
     {
         $grant=AccessGrants::forUser($this->db,$this->tenant,$r['id']);
@@ -415,7 +465,10 @@ final class AdminApi
         } else {
             if ($values || $document===false) { $this->update('users',$id,$values); } else { $this->db->run('UPDATE users SET version=version+1 WHERE tenant_id=? AND id=?',[$this->tenant,$id]); }
             if (array_intersect(array_keys($values),['firm_id','site_id','area_id','position_id','schedule_id','company_id'])) { $this->assignment($id,$next); }
-            if (($values['holiday_calendar_id']??$old['holiday_calendar_id'])!==$old['holiday_calendar_id'] || ($values['site_id']??$old['site_id'])!==$old['site_id'] || (array_key_exists('holiday_calendar_id',$values) && $values['holiday_calendar_id']===null && $old['holiday_calendar_id']!==null)) { (new HolidayCalendars($this->db,$this->c,$this->access,$this->r))->recompute(array_column($this->db->run('SELECT id FROM holiday_calendars WHERE tenant_id=?',[$this->tenant])->fetchAll(),'id')); }
+            if (($values['holiday_calendar_id']??$old['holiday_calendar_id'])!==$old['holiday_calendar_id'] || ($values['site_id']??$old['site_id'])!==$old['site_id'] || (array_key_exists('holiday_calendar_id',$values) && $values['holiday_calendar_id']===null && $old['holiday_calendar_id']!==null)) {
+                // En lote se recalcula una sola vez al final (batchUsers), no por cada persona.
+                if ($this->batch) { $this->batchCalendars=true; } else { (new HolidayCalendars($this->db,$this->c,$this->access,$this->r))->recompute(array_column($this->db->run('SELECT id FROM holiday_calendars WHERE tenant_id=?',[$this->tenant])->fetchAll(),'id')); }
+            }
             $this->invalidateUser($id);
             if (($b->status??null)==='inactive') {
                 $this->db->run("UPDATE enrollments SET status='revoked' WHERE tenant_id=? AND user_id=? AND status='pending'",[$this->tenant,$id]);

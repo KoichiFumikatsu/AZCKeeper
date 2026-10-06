@@ -1,5 +1,5 @@
 {
-  "source_sha256": "a87fd90094045ec83478b12c702a186e7135223fbc5c5769ec4f8f27e2a64fd4",
+  "source_sha256": "53cdcd657313d6329f420ba4355962a5c35fc5b820638fb6d42e0f1a70836936",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -8850,6 +8850,108 @@
           }
         ],
         "x-permission": "equipos.ver"
+      }
+    },
+    "/users/batch": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "batchUpdateUsers",
+        "summary": "Editar personas en lote",
+        "description": "Aplica los mismos cambios a varias personas (máximo 500). Solo se cambian los campos enviados. Cada persona pasa por el mismo camino que PATCH /users/{id} (changes), PUT /users/{id}/plan (plan) y PUT /users/{id}/access (access): mismas validaciones, alcance (fuera de él: resource_not_found, como un 404), bloqueo por dominio de su fuente (managed_by_source), delegación segura, reglas por cargo y auditoría (una entrada por persona y operación, con el mismo request_id). Cada persona va en su propio savepoint: si algo falla, esa persona queda como estaba y su resultado trae error_code y detail; las demás siguen. version (opcional) es la que vio quien edita: si cambió, version_conflict. dry_run=true valida todo y lo deshace (vista previa). El permiso exigido es usuarios.editar si hay changes; si solo hay access, roles.gestionar; si solo hay plan, planes.asignar. plan exige además planes.asignar y access roles.gestionar (con la compuerta de autogestión de roles): sin ellos, 403 para todo el lote.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [
+          "User",
+          "DeviceSession",
+          "AdminSession",
+          "AuditEntry"
+        ],
+        "responses": {
+          "200": {
+            "description": "Resultado por persona (también cuando algunas fallan)",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserBatchResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserBatchInput"
+              }
+            }
+          }
+        },
+        "x-permission": "usuarios.editar",
+        "x-max-body-bytes": 131072
       }
     },
     "/users/{id}": {
@@ -29713,6 +29815,205 @@
         }
       },
       "description": "Usuario = membresía de empresa. Colaborador nace sin login. Firma es la firma organizativa, no firma manuscrita."
+    },
+    "UserBatchChanges": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Campos de UserPatch que se pueden cambiar en lote; mismos tipos y reglas.",
+      "properties": {
+        "company_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "site_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "area_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "position_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "reports_to_user_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schedule_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "holiday_calendar_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "inactive"
+          ]
+        }
+      }
+    },
+    "UserBatchInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "users"
+      ],
+      "properties": {
+        "users": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 500,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Versión que vio quien edita; si cambió, version_conflict."
+              }
+            }
+          }
+        },
+        "changes": {
+          "$ref": "#/components/schemas/UserBatchChanges"
+        },
+        "plan": {
+          "$ref": "#/components/schemas/UserPlanInput"
+        },
+        "access": {
+          "$ref": "#/components/schemas/AccessInput"
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Valida cada persona y deshace todo (vista previa de cuántas se pueden cambiar y por qué no las demás)."
+        }
+      }
+    },
+    "UserBatchResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dry_run",
+        "applied",
+        "failed",
+        "results"
+      ],
+      "properties": {
+        "dry_run": {
+          "type": "boolean"
+        },
+        "applied": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Personas cambiadas (o que se cambiarían, en dry_run)."
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "ok",
+              "error_code",
+              "detail",
+              "message"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "error_code": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "code del Problem que daría la operación individual (invalid_transition, permission_denied, resource_not_found, version_conflict, validation_failed...)."
+              },
+              "detail": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "detail del Problem (managed_by_source, scope_denied, delegation_exceeds_own_access, hierarchy_cycle...)."
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Problem.errors[0].message cuando existe (p. ej. qué rol daría una regla por cargo)."
+              }
+            }
+          }
+        }
+      }
     },
     "UserCreate": {
       "type": "object",

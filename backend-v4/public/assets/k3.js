@@ -57,7 +57,16 @@ function cellText(v) {
 }
 // Tabla con filtro de texto y, opcionalmente, un select por columna. `search` (fila → textos) agrega
 // campos de la entidad que la búsqueda debe encontrar aunque no se vean o se dibujen como nodos.
-function table(parent, caption, columns, rows, { filters = [], search: searchFields } = {}) {
+// `selection` ({ set, key, label, bar, onChange }) agrega una casilla por fila y otra en el encabezado que marca o
+// desmarca las filas visibles (con búsqueda y filtros aplicados); `bar` se agrega a la barra y onChange(visibles) avisa.
+function table(parent, caption, columns, rows, { filters = [], search: searchFields, selection = null } = {}) {
+  if (selection) {
+    const { set, key, label } = selection;
+    // Casillas por clave (tablekit ordena y pagina moviendo las filas: el orden del DOM no sirve para ubicarlas).
+    selection.boxes = new Map();
+    columns = [['', r => { const c = el('input'); c.type = 'checkbox'; c.checked = set.has(key(r)); c.setAttribute('aria-label', `Seleccionar a ${label(r)}`); selection.boxes.set(key(r), c);
+      c.addEventListener('change', () => { if (c.checked) set.add(key(r)); else set.delete(key(r)); selection.sync?.(); }); return c; }], ...columns];
+  }
   const bar = el('div', undefined, 'toolbar');
   const search = el('input'); search.type = 'search'; search.placeholder = 'Buscar';
   const searchLabel = el('label', 'Buscar'); searchLabel.append(search); bar.append(searchLabel);
@@ -68,8 +77,18 @@ function table(parent, caption, columns, rows, { filters = [], search: searchFie
     if (initial && [...s.options].some(o => o.value === initial)) s.value = initial;
     l.append(s); bar.append(l); return [s, getter];
   });
+  if (selection?.bar) bar.append(selection.bar);
   parent.append(bar);
   const wrap = el('div', undefined, 'table-wrap'); wrap.tabIndex = 0; parent.append(wrap);
+  let all = null, shownNow = [];
+  if (selection) {
+    selection.sync = () => {
+      const n = shownNow.filter(r => selection.set.has(selection.key(r))).length;
+      if (all) { all.checked = n > 0 && n === shownNow.length; all.indeterminate = n > 0 && n < shownNow.length; }
+      selection.boxes.forEach((c, k) => { c.checked = selection.set.has(k); });
+      selection.onChange?.(shownNow);
+    };
+  }
   const hay = new Map();
   const haystack = r => {
     if (!hay.has(r)) {
@@ -82,10 +101,15 @@ function table(parent, caption, columns, rows, { filters = [], search: searchFie
   const render = () => {
     const term = searchFold(search.value);
     const shown = rows.filter(r => selects.every(([s, g]) => !s.value || g(r) === s.value) && (!term || haystack(r).includes(term)));
-    wrap.replaceChildren();
-    if (!shown.length) { empty(wrap, 'Sin resultados', 'No hay filas que coincidan con la búsqueda o los filtros.'); return; }
+    wrap.replaceChildren(); shownNow = shown; all = null; selection?.boxes.clear();
+    if (!shown.length) { empty(wrap, 'Sin resultados', 'No hay filas que coincidan con la búsqueda o los filtros.'); selection?.sync(); return; }
     const t = el('table'); t.append(el('caption', `${caption} · ${shown.length} de ${rows.length}`));
     const head = el('thead'); const hr = el('tr'); columns.forEach(([name]) => { const th = el('th', name); th.scope = 'col'; hr.append(th); }); head.append(hr);
+    if (selection) {
+      all = el('input'); all.type = 'checkbox'; all.setAttribute('aria-label', 'Seleccionar o quitar todas las filas visibles');
+      all.addEventListener('change', () => { shownNow.forEach(r => { if (all.checked) selection.set.add(selection.key(r)); else selection.set.delete(selection.key(r)); }); selection.sync(); });
+      hr.firstElementChild.append(all);
+    }
     const body = el('tbody');
     for (const r of shown) {
       const tr = el('tr');
@@ -93,6 +117,7 @@ function table(parent, caption, columns, rows, { filters = [], search: searchFie
       body.append(tr);
     }
     t.append(head, body); wrap.append(t);
+    selection?.sync();
   };
   search.addEventListener('input', render); selects.forEach(([s]) => s.addEventListener('change', render)); render();
 }
@@ -1313,6 +1338,11 @@ async function people() {
   const planName = id => avail?.data.find(p => p.id === id)?.name || allPlans.find(p => p.id === id)?.name || null;
   const defaultLabel = avail ? `Por defecto (${planName(avail.default_plan_id) || 'sin plan'})` : '';
   const ownPlan = u => avail?.data.find(p => p.id === u.plan_id) || null;
+  // Edición en lote: datos (usuarios.editar), plan (si se pueden ver planes) y acceso (roles.gestionar). La API valida igual.
+  const can = code => isSuper || !!myAccess?.permissions?.some(p => p.code === code);
+  const batchFields = { data: isSuper || !myAccess || can('usuarios.editar'), plan: !!avail, access: can('roles.gestionar') };
+  const canBatch = batchFields.data || batchFields.plan || batchFields.access;
+  const selected = new Set();
   const render = () => {
     $('page-content').replaceChildren();
     kpis([['Personas', String(list.length)], ['Activas', String(list.filter(u => u.status === 'active').length)],
@@ -1328,6 +1358,27 @@ async function people() {
       tools.append(imp, tpl); s.append(tools);
     }
     if (!list.length) { empty(s, 'Aún no hay personas', 'Créalas una a una con "Crear persona" o impórtalas desde un CSV (descarga la plantilla).'); return; }
+    // Selección para editar en lote: casillas por fila, «Seleccionar las N filtradas» (búsqueda y filtros aplicados).
+    let selection = null;
+    if (canBatch) {
+      for (const id of [...selected]) if (!list.some(u => u.id === id)) selected.delete(id);
+      const bulk = el('div', undefined, 'bulk-bar'); bulk.setAttribute('role', 'group'); bulk.setAttribute('aria-label', 'Edición en lote');
+      const count = el('span', '', 'bulk-count'); count.setAttribute('aria-live', 'polite');
+      const pickAll = el('button'); pickAll.type = 'button';
+      const clear = el('button', 'Quitar selección', 'link-button'); clear.type = 'button';
+      const edit = el('button', '', 'primary'); edit.type = 'button';
+      bulk.append(count, pickAll, clear, edit);
+      let visible = [];
+      selection = { set: selected, key: u => u.id, label: u => u.display_name, bar: bulk, onChange: shown => {
+        visible = shown; const k = selected.size;
+        count.textContent = k ? `${k} seleccionada${k === 1 ? '' : 's'}` : 'Marca personas para editarlas en lote';
+        pickAll.textContent = `Seleccionar las ${shown.length} filtradas`; pickAll.disabled = !shown.length || shown.every(u => selected.has(u.id));
+        clear.hidden = !k; edit.textContent = `Editar seleccionadas (${k})`; edit.disabled = !k;
+      } };
+      pickAll.addEventListener('click', () => { visible.forEach(u => selected.add(u.id)); selection.sync(); });
+      clear.addEventListener('click', () => { selected.clear(); selection.sync(); });
+      edit.addEventListener('click', () => batchEditor(list.filter(u => selected.has(u.id))).catch(fail));
+    }
     table(s, 'Personas', [
       ['Nombre', u => { const a = el('a', u.display_name); a.href = personUrl(u); const d = el('div'); d.append(a); if (u.email) d.append(el('small', u.email)); return d; }],
       ['Cédula', u => u.document || '—'], ['Empresa', u => n.get(u.company_id) || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'],
@@ -1335,8 +1386,8 @@ async function people() {
       ['Estado', u => { const d = el('div'); d.append(badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : '')); if (u.monitoring === 'excluded') d.append(' ', badge('No se monitorea', 'info')); return d; }],
       ...(avail ? [['Plan', u => ownPlan(u)?.name || defaultLabel]] : []),
       ['Acciones', u => { if (u.managed_by) return el('small', `Gestionada por ${u.managed_by}`); const b = el('a', 'Editar', 'link-button'); b.href = personUrl(u); return b; }]],
-      list, { filters: [['Empresa', u => n.get(u.company_id) || 'Sin empresa'], ['País', u => countryName(siteCountry(u))], ['Ciudad', u => org.find(o => o.id === u.site_id)?.city || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']],
-        search: u => [u.display_name, u.email, u.document] });
+      list, { filters: [['Empresa', u => n.get(u.company_id) || 'Sin empresa'], ['País', u => countryName(siteCountry(u))], ['Ciudad', u => org.find(o => o.id === u.site_id)?.city || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']],
+        search: u => [u.display_name, u.email, u.document], selection });
   };
   // Cargos que no se monitorean (directivos y dueños): sus equipos nunca se aprueban solos en el alta.
   let excluded = (await optional(api('GET', '/monitoring-exclusions')))?.position_ids || null;
@@ -1416,6 +1467,138 @@ async function people() {
       progress.textContent = `Terminado: ${ready.length - failed.length} creadas, ${failed.length} con error.`;
       const ul = el('ul', undefined, 'import-issues'); failed.forEach(t => ul.append(el('li', t))); preview.append(ul);
       ok.hidden = true;
+    });
+    dialog.showModal();
+  };
+  // Edición en lote (POST /users/batch): se marcan los campos a cambiar, «Revisar cambios» hace una simulación (dry_run)
+  // que dice a cuántas se aplica y por qué no a las demás, y «Aplicar» repite lo mismo de verdad. Cada persona pasa por
+  // las mismas validaciones que su ficha (alcance, fuente que gestiona el dato, delegación de accesos).
+  const batchEditor = async picked => {
+    const roles = batchFields.access ? (await optional(allPages('/roles'))) || [] : [];
+    const plural = k => `${k} persona${k === 1 ? '' : 's'}`;
+    const { dialog, body, ok, show } = dialogShell(`Editar ${plural(picked.length)} a la vez`);
+    dialog.classList.add('wide-dialog');
+    body.append(el('p', 'Marca solo lo que quieres cambiar; lo demás queda como está en cada persona. Antes de aplicar verás a cuántas se les puede cambiar y por qué no a las demás.'));
+    const sourceName = id => sources?.data?.find(x => x.id === id)?.name || 'una fuente externa';
+    const ownerOf = domain => { const d = domains?.data?.find(x => x.domain === domain); return d?.source_id ? sourceName(d.source_id) : null; };
+    const fields = [];
+    const add = (key, label, control, { domain = null, read, text, help = null }) => {
+      const row = el('div', undefined, 'batch-field'); body.append(row);
+      const on = el('input'); on.type = 'checkbox'; const l = el('label', undefined, 'check'); l.append(on, ` Cambiar ${label.toLowerCase()}`); row.append(l);
+      const box = el('div', undefined, 'batch-control'); box.hidden = true; row.append(box);
+      if (control instanceof Node) { const c = el('label', label); c.append(control); box.append(c); }
+      const owner = domain ? ownerOf(domain) : null;
+      const linked = owner ? picked.filter(u => u.managed_by).length : 0;
+      const note = [help, owner && linked ? `${owner} gestiona este dato para ${linked === picked.length ? 'todas las elegidas' : `${linked} de las elegidas`}: a ellas no se les cambia aquí.` : null].filter(Boolean).join(' ');
+      if (note) box.append(el('p', note, 'help'));
+      on.addEventListener('change', () => { box.hidden = !on.checked; });
+      fields.push({ key, label, on, box, read, text });
+      return box;
+    };
+    const select = (items, first) => { const s = el('select'); if (first) s.append(new Option(first[1], first[0])); items.forEach(([v, t]) => s.append(new Option(t, v))); return s; };
+    const unitItems = kind => units(kind).map(o => [o.id, o.name]);
+    const shownText = s => s.selectedOptions[0]?.textContent || '—';
+    if (batchFields.data) {
+      for (const [kind, label, first] of [['company', 'Empresa del grupo', ['', 'Sin empresa (todo el grupo)']], ['site', 'Sede', ['', 'Elige la sede…']], ['area', 'Área', ['', 'Elige el área…']], ['position', 'Cargo', ['', 'Elige el cargo…']]]) {
+        const s = select(unitItems(kind), first);
+        add(`${kind}_id`, label, s, { domain: { company: 'empresas', site: 'sedes', area: 'areas', position: 'cargos' }[kind], text: () => shownText(s),
+          read: out => { if (kind !== 'company' && !s.value) return `Elige ${label.toLowerCase()}.`; out.changes[`${kind}_id`] = s.value || null; return null; } });
+      }
+      const boss = select(list.filter(u => u.status === 'active').sort((a, b) => a.display_name.localeCompare(b.display_name, 'es')).map(u => [u.id, u.display_name]), ['', 'Nadie']);
+      add('reports_to_user_id', 'Jefe (reporta a)', boss, { domain: 'jerarquia', text: () => shownText(boss), read: out => { out.changes.reports_to_user_id = boss.value || null; return null; } });
+      const sched = select(scheduleList.map(x => [x.id, x.name]), ['', 'Sin horario (no se espera jornada)']);
+      add('schedule_id', 'Horario', sched, { domain: 'horarios', text: () => shownText(sched), read: out => { out.changes.schedule_id = sched.value || null; return null; } });
+      if (calendarPage) {
+        const cal = select(calendars.map(c => [c.id, c.name]), ['', 'Automático (festivos del país de su sede)']);
+        add('holiday_calendar_id', 'Calendario de festivos', cal, { text: () => shownText(cal), read: out => { out.changes.holiday_calendar_id = cal.value || null; return null; } });
+      }
+      const st = select([['active', 'Activa'], ['inactive', 'Inactiva (retirada)']]);
+      add('status', 'Estado', st, { domain: 'personas', help: 'Retirar revoca sus equipos: dejan de reportar.', text: () => shownText(st), read: out => { out.changes.status = st.value; return null; } });
+    }
+    if (batchFields.plan) {
+      const plan = select(avail.data.map(x => [x.id, x.name]), ['', defaultLabel]);
+      add('plan', 'Plan', plan, { help: 'Define qué funciones de persona reciben. El plan no concede permisos para administrar el panel.', text: () => shownText(plan), read: out => { out.plan = { plan_id: plan.value || null }; return null; } });
+    }
+    if (batchFields.access && roles.length) {
+      const box = add('access', 'Acceso al panel (rol y alcance)', null, { help: 'Solo puedes dar roles y alcances que no superen los tuyos; a quien ya tenga más acceso que tú no se le cambia.',
+        text: () => { const a = ed.read(); return a ? scopeSummary(roles.find(r => r.id === a.role_id)?.name || 'Rol', a.scope, n) : '—'; },
+        read: out => { const p = ed.problem(); if (p) return p; out.access = ed.read(); return null; } });
+      const ed = accessEditor(box, { roles, org });
+    }
+    const preview = el('div', undefined, 'batch-preview'); preview.setAttribute('aria-live', 'polite'); body.append(preview);
+    const request = () => {
+      const out = { changes: {} }; const chosen = fields.filter(f => f.on.checked);
+      if (!chosen.length) return ['Marca al menos un dato para cambiar.'];
+      for (const f of chosen) { const p = f.read(out); if (p) return [p]; }
+      if (!Object.keys(out.changes).length) delete out.changes;
+      return [null, out, chosen];
+    };
+    const run = async (payload, dry) => {
+      const results = [];
+      for (let i = 0; i < picked.length; i += 500) {
+        const users = picked.slice(i, i + 500).map(u => ({ id: u.id, version: u.version }));
+        results.push(...(await patient(() => api('POST', '/users/batch', { body: { ...payload, users, dry_run: dry } }))).results);
+      }
+      return results;
+    };
+    const why = (r, chosen) => {
+      const d = r.detail, c = r.error_code;
+      if (d === 'managed_by_source') {
+        const owners = [...new Set(chosen.map(f => ({ company_id: 'empresas', site_id: 'sedes', area_id: 'areas', position_id: 'cargos', reports_to_user_id: 'jerarquia', schedule_id: 'horarios', status: 'personas' }[f.key])).filter(Boolean).map(ownerOf).filter(Boolean))];
+        return `esos datos los gestiona ${owners.join(' / ') || 'una fuente externa'} (se cambian allá)`;
+      }
+      return { scope_denied: 'el cambio las dejaría fuera de tu alcance', delegation_exceeds_own_access: 'tienen (o recibirían) un acceso mayor que el tuyo',
+        hierarchy_cycle: 'el jefe elegido les reporta (directa o indirectamente) o es la misma persona', unknown_manager: 'el jefe elegido ya no existe',
+        unknown_plan: 'ese plan está inactivo', role_inactive: 'ese rol está inactivo', role_not_found: 'ese rol ya no existe', group_scope_invalid: 'ese alcance no es válido' }[d]
+        || { resource_not_found: 'están fuera de tu alcance o ya no existen', version_conflict: 'alguien las modificó después de cargar la lista (recarga la página)',
+          validation_failed: 'algún dato no es válido para ellas (p. ej. el área no corresponde a su sede)', invalid_transition: 'el cambio choca con otros datos',
+          permission_denied: 'tu cuenta no tiene permiso para ese cambio' }[c] || `error ${c}`;
+    };
+    const summary = (results, chosen, dry) => {
+      preview.replaceChildren();
+      const good = results.filter(r => r.ok).length;
+      const what = chosen.map(f => `${f.label.toLowerCase()} a «${f.text()}»`).join(', ');
+      preview.append(el('p', good ? `${dry ? 'Se cambiará' : 'Se cambió'} ${what} en ${plural(good)}.` : 'No se puede aplicar a ninguna de las personas elegidas.', good ? 'notice' : 'error-text'));
+      if (dry && good && request()[1]?.changes?.status === 'inactive') preview.append(el('p', 'Las personas retiradas pierden sus equipos (quedan revocados y dejan de reportar).', 'help'));
+      const groups = new Map();
+      for (const r of results.filter(x => !x.ok)) { const k = why(r, chosen); groups.set(k, [...(groups.get(k) || []), r]); }
+      if (groups.size) {
+        const ul = el('ul', undefined, 'import-issues');
+        for (const [reason, rs] of groups) {
+          const who = rs.slice(0, 8).map(r => list.find(u => u.id === r.id)?.display_name || r.id).join(', ') + (rs.length > 8 ? ` y ${rs.length - 8} más` : '');
+          const msg = rs.find(r => r.message)?.message;
+          ul.append(el('li', `${rs.length} no se ${rs.length === 1 ? 'puede' : 'pueden'} cambiar porque ${reason}${msg && rs.length === 1 ? ` (${msg})` : ''}: ${who}.`));
+        }
+        preview.append(ul);
+      }
+      return good;
+    };
+    let reviewed = null; // payload revisado; cualquier cambio en el formulario obliga a revisar de nuevo
+    const reset = () => { reviewed = null; ok.textContent = 'Revisar cambios'; ok.disabled = false; };
+    body.addEventListener('change', e => { if (!preview.contains(e.target)) { preview.replaceChildren(); reset(); } });
+    reset();
+    dialog.querySelector('form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const [problem, payload, chosen] = request();
+      if (problem) { show(problem); return; }
+      dialog.querySelector('form > .error-text').hidden = true; ok.disabled = true;
+      try {
+        if (!reviewed) {
+          ok.textContent = 'Revisando…';
+          const good = summary(await run(payload, true), chosen, true);
+          reviewed = payload; ok.textContent = good ? `Aplicar a ${plural(good)}` : 'Revisar cambios'; ok.disabled = !good;
+          if (!good) reviewed = null;
+          return;
+        }
+        ok.textContent = 'Aplicando…';
+        const results = await run(reviewed, false);
+        const good = summary(results, chosen, false);
+        selected.clear(); results.filter(r => !r.ok).forEach(r => selected.add(r.id));
+        list = await allPages('/users'); render();
+        $('page-status').textContent = `${plural(good)} actualizada${good === 1 ? '' : 's'}${selected.size ? `; ${selected.size} sin cambiar siguen seleccionadas` : ''}.`;
+        if (!selected.size) { dialog.close(); return; }
+        ok.hidden = true; dialog.querySelector('.dialog-footer button').textContent = 'Cerrar';
+      } catch (e) { show(personError(e)); reset(); }
     });
     dialog.showModal();
   };
@@ -2609,7 +2792,7 @@ const AUDIT_ACTIONS = {
   reportHardening: 'El equipo reportó su endurecimiento', reportSecurity: 'El equipo reportó su seguridad', reportCommandResult: 'El equipo respondió un comando',
   deviceLogin: 'El equipo se conectó', deviceChallenge: 'El equipo pidió conectarse', syncDevice: 'El equipo se sincronizó', ingestEpisodes: 'El equipo envió actividad', ingestLogs: 'El equipo envió registros',
   createCheckIn: 'Se registró una entrada', externalCheckInsBatch: 'El sistema de puertas envió entradas',
-  createUser: 'Creó una persona', patchUser: 'Editó una persona', setUserAccess: 'Cambió el acceso de una persona', setSubscription: 'Cambió el plan de una persona',
+  createUser: 'Creó una persona', patchUser: 'Editó una persona', batchUpdateUsers: 'Editó personas en lote',setUserAccess: 'Cambió el acceso de una persona', setSubscription: 'Cambió el plan de una persona',
   createPanelAccount: 'Creó una cuenta del panel', patchPanelAccount: 'Cambió una cuenta del panel', resetPanelAccountPassword: 'Restableció una contraseña',
   createRole: 'Creó un rol', patchRole: 'Editó un rol', patchPermission: 'Editó un permiso', setRbacGate: 'Cambió quién gestiona los roles de la empresa',
   createRoleRule: 'Creó una asignación automática', patchRoleRule: 'Editó una asignación automática', putMonitoringExclusions: 'Cambió los cargos que no se monitorean',
