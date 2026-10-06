@@ -866,7 +866,8 @@ async function accounts() {
     });
     dialog.showModal();
   };
-  const create = preset => {
+  // personId: la persona ya elegida (desde su ficha o el alta: «Crear cuenta del panel para esta persona»).
+  const create = (preset, personId = null) => {
     const { dialog, body, ok, show } = dialogShell('Crear cuenta del panel');
     // La empresa decide el tipo: la duena da superadmin; cualquier otra, una cuenta de esa empresa ligada a una persona.
     const company = el('select');
@@ -881,7 +882,7 @@ async function accounts() {
     const display = labeled(ownerBox, 'Nombre', el('input')); display.maxLength = 160;
     ownerBox.append(el('p', 'Superadmin: entra a todas las empresas, crea empresas y cuentas, y cambia la marca del producto.', 'help'));
     const companyBox = el('div'); body.append(companyBox);
-    let person = null, accessEd = null, group = null;
+    let person = null, accessEd = null, group = null; let wanted = personId;
     const drawCompany = async id => {
       companyBox.replaceChildren(el('p', 'Cargando personas y roles…', 'help'));
       const [users, d] = await Promise.all([allPages('/users', id), companyData(id)]);
@@ -899,6 +900,11 @@ async function accounts() {
       }
       person.addEventListener('change', () => { const u = users.find(x => x.id === person.value); if (u?.email && !email.value) email.value = u.email; });
       accessEd = d.roles.length ? accessEditor(companyBox, { roles: d.roles, org: d.org, current: null }) : null;
+      if (wanted) {
+        if ([...person.options].some(o => o.value === wanted)) { person.value = wanted; person.dispatchEvent(new Event('change')); }
+        else companyBox.prepend(el('p', 'Esa persona no está disponible para una cuenta nueva: ya tiene cuenta o está inactiva.', 'notice'));
+        wanted = null;
+      }
       if (!d.roles.length) companyBox.append(el('p', 'Aún no hay roles en esta empresa: créalos en Roles y permisos. Sin rol, la cuenta no verá nada.', 'help'));
       group = platform ? await groupSection(companyBox, id, null) : null;
     };
@@ -938,7 +944,9 @@ async function accounts() {
   const action = $('page-action'); action.textContent = 'Crear cuenta'; action.hidden = false;
   action.addEventListener('click', () => create(null));
   render(list.data);
-  if (only && params.get('crear') === '1') create(only);
+  // &persona=<id> llega desde la ficha de la persona: la creación se abre con ella elegida.
+  const presetPerson = isUuid(params.get('persona')) ? params.get('persona') : null;
+  if (params.get('crear') === '1' && (only || (!platform && presetPerson))) create(only, presetPerson);
 }
 
 // ---- Empresas (solo plataforma) ---------------------------------------------------------------------------------
