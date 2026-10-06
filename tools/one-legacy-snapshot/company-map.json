@@ -3,7 +3,7 @@
   "tenant_slug": "grupo-azc",
   "companies": [
     { "slug": "azc-legal",   "name": "AZC Legal",       "one_codes": [1, 4] },
-    { "slug": "bilinguelaw", "name": "BilingueLaw",     "one_codes": [2] },
+    { "slug": "bilinguelaw", "name": "Bilinguelaw",     "one_codes": [2] },
     { "slug": "lawyerdesk",  "name": "LawyerDesk",      "one_codes": [3] },
     { "slug": "matiz",       "name": "Matiz LegalTech", "one_codes": [5] },
     { "slug": "grupo-azc",   "name": "Grupo AZC",       "one_codes": [] }
