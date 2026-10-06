@@ -41,8 +41,19 @@ function kpis(items) {
   for (const [label, value, note] of items) { const box = el('div', undefined, 'kpi'); box.append(el('dt', label), el('dd', value)); if (note) box.append(el('small', note)); dl.append(box); }
   $('page-content').append(dl);
 }
-// Tabla con filtro de texto y, opcionalmente, un select por columna.
-function table(parent, caption, columns, rows, { filters = [] } = {}) {
+// Texto buscable: sin tildes, sin mayúsculas y con espacios normalizados.
+const searchFold = v => String(v ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('es').replace(/\s+/g, ' ').trim();
+// Texto visible de una celda (string o nodo), sin botones ni controles de acciones.
+function cellText(v) {
+  if (v === null || v === undefined) return '';
+  if (!(v instanceof Node)) return String(v);
+  const c = v.cloneNode(true);
+  if (c.querySelectorAll) c.querySelectorAll('button, select, input, textarea, .actions').forEach(x => x.remove());
+  return c.matches?.('button, select, input, textarea') ? '' : (c.textContent || '');
+}
+// Tabla con filtro de texto y, opcionalmente, un select por columna. `search` (fila → textos) agrega
+// campos de la entidad que la búsqueda debe encontrar aunque no se vean o se dibujen como nodos.
+function table(parent, caption, columns, rows, { filters = [], search: searchFields } = {}) {
   const bar = el('div', undefined, 'toolbar');
   const search = el('input'); search.type = 'search'; search.placeholder = 'Buscar';
   const searchLabel = el('label', 'Buscar'); searchLabel.append(search); bar.append(searchLabel);
@@ -53,10 +64,18 @@ function table(parent, caption, columns, rows, { filters = [] } = {}) {
   });
   parent.append(bar);
   const wrap = el('div', undefined, 'table-wrap'); wrap.tabIndex = 0; parent.append(wrap);
+  const hay = new Map();
+  const haystack = r => {
+    if (!hay.has(r)) {
+      const parts = columns.filter(([name]) => name && name !== 'Acciones').map(([, get]) => cellText(get(r)));
+      if (searchFields) parts.push(...[].concat(searchFields(r)).filter(x => x !== null && x !== undefined));
+      hay.set(r, searchFold(parts.join(' ')));
+    }
+    return hay.get(r);
+  };
   const render = () => {
-    const term = search.value.trim().toLocaleLowerCase('es');
-    const shown = rows.filter(r => selects.every(([s, g]) => !s.value || g(r) === s.value) &&
-      (!term || columns.some(([, get]) => { const v = get(r); return typeof v === 'string' && v.toLocaleLowerCase('es').includes(term); })));
+    const term = searchFold(search.value);
+    const shown = rows.filter(r => selects.every(([s, g]) => !s.value || g(r) === s.value) && (!term || haystack(r).includes(term)));
     wrap.replaceChildren();
     if (!shown.length) { empty(wrap, 'Sin resultados', 'No hay filas que coincidan con la búsqueda o los filtros.'); return; }
     const t = el('table'); t.append(el('caption', `${caption} · ${shown.length} de ${rows.length}`));
@@ -480,6 +499,12 @@ function showSecret(account, secret) {
   body.append(copy); dialog.showModal();
 }
 
+// Enlace a una pantalla de una empresa cliente: fija esa empresa en el selector antes de navegar.
+function clientLink(text, tenantId, href, className = 'link-button') {
+  const a = el('a', text, className); a.href = href;
+  a.addEventListener('click', () => { try { sessionStorage.setItem('keeper.presentation.tenant', tenantId); } catch { /* sin almacenamiento */ } });
+  return a;
+}
 // Empresas visibles para la plataforma (la duena primero). Se carga en start() solo para superadmin.
 let companies = [];
 const ownerName = () => companies.find(c => c.id === PLATFORM_TENANT)?.branding?.display_name || 'AZC Keeper';
@@ -504,8 +529,18 @@ async function accounts() {
     const own = a.access ? scopeSummary(a.access.role_name, a.access.scope, data.get(a.tenant_id)?.n || new Map()) : 'Sin acceso: no verá nada';
     return a.group_id ? `${own} · Grupo ${a.group_name}: también ${a.group_access.map(g => g.tenant_name).join(', ') || 'ninguna otra empresa aún'}` : own;
   };
-  const render = rows => {
+  // ?empresa=<id> muestra solo las cuentas de esa empresa; con &crear=1 además abre la creación para ella.
+  const params = new URLSearchParams(location.search);
+  const only = platform && isUuid(params.get('empresa')) && params.get('empresa') !== PLATFORM_TENANT && companies.some(c => c.id === params.get('empresa')) ? params.get('empresa') : null;
+  const render = all => {
+    const rows = only ? all.filter(a => a.kind === 'company' && a.tenant_id === only) : all;
     $('page-content').replaceChildren();
+    if (only) {
+      const note = el('p', `Mostrando solo las cuentas de ${companyName(only)}. `, 'notice');
+      const allLink = el('a', 'Ver todas las cuentas'); allLink.href = '/cuentas.php';
+      const add = el('button', `Crear cuenta para ${companyName(only)}`, 'link-button'); add.type = 'button'; add.addEventListener('click', () => create(only));
+      note.append(allLink, ' · ', add); $('page-content').append(note);
+    }
     kpis([['Cuentas', String(rows.length)], ['Superadmin', String(rows.filter(a => a.kind === 'platform').length), `De ${ownerName()}`],
       ['De empresas', String(rows.filter(a => a.kind === 'company').length)],
       ['Pendientes de primer ingreso', String(rows.filter(a => a.must_change_password && a.active).length), 'Con contraseña temporal sin cambiar']]);
@@ -518,7 +553,8 @@ async function accounts() {
     columns.push(['Acceso', accessText],
       ['Estado', a => badge(!a.active ? 'Desactivada' : a.must_change_password ? 'Debe crear su contraseña' : 'Activa', !a.active ? 'bad' : a.must_change_password ? 'warn' : 'good')],
       ['Último ingreso', a => when(a.last_login_at)], ['Acciones', a => actionsFor(a)]);
-    table(s, 'Cuentas', columns, rows, { filters: platform ? [['Empresa', a => a.kind === 'platform' ? ownerName() : a.tenant_name]] : [] });
+    table(s, 'Cuentas', columns, rows, { filters: platform ? [['Empresa', a => a.kind === 'platform' ? ownerName() : a.tenant_name]] : [],
+      search: a => [a.user_name, a.display_name, a.email, a.tenant_name] });
   };
   const refresh = async () => {
     list.data = (await api('GET', '/panel-accounts')).data;
@@ -639,6 +675,12 @@ async function accounts() {
       users.filter(u => u.status === 'active' && !withAccount.has(u.id)).sort((x, y) => x.display_name.localeCompare(y.display_name, 'es'))
         .forEach(u => person.append(new Option(`${u.display_name}${u.email ? ' · ' + u.email : ''}`, u.id)));
       labeled(companyBox, '¿A quién pertenece?', person, users.length ? 'Si la persona no aparece, créala primero en Personas (o ya tiene cuenta).' : 'Esta empresa aún no tiene personas: créalas primero en Personas.');
+      if (person.options.length < 2) {
+        // Sin candidatos no hay cuenta posible: toda cuenta de empresa pertenece a una persona, que va primero.
+        const need = el('p', users.length ? 'Todas las personas activas de esta empresa ya tienen cuenta. ' : 'Requisito pendiente: esta empresa aún no tiene personas. ', 'notice');
+        need.append(clientLink('Crear la persona en Personas', id, '/usuarios.php', ''));
+        companyBox.append(need);
+      }
       person.addEventListener('change', () => { const u = users.find(x => x.id === person.value); if (u?.email && !email.value) email.value = u.email; });
       accessEd = d.roles.length ? accessEditor(companyBox, { roles: d.roles, org: d.org, current: null }) : null;
       if (!d.roles.length) companyBox.append(el('p', 'Aún no hay roles en esta empresa: créalos en Roles y permisos. Sin rol, la cuenta no verá nada.', 'help'));
@@ -680,8 +722,7 @@ async function accounts() {
   const action = $('page-action'); action.textContent = 'Crear cuenta'; action.hidden = false;
   action.addEventListener('click', () => create(null));
   render(list.data);
-  const preset = new URLSearchParams(location.search).get('empresa');
-  if (platform && isUuid(preset)) create(preset);
+  if (only && params.get('crear') === '1') create(only);
 }
 
 // ---- Empresas (solo plataforma) ---------------------------------------------------------------------------------
@@ -741,11 +782,11 @@ async function tenantsPage() {
           box.append(u, d); return box;
         }
         const b = el('button', 'Editar y marca', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(c)); box.append(b);
-        const a = el('a', 'Cuentas', 'link-button'); a.href = c.id === PLATFORM_TENANT ? '/cuentas.php' : `/cuentas.php?empresa=${encodeURIComponent(c.id)}`; box.append(a);
+        const a = el('a', 'Ver cuentas', 'link-button'); a.href = c.id === PLATFORM_TENANT ? '/cuentas.php' : `/cuentas.php?empresa=${encodeURIComponent(c.id)}`; box.append(a);
         if (c.id !== PLATFORM_TENANT) { const fb = el('button', 'Funciones', 'link-button'); fb.type = 'button'; fb.addEventListener('click', () => featuresEditor(c)); box.append(fb); }
         if (c.id !== PLATFORM_TENANT) { const x = el('button', 'Archivar', 'link-button'); x.type = 'button'; x.addEventListener('click', () => archive(c, true)); box.append(x); }
         return box;
-      }]], companies);
+      }]], companies, { search: c => [c.name, c.branding?.display_name] });
     renderGroups();
   };
   let groups = (await optional(api('GET', '/company-groups', { tenant: PLATFORM_TENANT })))?.data || [];
@@ -944,7 +985,7 @@ async function tenantsPage() {
   const action = $('page-action'); action.textContent = 'Crear empresa'; action.hidden = false;
   action.addEventListener('click', () => {
     const { dialog, body, ok, show } = dialogShell('Crear empresa');
-    body.append(el('p', 'Después de crearla, agrega sus personas y crea su primera cuenta (por ejemplo, su administrador).'));
+    body.append(el('p', 'Después de crearla: configura su organización, crea a su administrador como persona, luego su cuenta del panel y por último prepara la instalación de sus equipos.'));
     const name = labeled(body, 'Nombre de la empresa', el('input')); name.maxLength = 100;
     const tz = labeled(body, 'Zona horaria', el('input'), 'Ejemplo: America/Bogota'); tz.maxLength = 64; tz.value = 'America/Bogota';
     const pkg = el('select'); pkg.append(new Option('Sin paquete (solo el núcleo)', '')); packages.forEach(p => pkg.append(new Option(p.name, p.id)));
@@ -957,13 +998,26 @@ async function tenantsPage() {
       try {
         const created = await api('POST', '/tenants', { tenant: PLATFORM_TENANT, body: { name: name.value.trim(), timezone: tz.value.trim(), package_id: pkg.value || null,
           branding: { display_name: name.value.trim(), logo_url: `${location.origin}/branding.svg`, primary_color: '#3C4082', accent_color: '#5A61B3' } } });
-        dialog.close(); await reload();
-        if (confirm(`${created.name} quedó creada. ¿Crear ahora su primera cuenta?`)) location.href = `/cuentas.php?empresa=${encodeURIComponent(created.id)}`;
+        dialog.close(); await reload(); nextSteps(created);
       } catch (e) { show(e.status === 422 ? 'Revisa el nombre y la zona horaria (ejemplo: America/Bogota).' : e); ok.disabled = false; }
     });
     dialog.showModal();
   });
   render();
+}
+// Recorrido tras crear un cliente: la cuenta pertenece a una persona, así que la persona va antes que la cuenta.
+function nextSteps(created) {
+  const { dialog, body, ok, cancel } = dialogShell(`${created.branding?.display_name || created.name} quedó creada`);
+  body.append(el('p', 'Siguientes pasos, en este orden:'));
+  const ol = el('ol', undefined, 'next-steps'); body.append(ol);
+  const step = (text, note, link) => { const li = el('li'); li.append(el('strong', text), ' · ', link); if (note) li.append(el('small', note)); ol.append(li); };
+  step('Configurar la organización', 'Sedes (con su país), áreas y cargos.', clientLink('Abrir Organización', created.id, '/organizacion.php'));
+  step('Crear al administrador como persona', 'Toda cuenta de empresa pertenece a una persona.', clientLink('Abrir Personas', created.id, '/usuarios.php'));
+  const acc = el('a', 'Crear cuenta', 'link-button'); acc.href = `/cuentas.php?empresa=${encodeURIComponent(created.id)}&crear=1`;
+  step('Crear su cuenta del panel', 'Requiere la persona del paso anterior.', acc);
+  step('Preparar la instalación', 'Registrar los equipos de sus personas.', clientLink('Abrir Registrar equipos', created.id, '/alta.php'));
+  cancel.hidden = true; ok.textContent = 'Cerrar'; ok.type = 'button'; ok.addEventListener('click', () => dialog.close());
+  dialog.showModal();
 }
 const sortCompanies = list => [...list].sort((a, b) => (b.id === PLATFORM_TENANT) - (a.id === PLATFORM_TENANT) || (a.branding?.display_name || a.name).localeCompare(b.branding?.display_name || b.name, 'es'));
 
@@ -1043,7 +1097,8 @@ async function people() {
       ['Estado', u => { const d = el('div'); d.append(badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : '')); if (u.monitoring === 'excluded') d.append(' ', badge('No se monitorea', 'info')); return d; }],
       ...(avail ? [['Plan', u => ownPlan(u)?.name || defaultLabel]] : []),
       ['Acciones', u => { if (u.managed_by) return el('small', `Gestionada por ${u.managed_by}`); const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(u)); return b; }]],
-      list, { filters: [['Empresa', u => n.get(u.company_id) || 'Sin empresa'], ['País', u => countryName(siteCountry(u))], ['Ciudad', u => org.find(o => o.id === u.site_id)?.city || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']] });
+      list, { filters: [['Empresa', u => n.get(u.company_id) || 'Sin empresa'], ['País', u => countryName(siteCountry(u))], ['Ciudad', u => org.find(o => o.id === u.site_id)?.city || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']],
+        search: u => [u.display_name, u.email, u.document] });
   };
   const editor = u => {
     const { dialog, body, ok, show } = dialogShell(u ? `Editar ${u.display_name}` : 'Crear persona');
