@@ -7,7 +7,8 @@
       "country_code": "CO",
       "city": "Cali",
       "timezone": "America/Bogota",
-      "_note": "Pendiente: el dueno debe decir a cual sede de Keeper (Tequendama Casa 1/2/3) corresponde."
+      "_note": "Decision del dueno 2026-10-06: toda la gente de Tequendama Cali va a Tequendama Casa 1.",
+      "keeper_name": "Tequendama Casa 1"
     },
     "2": {
       "one_name": "Palmetto Cali",
