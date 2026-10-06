@@ -742,14 +742,27 @@ function logoImage(company, className = 'company-logo') {
 }
 // Casillas del catálogo agrupadas. Paquetes y funciones del cliente usan todo el catálogo; los planes por persona,
 // solo las funciones de nivel persona.
+// Las funciones `pending` se pueden contratar (política comercial) pero todavía no se aplican: se rotulan así en
+// cada casilla y un aviso vivo dice cuáles de las marcadas están en ese estado (contratada ≠ disponible para aplicar).
+const PENDING_LABEL = 'Pendiente de implementación';
 function featureChecks(catalog, parent, selected, { personOnly = false } = {}) {
   const list = personOnly ? catalog.filter(f => f.level === 'person') : catalog;
   const boxes = [];
+  const review = el('p', '', 'notice'); review.setAttribute('role', 'status'); review.hidden = true;
+  if (list.some(f => f.pending)) parent.append(el('p', `Las funciones marcadas «${PENDING_LABEL}» se pueden contratar, pero todavía no se aplican en los equipos ni en el panel.`, 'help'));
   for (const group of [...new Set(list.map(f => f.group))]) {
     const fs = el('fieldset', undefined, 'perm-group'); fs.append(el('legend', group)); parent.append(fs);
     boxes.push(...checks(fs, list.filter(f => f.group === group).map(f => [f.code, f.name,
-      personOnly ? (f.pending ? 'aún sin pantalla' : '') : `${f.level === 'person' ? 'Por persona' : 'Del cliente'}${f.pending ? ' · aún sin pantalla' : ''}`]), selected));
+      personOnly ? (f.pending ? PENDING_LABEL : '') : `${f.level === 'person' ? 'Por persona' : 'Del cliente'}${f.pending ? ` · ${PENDING_LABEL}` : ''}`]), selected));
   }
+  const pendingCodes = new Set(list.filter(f => f.pending).map(f => f.code));
+  const sync = () => {
+    const marked = boxes.filter(b => b.checked && pendingCodes.has(b.value)).map(b => list.find(f => f.code === b.value).name);
+    review.hidden = !marked.length;
+    review.textContent = marked.length ? `Contratadas pero pendientes de implementación (aún no se aplican): ${marked.join(', ')}.` : '';
+  };
+  boxes.forEach(b => b.addEventListener('change', sync)); parent.append(review); sync();
+  boxes.refreshReview = sync;
   return boxes;
 }
 let showArchived = false;
@@ -875,7 +888,7 @@ async function tenantsPage() {
       const parts = (u.data || []).filter(x => x.people > 0).map(x => `${x.people} en ${x.name || 'Sin plan'}`);
       usage.textContent = parts.length ? `Planes en uso: ${parts.join(' · ')}` : 'Planes en uso: aún no hay personas.';
     }).catch(() => { usage.hidden = true; });
-    pkg.addEventListener('change', () => { const p = packages.find(x => x.id === pkg.value); if (p) boxes.forEach(b => { b.checked = p.features.includes(b.value); }); });
+    pkg.addEventListener('change', () => { const p = packages.find(x => x.id === pkg.value); if (p) { boxes.forEach(b => { b.checked = p.features.includes(b.value); }); boxes.refreshReview(); } });
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault(); ok.disabled = true;
       try { await api('PUT', `/tenants/${c.id}/features`, { tenant: c.id, body: { package_id: pkg.value || null, features: boxes.filter(b => b.checked).map(b => b.value), ...((defPlan.value || null) === (current.default_plan_id || null) ? {} : { default_plan_id: defPlan.value || null }) } }); personPlans = (await api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done(); }
@@ -1847,13 +1860,17 @@ async function plansPage() {
     const s = surface('Catálogo de funciones');
     s.append(el('p', `Las ${catalog.length} funciones de Keeper. Las de persona son las que se eligen en los planes; las del cliente solo dependen de lo que compró.`, 'help'));
     table(s, 'Funciones', [
-      ['Función', f => { const d = el('div'); d.append(el('strong', f.name)); if (f.pending) d.append(el('small', 'Aún sin pantalla: se puede vender pero todavía no se aplica')); return d; }],
+      ['Función', f => { const d = el('div'); d.append(el('strong', f.name)); if (f.pending) d.append(' ', badge(PENDING_LABEL, 'warn'), el('small', 'Se puede contratar, pero todavía no se aplica en los equipos ni en el panel.')); return d; }],
       ['Nivel', f => badge(f.level === 'person' ? 'Persona' : 'Cliente', f.level === 'person' ? 'info' : '')],
       ['Grupo', f => f.group], ['Qué hace', f => f.description || '—']], catalog,
-    { filters: [['Nivel', f => f.level === 'person' ? 'Persona' : 'Cliente'], ['Grupo', f => f.group]] });
+    { filters: [['Nivel', f => f.level === 'person' ? 'Persona' : 'Cliente'], ['Grupo', f => f.group], ['Estado', f => f.pending ? PENDING_LABEL : 'Disponible']] });
   };
   const editButton = fn => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', fn); return b; };
-  const featureList = codes => { const d = el('div'); d.append(el('strong', String(codes.length))); if (codes.length) d.append(el('small', codes.map(featureName).join(', '))); return d; };
+  const isPending = code => !!catalog.find(f => f.code === code)?.pending;
+  const featureList = codes => {
+    const d = el('div'); d.append(el('strong', String(codes.length))); if (codes.length) d.append(el('small', codes.map(c => isPending(c) ? `${featureName(c)} (pendiente de implementación)` : featureName(c)).join(', ')));
+    return d;
+  };
   const renderPackages = () => {
     const s = surface('Paquetes de funciones');
     s.append(el('p', 'Atajos para vender: un paquete marca funciones de una vez. Cambiar un paquete no cambia a los clientes que ya lo usan.', 'help'));
