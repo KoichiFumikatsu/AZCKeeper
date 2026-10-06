@@ -1,0 +1,31 @@
+/* Ficha de equipo (revisión UX M5) y Reportes (M10). Complementa k3.css con sus mismos tokens. */
+.device-summary>h2{margin-bottom:10px}
+.device-chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 18px}
+.device-chips .badge{font-size:12px}
+.device-facts{grid-template-columns:repeat(3,minmax(0,1fr))}
+.device-facts dd .badge{margin-right:6px}
+.device-facts .state-note{display:block;margin-top:4px;font-size:11px;font-weight:400;color:var(--muted)}
+.device-more{margin-top:18px}
+.device-more summary{cursor:pointer;min-height:36px;display:flex;align-items:center;color:var(--accent);font-size:13px;font-weight:600}
+.device-more[open] summary{margin-bottom:12px}
+.history-checked{margin:6px 0 0}
+.device-history .history-subhead{margin:28px 0 10px}
+.device-history>.help{margin:4px 0}
+.device-hardening .toolbar{margin:16px 0 8px}
+.dialog-extra:empty{display:none}
+.dialog-extra{margin:0 0 12px}
+
+.report-form{align-items:end}
+.report-form .report-date-help{flex:1 1 100%;margin:-8px 0 0}
+.report-form>.report-presets{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:8px}
+.report-presets button{min-height:36px;padding:6px 12px;font-size:12px}
+.report-form>.report-filters{flex:1 1 100%;margin:0}
+.report-state{margin:0}
+.report-state.pending{border-left-color:var(--line)}
+.report-state.stale{border-left-color:#ac9872;color:#6d4c15;font-weight:600}
+.report-state.invalid{border-left-color:var(--error);color:var(--error);font-weight:600}
+.report-query{font-size:13px;font-weight:600;margin:0 0 16px;overflow-wrap:anywhere}
+.report-results .tab-panel>.work-surface{margin:0}
+
+@media(max-width:1000px){.device-facts{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.device-facts{grid-template-columns:1fr}}

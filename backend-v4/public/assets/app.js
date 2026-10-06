@@ -149,11 +149,14 @@ function today() {
   return `${part('year')}-${part('month')}-${part('day')}`;
 }
 function shiftDay(day, days) { const d = new Date(`${day}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); }
+// Reportes muestra «Hasta» incluido; la API espera el fin excluido, así que se suma un día al consultar.
+const inclusiveDates = () => $('date-form')?.dataset.inclusive === 'true';
 function dateRange() {
   const from = $('from')?.value || shiftDay(today(), -29);
-  const to = $('to')?.value || shiftDay(today(), 1);
+  const typed = $('to')?.value;
+  const to = typed ? (inclusiveDates() ? shiftDay(typed, 1) : typed) : shiftDay(today(), 1);
   const days = (Date.parse(to) - Date.parse(from)) / 86400000;
-  if (!(days > 0 && days <= 366)) throw new Error('Selecciona un período de 1 a 366 días; la fecha final es excluyente.');
+  if (!(days > 0 && days <= 366)) throw new Error(inclusiveDates() ? 'Selecciona un período de 1 a 366 días; las dos fechas se incluyen.' : 'Selecciona un período de 1 a 366 días; la fecha final es excluyente.');
   return { from, to };
 }
 function reportPath() { return query('/reports/productivity', dateRange()); }
@@ -332,70 +335,266 @@ function details(parent, fields) {
   parent.append(list);
 }
 const controlStates = { applied: 'Aplicado', failed: 'Fallido', unsupported: 'No soportado', unknown: 'Desconocido' };
+const controlTones = { applied: 'good', failed: 'bad', unsupported: 'warn', unknown: '' };
+const badge = (text, tone) => node('span', text, `badge${tone ? ` ${tone}` : ''}`);
+const clock = () => new Intl.DateTimeFormat('es-CO', { timeStyle: 'short' }).format(new Date()).replace(/\.$/, '');
+function ago(value) {
+  if (!value) return null;
+  const minutes = Math.max(0, Math.round((Date.now() - Date.parse(value)) / 60000));
+  if (minutes < 1) return 'hace menos de un minuto';
+  if (minutes < 60) return `hace ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `hace ${hours} h` : `hace ${Math.round(hours / 24)} días`;
+}
+// Como el Inicio: «en línea» es un equipo activo con señal en los últimos 5 minutos.
+function connectionState(d) {
+  if (d.status !== 'active') return { text: label(d.status), tone: 'warn', note: 'El equipo no está activo: no recibe órdenes.' };
+  if (!d.last_seen_at) return { text: 'Sin conexión', tone: 'warn', note: 'El agente aún no se ha conectado.' };
+  const online = Date.now() - Date.parse(d.last_seen_at) <= 300000;
+  return { text: online ? 'En línea' : 'Sin conexión', tone: online ? 'good' : 'warn', note: `Última señal ${ago(d.last_seen_at)}.` };
+}
+function hardeningState(status) {
+  if (!status) return { text: 'Desconocido', tone: '', note: 'Tu cuenta no puede consultar el endurecimiento de este equipo.' };
+  const text = hardeningStates[status.state] || status.state;
+  if (status.state === 'hardened') return { text: 'Endurecido', tone: 'good', note: status.hardened_at ? `Desde ${dateTime(status.hardened_at)}` : '' };
+  if (['none', 'unhardened', 'waiting_panel'].includes(status.state)) return { text: 'No endurecido', tone: 'warn', note: text };
+  if (status.state === 'running') return { text: 'En curso', tone: 'info', note: 'El agente está aplicando la orden.' };
+  return { text, tone: 'bad', note: status.detail || '' };
+}
+// No hay un campo «bloqueado»: se deduce de la última orden de bloquear/desbloquear ejecutada del historial.
+function lockState(rows) {
+  if (!rows) return { text: 'Desconocido', tone: '', note: 'Sin acceso al historial de órdenes de este equipo.' };
+  const now = Date.now();
+  const list = rows.filter(r => r.type === 'lock' || r.type === 'unlock').sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  const done = list.find(r => r.status === 'succeeded');
+  const waiting = list.find(r => ['pending', 'delivered', 'running'].includes(r.status) && Date.parse(r.expires_at) > now && (!done || Date.parse(r.created_at) > Date.parse(done.created_at)));
+  const state = done ? (done.type === 'lock' ? { text: 'Bloqueado', tone: 'bad' } : { text: 'No bloqueado', tone: 'good' }) : { text: 'Desconocido', tone: '' };
+  let note = done ? `Según la última orden ejecutada (${commandTypes[done.type]}, ${dateTime(done.result?.completed_at || done.created_at)}).` : 'El historial no tiene órdenes de bloquear o desbloquear ejecutadas.';
+  if (waiting) note += ` Hay una orden de ${waiting.type === 'lock' ? 'bloquear' : 'desbloquear'} sin confirmar.`;
+  return { ...state, note };
+}
+function facts(parent, rows, className = 'details') {
+  const list = node('dl', undefined, className);
+  const cells = {};
+  rows.forEach(([key, value, name]) => {
+    const row = node('div'); const dd = node('dd');
+    if (value instanceof Node) dd.append(value); else dd.textContent = value === null || value === undefined ? 'Sin dato' : String(value);
+    row.append(node('dt', key), dd); list.append(row); if (name) cells[name] = dd;
+  });
+  parent.append(list);
+  return cells;
+}
+function stateCell(cell, state) {
+  cell.replaceChildren(badge(state.text, state.tone));
+  if (state.note) cell.append(node('small', state.note, 'state-note'));
+}
+// Historial de órdenes del equipo: una sola consulta alimenta el resumen (bloqueo) y la tabla del historial.
+function commandLog(d) {
+  const listeners = []; let loading = null;
+  const log = { rows: undefined, error: null, on: f => listeners.push(f) };
+  log.load = () => {
+    if (loading) return loading;
+    loading = (async () => {
+      try {
+        const rows = []; let cursor = null; const seen = new Set();
+        for (let i = 0; i < 20; i++) {
+          const result = await api('GET', query(`/devices/${d.id}/commands`, { limit: 100, cursor }));
+          rows.push(...result.data); cursor = result.next_cursor;
+          if (!cursor || seen.has(cursor)) break; seen.add(cursor);
+        }
+        log.rows = rows; log.error = null;
+      } catch (error) { log.rows = null; log.error = error; }
+      finally { loading = null; }
+      listeners.forEach(f => f(log));
+      return log;
+    })();
+    return loading;
+  };
+  return log;
+}
+async function optionalData(task) { try { return await task(); } catch { return null; } }
 async function device() {
   const id = new URLSearchParams(location.search).get('id');
   if (!isUuid(id)) throw new Error('Selecciona un equipo desde Equipos.');
   const d = await get(`/devices/${id}`);
-  const summary = node('section', undefined, 'work-surface');
-  summary.append(node('h2', d.hostname));
-  details(summary, [['Estado', label(d.status)], ['Versión del agente', d.agent_version], ['Última conexión', dateTime(d.last_seen_at)],
-    ['Sistema operativo', d.os_edition], ['CPU', d.cpu], ['RAM', d.ram_bytes ? `${number.format(d.ram_bytes / 1073741824)} GB` : null],
-    ['Cifrado de disco', d.encryption_state], ['Versión de política aplicada', d.policy_version]]);
-  const owner = node('p'); const ownerLink = node('a', 'Ver la persona asignada'); ownerLink.href = `/miembro.php?id=${encodeURIComponent(d.user_id)}`; owner.append(ownerLink); summary.append(owner);
-  $('content').append(summary);
-  const remote = await remoteActionsSection(d);
+  const log = commandLog(d);
+  const [owner, org, hardening] = await Promise.all([
+    d.user_id ? optionalData(() => get(`/users/${d.user_id}`)) : null,
+    optionalData(() => allPages('/organization')),
+    api('GET', `/admin/devices/${d.id}/hardening`).catch(error => { if ([403, 404].includes(error.status)) return null; throw error; }),
+    log.load(),
+  ]);
+  const header = deviceSummary(d, owner, org, hardening, log);
+  $('content').append(header.section);
+  const remote = await remoteActionsSection(d, log);
   if (remote) $('content').append(remote);
-  $('content').append(renameSection(d));
-  const hardening = await hardeningSection(d);
-  if (hardening) $('content').append(hardening);
-
-  // Estado declarado por el agente en su último reporte; no es una verificación independiente.
+  $('content').append(renameSection(d, log));
+  const hardeningBox = await hardeningSection(d, hardening, status => header.hardening(status), log);
+  if (hardeningBox) $('content').append(hardeningBox);
+  $('content').append(await controlsSection(d));
+  $('content').append(await historySection(d, log));
+}
+// Encabezado de la ficha: quién lo usa, dónde, con qué agente, si está en línea, endurecido o bloqueado.
+function deviceSummary(d, owner, org, hardening, log) {
+  const section = node('section', undefined, 'work-surface device-summary');
+  section.append(node('h2', d.hostname));
+  const chips = node('div', undefined, 'device-chips'); chips.setAttribute('aria-label', 'Estado del equipo');
+  section.append(chips);
+  let person;
+  if (!d.user_id) person = 'Sin persona asignada';
+  else { person = node('a', owner?.display_name || 'Ver la persona asignada'); person.href = `/miembro.php?id=${encodeURIComponent(d.user_id)}`; }
+  const site = !owner ? 'No disponible' : !owner.site_id ? 'Sin sede' : org?.find(o => o.id === owner.site_id)?.name || 'No disponible';
+  const connection = connectionState(d);
+  const lastSeen = d.last_seen_at ? `${dateTime(d.last_seen_at)} · ${ago(d.last_seen_at)}` : 'Sin registro';
+  const cells = facts(section, [['Persona asignada', person], ['Sede', site], ['Versión del agente', d.agent_version || 'Sin versión'],
+    ['Última conexión', lastSeen], ['Conexión', null, 'connection'], ['Endurecimiento', null, 'hardening'], ['Bloqueo', null, 'lock']], 'details device-facts');
+  const more = node('details', undefined, 'device-more'); more.append(node('summary', 'Datos técnicos del equipo'));
+  details(more, [['Estado del equipo', label(d.status)], ['Sistema operativo', d.os_edition], ['CPU', d.cpu], ['RAM', d.ram_bytes ? `${number.format(d.ram_bytes / 1073741824)} GB` : null],
+    ['Cifrado de disco', d.encryption_state], ['Versión de política aplicada', d.policy_version]]);
+  section.append(more);
+  const states = { connection, hardening: hardeningState(hardening), lock: lockState(log.rows) };
+  const draw = () => {
+    chips.replaceChildren(badge(states.connection.text, states.connection.tone), badge(`Endurecimiento: ${states.hardening.text.toLowerCase()}`, states.hardening.tone), badge(`Bloqueo: ${states.lock.text.toLowerCase()}`, states.lock.tone));
+    Object.entries(states).forEach(([key, state]) => stateCell(cells[key], state));
+  };
+  log.on(current => { states.lock = lockState(current.rows); draw(); });
+  draw();
+  return { section, hardening: status => { states.hardening = hardeningState(status); draw(); } };
+}
+// Estado declarado por el agente en su último reporte; no es una verificación independiente.
+async function controlsSection(d) {
   const controls = node('section', undefined, 'work-surface'); controls.append(node('h2', 'Controles del equipo'));
   try {
-    const report = await get(`/devices/${id}/security`);
-    controls.append(node('p', `Último reporte del agente: ${dateTime(report.observed_at)}. Es el estado que declara el agente.`));
-    const columns = [['Control', 'control_id'], ['Estado', r => controlStates[r.state] || r.state], ['Detalle', r => r.error_code || '—'], ['Observado', r => dateTime(r.observed_at)]];
-    const failing = report.controls.filter(c => c.state !== 'applied').length;
-    if (failing) controls.append(node('p', `${failing} control(es) no están aplicados.`, 'error-message'));
-    appendRows(table(controls, 'Estado por control', columns).body, report.controls, columns);
+    const report = await get(`/devices/${d.id}/security`);
+    controls.append(node('p', `Último reporte del agente: ${dateTime(report.observed_at)}${report.observed_at ? ` (${ago(report.observed_at)})` : ''}. Es el estado que declara el agente, no una verificación independiente.`, 'help'));
+    const columns = [['Control', 'control_id'], ['Estado', r => badge(controlStates[r.state] || r.state, controlTones[r.state] || '')], ['Detalle', r => r.error_code || '—'], ['Observado', r => dateTime(r.observed_at)]];
+    const failing = report.controls.filter(c => c.state !== 'applied');
+    if (failing.length) controls.append(node('p', `${failing.length} de ${report.controls.length} controles no están aplicados. Aparecen primero.`, 'error-message'));
+    else if (report.controls.length) controls.append(node('p', 'Todos los controles reportados están aplicados.', 'help'));
+    const ordered = [...failing, ...report.controls.filter(c => c.state === 'applied')];
+    appendRows(table(controls, 'Estado por control', columns).body, ordered, columns);
   } catch (error) {
     if (error.status === 403) controls.append(node('p', 'Tu cuenta no tiene acceso al estado de los controles.', 'empty-state'));
     else if (error.status === 404) controls.append(node('p', 'El equipo aún no ha enviado un reporte de controles.', 'empty-state'));
     else appendError(controls, error);
   }
-  $('content').append(controls);
+  return controls;
+}
+// Historial al final de la ficha: órdenes enviadas (con su estado real según la API) y registro del agente.
+async function historySection(d, log) {
+  const section = node('section', undefined, 'work-surface device-history'); section.append(node('h2', 'Historial del equipo'));
+  const head = node('div', undefined, 'section-head remote-history-head'); head.append(node('h3', 'Órdenes enviadas'));
+  const refresh = node('button', 'Actualizar historial', 'link-button'); refresh.type = 'button'; head.append(refresh);
+  const checked = node('p', undefined, 'help history-checked');
+  const history = node('div', undefined, 'remote-history');
+  section.append(head, node('p', '«Pendiente» y «Entregado» significan que la orden aún no tiene confirmación del equipo. «Ejecutado» o «Falló» es lo que informó el agente.', 'help'), checked, history);
+  const render = current => {
+    refresh.disabled = false;
+    checked.textContent = `Última consulta: ${clock()}.`;
+    history.replaceChildren();
+    if (current.error) {
+      if (current.error.status === 403) history.append(node('p', 'Tu cuenta no tiene acceso al historial de órdenes de este equipo.', 'empty-state'));
+      else appendError(history, current.error);
+      return;
+    }
+    if (!current.rows.length) { history.append(node('p', 'Aún no se han enviado órdenes a este equipo.', 'empty-state')); return; }
+    const now = Date.now();
+    const recent = [...current.rows].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).slice(0, 20);
+    const columns = [['Orden', r => commandTypes[r.type] || r.type], ['Enviada', r => dateTime(r.created_at)],
+      ['Estado', r => {
+        const stale = ['pending', 'delivered'].includes(r.status) && Date.parse(r.expires_at) <= now;
+        const [text, tone] = commandStates[stale ? 'expired' : r.status] || [r.status, ''];
+        return badge(text, tone);
+      }],
+      ['Resultado', r => r.result ? `${commandCodes[r.result.code] || r.result.code} · ${dateTime(r.result.completed_at)}` : '—'],
+      ['Vence', r => dateTime(r.expires_at)]];
+    appendRows(table(history, `Últimas ${recent.length} órdenes de este equipo`, columns).body, recent, columns);
+    history.append(node('p', 'Quién envió cada orden y su motivo quedan en Auditoría.', 'help'));
+  };
+  log.on(render);
+  render(log);
+  refresh.addEventListener('click', () => { refresh.disabled = true; log.load(); });
 
-  const logs = node('section', undefined, 'work-surface'); logs.append(node('h2', 'Registro reciente del agente'));
+  section.append(node('h3', 'Registro reciente del agente', 'history-subhead'));
   try {
-    const result = await get(query('/audit/client-logs', { device_id: id, limit: 50 }));
-    if (!result.data.length) logs.append(node('p', 'No hay registros del agente en el período de retención.', 'empty-state'));
+    const result = await get(query('/audit/client-logs', { device_id: d.id, limit: 50 }));
+    if (!result.data.length) section.append(node('p', 'No hay registros del agente en el período de retención.', 'empty-state'));
     else {
       const columns = [['Fecha', r => dateTime(r.at)], ['Nivel', 'level'], ['Componente', 'component'], ['Código', 'code'], ['Error', r => r.error_code || '—']];
-      appendRows(table(logs, 'Últimos 50 registros', columns).body, result.data, columns);
+      appendRows(table(section, 'Últimos 50 registros', columns).body, result.data, columns);
     }
   } catch (error) {
-    if (error.status === 403) logs.append(node('p', 'Tu cuenta no tiene acceso al registro del agente.', 'empty-state'));
-    else appendError(logs, error);
+    if (error.status === 403) section.append(node('p', 'Tu cuenta no tiene acceso al registro del agente.', 'empty-state'));
+    else appendError(section, error);
   }
-  $('content').append(logs);
+  return section;
 }
-// Endurecimiento (Modo B) desde el panel: el agente lanza el bootstrapper instalado. Al endurecer, las cuentas
+// Confirmación común de la ficha: título con el equipo, efecto en lenguaje simple, nombre escrito cuando hace falta y
+// el error de la API dentro del mismo diálogo. onConfirm devuelve false para dejarlo abierto.
+function confirmDialog({ title, paragraphs, warning, typed, okText, okClass = 'primary', onConfirm }) {
+  const dialog = node('dialog', undefined, 'remote-dialog confirm-dialog'); const form = node('form'); form.noValidate = true;
+  form.append(node('h2', title));
+  const body = node('div', undefined, 'dialog-body'); form.append(body);
+  paragraphs.forEach(text => body.append(node('p', text)));
+  if (warning) body.append(node('p', warning, 'error-text'));
+  let typedInput = null;
+  if (typed) {
+    const l = node('label', `Escribe el nombre del equipo (${typed}) para confirmar`); typedInput = node('input'); typedInput.name = 'confirmation'; typedInput.autocomplete = 'off'; typedInput.spellcheck = false; l.append(typedInput); body.append(l);
+  }
+  const extra = node('div', undefined, 'dialog-extra'); body.append(extra);
+  const error = node('p', '', 'error-text'); error.hidden = true; error.setAttribute('role', 'alert');
+  const footer = node('div', undefined, 'dialog-footer'); const cancel = node('button', 'Cancelar'); cancel.type = 'button';
+  const ok = node('button', okText, okClass); ok.type = 'submit';
+  footer.append(cancel, ok); form.append(error, footer); dialog.append(form); document.body.append(dialog);
+  const sync = () => { ok.disabled = !!typed && typedInput.value !== typed; };
+  if (typed) { typedInput.addEventListener('input', sync); sync(); }
+  const show = e => { error.textContent = e ? errorMessage(e) : ''; error.hidden = !e; };
+  cancel.addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => dialog.remove());
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); show(null);
+    if (typed && typedInput.value !== typed) { show(new Error('Escribe el nombre exacto del equipo para confirmar.')); return; }
+    ok.disabled = true; cancel.disabled = true;
+    try { if (await onConfirm({ show, extra }) !== false) dialog.close(); }
+    catch (e) { show(e); }
+    finally { if (dialog.open) { cancel.disabled = false; sync(); } }
+  });
+  dialog.showModal();
+  (typed ? typedInput : ok).focus();
+  return dialog;
+}
+// Endurecimiento desde el panel: el agente lanza el bootstrapper instalado. Al endurecer, las cuentas
 // administradoras locales quedan como usuario estandar (salvo la cuenta gestionada de IT) y su sesion se cierra a los
 // 2 minutos con aviso, para que el cambio aplique. Revertir restaura exactamente las cuentas degradadas.
 const hardeningStates = { none: 'Sin endurecer', hardened: 'Endurecido', unhardened: 'Revertido', failed: 'Falló (revertido)', running: 'En curso', recovery_required: 'Requiere revertir', rollback_failed: 'Reversión incompleta', waiting_panel: 'Sin endurecer' };
-async function hardeningSection(d) {
-  let status;
-  try { status = await api('GET', `/admin/devices/${d.id}/hardening`); }
-  catch (error) { if ([403, 404].includes(error.status)) return null; throw error; }
-  const section = node('section', undefined, 'work-surface'); section.append(node('h2', 'Endurecimiento de cuentas (Modo B)'));
-  details(section, [['Estado', hardeningStates[status.state] || status.state], ['Último paso', status.last_step], ['Detalle', status.detail],
-    ['Endurecido desde', status.hardened_at ? dateTime(status.hardened_at) : null], ['Último reporte', status.reported_at ? dateTime(status.reported_at) : null]]);
-  section.append(node('p', 'Endurecer deja a las cuentas administradoras del equipo como usuario estándar y crea la cuenta de IT. La persona verá un aviso y su sesión se cerrará a los 2 minutos para aplicar el cambio. Revertir lo deshace.', 'help'));
+async function hardeningSection(d, initial, onStatus, log) {
+  if (!initial) return null;
+  let status = initial;
+  const section = node('section', undefined, 'work-surface device-hardening'); section.append(node('h2', 'Endurecimiento de cuentas'));
+  const state = node('div'); const checked = node('p', undefined, 'help history-checked');
+  const drawState = () => {
+    state.replaceChildren();
+    details(state, [['Estado', hardeningStates[status.state] || status.state], ['Último paso', status.last_step], ['Detalle', status.detail],
+      ['Endurecido desde', status.hardened_at ? dateTime(status.hardened_at) : null], ['Último reporte', status.reported_at ? dateTime(status.reported_at) : null]]);
+    checked.textContent = `Última consulta: ${clock()}.`;
+  };
+  drawState();
+  section.append(state, checked);
+  section.append(node('p', 'Endurecer deja a las cuentas administradoras del equipo como usuario estándar y crea la cuenta local de IT en Windows. La persona verá un aviso y su sesión se cerrará a los 2 minutos para aplicar el cambio. Revertir lo deshace.', 'help'));
   const bar = node('div', undefined, 'toolbar');
   const harden = node('button', 'Endurecer', 'primary'); harden.type = 'button';
   const undo = node('button', 'Revertir'); undo.type = 'button';
+  const reload = node('button', 'Actualizar estado'); reload.type = 'button';
   const fb = node('p', undefined, 'help'); fb.setAttribute('role', 'status');
   const problem = node('p', undefined, 'error-message'); problem.hidden = true; problem.setAttribute('role', 'alert');
+  // El estado real lo informa el agente: tras enviar la orden se vuelve a consultar (GET existente), sin suponerlo.
+  const refreshStatus = async () => {
+    reload.disabled = true;
+    try { status = await api('GET', `/admin/devices/${d.id}/hardening`); drawState(); onStatus(status); showError(problem, null); }
+    catch (error) { showError(problem, error); }
+    finally { reload.disabled = false; }
+  };
+  reload.addEventListener('click', refreshStatus);
   // Cuenta de IT de la empresa: sin su contraseña la API niega "Endurecer" (409). Quien puede configurarla (permiso
   // de endurecimiento sobre toda la empresa) ve el estado y el boton; para el resto se omite.
   const itBar = node('div', undefined, 'toolbar'); itBar.hidden = true;
@@ -412,30 +611,56 @@ async function hardeningSection(d) {
     settings = saved; drawIt(); showError(problem, null); fb.textContent = 'Cuenta de IT guardada. Ya puedes endurecer el equipo.';
   } }));
   itBar.append(configure); drawIt();
-  const send = async (action, button) => {
-    const verb = action === 'harden' ? 'endurecer' : 'revertir el endurecimiento de';
-    if (prompt(`Vas a ${verb} ${d.hostname}. Escribe el nombre del equipo para confirmar.`) !== d.hostname) return;
-    showError(problem, null); fb.textContent = ''; button.disabled = true;
-    try {
-      await api('POST', `/admin/devices/${d.id}/hardening/command`, { body: { action }, idempotencyKey: crypto.randomUUID() });
-      fb.textContent = `Orden enviada. El equipo la ejecuta en su próxima sincronización (unos 2 minutos); el resultado aparece en su registro y en este estado.`;
-    } catch (error) {
-      showError(problem, error.code === 'agent_too_old' ? new Error('El agente de este equipo es anterior a 4.0.10: actualízalo antes de endurecerlo desde el panel.')
-        : error.status === 409 && action === 'harden' && settings?.configured ? new Error('No se puede endurecer: el equipo requiere revertir primero (o no está activo).')
-        : error.status === 409 && action === 'harden' ? new Error('No se puede endurecer: falta cargar la clave de la cuenta de IT de la empresa, o el equipo requiere revertir primero.') : error);
-      if (error.status === 409 && error.code !== 'agent_too_old' && action === 'harden' && canConfigure && !settings?.configured) itBar.hidden = false;
-    } finally { button.disabled = false; }
+  // Confirmación completa en un solo diálogo: efecto, cierre de sesión a los 2 minutos y nombre del equipo escrito.
+  const send = (action, button) => {
+    const hardenIt = action === 'harden';
+    showError(problem, null); fb.textContent = '';
+    confirmDialog({
+      title: hardenIt ? `Endurecer ${d.hostname}` : `Revertir el endurecimiento de ${d.hostname}`,
+      paragraphs: hardenIt
+        ? ['Las cuentas administradoras locales del equipo pasan a usuario estándar, salvo la cuenta local de IT en Windows, que se crea con la clave configurada para la empresa (no es tu cuenta del panel).',
+          'La orden se ejecuta en la próxima sincronización del equipo (unos 2 minutos), si está encendido y conectado.']
+        : ['Las cuentas administradoras que se degradaron al endurecer vuelven a ser administradoras.',
+          'La orden se ejecuta en la próxima sincronización del equipo (unos 2 minutos), si está encendido y conectado.'],
+      warning: hardenIt ? 'La persona verá un aviso y su sesión de Windows se cerrará a los 2 minutos de aplicarse el cambio: perderá lo que no haya guardado.' : null,
+      typed: d.hostname,
+      okText: hardenIt ? 'Enviar orden de endurecimiento' : 'Enviar orden de reversión',
+      onConfirm: async ({ extra }) => {
+        button.disabled = true;
+        try {
+          await api('POST', `/admin/devices/${d.id}/hardening/command`, { body: { action }, idempotencyKey: crypto.randomUUID() });
+        } catch (error) {
+          const missingIt = error.status === 409 && error.code !== 'agent_too_old' && hardenIt && canConfigure && !settings?.configured;
+          if (missingIt) {
+            itBar.hidden = false;
+            // La falta de cuenta de IT se resuelve desde la misma tarea; guardarla no envía la orden.
+            const fix = node('button', 'Configurar cuenta de IT'); fix.type = 'button';
+            fix.addEventListener('click', () => openHardeningSettings(tenant, { onSaved: saved => {
+              settings = saved; drawIt(); extra.replaceChildren(node('p', 'Cuenta de IT guardada. La orden aún no se ha enviado: pulsa «Enviar orden de endurecimiento».', 'help'));
+            } }));
+            extra.replaceChildren(fix);
+          }
+          throw error.code === 'agent_too_old' ? new Error('El agente de este equipo es anterior a 4.0.10: actualízalo antes de endurecerlo desde el panel.')
+            : error.status === 409 && hardenIt && settings?.configured ? new Error('No se puede endurecer: el equipo requiere revertir primero (o no está activo).')
+            : error.status === 409 && hardenIt ? new Error('No se puede endurecer: falta cargar la clave de la cuenta de IT de la empresa, o el equipo requiere revertir primero.') : error;
+        } finally { button.disabled = false; }
+        fb.textContent = 'Orden enviada; aún sin confirmación del equipo. Lo ejecuta en su próxima sincronización (unos 2 minutos). El estado de arriba cambia cuando el agente informe el resultado: pulsa «Actualizar estado» para volver a consultarlo.';
+        await refreshStatus();
+        log.load();
+        return true;
+      },
+    });
   };
   harden.addEventListener('click', () => send('harden', harden));
   undo.addEventListener('click', () => send('unharden', undo));
-  bar.append(harden, undo); section.append(itSummary, bar, fb, problem, itBar);
+  bar.append(harden, undo, reload); section.append(itSummary, bar, fb, problem, itBar);
   return section;
 }
 // Cambio del nombre de Windows del equipo (comando rename_computer). La placa de activo ACT_0015 se convierte a
 // ACT-0015: el guion bajo no es valido en nombres DNS. El agente lo aplica en el proximo reinicio o al reiniciar ahora.
 const computerNamePattern = /^(?![0-9]+$)[A-Za-z0-9-]{1,15}$/;
-function renameSection(d) {
-  const section = node('section', undefined, 'work-surface'); section.append(node('h2', 'Cambiar nombre del equipo'));
+function renameSection(d, log) {
+  const section = node('section', undefined, 'work-surface device-rename'); section.append(node('h2', 'Cambiar nombre del equipo'));
   section.append(node('p', `Nombre actual en Windows: ${d.hostname}. Usa la placa de activo (por ejemplo ACT-0015). Máximo 15 caracteres: letras, números y guion.`, 'help'));
   const form = node('form'); form.className = 'toolbar'; form.noValidate = true;
   const label = node('label', 'Nombre nuevo'); const input = node('input'); input.name = 'computer_name'; input.maxLength = 15; input.autocomplete = 'off'; input.placeholder = 'ACT-0015'; label.append(input);
@@ -448,20 +673,31 @@ function renameSection(d) {
     event.preventDefault(); showError(problem, null); status.textContent = '';
     const name = input.value.trim();
     if (!computerNamePattern.test(name)) { showError(problem, new Error('Nombre no válido: de 1 a 15 caracteres, solo letras, números y guion, y no solo números.')); return; }
-    if (restart.checked && !confirm(`El equipo ${d.hostname} se reiniciará de inmediato y pasará a llamarse ${name}. ¿Continuar?`)) return;
-    submit.disabled = true;
-    try {
-      await api('POST', `/devices/${d.id}/commands`, {
-        body: { type: 'rename_computer', reason: 'Cambio de nombre desde el panel', expires_at: new Date(Date.now() + 23 * 3600 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'), parameters: { computer_name: name, restart_now: restart.checked } },
-        idempotencyKey: crypto.randomUUID(),
-      });
-      status.textContent = restart.checked
-        ? `Orden enviada. El equipo la recibe en su próxima sincronización (unos 2 minutos), se renombra a ${name} y se reinicia.`
-        : `Orden enviada. El equipo la recibe en su próxima sincronización y pasará a llamarse ${name} en su próximo reinicio.`;
-      input.value = '';
-    } catch (error) {
-      showError(problem, error.code === 'agent_too_old' ? new Error('El agente de este equipo es anterior a 4.0.8: actualízalo antes de cambiarle el nombre.') : error);
-    } finally { submit.disabled = false; }
+    const now = restart.checked;
+    confirmDialog({
+      title: `Cambiar el nombre de ${d.hostname}`,
+      paragraphs: [`El equipo pasará a llamarse ${name} en Windows. La orden llega en su próxima sincronización (unos 2 minutos), si está encendido y conectado.`,
+        now ? 'Al recibirla, el equipo se reinicia de inmediato para aplicar el nombre.' : 'El nombre nuevo se aplica en el próximo reinicio del equipo.'],
+      warning: now ? 'La persona perderá lo que no haya guardado: el reinicio no tiene aviso ni cuenta regresiva.' : null,
+      okText: now ? 'Cambiar nombre y reiniciar' : 'Enviar cambio de nombre',
+      onConfirm: async () => {
+        submit.disabled = true;
+        try {
+          await api('POST', `/devices/${d.id}/commands`, {
+            body: { type: 'rename_computer', reason: 'Cambio de nombre desde el panel', expires_at: new Date(Date.now() + 23 * 3600 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'), parameters: { computer_name: name, restart_now: now } },
+            idempotencyKey: crypto.randomUUID(),
+          });
+        } catch (error) {
+          throw error.code === 'agent_too_old' ? new Error('El agente de este equipo es anterior a 4.0.8: actualízalo antes de cambiarle el nombre.') : error;
+        } finally { submit.disabled = false; }
+        status.textContent = now
+          ? `Orden enviada. El equipo la recibe en su próxima sincronización (unos 2 minutos), se renombra a ${name} y se reinicia.`
+          : `Orden enviada. El equipo la recibe en su próxima sincronización y pasará a llamarse ${name} en su próximo reinicio.`;
+        input.value = '';
+        log.load();
+        return true;
+      },
+    });
   });
   form.append(label, restartLabel, submit); section.append(form, status, problem);
   return section;
@@ -516,18 +752,17 @@ function commandError(error, type) {
   return error;
 }
 const commandExpiry = () => new Date(Date.now() + 23 * 3600 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
-async function remoteActionsSection(d) {
+async function remoteActionsSection(d, log) {
   const access = await api('GET', '/me/access').catch(() => null);
   const offered = [...remoteActions, wipeAction].map(action => ({ action, state: remoteAvailability(action, access, d) })).filter(x => x.state);
   if (!offered.length) return null;
   const section = node('section', undefined, 'work-surface remote-actions'); section.append(node('h2', 'Acciones remotas'));
-  section.append(node('p', 'Cada orden queda en cola: el equipo la recibe en su próxima sincronización (unos 2 minutos) si está encendido y conectado. Su resultado aparece en el historial.', 'help'));
+  section.append(node('p', 'Cada orden queda en cola: el equipo la recibe en su próxima sincronización (unos 2 minutos) si está encendido y conectado. Su estado y resultado aparecen en «Historial del equipo», al final de esta ficha.', 'help'));
   const status = node('p', undefined, 'help remote-feedback'); status.setAttribute('role', 'status');
-  const history = node('div', undefined, 'remote-history');
   const button = ({ action, state }, className) => {
     const b = node('button', action.label, className); b.type = 'button'; b.dataset.command = action.type;
     if (state.reason) { b.disabled = true; b.title = state.reason; }
-    else b.addEventListener('click', () => { status.textContent = ''; openRemoteAction(d, action, { onSent: () => { status.textContent = 'Orden enviada: el equipo la recibe en su próxima sincronización (unos 2 minutos).'; loadHistory(); } }); });
+    else b.addEventListener('click', () => { status.textContent = ''; openRemoteAction(d, action, { onSent: () => { status.textContent = 'Orden enviada: el equipo la recibe en su próxima sincronización (unos 2 minutos).'; log.load(); } }); });
     return b;
   };
   const reasons = list => {
@@ -549,45 +784,6 @@ async function remoteActionsSection(d) {
     section.append(zone);
   }
   section.append(status);
-  const head = node('div', undefined, 'section-head remote-history-head'); head.append(node('h3', 'Historial de órdenes'));
-  const refresh = node('button', 'Actualizar historial', 'link-button'); refresh.type = 'button'; head.append(refresh);
-  section.append(head, history);
-  let loading = null;
-  function loadHistory() {
-    if (loading) return loading;
-    refresh.disabled = true;
-    loading = (async () => {
-      try {
-        const rows = []; let cursor = null; const seen = new Set();
-        for (let i = 0; i < 20; i++) {
-          const result = await api('GET', query(`/devices/${d.id}/commands`, { limit: 100, cursor }));
-          rows.push(...result.data); cursor = result.next_cursor;
-          if (!cursor || seen.has(cursor)) break; seen.add(cursor);
-        }
-        history.replaceChildren();
-        if (!rows.length) { history.append(node('p', 'Aún no se han enviado órdenes a este equipo.', 'empty-state')); return; }
-        const now = Date.now();
-        const recent = rows.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).slice(0, 20);
-        const columns = [['Orden', r => commandTypes[r.type] || r.type], ['Enviada', r => dateTime(r.created_at)],
-          ['Estado', r => {
-            const stale = ['pending', 'delivered'].includes(r.status) && Date.parse(r.expires_at) <= now;
-            const [text, tone] = commandStates[stale ? 'expired' : r.status] || [r.status, ''];
-            return node('span', text, `badge${tone ? ` ${tone}` : ''}`);
-          }],
-          ['Resultado', r => r.result ? `${commandCodes[r.result.code] || r.result.code} · ${dateTime(r.result.completed_at)}` : '—'],
-          ['Vence', r => dateTime(r.expires_at)]];
-        appendRows(table(history, `Últimas ${recent.length} órdenes de este equipo`, columns).body, recent, columns);
-        history.append(node('p', 'Quién envió cada orden y su motivo quedan en Auditoría.', 'help'));
-      } catch (error) {
-        history.replaceChildren();
-        if (error.status === 403) history.append(node('p', 'Tu cuenta no tiene acceso al historial de órdenes de este equipo.', 'empty-state'));
-        else appendError(history, error);
-      } finally { refresh.disabled = false; loading = null; }
-    })();
-    return loading;
-  }
-  refresh.addEventListener('click', () => { loadHistory(); });
-  await loadHistory();
   return section;
 }
 // Diálogo de confirmación: efecto en lenguaje simple, motivo (va a la auditoría) y, en el borrado, el nombre exacto del
@@ -688,7 +884,7 @@ async function context() {
     timezone = 'UTC';
     showError($('page-error'), new Error(`No se pudo consultar la identidad de la empresa. ${errorMessage(error)}`));
   }
-  if ($('from') && !$('from').value) { $('from').value = shiftDay(today(), -29); $('to').value = shiftDay(today(), 1); }
+  if ($('from') && !$('from').value) { $('from').value = shiftDay(today(), -29); $('to').value = inclusiveDates() ? today() : shiftDay(today(), 1); }
   return true;
 }
 async function load() {
@@ -743,7 +939,8 @@ async function start() {
   returnBand(); // llegó desde un paso de Puesta en marcha (?pm=N): «Volver al progreso»
   $('refresh').addEventListener('click', load);
   $('tenant-select').addEventListener('change', () => { sessionStorage.setItem('keeper.presentation.tenant', $('tenant-select').value); load(); });
-  $('date-form')?.addEventListener('submit', event => { event.preventDefault(); load(); });
+  // En Reportes la consulta la maneja coordinator.js (estado «sin consultar», filtros dependientes); aquí no se recarga.
+  $('date-form')?.addEventListener('submit', event => { event.preventDefault(); if (!(surface === 'portal' && page === 'reports')) load(); });
   await load();
 }
 window.addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
