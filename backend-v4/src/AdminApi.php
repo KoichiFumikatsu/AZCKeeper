@@ -420,7 +420,9 @@ final class AdminApi
             $this->db->run("DELETE FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source='document'",[$this->tenant,$id]);
             if ($document!==null) { $this->db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,'document',?)",[$this->tenant,$id,$document]); }
         }
-        RoleRules::apply($this->db,$this->tenant,$this->access);
+        // Las reglas por cargo solo miran a esta persona y a sus jefes (antes y despues, por la regla «manages»).
+        $focus=array_values(array_filter([$id,$old['reports_to_user_id']??null,$this->row('users',$id)['reports_to_user_id']]));
+        RoleRules::apply($this->db,$this->tenant,$this->access,fn(string $user):bool=>in_array($user,$focus,true));
         $this->audit('user',$id,array_keys(get_object_vars($b))); $this->dirty($this->userDevices($id));
         return $this->result($this->userDto($this->row('users',$id)),$op==='createUser'?201:200);
     }
@@ -511,7 +513,8 @@ final class AdminApi
         foreach ($b->permissions as $permission) { $this->db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)',[$this->tenant,$id,$permission]); }
         foreach ($this->db->run('SELECT user_id FROM access_grants WHERE tenant_id=? AND role_id=? AND user_id IS NOT NULL',[$this->tenant,$id])->fetchAll() as $user) { $this->invalidateUser($user['user_id']); }
         $this->db->run('UPDATE tenants SET auth_version=auth_version+1 WHERE tenant_id=?',[$this->tenant]);
-        RoleRules::apply($this->db,$this->tenant,$this->access);
+        // Lo que cambia por este rol: quienes lo recibirian por regla o lo tenian (al desactivarlo caen en otra regla).
+        RoleRules::apply($this->db,$this->tenant,$this->access,fn(string $user,?string $role,?array $grant):bool=>$role===$id || ($grant['role_id']??null)===$id);
         $this->audit('role',$id,array_keys(get_object_vars($b))); return $this->result($this->roleDto($this->row('roles',$id)),$op==='createRole'?201:200);
     }
     /** Un rol nunca incluye permisos de funciones que el cliente no compro (§4), ni siquiera si lo guarda superadmin. */

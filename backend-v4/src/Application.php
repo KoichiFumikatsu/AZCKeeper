@@ -74,7 +74,7 @@ final class Application
                 $this->send($e->status,Util::json(['error'=>$e->status===401?'invalid_client':'invalid_request']),$id,$e->status===401?['WWW-Authenticate'=>'Basic realm="keeper-oauth"']:[]);
                 return;
             }
-            $this->send($e->status, Util::json(['type' => 'about:blank', 'title' => $e->errorCode, 'status' => $e->status, 'code' => $e->errorCode, 'request_id' => $id] + ($e->detail===null?[]:['detail'=>$e->detail])), $id, $e->headers, true);
+            $this->send($e->status, Util::json(['type' => 'about:blank', 'title' => $e->errorCode, 'status' => $e->status, 'code' => $e->errorCode, 'request_id' => $id] + ($e->detail===null?[]:['detail'=>$e->detail]) + ($e->errors===[]?[]:['errors'=>$e->errors])), $id, $e->headers, true);
         } catch (\Throwable $e) {
             $status = $e instanceof \PDOException ? 503 : 500;
             // Exception messages may contain secrets; log only class, correlation ID and numeric driver metadata.

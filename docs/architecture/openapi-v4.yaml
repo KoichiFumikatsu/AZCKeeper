@@ -1605,7 +1605,8 @@ paths:
       summary: Crear colaborador sin login
       description: Crear colaborador sin login Autorización de acción/objeto obligatoria además de CSRF; registrar
         auditoría. Rol inicial Colaborador y panel_login_enabled=false, asignados por servidor; no acepta roles/login
-        en payload.
+        en payload. Las reglas por cargo se recalculan solo para esta persona y sus jefes (antes y después, regla manages); si darían un rol
+        que quien llama no puede dar, 403 delegation_exceeds_own_access con errors[0].message que nombra a la persona y el rol.
       security:
       - adminSession: []
         csrfToken: []
@@ -6112,7 +6113,8 @@ paths:
       operationId: patchUser
       summary: Editar registro o inactivar
       description: Editar registro o inactivar Autorización de acción/objeto obligatoria además de CSRF; registrar
-        auditoría.
+        auditoría. Las reglas por cargo se recalculan solo para esta persona y sus jefes (antes y después, regla manages); si darían un rol
+        que quien llama no puede dar, 403 delegation_exceeds_own_access con errors[0].message que nombra a la persona y el rol.
       security:
       - adminSession: []
         csrfToken: []
@@ -11915,7 +11917,8 @@ paths:
       operationId: createRoleRule
       summary: Crear regla de rol
       description: Solo con roles marcados como asignables por regla. Dar permisos de administración a más de 10 personas exige
-        confirm_sensitive.
+        confirm_sensitive. Quien guarda debe poder dar el rol; el recálculo solo mira a quienes cumplen la regla o la tenían
+        (403 delegation_exceeds_own_access con errors[0].message que nombra a la persona y el rol).
       security:
       - adminSession: []
         csrfToken: []
@@ -11982,7 +11985,8 @@ paths:
       - admin
       operationId: patchRoleRule
       summary: Editar regla de rol
-      description: Al guardar se recalculan los roles puestos por reglas.
+      description: Al guardar se recalculan los roles puestos por esta regla (quienes la cumplen o la tenían); si darían un rol
+        que quien llama no puede dar, 403 delegation_exceeds_own_access con errors[0].message que nombra a la persona y el rol.
       security:
       - adminSession: []
         csrfToken: []

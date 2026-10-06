@@ -37,27 +37,51 @@ final class RoleRules
     /**
      * Recalcula los roles puestos por reglas en toda la empresa. Devuelve [añadidos, quitados].
      * $by: quien hizo el cambio desde el panel. Un rol que la regla le daria a alguien por ese cambio pasa por su
-     * delegacion (§4); si no podria darlo, 403 y no cambia nada. Sin $by (sync, sistema), la regla aplica sin mas.
+     * delegacion (§4); si no podria darlo, 403 (con la persona y el rol) y no cambia nada. Sin $by (sync, sistema) o
+     * con la plataforma, la regla aplica en toda la empresa.
+     * $concerns(user, rol deseado|null, grant actual|null, regla deseada|null): lo que cambia por la peticion (la persona
+     * editada y su jefe, la regla o el rol guardado). Para quien no es plataforma solo eso se valida y se aplica; el
+     * desfase de otras personas (sync sin jerarquia, pendientes resueltos, migracion) queda para el recalculo del
+     * sistema y no se le cobra a quien edita. null = toda la empresa (fail-closed).
      */
-    public static function apply(Database $db, string $tenant, ?AdminAccess $by = null): array
+    public static function apply(Database $db, string $tenant, ?AdminAccess $by = null, ?\Closure $concerns = null): array
     {
+        $only = $by !== null && $concerns !== null && !$by->c['platform'];
         $desired = [];
         foreach ($db->run('SELECT p.* FROM panel_role_rules p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id AND r.active=TRUE AND r.assignable_by_rule=TRUE WHERE p.tenant_id=? AND p.active=TRUE ORDER BY p.created_at', [$tenant])->fetchAll() as $rule) {
             foreach (self::matching($db, $tenant, $rule) as $user) { $desired[bin2hex($user)] ??= [$user, $rule['role_id'], $rule['id']]; }
         }
         $added = 0; $removed = 0;
         foreach ($db->run("SELECT user_id FROM access_grants WHERE tenant_id=? AND source='rule' AND user_id IS NOT NULL", [$tenant])->fetchAll() as $row) {
-            if (!isset($desired[bin2hex($row['user_id'])])) { AccessGrants::revertToDefault($db, $tenant, $row['user_id']); $removed++; }
+            if (isset($desired[bin2hex($row['user_id'])])) { continue; }
+            if ($only && !$concerns($row['user_id'], null, AccessGrants::forUser($db, $tenant, $row['user_id']), null)) { continue; }
+            AccessGrants::revertToDefault($db, $tenant, $row['user_id']); $removed++;
         }
         foreach ($desired as [$user, $role, $rule]) {
             $g = AccessGrants::forUser($db, $tenant, $user);
             if ($g !== null && ($g['source'] === 'manual' || ($g['role_id'] === $role && $g['rule_id'] === $rule))) { continue; }
+            if ($only && !$concerns($user, $role, $g, $rule)) { continue; }
             $scope = $g['scope'] ?? AccessScope::own();
-            if ($by !== null && ($g === null || $g['role_id'] !== $role)) { $by->within(AccessGrants::permissions($db, $tenant, $role), $scope, $user); }
+            if ($by !== null && ($g === null || $g['role_id'] !== $role)) { self::delegate($db, $tenant, $by, $user, $role, $scope); }
             AccessGrants::setForUser($db, $tenant, $user, $role, $scope, 'rule', $rule);
             $added++;
         }
         return [$added, $removed];
+    }
+
+    /** Delegacion de un rol que una regla le daria a $user; el 403 dice a quien y que rol (Problem.errors, en español). */
+    private static function delegate(Database $db, string $tenant, AdminAccess $by, string $user, string $role, AccessScope $scope): void
+    {
+        $permissions = AccessGrants::permissions($db, $tenant, $role);
+        try { $by->within($permissions, $scope, $user); } catch (ApiError $e) {
+            if ($e->detail !== 'delegation_exceeds_own_access') { throw $e; }
+            $roleName = $db->one('SELECT name FROM roles WHERE tenant_id=? AND id=?', [$tenant, $role])['name'] ?? 'nuevo';
+            // Solo se nombra a quien el que edita puede ver (el jefe nuevo puede estar fuera de su alcance).
+            $person = $by->sees($user) ? ($db->one('SELECT display_name FROM users WHERE tenant_id=? AND id=?', [$tenant, $user])['display_name'] ?? 'esa persona') : 'una persona fuera de tu alcance';
+            $why = $by->lacking($permissions) ? 'tiene permisos que tú no tienes' : 'su alcance no está dentro del tuyo';
+            $message = mb_substr("No puedes dar el rol $roleName a $person: $why.", 0, 200);
+            throw new ApiError(403, 'permission_denied', [], 'delegation_exceeds_own_access', [['pointer' => '', 'code' => 'delegation_exceeds_own_access', 'message' => $message]]);
+        }
     }
 
     /** Monitoreo efectivo: la excepcion por persona manda; si no, los cargos excluidos (directivos) no se monitorean. */
@@ -105,7 +129,8 @@ final class RoleRules
             $this->db->run('UPDATE panel_role_rules SET name=?,condition_kind=?,position_id=?,area_id=?,role_id=?,active=?,version=version+1 WHERE tenant_id=? AND id=?', [$b->name, $b->condition_kind, $position, $area, $role['id'], (int) $b->active, $tenant, $id]);
             // Cambiar el rol de una regla: lo que puso con el rol anterior se recalcula abajo.
         }
-        self::apply($this->db, $tenant, $this->access);
+        // Lo que cambia por esta regla: quienes la cumplen ahora o la tenian (al desactivarla caen en otra regla).
+        self::apply($this->db, $tenant, $this->access, fn (string $user, ?string $role, ?array $grant, ?string $rule): bool => $rule === $id || ($grant['rule_id'] ?? null) === $id);
         (new Audit($this->db))->record($this->c, $this->r, $this->r->operation['operationId'], 'role_rule', $id, array_keys(get_object_vars($b)));
         return AdminApi::response($this->dto($this->db->one('SELECT * FROM panel_role_rules WHERE tenant_id=? AND id=?', [$tenant, $id])), $this->r->method === 'POST' ? 201 : 200);
     }

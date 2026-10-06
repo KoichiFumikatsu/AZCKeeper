@@ -123,6 +123,16 @@ final class AdminAccess
         if (!$this->c['platform'] && !$this->covers($scope, $target)) { throw new ApiError(403, 'permission_denied', [], 'delegation_exceeds_own_access'); }
     }
 
+    /** Permisos de la lista que quien llama no puede dar (no los tiene, no son delegables o son de la plataforma). */
+    public function lacking(array $permissions): array
+    {
+        if ($this->c['platform']) { return []; }
+        return array_values(array_filter($permissions, function (string $code): bool {
+            $p = $this->db->one('SELECT delegable,platform_only FROM permissions WHERE code=?', [$code]);
+            return !$p || $p['platform_only'] || !$p['delegable'] || $code === 'roles.gestionar' || !in_array($code, $this->permissions, true);
+        }));
+    }
+
     private function covers(AccessScope $child, ?string $target): bool
     {
         if ($this->full()) { return true; }
@@ -134,7 +144,7 @@ final class AdminAccess
         };
     }
 
-    private function sees(string $user): bool
+    public function sees(string $user): bool
     {
         [$where, $args] = $this->usersSql();
         return (bool) $this->db->one("SELECT u.id FROM users u WHERE u.tenant_id=? AND u.id=? AND $where", [$this->c['tenant_id'], $user, ...$args]);

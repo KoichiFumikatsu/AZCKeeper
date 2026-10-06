@@ -107,7 +107,8 @@ export function errorMessage(error) {
   const detail = error?.problem?.detail || '';
   if (/^feature_not_contracted:/.test(detail)) message = 'La función no está contratada por el cliente.';
   if (detail === 'scope_denied') message = 'Tu alcance no incluye esa empresa, sede o área.';
-  if (detail === 'delegation_exceeds_own_access') message = 'No puedes dar un acceso más amplio que el tuyo.';
+  // Una regla por cargo que daría un rol mayor: el servidor dice a quién y qué rol (Problem.errors).
+  if (detail === 'delegation_exceeds_own_access') message = error.problem.errors?.find?.(e => e?.code === detail)?.message || 'No puedes dar un acceso más amplio que el tuyo.';
   if (!message) {
     if (error.status === 401) message = 'Tu sesión venció. Inicia sesión de nuevo.';
     else if (error.status === 403) message = 'No tienes permiso para consultar esta información.';

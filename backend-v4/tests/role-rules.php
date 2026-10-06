@@ -102,5 +102,29 @@ function roleRulesTests(Database $db): void
     check($roleOf() === Util::bin($light['id']), 'rule within the caller access fires');
     expect(adminRequest($platform2, 'PATCH', '/users/' . Util::id($target['id']), ['position_id' => $director], ['if-match' => $tv()]), 200, 'platform changes the position');
     check($roleOf() === Util::bin($strong['id']), 'platform change fires the larger rule');
+
+    // Precision del 403 (revision final, punto 4): solo cuenta lo que cambia para la persona editada (y su jefe con la
+    // regla «manages»); el desfase de otras personas no se cobra a quien edita, y el error nombra a la persona y el rol.
+    $named = function (string $name) use ($db, $v): array { $p = adminMember($db, $v); $db->run('UPDATE users SET display_name=? WHERE tenant_id=? AND id=?', [$name, $p['tenant_id'], $p['id']]); return $p; };
+    $ana = $named('Ana Pérez'); $drift = $named('Desfase previo');
+    $db->run('UPDATE users SET position_id=? WHERE tenant_id=? AND id=?', [Util::bin($director), $t2, $drift['id']]); // sin recalcular: desfase
+    $uv = fn (array $p) => '"' . $db->one('SELECT version FROM users WHERE tenant_id=? AND id=?', [$t2, $p['id']])['version'] . '"';
+    $roleOfP = fn (array $p) => $db->one('SELECT role_id FROM access_grants WHERE tenant_id=? AND user_id=?', [$t2, $p['id']])['role_id'] ?? null;
+    expect(adminRequest($manager, 'PATCH', '/role-rules/' . $lightRule['id'], $byPosition($light['id'], $analyst), ['if-match' => '"' . $lightRule['version'] . '"']), 200, 'saving an unrelated rule does not charge the drift');
+    expect(adminRequest($manager, 'PATCH', '/users/' . Util::id($ana['id']), ['position_id' => $analyst], ['if-match' => $uv($ana)]), 200, 'drift elsewhere does not block an unrelated edit');
+    check($roleOfP($ana) === Util::bin($light['id']), 'the edited person gets her rule role');
+    check($roleOfP($drift) !== Util::bin($strong['id']), 'the caller never applies drift they could not give');
+    $r = adminRequest($manager, 'PATCH', '/users/' . Util::id($ana['id']), ['position_id' => $director], ['if-match' => $uv($ana)]);
+    check($exceeds($r) && ($r[1]['errors'][0]['message'] ?? null) === 'No puedes dar el rol Gestor por cargo a Ana Pérez: tiene permisos que tú no tienes.', 'the 403 names the person and the role');
+    check($roleOfP($ana) === Util::bin($light['id']), 'refused change keeps her role');
+    // «manages»: poner a alguien de jefe cuenta para ese jefe.
+    expect(adminRequest($platform2, 'POST', '/role-rules', ['name' => 'Jefes fuertes', 'condition_kind' => 'manages', 'position_id' => null, 'area_id' => null, 'role_id' => $strong['id'], 'active' => true]), 201, 'platform creates a strong manages rule');
+    check($roleOfP($drift) === Util::bin($strong['id']), 'a platform apply settles the drift');
+    $boss = $named('Bruno Jefe');
+    $r = adminRequest($manager, 'PATCH', '/users/' . Util::id($ana['id']), ['reports_to_user_id' => Util::id($boss['id'])], ['if-match' => $uv($ana)]);
+    check($exceeds($r) && ($r[1]['errors'][0]['message'] ?? null) === 'No puedes dar el rol Gestor por cargo a Bruno Jefe: tiene permisos que tú no tienes.', 'the manages rule names the new manager');
+    check($db->one('SELECT reports_to_user_id FROM users WHERE tenant_id=? AND id=?', [$t2, $ana['id']])['reports_to_user_id'] === null && $roleOfP($boss) === null, 'refused manager change rolled back');
+    expect(adminRequest($platform2, 'PATCH', '/users/' . Util::id($ana['id']), ['reports_to_user_id' => Util::id($boss['id'])], ['if-match' => $uv($ana)]), 200, 'platform sets the manager');
+    check($roleOfP($boss) === Util::bin($strong['id']), 'platform change gives the manager his rule role');
     echo 'PASS role rules (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
