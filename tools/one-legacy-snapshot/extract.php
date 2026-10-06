@@ -94,6 +94,8 @@ foreach ($q('SELECT id, nombre, activa FROM sedes ORDER BY id') as $r) {
     } else {
         if (($loc['one_name'] ?? $name) !== $name) { $warn("sede one-sede-{$r['id']}: el nombre en One no coincide con one_name del mapa; revisar sites-location.json"); }
     }
+    // keeper_name: nombre con el que se envia la sede (decision del dueno 2026-10-06: conservar los nombres de Keeper).
+    if ($loc !== null && isset($loc['keeper_name'])) { $item['name'] = clean($loc['keeper_name'], 120); }
     // Keeper: campo ausente = conserva, null = borra. Se envian siempre ambos (one-keeper-changes-report.md).
     $item['country_code'] = $loc['country_code'] ?? null;
     $item['city'] = $loc['city'] ?? null;

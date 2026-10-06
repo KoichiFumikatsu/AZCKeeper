@@ -1,13 +1,41 @@
 {
-  "_doc": "Ubicacion de cada sede de One legacy (clave = sedes.id). Se envian SIEMPRE country_code (ISO 3166-1 alfa-2) y city; null borra el valor en Keeper. timezone es obligatorio: los horarios de la gente de la sede se emiten en esa zona (cambiarla cambia el external_id del horario). one_name es solo una comprobacion: si no coincide con sedes.nombre el extractor avisa.",
+  "_doc": "Ubicacion de cada sede de One legacy (clave = sedes.id). Se envian SIEMPRE country_code (ISO 3166-1 alfa-2) y city; null borra el valor en Keeper. timezone es obligatorio: los horarios de la gente de la sede se emiten en esa zona (cambiarla cambia el external_id del horario). one_name es solo una comprobacion: si no coincide con sedes.nombre el extractor avisa. keeper_name (opcional): nombre con el que la sede llega a Keeper; se usa para emparejar con sedes ya creadas en Keeper y conservar su nombre.",
   "default_timezone": "America/Bogota",
   "sites": {
-    "1": { "one_name": "Tequendama Cali", "country_code": "CO", "city": "Cali",     "timezone": "America/Bogota" },
-    "2": { "one_name": "Palmetto Cali",   "country_code": "CO", "city": "Cali",     "timezone": "America/Bogota" },
-    "4": { "one_name": "808 Medellín",    "country_code": "CO", "city": "Medellín", "timezone": "America/Bogota" },
-    "5": { "one_name": "Granada",         "country_code": "CO", "city": "Cali",     "timezone": "America/Bogota",
-           "_note": "Sede en Cali, confirmado por el dueno 2026-10-06. No es Tegucigalpa." },
-    "6": { "one_name": "Honduras",        "country_code": "HN", "city": null,       "timezone": "America/Tegucigalpa",
-           "_note": "Sede nueva en One (aparece en la extraccion del 2026-10-06). Pais deducido del nombre; ciudad sin confirmar." }
+    "1": {
+      "one_name": "Tequendama Cali",
+      "country_code": "CO",
+      "city": "Cali",
+      "timezone": "America/Bogota",
+      "_note": "Pendiente: el dueno debe decir a cual sede de Keeper (Tequendama Casa 1/2/3) corresponde."
+    },
+    "2": {
+      "one_name": "Palmetto Cali",
+      "country_code": "CO",
+      "city": "Cali",
+      "timezone": "America/Bogota"
+    },
+    "4": {
+      "one_name": "808 Medellín",
+      "country_code": "CO",
+      "city": "Medellín",
+      "timezone": "America/Bogota",
+      "keeper_name": "Medellin 808"
+    },
+    "5": {
+      "one_name": "Granada",
+      "country_code": "CO",
+      "city": "Cali",
+      "timezone": "America/Bogota",
+      "_note": "Sede en Cali, confirmado por el dueno 2026-10-06. No es Tegucigalpa."
+    },
+    "6": {
+      "one_name": "Honduras",
+      "country_code": "HN",
+      "city": "Tegucigalpa",
+      "timezone": "America/Tegucigalpa",
+      "_note": "Sede Honduras de One = Tegucigalpa en Keeper (confirmado por el dueno 2026-10-06).",
+      "keeper_name": "Tegucigalpa"
+    }
   }
 }
