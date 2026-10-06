@@ -569,7 +569,7 @@ async function load() {
     const companyZone = surface === 'portal' && ['home', 'users', 'member', 'reports', 'policies'].includes(page);
     const zoneText = companyZone ? `Fechas y horas en la zona horaria de la empresa (${timezone})` : 'Fechas de eventos en la zona horaria del navegador';
     if ($('tz-note')) $('tz-note').textContent = zoneText;
-    $('page-status').textContent = `Consulta finalizada a las ${new Intl.DateTimeFormat('es-CO', { timeStyle: 'medium' }).format(new Date())}. ${zoneText}.`;
+    $('page-status').textContent = `Consulta finalizada a las ${new Intl.DateTimeFormat('es-CO', { timeStyle: 'medium' }).format(new Date()).replace(/\.$/, '')}. ${zoneText}.`;
   } catch (error) {
     showError($('page-error'), error); $('page-status').textContent = 'No se pudo completar la consulta.';
   } finally {
