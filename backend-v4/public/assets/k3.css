@@ -133,3 +133,8 @@ tr.group-row th{background:#d6d6d6;color:var(--ink);white-space:normal;padding:4
 .rule-related ul,.rule-review ul,.rule-changes ul{margin:6px 0 0;padding-left:20px;font-size:13px}.rule-related li,.rule-review li,.rule-changes li{margin:3px 0;overflow-wrap:anywhere}
 .rule-review{display:grid;gap:10px}.rule-review p{margin:0}.rule-review .notice{margin:0}.rule-sentence{font-size:16px;font-weight:650;overflow-wrap:anywhere}.rule-changes{border-top:1px solid var(--line);padding-top:10px}.rule-changes h4{margin:0 0 4px}
 @media(max-width:600px){.rule-steps{gap:4px}.rule-step-tab{font-size:12px}}
+/* M7 · Planes y paquetes: pestañas, detalle de funciones y revisión de diferencias. */
+.plan-tabs{margin-top:0}.plan-tabs [role=tab]:focus-visible{outline:3px solid var(--p-400);outline-offset:2px}
+.feature-detail summary{min-height:32px;padding-block:4px;font-size:13px;font-weight:600;color:var(--accent)}.feature-detail ul{margin:4px 0 0;padding-left:18px;font-size:13px}.feature-detail li{margin:4px 0}.feature-detail small{display:block;color:var(--muted)}
+.change-review{margin:16px 0 0}.change-review strong{display:block;margin-bottom:4px}.change-review ul{margin:4px 0 0;padding-left:18px}.change-review li{margin:4px 0;overflow-wrap:anywhere}.change-review .review-add{color:#305b48}.change-review .review-remove{color:var(--error);font-weight:600}.change-review .review-warn{color:#6d4c15}
+.feature-detail li.pending>span{color:#6d4c15;font-weight:600}

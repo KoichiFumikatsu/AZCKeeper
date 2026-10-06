@@ -3042,34 +3042,69 @@ async function policiesPage() {
 // ---- Planes y paquetes (solo plataforma) ----------------------------------------------------------------------------
 // Catálogo de funciones, paquetes (plantillas para vender) y planes por persona (docs/architecture/v4-clientes-funciones-accesos.md
 // §2-3). Las funciones de cada cliente y su plan por defecto se eligen en Empresas → Funciones.
+// Pestañas (revisión UX M7): el trabajo frecuente (planes y paquetes) va primero y la explicación queda en su pestaña.
+const PLAN_TABS = [['como', 'Cómo funciona'], ['funciones', 'Funciones'], ['paquetes', 'Paquetes'], ['planes', 'Planes por persona']];
+const PLAN_TAB_KEY = 'keeper.plans.tab';
 async function plansPage() {
   const [catalogPage, packagePage, planPage] = await Promise.all([api('GET', '/features', { tenant: PLATFORM_TENANT }),
     api('GET', '/feature-packages', { tenant: PLATFORM_TENANT }), api('GET', '/person-plans', { tenant: PLATFORM_TENANT })]);
   const catalog = catalogPage.data;
   let packages = packagePage.data, personPlans = planPage.data;
   const featureName = code => catalog.find(f => f.code === code)?.name || code;
+  const clientName = c => c.branding?.display_name || c.name;
   const clients = companies.filter(c => c.id !== PLATFORM_TENANT && !c.archived);
+  const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  const counted = v => typeof v === 'number' && Number.isFinite(v);
   // Uso por cliente: personas de cada empresa en cada plan (plan efectivo: propio activo o el por defecto del cliente).
-  const usage = new Map();
+  // Un cliente cuyo uso no se pudo leer queda en `unread` y se muestra «No disponible», nunca como cero personas.
+  const usage = new Map(); let unread = [];
   const loadUsage = async () => {
     const results = await Promise.all(clients.map(c => api('GET', `/tenants/${c.id}/plan-usage`, { tenant: c.id }).then(u => [c, u], () => [c, null])));
-    usage.clear();
+    usage.clear(); unread = [];
     for (const [c, u] of results) {
-      for (const row of u?.data || []) {
+      if (!u) { unread.push(clientName(c)); continue; }
+      for (const row of u.data || []) {
         if (!row.plan_id || !row.people) continue;
         if (!usage.has(row.plan_id)) usage.set(row.plan_id, []);
-        usage.get(row.plan_id).push(`${c.branding?.display_name || c.name}: ${row.people}`);
+        usage.get(row.plan_id).push(`${clientName(c)}: ${row.people}`);
       }
     }
   };
   await loadUsage();
   const refresh = async () => { await loadUsage(); render(); done(); };
+  let current = 'planes';
+  try { const v = localStorage.getItem(PLAN_TAB_KEY); if (PLAN_TABS.some(([k]) => k === v)) current = v; } catch { /* sin almacenamiento */ }
+  const asked = new URLSearchParams(location.search).get('tab'); if (PLAN_TABS.some(([k]) => k === asked)) current = asked;
+  let tabButtons = [], panels = {};
+  const choose = (key, focus = false) => {
+    current = key;
+    try { localStorage.setItem(PLAN_TAB_KEY, key); } catch { /* sin almacenamiento */ }
+    tabButtons.forEach(b => { const on = b.dataset.key === key; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; if (on && focus) b.focus(); });
+    Object.entries(panels).forEach(([k, p]) => { p.hidden = k !== key; });
+  };
   const render = () => {
     $('page-content').replaceChildren();
-    renderHow(); renderCatalog(); renderPackages(); renderPersonPlans();
+    const tabs = el('div', undefined, 'tabs plan-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Planes y paquetes');
+    const counts = { funciones: catalog.length, paquetes: packages.length, planes: personPlans.length };
+    tabButtons = PLAN_TABS.map(([k, label]) => {
+      const b = el('button', label); b.type = 'button'; b.id = `plans-tab-${k}`; b.dataset.key = k;
+      b.setAttribute('role', 'tab'); b.setAttribute('aria-controls', `plans-panel-${k}`);
+      if (k in counts) b.append(' ', el('span', String(counts[k]), 'tab-count'));
+      b.addEventListener('click', () => choose(k));
+      b.addEventListener('keydown', e => {
+        const i = PLAN_TABS.findIndex(([x]) => x === k);
+        const to = e.key === 'ArrowRight' ? (i + 1) % PLAN_TABS.length : e.key === 'ArrowLeft' ? (i + PLAN_TABS.length - 1) % PLAN_TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? PLAN_TABS.length - 1 : -1;
+        if (to >= 0) { e.preventDefault(); choose(PLAN_TABS[to][0], true); }
+      });
+      tabs.append(b); return b;
+    });
+    $('page-content').append(tabs);
+    panels = Object.fromEntries(PLAN_TABS.map(([k]) => { const p = el('div', undefined, 'plan-panel'); p.id = `plans-panel-${k}`; p.setAttribute('role', 'tabpanel'); p.setAttribute('aria-labelledby', `plans-tab-${k}`); $('page-content').append(p); return [k, p]; }));
+    renderHow(panels.como); renderCatalog(panels.funciones); renderPackages(panels.paquetes); renderPersonPlans(panels.planes);
+    choose(current);
   };
-  const renderHow = () => {
-    const s = surface('Cómo funciona');
+  const renderHow = parent => {
+    const s = surface('Cómo funciona', parent);
     const chain = el('div', undefined, 'portal-path');
     ['Funciones (catálogo)', 'Paquete', 'Funciones del cliente', 'Plan de cada persona', 'Lo que recibe la persona'].forEach((t, i) => { if (i) chain.append('→'); chain.append(el('span', t)); });
     s.append(chain);
@@ -3081,9 +3116,22 @@ async function plansPage() {
       'Lo que recibe la persona = funciones del cliente ∩ su plan. Si el cliente no compró una función, ningún plan la da.']
       .forEach(t => ul.append(el('li', t, 'help')));
     s.append(ul);
+    s.append(el('p', 'Ejemplo: el cliente compró Bloqueo de USB y Actividad; su plan por defecto da solo Actividad. Sus personas reciben Actividad; una persona con un plan propio que incluya Bloqueo de USB recibe las dos.', 'notice'));
   };
-  const renderCatalog = () => {
-    const s = surface('Catálogo de funciones');
+  // Funciones de un plan o paquete: el número y, al abrir, cada una con su nivel y si está pendiente de implementación.
+  const featureList = codes => {
+    const d = el('div', undefined, 'feature-detail');
+    if (!codes.length) { d.append(el('strong', '0'), el('small', 'Sin funciones')); return d; }
+    const det = el('details'); det.append(el('summary', `${plural(codes.length, 'función', 'funciones')}`));
+    const ul = el('ul');
+    [...codes].sort((a, b) => featureName(a).localeCompare(featureName(b), 'es')).forEach(c => {
+      const f = catalog.find(x => x.code === c); const li = el('li', undefined, f?.pending ? 'pending' : ''); li.append(el('span', f?.pending ? `${featureName(c)} (pendiente de implementación)` : featureName(c)), ' ', badge(f?.level === 'client' ? 'Cliente' : f ? 'Persona' : 'Desconocida', f?.level === 'person' ? 'info' : ''));
+      ul.append(li);
+    });
+    det.append(ul); d.append(det); return d;
+  };
+  const renderCatalog = parent => {
+    const s = surface('Catálogo de funciones', parent);
     s.append(el('p', `Las ${catalog.length} funciones de Keeper. Las de persona son las que se eligen en los planes; las del cliente solo dependen de lo que compró.`, 'help'));
     table(s, 'Funciones', [
       ['Función', f => { const d = el('div'); d.append(el('strong', f.name)); if (f.pending) d.append(' ', badge(PENDING_LABEL, 'warn'), el('small', 'Se puede contratar, pero todavía no se aplica en los equipos ni en el panel.')); return d; }],
@@ -3092,27 +3140,61 @@ async function plansPage() {
     { filters: [['Nivel', f => f.level === 'person' ? 'Persona' : 'Cliente'], ['Grupo', f => f.group], ['Estado', f => f.pending ? PENDING_LABEL : 'Disponible']] });
   };
   const editButton = fn => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', fn); return b; };
-  const isPending = code => !!catalog.find(f => f.code === code)?.pending;
-  const featureList = codes => {
-    const d = el('div'); d.append(el('strong', String(codes.length))); if (codes.length) d.append(el('small', codes.map(c => isPending(c) ? `${featureName(c)} (pendiente de implementación)` : featureName(c)).join(', ')));
-    return d;
+  // Diferencias de funciones entre lo guardado y lo marcado (se agregan / se quitan / se conservan).
+  const diff = (before, after) => ({ added: after.filter(f => !before.includes(f)), removed: before.filter(f => !after.includes(f)), kept: after.filter(f => before.includes(f)) });
+  const nameList = codes => [...codes].sort((a, b) => featureName(a).localeCompare(featureName(b), 'es')).map(c => catalog.find(f => f.code === c)?.pending ? `${featureName(c)} (pendiente de implementación)` : featureName(c)).join(', ');
+  // Revisión dentro del diálogo antes de guardar: el primer envío muestra el resumen; el segundo guarda. Cualquier
+  // cambio en el formulario vuelve a pedir revisión.
+  const reviewStep = (form, ok, body, label) => {
+    const box = el('div', undefined, 'notice change-review'); box.setAttribute('role', 'status'); box.hidden = true; body.append(box);
+    let reviewed = false;
+    ok.textContent = label;
+    const reset = () => { if (!reviewed) return; reviewed = false; box.hidden = true; ok.textContent = label; };
+    form.addEventListener('input', reset); form.addEventListener('change', reset);
+    return {
+      get reviewed() { return reviewed; },
+      show(lines) {
+        box.replaceChildren(el('strong', 'Revisa el cambio antes de guardar'));
+        const ul = el('ul'); lines.filter(Boolean).forEach(([text, tone]) => ul.append(el('li', text, tone || ''))); box.append(ul);
+        box.hidden = false; reviewed = true; ok.textContent = 'Confirmar y guardar';
+        box.scrollIntoView?.({ block: 'nearest' });
+      },
+    };
   };
-  const renderPackages = () => {
-    const s = surface('Paquetes de funciones');
+  const changeLines = d => [
+    d.added.length ? [`Se agregan (${d.added.length}): ${nameList(d.added)}.`, 'review-add'] : null,
+    d.removed.length ? [`Se quitan (${d.removed.length}): ${nameList(d.removed)}.`, 'review-remove'] : null,
+    [d.kept.length ? `Se conservan ${plural(d.kept.length, 'función', 'funciones')}.` : 'No se conserva ninguna función.'],
+  ];
+  const usageText = id => {
+    const parts = usage.get(id) || [];
+    return [parts.length ? parts.join(' · ') : '', unread.length ? `No disponible: ${unread.join(', ')}` : ''].filter(Boolean).join(' · ');
+  };
+  const renderPackages = parent => {
+    const s = surface('Paquetes de funciones', parent);
     s.append(el('p', 'Atajos para vender: un paquete marca funciones de una vez. Cambiar un paquete no cambia a los clientes que ya lo usan.', 'help'));
     const add = el('button', 'Crear paquete'); add.type = 'button'; add.addEventListener('click', () => packageEditor(null)); s.append(add);
     if (!packages.length) { s.append(el('p', 'Aún no hay paquetes.', 'help')); return; }
-    table(s, 'Paquetes', [['Paquete', p => p.name], ['Funciones', p => featureList(p.features)], ['Clientes', p => String(p.tenants)], ['', p => editButton(() => packageEditor(p))]], packages);
+    table(s, 'Paquetes', [['Paquete', p => p.name], ['Funciones', p => featureList(p.features)], ['Clientes', p => counted(p.tenants) ? String(p.tenants) : 'No disponible'], ['', p => editButton(() => packageEditor(p))]], packages);
   };
   const packageEditor = p => {
-    const { dialog, body, ok, show } = dialogShell(p ? `Editar ${p.name}` : 'Crear paquete');
+    const { dialog, form, body, ok, show } = dialogShell(p ? `Editar ${p.name}` : 'Crear paquete');
     dialog.classList.add('wide-dialog');
     const name = labeled(body, 'Nombre', el('input')); name.maxLength = 80; name.value = p?.name || '';
     const boxes = featureChecks(catalog, body, p?.features || []);
-    dialog.querySelector('form').addEventListener('submit', async ev => {
+    const review = reviewStep(form, ok, body, p ? 'Revisar cambios' : 'Revisar y crear');
+    form.addEventListener('submit', async ev => {
       ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
+      const next = boxes.filter(b => b.checked).map(b => b.value);
+      const d = diff(p?.features || [], next);
+      if (!review.reviewed && (!p || d.added.length || d.removed.length)) {
+        review.show([...changeLines(d),
+          [p ? `No cambia a los clientes actuales${counted(p.tenants) ? ` (${plural(p.tenants, 'cliente lo usa', 'clientes lo usan')})` : ' (el número de clientes que lo usan no está disponible)'}: sus funciones siguen iguales. Solo se aplica al dar de alta o editar un cliente con este paquete.` : 'Es un paquete nuevo: no cambia a ningún cliente hasta que se elija al dar de alta o editar uno.'],
+          d.added.some(c => catalog.find(f => f.code === c)?.pending) ? ['Las funciones pendientes de implementación se pueden vender, pero todavía no se aplican.', 'review-warn'] : null]);
+        return;
+      }
       ok.disabled = true;
-      const payload = { name: name.value.trim(), features: boxes.filter(b => b.checked).map(b => b.value) };
+      const payload = { name: name.value.trim(), features: next };
       try {
         if (p) await api('PATCH', `/feature-packages/${p.id}`, { tenant: PLATFORM_TENANT, body: payload, ifMatch: p.version }); else await api('POST', '/feature-packages', { tenant: PLATFORM_TENANT, body: payload });
         packages = (await api('GET', '/feature-packages', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done();
@@ -3120,27 +3202,42 @@ async function plansPage() {
     });
     dialog.showModal();
   };
-  const renderPersonPlans = () => {
-    const s = surface('Planes por persona');
+  const renderPersonPlans = parent => {
+    const s = surface('Planes por persona', parent);
     s.append(el('p', 'Qué funciones de persona recibe cada persona. Cada cliente elige un plan por defecto y las personas pueden tener uno propio. No hay cupos: el conteo de personas por plan sirve para facturar.', 'help'));
+    if (unread.length) s.append(el('p', `No se pudo leer el uso por cliente de ${unread.join(', ')}: ahí se muestra «No disponible», no cero personas.`, 'notice'));
     const add = el('button', 'Crear plan'); add.type = 'button'; add.addEventListener('click', () => personPlanEditor(null)); s.append(add);
     if (!personPlans.length) { s.append(el('p', 'Aún no hay planes por persona.', 'help')); return; }
     table(s, 'Planes por persona', [['Plan', x => { const d = el('div'); d.append(el('strong', x.name)); if (!x.active) d.append(' ', badge('Inactivo', '')); if (x.badge_label) d.append(el('small', x.badge_label)); return d; }],
-      ['Funciones', x => featureList(x.features)], ['Personas', x => String(x.people)],
-      ['Por cliente', x => (usage.get(x.id) || []).join(' · ') || '—'], ['', x => editButton(() => personPlanEditor(x))]], personPlans);
+      ['Funciones', x => featureList(x.features)], ['Personas', x => counted(x.people) ? String(x.people) : 'No disponible'],
+      ['Por cliente', x => usageText(x.id) || 'Ningún cliente'], ['', x => editButton(() => personPlanEditor(x))]], personPlans);
   };
   const personPlanEditor = p => {
-    const { dialog, body, ok, show } = dialogShell(p ? `Editar ${p.name}` : 'Crear plan por persona');
+    const { dialog, form, body, ok, show } = dialogShell(p ? `Editar ${p.name}` : 'Crear plan por persona');
     dialog.classList.add('wide-dialog');
     const name = labeled(body, 'Nombre', el('input')); name.maxLength = 80; name.value = p?.name || '';
     const badgeLabel = labeled(body, 'Etiqueta', el('input'), 'El texto corto que se muestra junto a la persona.'); badgeLabel.maxLength = 40; badgeLabel.value = p?.badge_label || '';
     body.append(el('p', 'Marca las funciones de persona que da este plan. Cada persona recibe solo las que además compró su cliente.', 'help'));
     const boxes = featureChecks(catalog, body, p?.features || [], { personOnly: true });
     const [activeBox] = checks(body, [['active', 'Plan activo']], !p || p.active ? ['active'] : []);
-    dialog.querySelector('form').addEventListener('submit', async ev => {
+    const review = reviewStep(form, ok, body, p ? 'Revisar cambios' : 'Revisar y crear');
+    form.addEventListener('submit', async ev => {
       ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
       const nextFeatures = boxes.filter(b => b.checked).map(b => b.value);
-      if (p && p.people > 0 && ((p.active && !activeBox.checked) || p.features.some(f => !nextFeatures.includes(f))) && !confirm(`Este plan lo usan ${p.people} personas. Al guardar, sus equipos dejarán de aplicar lo que quitaste (en la próxima compilación). ¿Continuar?`)) { return; }
+      const d = diff(p?.features || [], nextFeatures);
+      const turnsOff = p && p.active && !activeBox.checked, turnsOn = p && !p.active && activeBox.checked;
+      if (!review.reviewed && (!p || d.added.length || d.removed.length || turnsOff || turnsOn)) {
+        const where = p ? usageText(p.id) : '';
+        const people = !p ? 'Es un plan nuevo: nadie lo usa todavía.'
+          : counted(p.people) ? `Afecta a ${plural(p.people, 'persona activa', 'personas activas')} que hoy tienen este plan (propio o por defecto de su cliente)${where ? `: ${where}` : ''}.`
+          : `No disponible: no se pudo leer cuántas personas usan este plan${where ? ` (${where})` : ''}.`;
+        review.show([...changeLines(d), [people, p && p.people > 0 && (d.removed.length || turnsOff) ? 'review-remove' : ''],
+          p && p.people > 0 && d.removed.length ? ['Sus equipos dejan de aplicar lo que se quita en la próxima compilación.'] : null,
+          turnsOff ? ['Al desactivarlo, quien lo tiene como plan propio pasa al plan por defecto de su cliente; en los clientes donde es el plan por defecto, las personas sin plan propio quedan sin plan y sus equipos no reciben controles de persona.', 'review-remove'] : null,
+          turnsOn ? ['Al activarlo, quienes lo tienen asignado vuelven a recibir sus funciones.'] : null,
+          ['Cada persona recibe solo las funciones que además compró su cliente.']]);
+        return;
+      }
       ok.disabled = true;
       const payload = { name: name.value.trim(), badge_label: badgeLabel.value.trim(), features: nextFeatures, active: activeBox.checked };
       try {
