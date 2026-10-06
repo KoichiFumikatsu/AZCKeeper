@@ -1,0 +1,11 @@
+{
+  "_doc": "Codigo employee.company de One legacy -> empresa del grupo en Keeper. Decision del dueno 2026-10-06: 1 y 4 -> AZC Legal; 2 -> BilingueLaw; 3 -> LawyerDesk; 5 -> Matiz LegalTech; el holding (Grupo AZC) no recibe personas por ahora. El slug forma el external_id one-company-<slug>: NO cambiarlo nunca (One v2 debe emitir el mismo). El nombre debe ser identico al de la empresa ya creada en Keeper para que el emparejamiento por nombre la proponga.",
+  "tenant_slug": "grupo-azc",
+  "companies": [
+    { "slug": "azc-legal",   "name": "AZC Legal",       "one_codes": [1, 4] },
+    { "slug": "bilinguelaw", "name": "BilingueLaw",     "one_codes": [2] },
+    { "slug": "lawyerdesk",  "name": "LawyerDesk",      "one_codes": [3] },
+    { "slug": "matiz",       "name": "Matiz LegalTech", "one_codes": [5] },
+    { "slug": "grupo-azc",   "name": "Grupo AZC",       "one_codes": [] }
+  ]
+}
