@@ -127,12 +127,14 @@ export async function coordinator(ctx) {
   }
   function productivity(p, data) {
     const series = rows(data, 'series');
+    // Promedio diario: media simple de los días con dato (no es un ratio del período ponderado por horas).
     const avg = field => { const values = series.filter(r => numeric(r[field])); return values.length ? values.reduce((a, r) => a + r[field], 0) / values.length : null; };
+    const daysWith = field => series.filter(r => numeric(r[field])).length;
     // Etiquetas con su formula: "horas activas" se leia como "equipo encendido" y la cobertura no se entendia.
     metrics(p, [['Uso real', series.length ? hours(series.reduce((a, r) => a + r.active_seconds, 0)) : 'Sin datos', `Suma del período: tiempo con teclado o ratón en uso. Equipo encendido y registrando: ${series.length ? hours(series.reduce((a, r) => a + r.active_seconds + r.idle_seconds, 0)) : 'sin datos'}.`],
-      ['Productividad media', percent(avg('productivity_percent')), 'Uso en apps productivas ÷ uso total. Responde: ¿en qué se usa el tiempo?'],
-      ['Distracción media', percent(avg('distraction_percent')), 'Uso en apps poco productivas ÷ uso total.'],
-      ['Focus promedio', numeric(avg('focus_score')) ? `${fmt.format(avg('focus_score'))} /100` : 'Sin dato', 'Tiempo productivo en bloques de 25 min o más sin distraerse ÷ tiempo productivo. Responde: ¿el trabajo fue sostenido o a ratos?'],
+      ['Promedio diario de productividad', percent(avg('productivity_percent')), `Suma de la productividad de cada día con dato ÷ días con dato (${daysWith('productivity_percent')}). La de cada día = uso en apps productivas ÷ uso total de ese día. Todos los días pesan igual, aunque uno tenga más horas que otro; los días sin dato no cuentan.`],
+      ['Promedio diario de distracción', percent(avg('distraction_percent')), `Suma de la distracción de cada día con dato ÷ días con dato (${daysWith('distraction_percent')}). La de cada día = uso en apps poco productivas ÷ uso total de ese día.`],
+      ['Focus: promedio diario', numeric(avg('focus_score')) ? `${fmt.format(avg('focus_score'))} /100` : 'Sin dato', `Suma del focus de cada día con dato ÷ días con dato (${daysWith('focus_score')}). El de cada día = tiempo productivo en bloques de 25 min o más sin distraerse ÷ tiempo productivo. Responde: ¿el trabajo fue sostenido o a ratos?`],
       ['Registro vs. jornada', series.length ? percent(data.coverage_percent) : 'Sin datos', 'Tiempo con el equipo encendido y Keeper registrando ÷ horas de jornada esperadas (horario menos festivos y ausencias). Bajo = equipos apagados o sin reportar.']]);
     const unclassified = avg('unclassified_percent');
     if (numeric(unclassified) && unclassified > 20) { const n = el('p', undefined, 'notice'); n.append(`El ${percent(unclassified)} del uso está en apps sin clasificar: productividad y distracción son poco confiables. `, link('Clasificar aplicaciones', '/clasificacion.php')); p.append(n); }
