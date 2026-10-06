@@ -1,5 +1,5 @@
 {
-  "source_sha256": "8cf5c1b1457b02df0bb03701aadf74e48468fbdaccf09bfa231b33e9c1c4e629",
+  "source_sha256": "b935282725a91ecb9b94be96b91f3d33cbc50a541de0abb88a6134acdb3541f3",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -22105,7 +22105,7 @@
         "domains": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 9,
+          "maxItems": 10,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -22116,6 +22116,7 @@
             "properties": {
               "domain": {
                 "enum": [
+                  "empresas",
                   "firmas",
                   "sedes",
                   "areas",
@@ -22152,7 +22153,7 @@
       "properties": {
         "data": {
           "type": "array",
-          "maxItems": 9,
+          "maxItems": 10,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -22163,6 +22164,7 @@
             "properties": {
               "domain": {
                 "enum": [
+                  "empresas",
                   "firmas",
                   "sedes",
                   "areas",
@@ -22296,9 +22298,10 @@
         },
         "domains": {
           "type": "array",
-          "maxItems": 9,
+          "maxItems": 10,
           "items": {
             "enum": [
+              "empresas",
               "firmas",
               "sedes",
               "areas",

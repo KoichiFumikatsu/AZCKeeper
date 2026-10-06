@@ -248,7 +248,7 @@ final class AdminApi
     private function deleteOrgUnit(array $old): array
     {
         $this->match($old); $id=$old['id'];
-        DataSources::guardWrite($this->db,$this->tenant,['firm'=>'firmas','company'=>'firmas','site'=>'sedes','area'=>'areas','position'=>'cargos'][$old['kind']]??'areas','org_unit',$id);
+        DataSources::guardWrite($this->db,$this->tenant,['firm'=>'firmas','company'=>'empresas','site'=>'sedes','area'=>'areas','position'=>'cargos'][$old['kind']]??'areas','org_unit',$id);
         $uses=[
             'personas activas'=>["SELECT COUNT(*) n FROM users WHERE tenant_id=? AND status='active' AND ? IN (firm_id,site_id,area_id,position_id,company_id)",[$this->tenant,$id]],
             'unidades que dependen de ella'=>['SELECT COUNT(*) n FROM org_units WHERE tenant_id=? AND parent_id=? AND deleted_at IS NULL',[$this->tenant,$id]],
@@ -298,7 +298,7 @@ final class AdminApi
         $city=property_exists($b,'city')?($b->city===null?null:(preg_replace('/\s+/u',' ',trim($b->city))?:null)):($id?$old['city']:null);
         if ($city!==null && $b->kind!=='site') { throw new ApiError(422,'validation_failed',[],'city_only_for_sites'); }
         $values=['kind'=>$b->kind,'name'=>$b->name,'parent_id'=>$parent,'active'=>(int)$b->active,'country_code'=>$country,'city'=>$city];
-        DataSources::guardWrite($this->db,$this->tenant,['firm'=>'firmas','company'=>'firmas','site'=>'sedes','area'=>'areas','position'=>'cargos'][$b->kind]??'areas','org_unit',$id);
+        DataSources::guardWrite($this->db,$this->tenant,['firm'=>'firmas','company'=>'empresas','site'=>'sedes','area'=>'areas','position'=>'cargos'][$b->kind]??'areas','org_unit',$id);
         if ($id) { $this->update('org_units',$id,$values); } else { $id=Util::bin(Util::uuid()); $this->db->run('INSERT INTO org_units (tenant_id,id,kind,name,parent_id,active,country_code,city) VALUES (?,?,?,?,?,?,?,?)',[$this->tenant,$id,...array_values($values)]); }
         if (isset($old) && $b->kind==='site' && $old['country_code']!==$country) { (new HolidayCalendars($this->db,$this->c,$this->access,$this->r))->recompute(array_column($this->db->run('SELECT id FROM holiday_calendars WHERE tenant_id=?',[$this->tenant])->fetchAll(),'id')); }
         $this->audit('org_unit',$id,array_keys($values)); $this->dirty();
@@ -455,23 +455,8 @@ final class AdminApi
         $codes=array_values(array_filter($codes,function ($code) use ($features) { $f=Features::forOperation('',$code); return $f===null || in_array($f,$features,true); }));
         return self::response(['platform'=>false,'features'=>$features,'permissions'=>array_map(fn($code)=>['code'=>$code,'scopes'=>[$kind]],$codes)]);
     }
-    private function placeholderFirm(): string
-    {
-        $row=$this->db->one("SELECT id FROM org_units WHERE tenant_id=? AND kind='firm' AND active=TRUE AND name='Sin firma' LIMIT 1",[$this->tenant]);
-        if ($row) { return $row['id']; }
-        $id=Util::bin(Util::uuid());
-        $this->db->run("INSERT INTO org_units (tenant_id,id,kind,name) VALUES (?,?,'firm','Sin firma')",[$this->tenant,$id]);
-        return $id;
-    }
-    /** Horario sin dias laborales: la jornada esperada es cero, nunca hay ausencia ni tardanza; la actividad si se cuenta. */
-    private function placeholderSchedule(): string
-    {
-        $row=$this->db->one("SELECT s.id FROM schedules s WHERE s.tenant_id=? AND s.name='Sin horario' AND NOT EXISTS (SELECT 1 FROM schedule_days d WHERE d.tenant_id=s.tenant_id AND d.schedule_id=s.id) LIMIT 1",[$this->tenant]);
-        if ($row) { return $row['id']; }
-        $id=Util::bin(Util::uuid());
-        $this->db->run("INSERT INTO schedules (tenant_id,id,name,timezone,start_local,end_local) VALUES (?,?,'Sin horario',?,'00:00:00','00:00:00')",[$this->tenant,$id,$this->c['timezone']]);
-        return $id;
-    }
+    private function placeholderFirm(): string { return Placeholders::unit($this->db,$this->tenant,'firm'); }
+    private function placeholderSchedule(): string { return Placeholders::schedule($this->db,$this->tenant,$this->c['timezone']); }
     /** Jefe valido: persona de la empresa y sin ciclos (A reporta a B que reporta a A). */
     private function managerOk(string $manager,?string $user): void
     {

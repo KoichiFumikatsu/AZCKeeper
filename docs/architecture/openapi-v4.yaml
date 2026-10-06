@@ -13780,9 +13780,10 @@ components:
           maximum: 100
         domains:
           type: array
-          maxItems: 9
+          maxItems: 10
           items:
             enum:
+            - empresas
             - firmas
             - sedes
             - areas
@@ -14078,7 +14079,7 @@ components:
       properties:
         data:
           type: array
-          maxItems: 9
+          maxItems: 10
           items:
             type: object
             additionalProperties: false
@@ -14088,6 +14089,7 @@ components:
             properties:
               domain:
                 enum:
+                - empresas
                 - firmas
                 - sedes
                 - areas
@@ -14111,7 +14113,7 @@ components:
         domains:
           type: array
           minItems: 1
-          maxItems: 9
+          maxItems: 10
           items:
             type: object
             additionalProperties: false
@@ -14121,6 +14123,7 @@ components:
             properties:
               domain:
                 enum:
+                - empresas
                 - firmas
                 - sedes
                 - areas

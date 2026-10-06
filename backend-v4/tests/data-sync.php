@@ -162,4 +162,110 @@ function dataSyncTests(Database $db): void
     check($renamed['name'] === 'AZC One (plataforma)', 'superadmin edit applied');
     expect(adminRequest($platform, 'POST', '/data-sources/' . $src['id'] . '/runs', ['kind' => 'full', 'simulate' => true]), 201, 'superadmin still runs a sync');
     echo 'PASS data sync (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+    oneBridgeSyncTests($db);
+}
+
+// Puente One (v4-puente-one-legacy.md §6.1): empresas del grupo (K1), personas sin area ni firma (K2), pais y ciudad de
+// las sedes (K3) y un correo repetido que no tumba la vuelta (K4). Festivos y ausencias siguen siendo de Keeper.
+function oneBridgeSyncTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tenant = $u['tenant_id'];
+    $platform = sharedPlatform($db); $platform['tenant'] = $tenant;
+    // Calendarios por pais con un festivo ya pasado cada uno (la recompilacion por cambio de pais los recorre).
+    $cal = [];
+    foreach (['CO' => 'Colombia', 'HN' => 'Honduras', 'US' => 'Estados Unidos'] as $code => $name) {
+        $db->run('INSERT INTO holiday_calendars (tenant_id,id,name,country_code,is_default) VALUES (?,?,?,?,?)', [$tenant, $cal[$code] = Util::bin(Util::uuid()), $name, $code, (int) ($code === 'CO')]);
+        $db->run('INSERT INTO holidays (tenant_id,id,day,name,calendar_id) VALUES (?,?,UTC_DATE()-INTERVAL 3 DAY,?,?)', [$tenant, Util::bin(Util::uuid()), "Festivo $code", $cal[$code]]);
+    }
+    $src = expect(adminRequest($platform, 'POST', '/data-sources', ['name' => 'AZC One puente', 'base_url' => 'https://127.0.0.1:9/api/keeper/v1', 'company' => 'grupo-azc', 'token' => 't']), 201, 'bridge source');
+    $sid = Util::bin($src['id']);
+    $owned = ['empresas', 'firmas', 'sedes', 'areas', 'cargos', 'horarios', 'personas', 'jerarquia'];
+    $owners = expect(adminRequest($platform, 'PUT', '/data-domains', ['domains' => array_map(fn ($d) => ['domain' => $d, 'source_id' => $src['id']], $owned)]), 200, 'bridge owns catalogs and people');
+    check(count($owners['data']) === 10 && count(array_filter($owners['data'], fn ($d) => $d['source_id'] === $src['id'])) === 8, 'empresas is a data domain');
+
+    $person = fn (int $n, array $extra = []) => $extra + ['external_id' => "one-emp-$n", 'document' => (string) (5550000 + $n), 'display_name' => "Empleado $n", 'email' => "e$n@azc.test",
+        'company_external_id' => 'one-company-azc-legal', 'firm_external_id' => 'one-firm-1', 'site_external_id' => 'one-sede-1', 'area_external_id' => 'one-area-1',
+        'position_external_id' => 'one-cargo-1', 'schedule_external_id' => 'one-hor-1', 'reports_to_external_id' => null, 'status' => 'active', 'hired_on' => null, 'terminated_on' => null];
+    $world = [
+        'org-units' => [
+            ['external_id' => 'one-company-azc-legal', 'kind' => 'company', 'name' => 'AZC Legal', 'parent_external_id' => null, 'active' => true],
+            ['external_id' => 'one-company-bilinguelaw', 'kind' => 'company', 'name' => 'BilingueLaw', 'parent_external_id' => null, 'active' => true],
+            ['external_id' => 'one-firm-1', 'kind' => 'firm', 'name' => 'Firma Uno', 'parent_external_id' => null, 'active' => true],
+            ['external_id' => 'one-sede-1', 'kind' => 'site', 'name' => 'Palmetto Cali', 'parent_external_id' => null, 'active' => true, 'country_code' => 'CO', 'city' => '  Cali  '],
+            ['external_id' => 'one-sede-2', 'kind' => 'site', 'name' => 'Granada', 'parent_external_id' => null, 'active' => true, 'country_code' => 'hn', 'city' => 'Tegucigalpa'],
+            ['external_id' => 'one-sede-3', 'kind' => 'site', 'name' => 'Sede rara', 'parent_external_id' => null, 'active' => true, 'country_code' => 'COL', 'city' => null],
+            ['external_id' => 'one-area-1', 'kind' => 'area', 'name' => 'Litigio', 'parent_external_id' => null, 'active' => true],
+            ['external_id' => 'one-cargo-1', 'kind' => 'position', 'name' => 'Abogado', 'parent_external_id' => null, 'active' => true]],
+        'schedules' => [['external_id' => 'one-hor-1', 'name' => 'L-V 08:00-16:30 (CO)', 'timezone' => 'America/Bogota', 'active' => true,
+            'days' => array_map(fn ($w) => ['weekday' => $w, 'start_local' => '08:00', 'end_local' => '16:30', 'lunch' => null], [1, 2, 3, 4, 5])]],
+        'people' => [
+            $person(1),
+            $person(2, ['firm_external_id' => null, 'area_external_id' => null, 'site_external_id' => 'one-sede-2', 'company_external_id' => 'one-company-bilinguelaw']),
+            array_diff_key($person(3, ['schedule_external_id' => null]), ['area_external_id' => true, 'company_external_id' => true]),
+            $person(4, ['email' => 'E1@azc.test']),
+            $person(5, ['area_external_id' => 'one-area-999']),
+            $person(6, ['area_external_id' => 'one-firm-1']),
+            $person(7, ['site_external_id' => null]),
+            $person(8, ['company_external_id' => 123]),
+        ],
+    ];
+    $called = [];
+    $sync = new DataSync($db, function (array $source, string $endpoint, ?string $since) use (&$world, &$called): array {
+        $called[$endpoint] = true;
+        return ['schema' => DataSync::SCHEMA, 'company' => 'grupo-azc', 'generated_at' => '2026-10-06T13:00:00Z', 'complete' => $since === null, 'next_cursor' => null, 'items' => $world[$endpoint]];
+    });
+    $run = fn (string $kind) => $db->one('SELECT * FROM sync_runs WHERE tenant_id=? AND id=?', [$tenant, $db->transaction(fn () => $sync->run($tenant, $sid, $kind, 'manual', false, false))]);
+    $items = fn (array $r, string $action) => $db->run('SELECT external_id,reason FROM sync_items WHERE tenant_id=? AND run_id=? AND action=? ORDER BY external_id', [$tenant, $r['id'], $action])->fetchAll();
+    $byExt = fn (string $ext) => $db->one("SELECT u.* FROM users u JOIN entity_links l ON l.tenant_id=u.tenant_id AND l.entity_type='user' AND l.entity_id=u.id WHERE l.tenant_id=? AND l.source_id=? AND l.external_id=?", [$tenant, $sid, $ext]);
+    $unit = fn (string $ext) => $db->one("SELECT o.* FROM org_units o JOIN entity_links l ON l.tenant_id=o.tenant_id AND l.entity_type='org_unit' AND l.entity_id=o.id WHERE l.tenant_id=? AND l.source_id=? AND l.external_id=?", [$tenant, $sid, $ext]);
+    $name = fn (?string $id) => $id === null ? null : ($db->one('SELECT name FROM org_units WHERE tenant_id=? AND id=?', [$tenant, $id]) ?? $db->one('SELECT name FROM schedules WHERE tenant_id=? AND id=?', [$tenant, $id]))['name'];
+    $open = fn (array $p) => $db->one('SELECT * FROM user_assignments WHERE tenant_id=? AND user_id=? AND ends_at IS NULL', [$tenant, $p['id']]);
+
+    // 1) Primera vuelta completa: la vuelta termina aplicada aunque haya un correo repetido y referencias malas.
+    $first = $run('full');
+    check($first['status'] === 'applied' && $first['error_code'] === null, 'bridge run applied despite item errors ' . $first['status'] . ' ' . $first['error_code']);
+    check(!isset($called['holidays']) && !isset($called['absences']), 'holidays and absences stay with Keeper (not fetched)');
+    $counts = json_decode($first['counts'], true);
+    check(($counts['empresas']['create'] ?? 0) === 2 && ($counts['personas']['create'] ?? 0) === 3, 'companies and people created ' . $first['counts']);
+    $errors = array_column($items($first, 'error'), 'reason', 'external_id');
+    check($errors === ['one-emp-4' => 'email_in_use', 'one-emp-5' => 'unknown_reference', 'one-emp-6' => 'unknown_reference', 'one-emp-7' => 'missing_site', 'one-emp-8' => 'invalid_reference', 'one-sede-3' => 'invalid_item'], 'item errors ' . json_encode($errors));
+    // K3: pais en mayusculas, ciudad sin espacios de mas.
+    $palmetto = $unit('one-sede-1'); $granada = $unit('one-sede-2');
+    check($palmetto['country_code'] === 'CO' && $palmetto['city'] === 'Cali' && $granada['country_code'] === 'HN' && $granada['city'] === 'Tegucigalpa', 'site country and city from source');
+    check($unit('one-company-azc-legal')['kind'] === 'company', 'company unit created');
+    // K1: empresa de la persona y de su asignacion.
+    $p1 = $byExt('one-emp-1');
+    check($name($p1['company_id']) === 'AZC Legal' && $open($p1)['company_id'] === $p1['company_id'], 'person company from source');
+    // K2: sin area ni firma -> "Sin área" / "Sin firma"; sin horario -> "Sin horario"; sin empresa -> vacia.
+    $p2 = $byExt('one-emp-2'); $p3 = $byExt('one-emp-3');
+    check($name($p2['area_id']) === 'Sin área' && $name($p2['firm_id']) === 'Sin firma' && $name($p2['company_id']) === 'BilingueLaw' && $p2['site_id'] === $granada['id'], 'person without area and firm accepted');
+    check($name($p3['schedule_id']) === 'Sin horario' && $name($p3['area_id']) === 'Sin área' && $p3['company_id'] === null && $name($p3['position_id']) === 'Abogado', 'person without schedule, area or company accepted');
+    check(!$byExt('one-emp-4') && !$byExt('one-emp-7'), 'rejected people not created');
+    $effective = fn (array $p) => $db->one('SELECT ' . Keeper\HolidayCalendars::effective('a') . ' c FROM user_assignments a WHERE a.tenant_id=? AND a.user_id=? AND a.ends_at IS NULL', [$tenant, $p['id']])['c'];
+    check($effective($p2) === $cal['HN'] && $effective($p1) === $cal['CO'], 'Granada people use the HN calendar');
+    // Lo que gestiona la fuente no se edita en Keeper: tampoco las empresas.
+    $company = expect(adminRequest($platform, 'GET', '/organization/' . Util::id($unit('one-company-azc-legal')['id'])), 200, 'read synced company');
+    check(adminRequest($platform, 'PATCH', '/organization/' . $company['id'], ['kind' => 'company', 'name' => 'Otra', 'parent_id' => null, 'active' => true], ['if-match' => '"' . $company['version'] . '"'])[1]['detail'] === 'managed_by_source', 'synced company locked');
+
+    // 2) Incremental: cambio de empresa (nueva asignacion), el area llega, se corrige el correo y una sede cambia de pais.
+    $world['people'][0]['company_external_id'] = 'one-company-bilinguelaw';
+    $world['people'][1]['area_external_id'] = 'one-area-1';
+    $world['people'][3]['email'] = 'e4@azc.test';
+    $world['org-units'][3]['country_code'] = 'US';
+    $second = $run('incremental');
+    check($second['status'] === 'applied', 'second run applied');
+    $p1b = $byExt('one-emp-1');
+    check($name($p1b['company_id']) === 'BilingueLaw' && $open($p1b)['company_id'] === $p1b['company_id'] && (int) $db->one('SELECT COUNT(*) n FROM user_assignments WHERE tenant_id=? AND user_id=?', [$tenant, $p1['id']])['n'] === 2, 'company change opens a new assignment');
+    check($name($byExt('one-emp-2')['area_id']) === 'Litigio', 'area filled later in One reaches Keeper');
+    check((bool) $byExt('one-emp-4'), 'person created once the email no longer collides');
+    check($unit('one-sede-1')['country_code'] === 'US' && $effective($p1b) === $cal['US'], 'site country change moves its people to that calendar');
+    // 3) Sin dueño de "empresas", la empresa de la persona se conserva aunque la fuente mande otra.
+    expect(adminRequest($platform, 'PUT', '/data-domains', ['domains' => [['domain' => 'empresas', 'source_id' => null]]]), 200, 'companies back to Keeper');
+    $world['people'][0]['company_external_id'] = 'one-company-azc-legal';
+    $world['people'][0]['display_name'] = 'Empleado Uno';
+    $run('incremental');
+    $p1c = $byExt('one-emp-1');
+    check($p1c['display_name'] === 'Empleado Uno' && $p1c['company_id'] === $p1b['company_id'], 'company kept when Keeper owns empresas');
+    echo 'PASS one bridge sync (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

@@ -48,6 +48,7 @@ Este documento define cómo Keeper recibe y entrega datos de otros sistemas (AZC
 
 | Dominio | Clase | Qué contiene | Entidad Keeper |
 |---|---|---|---|
+| `empresas` | catálogo | Empresas del grupo (AZC Legal, BilingueLaw…) y la empresa de cada persona | `org_units` kind=company, `users.company_id` |
 | `firmas` | catálogo | Firmas / sociedades cliente | `org_units` kind=firm |
 | `sedes` | catálogo | Sedes físicas | `org_units` kind=site |
 | `areas` | catálogo | Áreas (jerárquicas) | `org_units` kind=area |
@@ -77,9 +78,7 @@ Este documento define cómo Keeper recibe y entrega datos de otros sistemas (AZC
 
 | Empresa Keeper | Fuente | Dominios de One (`in`) | Keeper es dueño de |
 |---|---|---|---|
-| Grupo AZC | One (`?empresa=grupo-azc`) | firmas, sedes, areas, cargos, horarios, festivos, personas, jerarquia, ausencias | roles_panel, equipos, reglas… |
-| Bilingüe | One (`?empresa=bilingue`) | ídem | ídem |
-| LawyerDesk | One (`?empresa=lawyerdesk`) | ídem | ídem |
+| Grupo AZC (un solo tenant desde 0035, con empresas internas) | One (`?empresa=grupo-azc`) | empresas, firmas, sedes, areas, cargos, horarios, personas, jerarquia | festivos y ausencias (decisión 2026-10-06, ver `v4-puente-one-legacy.md` P2/P3), roles_panel, equipos, reglas… |
 | Cliente nuevo sin One | CSV o manual | — | todo |
 
 Las **entradas** de las tres empresas de AZC vienen del sistema de puertas (§7).
@@ -193,7 +192,9 @@ JSON UTF-8. Fechas-hora en ISO 8601 UTC (`2026-09-30T13:05:00Z`); fechas en `YYY
   "parent_external_id": null, "active": true, "updated_at": "2026-09-29T20:11:00Z" }
 ```
 
-`kind` ∈ `firm`, `site`, `area`, `position`. Solo las áreas usan `parent_external_id`; si un área cuelga de una sede, el padre es la sede.
+`kind` ∈ `company`, `firm`, `site`, `area`, `position` (`company` = empresa del grupo, dominio `empresas`). Solo las áreas usan `parent_external_id`; si un área cuelga de una sede, el padre es la sede.
+
+Las sedes (`kind: "site"`) pueden traer además `country_code` (ISO 3166-1 alfa-2; Keeper lo pasa a mayúsculas, otro valor = `invalid_item`) y `city` (texto libre, sin espacios de más, hasta 80 caracteres). Un campo que no viene se conserva; `null` lo borra. Cambiar el país de una sede recalcula los festivos de su gente, como al editarla en el panel.
 
 ### 4.3 Horario
 
@@ -225,6 +226,7 @@ JSON UTF-8. Fechas-hora en ISO 8601 UTC (`2026-09-30T13:05:00Z`); fechas en `YYY
   "document": "1144123456",
   "display_name": "Ana María Pérez Gómez",
   "email": "ana.perez@azclegal.com",
+  "company_external_id": "one-company-azc-legal",
   "firm_external_id": "firma-3",
   "site_external_id": "sede-17",
   "area_external_id": "area-9",
@@ -240,7 +242,9 @@ JSON UTF-8. Fechas-hora en ISO 8601 UTC (`2026-09-30T13:05:00Z`); fechas en `YYY
 
 - `document`: cédula u otro documento, solo dígitos y letras (Keeper la normaliza igual que hoy).
 - `status: "inactive"` + `terminated_on` = retiro. Keeper **no borra personas**: las marca inactivas (lo que revoca sus equipos, §5.4).
-- Las referencias (`*_external_id`) deben existir en la misma vuelta o en una anterior. Si no, la persona se omite con error `unknown_reference` y se reintenta en la siguiente vuelta.
+- Las referencias (`*_external_id`) deben existir en la misma vuelta o en una anterior, y ser del tipo que corresponde. Un id **enviado** que no resuelve deja a la persona como error `unknown_reference` (se reintenta en la siguiente vuelta); un valor que no es un id (número, texto vacío) es `invalid_reference`.
+- Las referencias son **opcionales**, salvo la sede: `null` o ausente deja la empresa vacía y a la persona en "Sin firma", "Sin área", "Sin cargo" o "Sin horario" (unidades locales que Keeper crea al necesitarlas, como al dar de alta desde el panel). Sin sede: error `missing_site`. Si la fuente no es dueña del dominio de una referencia, Keeper conserva el valor que la persona ya tiene.
+- Un correo que ya usa otra persona de la empresa deja a esta como error `email_in_use`; el resto de la vuelta se aplica. Cualquier otro choque con un valor único se registra como `duplicate_value`.
 
 ### 4.6 Ausencia (evento)
 

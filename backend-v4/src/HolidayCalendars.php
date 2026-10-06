@@ -62,13 +62,16 @@ final class HolidayCalendars
     }
 
     /** Recalcula la jornada esperada de los dias festivos (ya pasados) de estos calendarios. */
-    public function recompute(array $calendars): void
+    public function recompute(array $calendars): void { self::refresh($this->db,$this->tenant,$calendars); }
+    /** Lo mismo sin sesion de panel (fuentes de datos). null = todos los calendarios de la empresa. */
+    public static function refresh(Database $db,string $tenant,?array $calendars=null): void
     {
+        $calendars??=array_column($db->run('SELECT id FROM holiday_calendars WHERE tenant_id=?',[$tenant])->fetchAll(),'id');
         $calendars=array_values(array_unique(array_filter($calendars)));
         if (!$calendars) { return; }
         $marks=implode(',',array_fill(0,count($calendars),'?'));
-        $days=array_column($this->db->run("SELECT DISTINCT day FROM holidays WHERE tenant_id=? AND calendar_id IN ($marks) AND day<=UTC_DATE() AND day>=UTC_DATE()-INTERVAL 400 DAY",[$this->tenant,...$calendars])->fetchAll(),'day');
-        if ($days) { ActivityCalendar::refresh($this->db,$this->tenant,$days); }
+        $days=array_column($db->run("SELECT DISTINCT day FROM holidays WHERE tenant_id=? AND calendar_id IN ($marks) AND day<=UTC_DATE() AND day>=UTC_DATE()-INTERVAL 400 DAY",[$tenant,...$calendars])->fetchAll(),'day');
+        if ($days) { ActivityCalendar::refresh($db,$tenant,$days); }
     }
 
     private function row(string $id): array

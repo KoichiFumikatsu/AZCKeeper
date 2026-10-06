@@ -5,7 +5,7 @@ namespace Keeper;
 // Fuentes de datos de una empresa: configuracion, dueño por dominio, vueltas de sincronizacion y pendientes (§3, §10).
 final class DataSources
 {
-    public const DOMAINS = ['firmas', 'sedes', 'areas', 'cargos', 'horarios', 'festivos', 'personas', 'jerarquia', 'ausencias'];
+    public const DOMAINS = ['empresas', 'firmas','sedes', 'areas', 'cargos', 'horarios', 'festivos', 'personas', 'jerarquia', 'ausencias'];
     private string $tenant;
     public function __construct(private Database $db, private array $c, private AdminAccess $access, private Request $r) { $this->tenant = $c['tenant_id']; }
 
