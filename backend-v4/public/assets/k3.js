@@ -177,6 +177,108 @@ const ORG_TREE_HELP = 'Dependencia organizativa: cada unidad aparece bajo la uni
 let orgPickerSeq = 0;
 
 async function organization() {
+// Ruta legible por parent_id ("Tequendama › Agentes de servicio"); se corta si los datos tuvieran un círculo.
+function orgPath(o, map) {
+  const parts = []; const seen = new Set();
+  for (let x = o; x && !seen.has(x.id); x = x.parent_id ? map.get(x.parent_id) : null) { seen.add(x.id); parts.unshift(x.name); }
+  return parts.join(' › ');
+}
+function orgDescendants(org, id) {
+  const kids = new Map();
+  for (const o of org) if (o.parent_id) kids.set(o.parent_id, [...(kids.get(o.parent_id) || []), o.id]);
+  const out = new Set([id]); const stack = [id];
+  while (stack.length) for (const c of kids.get(stack.pop()) || []) if (!out.has(c)) { out.add(c); stack.push(c); }
+  return out;
+}
+const orgSitesIn = (org, country) => org.filter(o => o.kind === 'site' && (!country || (country === NO_COUNTRY ? !o.country_code : o.country_code === country)));
+const orgFillCities = (list, org, country) => { list.replaceChildren(); [...new Set(orgSitesIn(org, country).map(o => o.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es')).forEach(c => list.append(new Option(c))); };
+// Selector de dependencia (combobox con lista agrupada). Ofrece unidades activas; conserva el valor actual aunque
+// no esté en la lista (p. ej. una superior inactiva) hasta que se elija otro.
+function orgParentPicker(parent, { org, kind, value = '', excludeId = null, help }) {
+  const map = new Map(org.map(o => [o.id, o]));
+  const banned = excludeId ? orgDescendants(org, excludeId) : new Set();
+  const order = PARENT_ORDER[kind] || ORG_TABS.map(t => t.kind);
+  const candidates = org.filter(x => x.active && !banned.has(x.id)).map(x => ({ id: x.id, kind: x.kind, name: x.name, path: orgPath(x, map) }));
+  const uid = `org-parent-${++orgPickerSeq}`;
+  const box = el('div', undefined, 'org-picker');
+  const input = el('input'); input.id = uid; input.type = 'text'; input.autocomplete = 'off'; input.placeholder = 'Buscar por nombre o ruta';
+  input.setAttribute('role', 'combobox'); input.setAttribute('aria-autocomplete', 'list'); input.setAttribute('aria-expanded', 'false'); input.setAttribute('aria-controls', `${uid}-list`);
+  const label = el('label', 'Depende de'); label.append(input);
+  const list = el('div', undefined, 'org-picker-list'); list.id = `${uid}-list`; list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', 'Unidades de las que puede depender'); list.hidden = true;
+  box.append(label, list); parent.append(box);
+  if (help) parent.append(el('p', help, 'help'));
+  let selected = value || ''; let typed = false; let opts = []; let at = -1; let swallowEscape = false;
+  const textOf = id => !id ? 'Sin dependencia' : (map.get(id) ? orgPath(map.get(id), map) : 'Unidad no disponible');
+  input.value = textOf(selected);
+  const setActive = i => {
+    opts.forEach(o => o.classList.remove('active')); at = i;
+    if (i >= 0 && opts[i]) { opts[i].classList.add('active'); input.setAttribute('aria-activedescendant', opts[i].id); opts[i].scrollIntoView?.({ block: 'nearest' }); }
+    else input.removeAttribute('aria-activedescendant');
+  };
+  const close = () => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant'); typed = false; input.value = textOf(selected); };
+  const choose = id => { selected = id; close(); };
+  const option = (to, id, name, path) => {
+    const o = el('div', undefined, 'org-picker-option'); o.id = `${uid}-o${opts.length}`; o.dataset.value = id;
+    o.setAttribute('role', 'option'); o.setAttribute('aria-selected', String(id === selected));
+    o.append(el('span', name)); if (path && path !== name) o.append(el('small', path));
+    o.addEventListener('mousedown', e => e.preventDefault()); o.addEventListener('click', () => choose(id));
+    to.append(o); opts.push(o);
+  };
+  const fill = () => {
+    const term = typed ? orgFold(input.value) : '';
+    list.replaceChildren(); opts = [];
+    if (!term || orgFold('Sin dependencia').includes(term)) option(list, '', 'Sin dependencia', '');
+    for (const k of order) {
+      const tabLabel = ORG_TABS.find(t => t.kind === k)?.label || kinds[k];
+      const items = candidates.filter(c => c.kind === k && (!term || orgFold(`${c.path} ${tabLabel} ${kinds[k]}`).includes(term))).sort((a, b) => a.path.localeCompare(b.path, 'es'));
+      if (!items.length) continue;
+      const g = el('div', undefined, 'org-picker-group'); g.setAttribute('role', 'group');
+      const h = el('div', tabLabel, 'org-picker-head'); h.id = `${uid}-g-${k}`; g.setAttribute('aria-labelledby', h.id); g.append(h);
+      items.forEach(c => option(g, c.id, c.name, c.path)); list.append(g);
+    }
+    if (!opts.length) list.append(el('p', 'Sin coincidencias. Prueba con otro nombre.', 'org-picker-empty'));
+    setActive(typed ? (opts.length ? 0 : -1) : opts.findIndex(o => o.dataset.value === selected));
+  };
+  const open = () => { if (!list.hidden) return; fill(); list.hidden = false; input.setAttribute('aria-expanded', 'true'); };
+  input.addEventListener('click', open);
+  input.addEventListener('focus', () => input.select());
+  input.addEventListener('input', () => { typed = true; fill(); list.hidden = false; input.setAttribute('aria-expanded', 'true'); });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); if (list.hidden) { open(); return; }
+      if (opts.length) setActive((at + (e.key === 'ArrowDown' ? 1 : -1) + opts.length) % opts.length);
+    } else if (e.key === 'Enter' && !list.hidden) { e.preventDefault(); if (at >= 0) choose(opts[at].dataset.value); }
+    else if (e.key === 'Escape' && !list.hidden) { e.preventDefault(); e.stopPropagation(); swallowEscape = true; setTimeout(() => { swallowEscape = false; }); close(); }
+  });
+  // Escape cierra la lista, no el diálogo.
+  input.closest('dialog')?.addEventListener('cancel', e => { if (swallowEscape) e.preventDefault(); });
+  box.addEventListener('focusout', e => { if (!box.contains(e.relatedTarget)) close(); });
+  return { input, get value() { return selected; } };
+}
+// Diálogo «Nueva sede/área/cargo/empresa del grupo» con el tipo fijo: lo usan Organización y el alta y la ficha de
+// personas («+ Nueva área» sin salir del formulario). onCreated recibe la unidad que devolvió la API.
+function openOrgCreate({ kind, org, country: suggested = '', city: suggestedCity = '', onCreated }) {
+  const tab = ORG_TABS.find(t => t.kind === kind);
+  const { dialog, body, ok, show } = dialogShell(tab.title); ok.textContent = tab.submit;
+  const name = labeled(body, 'Nombre', el('input')); name.maxLength = 120;
+  let country = null, city = null;
+  if (kind === 'site') {
+    country = labeled(body, 'País', countrySelect(suggested), SITE_COUNTRY_HINT);
+    city = labeled(body, 'Ciudad', cityInput(suggestedCity, orgSitesIn(org, suggested || NO_COUNTRY)), 'Ciudades sugeridas del país elegido; también puedes escribir una nueva.');
+    if (suggested) body.append(el('p', 'País y ciudad sugeridos por el filtro actual: revísalos antes de crear.', 'help'));
+    country.addEventListener('change', () => orgFillCities($(city.getAttribute('list')), org, country.value || NO_COUNTRY));
+  }
+  const parent = orgParentPicker(body, { org, kind, help: 'Opcional. Por ejemplo, un área que pertenece a una sede, o un cargo que depende de un área.' });
+  dialog.querySelector('form').addEventListener('submit', async ev => {
+    ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
+    ok.disabled = true;
+    try {
+      const created = await api('POST', '/organization', { body: { kind, name: name.value.trim(), parent_id: parent.value || null, active: true, ...(country ? { country_code: country.value || null, city: city.value.trim() || null } : {}) } });
+      dialog.close(); onCreated(created);
+    } catch (e) { show(e); ok.disabled = false; }
+  });
+  dialog.showModal(); name.focus();
+}
   let org = await allPages('/organization');
   // null = la cuenta no puede consultar Personas: el conteo es "No disponible", nunca cero.
   const users = await optional(allPages('/users'));
@@ -210,19 +312,8 @@ async function organization() {
   const citiesOf = country => [...new Set(sitesIn(country).map(o => o.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
   const fillCities = (list, country) => { list.replaceChildren(); citiesOf(country).forEach(c => list.append(new Option(c))); };
   const unitMap = () => new Map(org.map(o => [o.id, o]));
-  // Ruta legible por parent_id ("Tequendama › Agentes de servicio"); se corta si los datos tuvieran un círculo.
-  const pathOf = (o, map) => {
-    const parts = []; const seen = new Set();
-    for (let x = o; x && !seen.has(x.id); x = x.parent_id ? map.get(x.parent_id) : null) { seen.add(x.id); parts.unshift(x.name); }
-    return parts.join(' › ');
-  };
-  const descendantsOf = id => {
-    const kids = new Map();
-    for (const o of org) if (o.parent_id) kids.set(o.parent_id, [...(kids.get(o.parent_id) || []), o.id]);
-    const out = new Set([id]); const stack = [id];
-    while (stack.length) for (const c of kids.get(stack.pop()) || []) if (!out.has(c)) { out.add(c); stack.push(c); }
-    return out;
-  };
+  const pathOf = orgPath;
+  const descendantsOf = id => orgDescendants(org, id);
   const kindRank = o => ORG_TABS.findIndex(t => t.kind === o.kind);
   const byKindName = (a, b) => kindRank(a) - kindRank(b) || a.name.localeCompare(b.name, 'es');
 
@@ -427,69 +518,7 @@ async function organization() {
     const updated = await api('PATCH', `/organization/${o.id}`, { body, ifMatch: o.version });
     org = org.map(x => x.id === o.id ? updated : x); render();
   };
-  // Selector de dependencia (combobox con lista agrupada). Ofrece unidades activas; conserva el valor actual aunque
-  // no esté en la lista (p. ej. una superior inactiva) hasta que se elija otro.
-  const parentPicker = (parent, kind, value, excludeId, help) => {
-    const map = unitMap();
-    const banned = excludeId ? descendantsOf(excludeId) : new Set();
-    const order = PARENT_ORDER[kind] || ORG_TABS.map(t => t.kind);
-    const candidates = org.filter(x => x.active && !banned.has(x.id)).map(x => ({ id: x.id, kind: x.kind, name: x.name, path: pathOf(x, map) }));
-    const uid = `org-parent-${++orgPickerSeq}`;
-    const box = el('div', undefined, 'org-picker');
-    const input = el('input'); input.id = uid; input.type = 'text'; input.autocomplete = 'off'; input.placeholder = 'Buscar por nombre o ruta';
-    input.setAttribute('role', 'combobox'); input.setAttribute('aria-autocomplete', 'list'); input.setAttribute('aria-expanded', 'false'); input.setAttribute('aria-controls', `${uid}-list`);
-    const label = el('label', 'Depende de'); label.append(input);
-    const list = el('div', undefined, 'org-picker-list'); list.id = `${uid}-list`; list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', 'Unidades de las que puede depender'); list.hidden = true;
-    box.append(label, list); parent.append(box);
-    if (help) parent.append(el('p', help, 'help'));
-    let selected = value || ''; let typed = false; let opts = []; let at = -1; let swallowEscape = false;
-    const textOf = id => !id ? 'Sin dependencia' : (map.get(id) ? pathOf(map.get(id), map) : 'Unidad no disponible');
-    input.value = textOf(selected);
-    const setActive = i => {
-      opts.forEach(o => o.classList.remove('active')); at = i;
-      if (i >= 0 && opts[i]) { opts[i].classList.add('active'); input.setAttribute('aria-activedescendant', opts[i].id); opts[i].scrollIntoView?.({ block: 'nearest' }); }
-      else input.removeAttribute('aria-activedescendant');
-    };
-    const close = () => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant'); typed = false; input.value = textOf(selected); };
-    const choose = id => { selected = id; close(); };
-    const option = (to, id, name, path) => {
-      const o = el('div', undefined, 'org-picker-option'); o.id = `${uid}-o${opts.length}`; o.dataset.value = id;
-      o.setAttribute('role', 'option'); o.setAttribute('aria-selected', String(id === selected));
-      o.append(el('span', name)); if (path && path !== name) o.append(el('small', path));
-      o.addEventListener('mousedown', e => e.preventDefault()); o.addEventListener('click', () => choose(id));
-      to.append(o); opts.push(o);
-    };
-    const fill = () => {
-      const term = typed ? orgFold(input.value) : '';
-      list.replaceChildren(); opts = [];
-      if (!term || orgFold('Sin dependencia').includes(term)) option(list, '', 'Sin dependencia', '');
-      for (const k of order) {
-        const tabLabel = ORG_TABS.find(t => t.kind === k)?.label || kinds[k];
-        const items = candidates.filter(c => c.kind === k && (!term || orgFold(`${c.path} ${tabLabel} ${kinds[k]}`).includes(term))).sort((a, b) => a.path.localeCompare(b.path, 'es'));
-        if (!items.length) continue;
-        const g = el('div', undefined, 'org-picker-group'); g.setAttribute('role', 'group');
-        const h = el('div', tabLabel, 'org-picker-head'); h.id = `${uid}-g-${k}`; g.setAttribute('aria-labelledby', h.id); g.append(h);
-        items.forEach(c => option(g, c.id, c.name, c.path)); list.append(g);
-      }
-      if (!opts.length) list.append(el('p', 'Sin coincidencias. Prueba con otro nombre.', 'org-picker-empty'));
-      setActive(typed ? (opts.length ? 0 : -1) : opts.findIndex(o => o.dataset.value === selected));
-    };
-    const open = () => { if (!list.hidden) return; fill(); list.hidden = false; input.setAttribute('aria-expanded', 'true'); };
-    input.addEventListener('click', open);
-    input.addEventListener('focus', () => input.select());
-    input.addEventListener('input', () => { typed = true; fill(); list.hidden = false; input.setAttribute('aria-expanded', 'true'); });
-    input.addEventListener('keydown', e => {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault(); if (list.hidden) { open(); return; }
-        if (opts.length) setActive((at + (e.key === 'ArrowDown' ? 1 : -1) + opts.length) % opts.length);
-      } else if (e.key === 'Enter' && !list.hidden) { e.preventDefault(); if (at >= 0) choose(opts[at].dataset.value); }
-      else if (e.key === 'Escape' && !list.hidden) { e.preventDefault(); e.stopPropagation(); swallowEscape = true; setTimeout(() => { swallowEscape = false; }); close(); }
-    });
-    // Escape cierra la lista, no el diálogo.
-    input.closest('dialog')?.addEventListener('cancel', e => { if (swallowEscape) e.preventDefault(); });
-    box.addEventListener('focusout', e => { if (!box.contains(e.relatedTarget)) close(); });
-    return { input, get value() { return selected; } };
-  };
+  const parentPicker = (parent, kind, value, excludeId, help) => orgParentPicker(parent, { org, kind, value, excludeId, help });
   const countryHint = SITE_COUNTRY_HINT;
   const actions = o => {
     const box = el('div', undefined, 'row-actions');
@@ -545,32 +574,16 @@ async function organization() {
   };
   action.addEventListener('click', () => {
     const tab = current(); if (!tab.create || state.view === 'tree') return;
-    const { dialog, body, ok, show } = dialogShell(tab.title); ok.textContent = tab.submit;
-    const name = labeled(body, 'Nombre', el('input')); name.maxLength = 120;
-    let country = null, city = null;
-    if (tab.kind === 'site') {
-      // Sin país por defecto: solo se sugiere el del filtro actual, y se dice.
-      const suggested = state.country && state.country !== NO_COUNTRY ? state.country : '';
-      country = labeled(body, 'País', countrySelect(suggested), countryHint);
-      city = labeled(body, 'Ciudad', cityInput(suggested && state.city.trim() ? state.city.trim() : '', sitesIn(suggested || NO_COUNTRY)), 'Ciudades sugeridas del país elegido; también puedes escribir una nueva.');
-      if (suggested) body.append(el('p', 'País y ciudad sugeridos por el filtro actual: revísalos antes de crear.', 'help'));
-      country.addEventListener('change', () => fillCities($(city.getAttribute('list')), country.value || NO_COUNTRY));
-    }
-    const parent = parentPicker(body, tab.kind, '', null, 'Opcional. Por ejemplo, un área que pertenece a una sede, o un cargo que depende de un área.');
-    dialog.querySelector('form').addEventListener('submit', async ev => {
-      ev.preventDefault(); if (!name.value.trim()) { show('Escribe el nombre.'); return; }
-      ok.disabled = true;
-      try {
-        const created = await api('POST', '/organization', { body: { kind: tab.kind, name: name.value.trim(), parent_id: parent.value || null, active: true, ...(country ? { country_code: country.value || null, city: city.value.trim() || null } : {}) } });
-        org = [...org, created]; dialog.close(); quiet();
-        // Si la sede cae en un grupo plegado, se despliega para poder verla.
-        if (created.kind === 'site') { const gk = created.country_code || NO_COUNTRY; collapsed.delete(`c:${gk}`); collapsed.delete(`c:${gk}|${orgFold(created.city)}`); }
-        render();
-        const visible = document.querySelector(`#org-panel tr[data-id="${created.id}"]`);
-        $('page-status').textContent = visible ? `«${created.name}» creada.` : `«${created.name}» creada, pero no coincide con los filtros de esta vista.`;
-      } catch (e) { show(e); ok.disabled = false; }
-    });
-    dialog.showModal(); name.focus();
+    // Sin país por defecto: solo se sugiere el del filtro actual, y se dice.
+    const suggested = state.country && state.country !== NO_COUNTRY ? state.country : '';
+    openOrgCreate({ kind: tab.kind, org, country: suggested, city: suggested && state.city.trim() ? state.city.trim() : '', onCreated: created => {
+      org = [...org, created]; quiet();
+      // Si la sede cae en un grupo plegado, se despliega para poder verla.
+      if (created.kind === 'site') { const gk = created.country_code || NO_COUNTRY; collapsed.delete(`c:${gk}`); collapsed.delete(`c:${gk}|${orgFold(created.city)}`); }
+      render();
+      const visible = document.querySelector(`#org-panel tr[data-id="${created.id}"]`);
+      $('page-status').textContent = visible ? `«${created.name}» creada.` : `«${created.name}» creada, pero no coincide con los filtros de esta vista.`;
+    } });
   });
   render();
 }
