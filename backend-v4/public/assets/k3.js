@@ -24,6 +24,8 @@ function cityInput(value, org) {
   i.setAttribute('list', list.id); document.body.append(list);
   return i;
 }
+// Ayuda común de «País» al crear o editar una sede (Organización y Sedes).
+const SITE_COUNTRY_HINT = 'El país define el calendario automático de festivos de las personas de esta sede (salvo quien tenga un calendario propio). Sin país, usan el calendario predeterminado del cliente.';
 const placeOf = site => site ? [site.city, site.country_code ? countryName(site.country_code) : null].filter(Boolean).join(', ') || '—' : '—';
 function countrySelect(value, empty = 'Sin país') { const s = document.createElement('select'); s.append(new Option(empty, '')); COUNTRIES.forEach(([c, n]) => s.append(new Option(n, c))); s.value = value || ''; return s; }
 const online = d => d.status === 'active' && d.last_seen_at && Date.now() - Date.parse(d.last_seen_at) <= 5 * 60 * 1000;
@@ -125,8 +127,11 @@ async function sites() {
   action.addEventListener('click', () => {
     const { dialog, body, ok, show } = dialogShell('Crear sede');
     const name = labeled(body, 'Nombre de la sede', el('input')); name.maxLength = 120;
-    const country = labeled(body, 'País', countrySelect('CO'), 'Las personas de esta sede usan los festivos de este país (salvo que se les asigne otro calendario). Para quien trabaja desde casa crea una sede "Remoto – <país>".');
-    const city = labeled(body, 'Ciudad', cityInput('', org), 'Por ejemplo Cali para las sedes de Tequendama. Sirve para ver y filtrar personas por ciudad.');
+    // Sin país por defecto (igual que en Organización): elegirlo decide el calendario de festivos.
+    const country = labeled(body, 'País', countrySelect(''), `${SITE_COUNTRY_HINT} Para quien trabaja desde casa crea una sede "Remoto – <país>".`);
+    const city = labeled(body, 'Ciudad', cityInput('', []), 'Ciudades sugeridas del país elegido; también puedes escribir una nueva. Sirve para ver y filtrar personas por ciudad.');
+    const fillCities = () => { const list = $(city.getAttribute('list')); list.replaceChildren(); [...new Set(org.filter(o => o.kind === 'site' && o.city && (o.country_code || '') === country.value).map(o => o.city))].sort((a, b) => a.localeCompare(b, 'es')).forEach(c => list.append(new Option(c))); };
+    country.addEventListener('change', fillCities); fillCities();
     body.append(el('p', 'Después la asignas a las personas en Personas (o llega sola desde AZC One si One manda en las sedes).', 'help'));
     ok.textContent = 'Crear sede';
     dialog.querySelector('form').addEventListener('submit', async ev => {
@@ -298,7 +303,7 @@ async function organization() {
     }
     parent.value = value || ''; return parent;
   };
-  const countryHint = 'El país define el calendario automático de festivos de las personas de esta sede (salvo quien tenga un calendario propio). Sin país, usan el calendario predeterminado del cliente.';
+  const countryHint = SITE_COUNTRY_HINT;
   const actions = o => {
     const box = el('div', undefined, 'row-actions');
     const rename = el('button', 'Editar', 'link-button'); rename.type = 'button';
