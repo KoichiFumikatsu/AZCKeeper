@@ -10,12 +10,22 @@ const NEEDS = {
   classification: ['reportes.ver', true], 'suspicious-apps': ['cumplimiento.ver', true], 'dual-job': ['cumplimiento.ver', false],
   coverage: ['cobertura.ver', false], accounts: ['usuarios.editar', true], roles: ['roles.ver', true], sources: ['integraciones.ver', true],
   audit: ['auditoria.ver', true], 'client-logs': ['operacion.logs', false], 'panel-settings': ['operacion.ajustes_ver', true],
+  // Puesta en marcha: la decide canSeeOnboarding (allowed); esta entrada solo cumple la guarda de menú del smoke.
+  onboarding: ['organizacion.ver', true],
 };
 
 // Pantallas cuya funcion contratada es distinta a la de su permiso (la API las resuelve por operacion): sin la funcion se ocultan.
 const FEATURE_OF = { doors: 'puertas', absences: 'ausencias', classification: 'clasificacion', accounts: 'autogestion_accesos', roles: 'autogestion_accesos' };
 
+// Puesta en marcha: solo cuentas con algún permiso de administración sobre todo el cliente (nunca por nombre de rol).
+const ONBOARDING_PERMS = ['organizacion.editar', 'usuarios.crear', 'usuarios.editar', 'horarios.editar', 'equipos.enrolar'];
+export function canSeeOnboarding(access) {
+  if (!access) return false;
+  return !!access.platform || ONBOARDING_PERMS.some(code => !!(access.permissions || []).find(p => p.code === code)?.scopes?.includes('tenant'));
+}
+
 export function allowed(access, key) {
+  if (key === 'onboarding') return canSeeOnboarding(access);
   const need = NEEDS[key];
   if (!need || access.platform) return true;
   if (FEATURE_OF[key] && !(access.features || []).includes(FEATURE_OF[key])) return false;
