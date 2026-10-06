@@ -160,6 +160,8 @@ async function requests(content, tenant, rerender) {
   const s = section(box, 'Solicitudes de alta', 'Equipos que se instalaron y no cruzaron con un equipo esperado. Aprueba escribiendo la cédula o el correo de la persona; la placa es opcional.');
   const filter = el('div', undefined, 'toolbar'); s.append(filter);
   const status = select(filter, 'Mostrar', { pending: 'Pendientes', approved: 'Aprobadas sin enrolar', enrolled: 'Enroladas', rejected: 'Rechazadas' }, 'pending');
+  // Resultado de la última decisión fuera de la tabla: recargarla ya no lo borra.
+  const decision = feedback(s);
   const holder = el('div'); s.append(holder);
   async function load() {
     const result = await api('GET', `/enrollments/requests?status=${status.value}&limit=100`, { tenant });
@@ -192,13 +194,13 @@ async function requests(content, tenant, rerender) {
           approve.disabled = true;
           try {
             await api('POST', `/enrollments/requests/${r.id}/approve`, { tenant, body: { person: person.value.trim() || null, asset_code: asset.value.trim() || null } });
-            fb.ok('Aprobada. El equipo se enrola en su próximo reintento (unos minutos).'); await load();
+            decision.ok(`${r.hostname}: aprobada, esperando conexión. El equipo se enrola en su próximo reintento (unos minutos); mientras tanto aparece en «Aprobadas sin enrolar».`); await load();
           } catch (error) { fb.fail(error); } finally { approve.disabled = false; }
         });
         reject.addEventListener('click', async () => {
           if (!confirm(`¿Rechazar el alta de ${r.hostname}? El equipo no quedará gestionado por Keeper.`)) return;
           reject.disabled = true;
-          try { await api('POST', `/enrollments/requests/${r.id}/reject`, { tenant }); await load(); }
+          try { await api('POST', `/enrollments/requests/${r.id}/reject`, { tenant }); decision.ok(`${r.hostname}: alta rechazada. Aparece en «Rechazadas».`); await load(); }
           catch (error) { fb.fail(error); reject.disabled = false; }
         });
       } else {
