@@ -207,6 +207,7 @@ function accessEvaluationTests(Database $db): void
     $o = accessOrg($db); $tid = Util::id($o['tenant']);
     $perms = ['usuarios.ver', 'equipos.ver', 'reglas.ver']; // reglas.ver: el 403 de /policies debe ser por alcance, no por permiso
     $users = '/users?limit=100'; $devices = '/tenants/' . $tid . '/devices?limit=100';
+    accessResetPreloginQuota();
     $all = accessAccount($db, $o, 'zafra', $perms, AccessScope::all());
     $area = accessAccount($db, $o, 'juan', $perms, new AccessScope('filters', [], [], [], [$o['agentes']]));
     $city = accessAccount($db, $o, 'jur808', $perms, new AccessScope('filters', [], ['Medellín']));
