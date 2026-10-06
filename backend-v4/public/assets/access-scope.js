@@ -24,6 +24,21 @@ export function scopeSummary(roleName, scope, names) {
 
 const LISTS = ['company_ids', 'cities', 'site_ids', 'area_ids'];
 
+// El mismo alcance en piezas (chips) para la tabla de cuentas y el editor (revisión UX M8, ACC-1): las mismas partes
+// que scopeSummary, en el mismo orden. `all` marca la pieza que dice qué dimensión no limita.
+const CHIP_DIMENSION = { company_ids: 'Empresa', cities: 'Ciudad', site_ids: 'Sede', area_ids: 'Área' };
+export function scopeChips(scope, names) {
+  if (!scope) return [];
+  if (scope.kind === 'all') return [{ label: 'Todo el cliente', kind: 'all' }];
+  if (scope.kind === 'team') return [{ label: TEAM_LABEL, kind: 'team' }];
+  if (scope.kind === 'self') return [{ label: 'Solo lo propio', kind: 'self' }];
+  if (!LISTS.some(k => scope[k]?.length)) return [{ label: 'Filtros sin unidades: no ve a nadie', kind: 'none' }];
+  const chips = LISTS.flatMap(k => (scope[k] || []).map(v => ({ label: `${CHIP_DIMENSION[k]}: ${k === 'cities' ? v : names.get(v) || v}`, kind: k })));
+  if (!scope.site_ids.length && !scope.cities.length) chips.push({ label: 'todas las sedes', kind: 'all' });
+  else if (!scope.area_ids.length) chips.push({ label: 'todas las áreas', kind: 'all' });
+  return chips;
+}
+
 // Cómo combina el servidor un alcance por filtros (AccessScope::filterSql): Y entre dimensiones, cualquiera dentro de
 // la selección de cada una; una dimensión sin marcar no limita. null si no hay nada marcado (eso no ve a nadie).
 export const SCOPE_RULE = 'Se combinan con Y: verá solo a quienes cumplan a la vez cada grupo marcado (empresa, ciudad, sede, área). Dentro de un grupo basta cualquiera de las opciones marcadas; un grupo sin marcar no limita.';

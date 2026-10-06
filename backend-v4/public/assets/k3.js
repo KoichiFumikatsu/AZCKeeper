@@ -2,7 +2,8 @@ import { api, isUuid, setTenant, readSession, refreshCsrf, goToLogin, errorMessa
 import './menu.js';
 import { enhance } from './tablekit.js';
 import { applyNavAccess, loadAccess, allowed, canSeeOnboarding } from './nav-access.js';
-import { scopeSummary, sameAccess, scopeConditions, SCOPE_RULE, TEAM_LABEL } from './access-scope.js';
+import { scopeSummary, sameAccess, scopeConditions, scopeChips, SCOPE_RULE, TEAM_LABEL } from './access-scope.js';
+import { wireDialog, confirmBox, noticeBox, feedback } from './dialogs.js';
 import { coordinator } from './coordinator.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings } from './hardening-settings.js';
 import { onboardingPage, returnBand, AUDIT_LABELS as ONBOARDING_AUDIT } from './onboarding.js';
@@ -35,6 +36,8 @@ let tenant;
 
 function fail(error) { $('page-error').textContent = error instanceof Error && !(error.status) ? error.message : errorMessage(error); $('page-error').hidden = false; $('page-status').textContent = ''; }
 function done() { $('page-status').textContent = `Actualizado a las ${new Intl.DateTimeFormat('es-CO', { timeStyle: 'short' }).format(new Date()).replace(/\.$/, '')}.`; }
+// Resultado de una acción en la región de estado de la página (role=status): se anuncia sin mover el foco.
+function announce(text) { done(); $('page-error').hidden = true; $('page-status').textContent = `${text} ${$('page-status').textContent}`; }
 function surface(title, parent = $('page-content')) {
   const s = el('section', undefined, 'surface'); const head = el('div', undefined, 'section-head'); head.append(el('h2', title)); s.append(head); parent.append(s); return s;
 }
@@ -733,6 +736,8 @@ function accessEditor(parent, { roles, org, current = null, groupOnly = false, n
   [['all', 'Todo el cliente'], ['filters', 'Solo ciertas empresas, ciudades, sedes o áreas'], ...(groupOnly ? [] : [['team', TEAM_LABEL], ['self', 'Solo lo propio']])]
     .forEach(([v, t]) => kind.append(new Option(t, v)));
   kind.value = current?.scope.kind || (groupOnly ? '' : 'self'); labeled(box, 'Alcance (qué datos ve)', kind);
+  // Revisión UX M8: todo el cliente, su equipo o solo lo propio se ven como un único chip; los filtros, por dimensión.
+  const kindChip = el('ul', undefined, 'chips scope-kind'); kindChip.setAttribute('aria-label', 'Alcance elegido'); box.append(kindChip);
   const filters = el('div'); box.append(filters);
   // Revisión UX ACC-1: la intersección se explica y se lee con la selección actual, no se deja a la intuición.
   filters.append(el('p', SCOPE_RULE, 'help'));
@@ -740,18 +745,43 @@ function accessEditor(parent, { roles, org, current = null, groupOnly = false, n
   // Lo que ya tiene se conserva aunque la sede o el área esté inactiva: guardar no le quita alcance a escondidas.
   const units = (k, key) => org.filter(o => o.kind === k && (o.active || had(key).includes(o.id))).sort((a, b) => a.name.localeCompare(b.name, 'es')).map(o => [o.id, o.name]);
   const cities = [...new Set([...org.filter(o => o.kind === 'site' && o.city).map(o => o.city), ...had('cities')])].sort((a, b) => a.localeCompare(b, 'es')).map(c => [c, c]);
+  // Cada dimensión: chips de lo elegido (con × para quitar) y una lista para agregar. Sin chips = «Todas».
   const picked = {};
-  for (const [key, title, items] of [['company_ids', 'Empresas', units('company', 'company_ids')], ['cities', 'Ciudades', cities], ['site_ids', 'Sedes', units('site', 'site_ids')], ['area_ids', 'Áreas', units('area', 'area_ids')]]) {
-    const fs = el('fieldset', undefined, 'perm-group'); fs.append(el('legend', `${title} (sin marcar = todas)`)); filters.append(fs);
-    if (items.length) picked[key] = checks(fs, items, had(key));
-    else { picked[key] = []; fs.append(el('p', `No hay ${title.toLowerCase()} creadas.`, 'help')); }
+  for (const [key, title, one, all, items] of [['company_ids', 'Empresas', 'empresa', 'Todas las empresas', units('company', 'company_ids')], ['cities', 'Ciudades', 'ciudad', 'Todas las ciudades', cities],
+    ['site_ids', 'Sedes', 'sede', 'Todas las sedes', units('site', 'site_ids')], ['area_ids', 'Áreas', 'área', 'Todas las áreas', units('area', 'area_ids')]]) {
+    const fs = el('fieldset', undefined, 'perm-group scope-dim'); fs.append(el('legend', title)); filters.append(fs);
+    const chosen = new Set(had(key).filter(v => items.some(([id]) => id === v)));
+    picked[key] = chosen;
+    if (!items.length) { fs.append(el('p', `No hay ${title.toLowerCase()} creadas: no limita.`, 'help')); continue; }
+    const chips = el('ul', undefined, 'chips'); chips.setAttribute('aria-label', `${title} elegidas`); fs.append(chips);
+    const add = el('select'); add.dataset.dimension = key; labeled(fs, `Agregar ${one}`, add);
+    const nameOf = v => items.find(([id]) => id === v)?.[1] || v;
+    const article = one === 'área' ? 'un área' : `una ${one}`;
+    const draw = () => {
+      chips.replaceChildren();
+      if (!chosen.size) chips.append(el('li', all, 'chip chip-all'));
+      for (const [v] of items.filter(([id]) => chosen.has(id))) {
+        const li = el('li', undefined, 'chip'); li.dataset.value = v; li.append(el('span', nameOf(v)));
+        const x = el('button', '×', 'chip-remove'); x.type = 'button'; x.setAttribute('aria-label', `Quitar ${one} ${nameOf(v)}`);
+        x.addEventListener('click', () => {
+          chosen.delete(v); draw(); sync();
+          (chips.querySelector('.chip-remove') || add).focus();
+        });
+        li.append(x); chips.append(li);
+      }
+      add.replaceChildren(new Option(chosen.size ? `Agregar otra ${one}…` : `Elige ${article}…`, ''));
+      items.filter(([id]) => !chosen.has(id)).forEach(([v, t]) => add.append(new Option(t, v)));
+      add.disabled = add.options.length < 2;
+    };
+    add.addEventListener('change', () => { if (!add.value) return; chosen.add(add.value); draw(); sync(); add.focus(); });
+    draw();
   }
   const conditions = el('p', '', 'help'); filters.append(conditions);
   const line = el('p', '', 'help'); line.setAttribute('aria-live', 'polite'); box.append(line);
   const read = () => {
     if (!role.value) return null;
     const scope = { kind: kind.value, company_ids: [], cities: [], site_ids: [], area_ids: [] };
-    if (kind.value === 'filters') for (const key of Object.keys(picked)) scope[key] = picked[key].filter(c => c.checked).map(c => c.value);
+    if (kind.value === 'filters') for (const key of Object.keys(picked)) scope[key] = [...picked[key]];
     return { role_id: role.value, scope };
   };
   const problem = () => {
@@ -762,13 +792,15 @@ function accessEditor(parent, { roles, org, current = null, groupOnly = false, n
   const valid = () => problem() === null;
   const sync = () => {
     filters.hidden = kind.value !== 'filters'; const a = read();
+    kindChip.replaceChildren(); kindChip.hidden = !kind.value || kind.value === 'filters';
+    if (!kindChip.hidden) kindChip.append(el('li', scopeChips({ kind: kind.value }, n)[0].label, 'chip chip-kind'));
     line.textContent = !a ? (current ? 'Sin rol elegido: conserva su acceso actual.' : 'Sin rol elegido: no tendrá acceso al panel.')
       : !a.scope.kind ? 'Elige el alcance: qué datos verá.' : scopeSummary(role.selectedOptions[0].textContent, a.scope, n);
-    // Se calcula aunque falte el rol: la combinación depende solo de las casillas.
-    const marked = { kind: 'filters' }; for (const key of Object.keys(picked)) marked[key] = picked[key].filter(c => c.checked).map(c => c.value);
+    // Se calcula aunque falte el rol: la combinación depende solo de lo elegido.
+    const marked = { kind: 'filters' }; for (const key of Object.keys(picked)) marked[key] = [...picked[key]];
     conditions.textContent = scopeConditions(marked, n) || SCOPE_INCOMPLETE;
   };
-  box.addEventListener('change', sync); sync();
+  role.addEventListener('change', sync); kind.addEventListener('change', sync); sync();
   return { read, valid, problem };
 }
 const SCOPE_INCOMPLETE = 'Marca al menos una empresa, ciudad, sede o área, o elige otro alcance.';
@@ -779,7 +811,10 @@ function dialogShell(title) {
   const footer = el('div', undefined, 'dialog-footer'); const cancel = el('button', 'Cancelar'); cancel.type = 'button'; const ok = el('button', 'Guardar', 'primary'); ok.type = 'submit';
   footer.append(cancel, ok); form.append(error, footer); dialog.append(form); document.body.append(dialog);
   cancel.addEventListener('click', () => dialog.close()); dialog.addEventListener('close', () => dialog.remove());
-  const show = e => { error.textContent = typeof e === 'string' ? e : errorMessage(e); error.hidden = false; };
+  // Revisión UX M11: título asociado, error como alerta, foco en el primer campo y retorno a quien lo abrió.
+  wireDialog(dialog, { title: form.querySelector('h2'), error });
+  // field: el campo a corregir; recibe el foco para no tener que buscarlo.
+  const show = (e, field) => { error.textContent = typeof e === 'string' ? e : errorMessage(e); error.hidden = false; field?.focus?.(); };
   return { dialog, form, body, ok, cancel, show };
 }
 function labeled(parent, text, input, help) { const l = el('label', text); l.append(input); parent.append(l); if (help) parent.append(el('p', help, 'help')); return input; }
@@ -833,6 +868,33 @@ async function accounts() {
     const own = a.access ? scopeSummary(a.access.role_name, a.access.scope, data.get(a.tenant_id)?.n || new Map()) : 'Sin acceso: no verá nada';
     return a.group_id ? `${own} · Grupo ${a.group_name}: también ${a.group_access.map(g => g.tenant_name).join(', ') || 'ninguna otra empresa aún'}` : own;
   };
+  // Revisión UX M8: el acceso en chips (rol, cada condición del alcance y el grupo). La frase completa queda para
+  // lectores de pantalla y búsqueda; los chips son su versión visual, pieza por pieza.
+  const accessCell = a => {
+    const d = el('div', undefined, 'access-cell');
+    d.append(el('span', accessText(a), 'sr-only'));
+    const ul = el('ul', undefined, 'chips'); ul.setAttribute('aria-hidden', 'true'); d.append(ul);
+    const chip = (text, cls = '') => ul.append(el('li', text, `chip ${cls}`.trim()));
+    if (a.kind === 'platform') { chip('Superadmin', 'chip-role'); chip('Todo, en todas las empresas', 'chip-all'); return d; }
+    if (!a.access) { chip('Sin acceso: no verá nada', 'chip-warn'); }
+    else {
+      chip(a.access.role_name || 'Sin rol', 'chip-role');
+      scopeChips(a.access.scope, data.get(a.tenant_id)?.n || new Map()).forEach(c => chip(c.label, c.kind === 'all' ? 'chip-all' : c.kind === 'none' ? 'chip-warn' : ''));
+    }
+    if (a.group_id) chip(`Grupo ${a.group_name}: también ${a.group_access.map(g => g.tenant_name).join(', ') || 'ninguna otra empresa aún'}`, 'chip-group');
+    return d;
+  };
+  // Revisión UX ACC-2: activa, sin acceso al panel, debe cambiar la contraseña y desactivada son estados distintos.
+  // El primero manda en la columna y en el filtro; el de contraseña se agrega si también aplica.
+  const stateOf = a => !a.active ? 'Desactivada' : a.kind === 'company' && !a.access ? 'Sin acceso al panel' : a.must_change_password ? 'Debe cambiar la contraseña' : 'Activa';
+  const STATE_TONE = { Desactivada: 'bad', 'Sin acceso al panel': 'warn', 'Debe cambiar la contraseña': 'warn', Activa: 'good' };
+  const stateCell = a => {
+    const d = el('div', undefined, 'account-state'); const st = stateOf(a); d.append(badge(st, STATE_TONE[st]));
+    if (st === 'Sin acceso al panel' && a.must_change_password) d.append(' ', badge('Debe cambiar la contraseña', 'warn'));
+    return d;
+  };
+  const STATE_HELP = [['Activa', 'entra al panel y ve lo que permite su acceso.'], ['Sin acceso al panel', 'puede iniciar sesión, pero no verá nada hasta que le des un rol y un alcance (Completar acceso).'],
+    ['Debe cambiar la contraseña', 'aún no entra por primera vez: al hacerlo cambia la contraseña temporal.'], ['Desactivada', 'no puede entrar. La persona sigue activa en Personas y sus equipos siguen reportando.']];
   // ?empresa=<id> muestra solo las cuentas de esa empresa; con &crear=1 además abre la creación para ella.
   const params = new URLSearchParams(location.search);
   const only = platform && isUuid(params.get('empresa')) && params.get('empresa') !== PLATFORM_TENANT && companies.some(c => c.id === params.get('empresa')) ? params.get('empresa') : null;
@@ -847,17 +909,21 @@ async function accounts() {
     }
     kpis([['Cuentas', String(rows.length)], ['Superadmin', String(rows.filter(a => a.kind === 'platform').length), `De ${ownerName()}`],
       ['De empresas', String(rows.filter(a => a.kind === 'company').length)],
-      ['Pendientes de primer ingreso', String(rows.filter(a => a.must_change_password && a.active).length), 'Con contraseña temporal sin cambiar']]);
+      ['Pendientes de primer ingreso', String(rows.filter(a => a.must_change_password && a.active).length), 'Con contraseña temporal sin cambiar'],
+      ['Sin acceso al panel', String(rows.filter(a => a.active && a.kind === 'company' && !a.access).length), 'Activas, pero sin rol: no ven nada']]);
     const s = surface('Cuentas con acceso al panel');
     s.append(el('p', platform
       ? `Las cuentas de ${ownerName()} son superadmin: administran todas las empresas. Las de una empresa pertenecen a una persona y ven lo que permita su acceso: un rol y un alcance (todo, ciertas empresas, ciudades, sedes o áreas, su equipo o solo lo propio).`
       : 'Cada cuenta pertenece a una persona de tu empresa y ve lo que permita su acceso: un rol y un alcance (todo, ciertas empresas, ciudades, sedes o áreas, su equipo o solo lo propio).', 'help'));
     const columns = [['Cuenta', a => { const d = el('div'); d.append(el('strong', a.user_name || a.display_name || a.email), el('small', a.email)); return d; }]];
     if (platform) columns.push(['Empresa', a => a.kind === 'platform' ? badge(`${ownerName()} · superadmin`, 'info') : a.tenant_name]);
-    columns.push(['Acceso', accessText],
-      ['Estado', a => badge(!a.active ? 'Desactivada' : a.must_change_password ? 'Debe crear su contraseña' : 'Activa', !a.active ? 'bad' : a.must_change_password ? 'warn' : 'good')],
+    columns.push(['Acceso', accessCell], ['Estado', stateCell],
       ['Último ingreso', a => when(a.last_login_at)], ['Acciones', a => actionsFor(a)]);
-    table(s, 'Cuentas', columns, rows, { filters: platform ? [['Empresa', a => a.kind === 'platform' ? ownerName() : a.tenant_name]] : [],
+    const legend = el('details', undefined, 'state-legend'); legend.append(el('summary', 'Qué significa cada estado'));
+    const dl = el('dl'); STATE_HELP.forEach(([t, d]) => { const row = el('div'); row.append(el('dt', t), el('dd', d)); dl.append(row); }); legend.append(dl);
+    legend.append(el('p', 'Desactivar la cuenta solo impide entrar al panel. Retirar a la persona (en Personas) revoca sus equipos: son decisiones distintas.', 'help'));
+    s.append(legend);
+    table(s, 'Cuentas', columns, rows, { filters: [...(platform ? [['Empresa', a => a.kind === 'platform' ? ownerName() : a.tenant_name]] : []), ['Estado', stateOf]],
       search: a => [a.user_name, a.display_name, a.email, a.tenant_name] });
   };
   const refresh = async () => {
@@ -868,11 +934,13 @@ async function accounts() {
   const actionsFor = a => {
     const box = el('div', undefined, 'actions no-margin'); const opts = { tenant: a.tenant_id };
     const button = (text, fn) => { const b = el('button', text, 'link-button'); b.type = 'button'; b.addEventListener('click', fn); box.append(b); };
-    if (a.kind === 'company') button('Acceso', () => editAccess(a));
+    if (a.kind === 'company') button(a.access ? 'Acceso' : 'Completar acceso', () => editAccess(a));
     if (a.kind === 'company' && platform && groupOf(a.tenant_id)) button('Grupo', () => editGroup(a));
-    button(a.active ? 'Desactivar' : 'Activar', async () => {
-      if (a.active && !confirm(`¿Desactivar la cuenta ${a.email}? Se cierran sus sesiones.`)) return;
-      try { await api('PATCH', `/panel-accounts/${a.id}`, { ...opts, body: { active: !a.active } }); await refresh(); } catch (e) { fail(e); }
+    button(a.active ? 'Desactivar cuenta' : 'Activar cuenta', async () => {
+      if (a.active && !await confirmBox({ title: 'Desactivar cuenta', message: `¿Desactivar la cuenta ${a.email}? Se cierran sus sesiones.`,
+        details: ['No podrá entrar al panel hasta que la actives de nuevo. La persona sigue activa en Personas y sus equipos siguen reportando: desactivar la cuenta no la retira.'],
+        okText: 'Desactivar cuenta', danger: true })) return;
+      try { await api('PATCH', `/panel-accounts/${a.id}`, { ...opts, body: { active: !a.active } }); await refresh(); announce(a.active ? `Cuenta ${a.email} desactivada.` : `Cuenta ${a.email} activada.`); } catch (e) { fail(e); }
     });
     button('Restablecer contraseña', () => {
       const { dialog, body, ok, show } = dialogShell(`Restablecer contraseña de ${a.email}`);
@@ -928,12 +996,12 @@ async function accounts() {
   const editGroup = async a => {
     const { dialog, body, ok, show } = dialogShell(`Grupo de ${a.user_name || a.email}`);
     dialog.classList.add('wide-dialog');
-    const group = await groupSection(body, a.tenant_id, a);
+    const group = await groupSection(body, a.tenant_id, a); ok.textContent = 'Guardar grupo';
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
       const p = group?.problem(); if (p) { show(p); return; }
       ok.disabled = true;
-      try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, ...group.read() } }); dialog.close(); await refresh(); }
+      try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, ...group.read() } }); dialog.close(); await refresh(); announce(`Grupo de ${a.user_name || a.email} guardado.`); }
       catch (e) { show(e); ok.disabled = false; }
     });
     dialog.showModal();
@@ -944,12 +1012,13 @@ async function accounts() {
     dialog.classList.add('wide-dialog');
     if (!d.roles.length) body.append(el('p', 'Esta empresa aún no tiene roles: créalos en Roles y permisos.', 'help'));
     const ed = accessEditor(body, { roles: d.roles, org: d.org, current: a.access, newRole: await rolesCreatable(a.tenant_id) });
+    ok.textContent = 'Guardar acceso';
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
       const p = ed.problem(); if (p) { show(p); return; }
       if (sameAccess(ed.read(), a.access)) { dialog.close(); return; }
       ok.disabled = true;
-      try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, access: ed.read() } }); dialog.close(); await refresh(); }
+      try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, access: ed.read() } }); dialog.close(); await refresh(); announce(`Acceso de ${a.user_name || a.email} guardado.`); }
       catch (e) { show(e.code === 'tenant_rbac_disabled' ? 'La empresa no tiene habilitada la gestión de sus propios roles: pídesela a la plataforma.' : e); ok.disabled = false; }
     });
     dialog.showModal();
@@ -3639,38 +3708,76 @@ async function suspiciousPage() {
 }
 
 // ---- Roles y permisos -------------------------------------------------------------------------------------------
+// Pestañas accesibles (tablist con flechas, Inicio y Fin) para separar tareas de una pantalla. tabs: [[clave, texto,
+// conteo|null]]. La pestaña elegida se recuerda por pantalla y cliente (solo comodidad: si no hay almacenamiento, la
+// primera). Devuelve { panels, choose }.
+function tabSet(parent, { id, label, tabs, initial = null, onChange = null }) {
+  const store = `keeper.tab.${page}.${tenant || '-'}.${id}`;
+  let saved = null; try { saved = localStorage.getItem(store); } catch { /* sin almacenamiento */ }
+  const bar = el('div', undefined, 'tabs page-tabs'); bar.setAttribute('role', 'tablist'); bar.setAttribute('aria-label', label); parent.append(bar);
+  const buttons = tabs.map(([k, text, count]) => {
+    const b = el('button', text); b.type = 'button'; b.id = `${id}-tab-${k}`; b.dataset.key = k;
+    b.setAttribute('role', 'tab'); b.setAttribute('aria-controls', `${id}-panel-${k}`);
+    if (count !== null && count !== undefined) b.append(' ', el('span', String(count), 'tab-count'));
+    bar.append(b); return b;
+  });
+  const panels = Object.fromEntries(tabs.map(([k]) => { const p = el('div', undefined, 'tab-panel'); p.id = `${id}-panel-${k}`; p.setAttribute('role', 'tabpanel'); p.setAttribute('aria-labelledby', `${id}-tab-${k}`); parent.append(p); return [k, p]; }));
+  const choose = (key, focus = false) => {
+    buttons.forEach(b => { const on = b.dataset.key === key; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; if (on && focus) b.focus(); });
+    Object.entries(panels).forEach(([k, p]) => { p.hidden = k !== key; });
+    try { localStorage.setItem(store, key); } catch { /* sin almacenamiento */ }
+    onChange?.(key);
+  };
+  buttons.forEach((b, i) => {
+    b.addEventListener('click', () => choose(b.dataset.key));
+    b.addEventListener('keydown', e => {
+      const to = e.key === 'ArrowRight' ? (i + 1) % buttons.length : e.key === 'ArrowLeft' ? (i + buttons.length - 1) % buttons.length : e.key === 'Home' ? 0 : e.key === 'End' ? buttons.length - 1 : -1;
+      if (to >= 0) { e.preventDefault(); choose(buttons[to].dataset.key, true); }
+    });
+  });
+  const keys = tabs.map(([k]) => k);
+  choose(keys.includes(initial) ? initial : keys.includes(saved) ? saved : keys[0]);
+  return { panels, choose };
+}
+
 async function rolesPage() {
   const session = readSession();
   const [roles, permissions, org] = await Promise.all([allPages('/roles'), allPages('/permissions'), optional(allPages('/organization'))]);
   const n = names(org || []); let list = roles;
   const visible = permissions.filter(p => session?.is_platform_admin || !p.platform_only);
   const labelOf = new Map(permissions.map(p => [p.code, p.label]));
-  const render = () => {
+  // ---- Asignacion automatica (reglas cargo/jefatura -> rol) ----
+  let rules = (await optional(api('GET', '/role-rules')))?.data ?? null;
+  // Revisión UX M8 / ACC-3: Roles y Asignación automática por cargo en pestañas propias, para no confundirlas con
+  // reglas de equipos ni sugerir que una persona acumula roles.
+  const render = (tab = null) => {
     $('page-content').replaceChildren();
-    const s = surface('Roles de la empresa');
-    s.append(el('p', 'Un rol es un conjunto de permisos. Qué datos ve cada persona (su alcance) se elige en su ficha de Personas o en Cuentas del panel.', 'help'));
+    const { panels } = tabSet($('page-content'), { id: 'roles', label: 'Roles y asignación automática', initial: tab,
+      tabs: [['roles', 'Roles', list.length], ...(rules === null ? [] : [['auto', 'Asignación automática por cargo', rules.length]])] });
+    const s = surface('Roles de la empresa', panels.roles);
+    s.append(el('p', 'Un rol es un conjunto de permisos. Qué datos ve cada persona (su alcance) se elige en su ficha de Personas o en Cuentas del panel. Cada persona tiene un solo rol.', 'help'));
     table(s, 'Roles', [['Rol', r => r.assignable_by_rule ? `${r.name} · automático` : r.name],
       ['Permisos', r => { const d = el('details'); d.append(el('summary', `${r.permissions.length} permisos`)); const ul = el('ul'); r.permissions.forEach(c => ul.append(el('li', labelOf.get(c) || c))); d.append(ul); return d; }],
       ['Estado', r => badge(r.active ? 'Activo' : 'Inactivo', r.active ? 'good' : '')], ['Acciones', r => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(r)); return b; }]], list);
-    renderRules();
+    if (panels.auto) renderRules(panels.auto);
   };
-  // ---- Asignacion automatica (reglas cargo/jefatura -> rol) ----
-  let rules = (await optional(api('GET', '/role-rules')))?.data ?? null;
   const CONDITIONS = [['position', 'Tiene el cargo…'], ['manages', 'Es jefe (alguien le reporta)'], ['position_in_area', 'Tiene el cargo… en el área…']];
   const unitName = id => n.get(id) || '—';
   const ruleText = x => x.condition_kind === 'manages' ? 'Es jefe de alguien' : x.condition_kind === 'position' ? `Cargo: ${unitName(x.position_id)}` : `Cargo: ${unitName(x.position_id)} en ${unitName(x.area_id)}`;
-  const renderRules = () => {
-    if (rules === null) return;
-    const s = surface('Asignación automática');
-    s.append(el('p', 'Cuando el cargo o la jefatura de una persona cambia (aquí o desde AZC One), estas reglas le dan o le quitan roles solas. Solo usan roles marcados como "se puede dar automáticamente" y solo quitan lo que ellas pusieron. La regla propone el rol; el alcance de cada persona no cambia.', 'help'));
-    const add = el('button', 'Crear regla'); add.type = 'button'; add.addEventListener('click', () => ruleEditor(null)); s.append(add);
-    if (!rules.length) { s.append(el('p', 'Aún no hay reglas.', 'help')); return; }
-    table(s, 'Reglas', [['Regla', x => x.name], ['Cuándo', ruleText], ['Da el rol', x => list.find(r => r.id === x.role_id)?.name || '—'], ['Personas hoy', x => String(x.matches)],
+  // RoleRules::apply: solo a quien no tiene un acceso dado a mano; con varias coincidencias gana la asignación más
+  // antigua; al dejar de cumplirla vuelve el rol por defecto con el mismo alcance.
+  const renderRules = parent => {
+    const s = surface('Asignación automática por cargo', parent);
+    s.append(el('p', 'Cuando el cargo o la jefatura de una persona cambia (aquí o desde AZC One), estas asignaciones le ponen su rol solas a quien no tiene un acceso dado a mano. Si cumple varias, se usa la más antigua; si deja de cumplirla, vuelve al rol por defecto. Solo usan roles marcados como "se puede dar automáticamente". La regla propone el rol; el alcance de cada persona no cambia.', 'help'));
+    s.append(el('p', 'No son reglas de equipos: no bloquean sitios ni aplicaciones, solo deciden el rol del panel.', 'help'));
+    const add = el('button', 'Nueva asignación automática'); add.type = 'button'; add.addEventListener('click', () => ruleEditor(null)); s.append(add);
+    if (!rules.length) { s.append(el('p', 'Aún no hay asignaciones automáticas.', 'help')); return; }
+    table(s, 'Asignaciones automáticas', [['Regla', x => x.name], ['Cuándo', ruleText], ['Da el rol', x => list.find(r => r.id === x.role_id)?.name || '—'], ['Personas hoy', x => String(x.matches)],
       ['Estado', x => badge(x.active ? 'Activa' : 'Inactiva', x.active ? 'good' : '')],
       ['', x => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => ruleEditor(x)); return b; }]], rules);
   };
   const ruleEditor = x => {
-    const { dialog, body, ok, show } = dialogShell(x ? `Editar ${x.name}` : 'Crear regla de asignación');
+    const { dialog, body, ok, show } = dialogShell(x ? `Editar ${x.name}` : 'Nueva asignación automática');
     const nm = labeled(body, 'Nombre', el('input')); nm.maxLength = 120; nm.value = x?.name || '';
     const cond = el('select'); CONDITIONS.forEach(([v, t]) => cond.append(new Option(t, v))); cond.value = x?.condition_kind || 'position'; labeled(body, 'Cuándo aplica', cond);
     const pos = el('select'); (org || []).filter(o => o.kind === 'position' && o.active).sort((a, b) => a.name.localeCompare(b.name, 'es')).forEach(o => pos.append(new Option(o.name, o.id)));
@@ -3679,7 +3786,8 @@ async function rolesPage() {
     const areaL = labeled(body, 'Área', area); area.value = x?.area_id || area.value;
     const role = el('select'); list.filter(r => r.active && r.assignable_by_rule).forEach(r => role.append(new Option(r.name, r.id))); role.value = x?.role_id || role.value;
     labeled(body, 'Da el rol', role, list.some(r => r.assignable_by_rule) ? 'Solo aparecen los roles marcados "se puede dar automáticamente".' : 'Primero marca un rol como "se puede dar automáticamente".');
-    const act = el('input'); act.type = 'checkbox'; act.checked = x ? x.active : true; const actL = el('label', undefined, 'check'); actL.append(act, ' Regla activa'); body.append(actL);
+    const act = el('input'); act.type = 'checkbox'; act.checked = x ? x.active : true; const actL = el('label', undefined, 'check'); actL.append(act, ' Asignación activa'); body.append(actL);
+    ok.textContent = x ? 'Guardar asignación' : 'Crear asignación';
     const sync = () => { posL.hidden = cond.value === 'manages'; areaL.hidden = cond.value !== 'position_in_area'; };
     cond.addEventListener('change', sync); sync();
     const send = async confirmSensitive => {
@@ -3689,19 +3797,21 @@ async function rolesPage() {
     };
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
-      if (!nm.value.trim() || !role.value) { show('Escribe el nombre y elige el rol.'); return; }
+      if (!nm.value.trim()) { show('Escribe el nombre y elige el rol.', nm); return; }
+      if (!role.value) { show('Escribe el nombre y elige el rol.', role); return; }
       ok.disabled = true;
       try { await send(false); }
       catch (e) {
-        if (e.problem?.detail === 'confirm_sensitive' && confirm('Esta regla da permisos de administración a más de 10 personas. ¿Seguro?')) {
+        // Confirmación sensible devuelta por el backend (más de 10 personas con permisos de administración).
+        if (e.problem?.detail === 'confirm_sensitive' && await confirmBox({ title: 'Permisos de administración', message: 'Esta regla da permisos de administración a más de 10 personas. ¿Seguro?', okText: 'Guardar de todos modos', danger: true })) {
           try { await send(true); } catch (e2) { show(e2); ok.disabled = false; return; }
-        } else { show(e.problem?.detail === 'role_not_assignable' ? 'Ese rol no está marcado como "se puede dar automáticamente".' : e.problem?.detail === 'condition_incomplete' ? 'Elige el cargo (y el área, si aplica).' : e); ok.disabled = false; return; }
+        } else { show(e.problem?.detail === 'role_not_assignable' ? 'Ese rol no está marcado como "se puede dar automáticamente".' : e.problem?.detail === 'condition_incomplete' ? 'Elige el cargo (y el área, si aplica).' : e.problem?.detail === 'confirm_sensitive' ? 'No se guardó: falta confirmar.' : e); ok.disabled = false; return; }
       }
-      rules = (await api('GET', '/role-rules')).data; dialog.close(); render(); done();
+      rules = (await api('GET', '/role-rules')).data; dialog.close(); render('auto'); announce(x ? 'Asignación automática guardada.' : 'Asignación automática creada.');
     });
     dialog.showModal();
   };
-  const editor = role => openRoleEditor(role, { permissions: visible, onSaved: saved => { list = role ? list.map(r => r.id === role.id ? saved : r) : [...list, saved]; render(); done(); } });
+  const editor = role => openRoleEditor(role, { permissions: visible, onSaved: saved => { list = role ? list.map(r => r.id === role.id ? saved : r) : [...list, saved]; render('roles'); announce(role ? `Rol «${saved.name}» guardado.` : `Rol «${saved.name}» creado.`); } });
   const action = $('page-action'); action.textContent = 'Crear rol'; action.hidden = false; action.addEventListener('click', () => editor(null));
   render();
 }
@@ -3713,7 +3823,7 @@ async function openRoleEditor(role, { company = null, permissions = null, onSave
   const { dialog, body, ok, show } = dialogShell(role ? `Editar ${role.name}` : 'Crear rol');
   dialog.classList.add('wide-dialog');
   if (note) body.append(el('p', note, 'help'));
-  const name = labeled(body, 'Nombre del rol', el('input')); name.maxLength = 120; name.value = role?.name || '';
+  const name = labeled(body, 'Nombre del rol', el('input')); name.maxLength = 120; name.value = role?.name || ''; ok.textContent = role ? 'Guardar rol' : 'Crear rol';
   body.append(el('h3', 'Permisos'));
   const groups = new Map(); catalog.forEach(p => { if (!groups.has(p.resource)) groups.set(p.resource, []); groups.get(p.resource).push(p); });
   const all = [];
@@ -3727,7 +3837,7 @@ async function openRoleEditor(role, { company = null, permissions = null, onSave
   const autol = el('label', undefined, 'check'); autol.append(auto, ' Se puede dar automáticamente (por cargo o jefatura, en "Asignación automática")'); body.append(autol);
   dialog.querySelector('form').addEventListener('submit', async ev => {
     ev.preventDefault();
-    if (!name.value.trim()) { show('Escribe el nombre del rol.'); return; }
+    if (!name.value.trim()) { show('Escribe el nombre del rol.', name); return; }
     ok.disabled = true;
     const payload = { name: name.value.trim(), permissions: all.filter(b => b.checked).map(b => b.value), active: active.checked, assignable_by_rule: auto.checked };
     try {

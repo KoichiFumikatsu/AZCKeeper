@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scopeSummary, sameAccess, scopeConditions, TEAM_LABEL } from '../public/assets/access-scope.js';
+import { scopeSummary, sameAccess, scopeConditions, scopeChips, TEAM_LABEL } from '../public/assets/access-scope.js';
 
 const names = new Map([['a1', 'Agentes de servicio'], ['s1', 'Tequendama'], ['s2', 'Medellín 808'], ['c1', 'BilingueLaw']]);
 const scope = (kind, lists = {}) => ({ kind, company_ids: [], cities: [], site_ids: [], area_ids: [], ...lists });
@@ -49,4 +49,16 @@ test('condiciones: Y entre dimensiones y cualquiera dentro de la selección', ()
 });
 test('Su equipo se nombra igual en el editor y en el resumen', () => {
   assert.equal(scopeSummary('Jefe', scope('team'), names), `Jefe · ${TEAM_LABEL}`);
+});
+// Revisión UX M8: el alcance en chips dice lo mismo que la frase, pieza por pieza.
+test('chips del alcance: mismas piezas que la frase', () => {
+  const labels = s => scopeChips(s, names).map(c => c.label);
+  assert.deepEqual(labels(scope('filters', { area_ids: ['a1'] })), ['Área: Agentes de servicio', 'todas las sedes']);
+  assert.deepEqual(labels(scope('filters', { company_ids: ['c1'], site_ids: ['s1', 's2'] })), ['Empresa: BilingueLaw', 'Sede: Tequendama', 'Sede: Medellín 808', 'todas las áreas']);
+  assert.deepEqual(labels(scope('filters', { cities: ['Cali'] })), ['Ciudad: Cali', 'todas las áreas']);
+  assert.deepEqual(labels(scope('team')), [TEAM_LABEL]);
+  assert.deepEqual(labels(scope('self')), ['Solo lo propio']);
+  assert.deepEqual(labels(scope('all')), ['Todo el cliente']);
+  assert.deepEqual(labels(scope('filters')), ['Filtros sin unidades: no ve a nadie']);
+  assert.deepEqual(scopeChips(null, names), []);
 });

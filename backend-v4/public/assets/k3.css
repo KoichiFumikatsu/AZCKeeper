@@ -138,3 +138,14 @@ tr.group-row th{background:#d6d6d6;color:var(--ink);white-space:normal;padding:4
 .feature-detail summary{min-height:32px;padding-block:4px;font-size:13px;font-weight:600;color:var(--accent)}.feature-detail ul{margin:4px 0 0;padding-left:18px;font-size:13px}.feature-detail li{margin:4px 0}.feature-detail small{display:block;color:var(--muted)}
 .change-review{margin:16px 0 0}.change-review strong{display:block;margin-bottom:4px}.change-review ul{margin:4px 0 0;padding-left:18px}.change-review li{margin:4px 0;overflow-wrap:anywhere}.change-review .review-add{color:#305b48}.change-review .review-remove{color:var(--error);font-weight:600}.change-review .review-warn{color:#6d4c15}
 .feature-detail li.pending>span{color:#6d4c15;font-weight:600}
+/* M8 · Accesos: alcance en chips, estados de cuenta y pestañas de Roles. */
+.chips{display:flex;flex-wrap:wrap;gap:6px;list-style:none;margin:6px 0;padding:0}.chip{display:inline-flex;align-items:center;gap:4px;min-height:28px;padding:2px 10px;border:1px solid var(--p-200);border-radius:14px;background:var(--p-50);color:var(--p-800);font-size:12px;font-weight:600;max-width:100%;overflow-wrap:anywhere}
+.chip.chip-all{border-style:dashed;border-color:#999;background:transparent;color:var(--muted);font-weight:500}.chip.chip-role{background:var(--p-100);border-color:var(--p-400)}.chip.chip-warn{border-color:#ac9872;background:#eee8dc;color:#6d4c15}.chip.chip-group{border-color:#999;background:#ececec;color:var(--ink);font-weight:500}.chip.chip-kind{background:var(--p-100)}
+.chip-remove{min-height:24px;min-width:24px;padding:0 4px;margin-right:-6px;border:0;border-radius:12px;background:none;box-shadow:none;color:var(--p-700);font-size:16px;line-height:1;text-decoration:none}.chip-remove:hover{background:var(--p-200)}
+.scope-dim{margin:10px 0}.scope-dim>label{margin:6px 0 0;font-size:12px}.scope-dim select{max-width:360px}.scope-kind{margin:2px 0 8px}
+.access-cell .chips{margin:0}.account-state{display:flex;flex-wrap:wrap;gap:4px}
+.state-legend{margin:0 0 10px;font-size:13px}.state-legend summary{min-height:36px;color:var(--accent);font-weight:600}.state-legend dl{display:grid;gap:4px;margin:4px 0 8px}.state-legend dl>div{display:flex;flex-wrap:wrap;gap:4px 8px}.state-legend dt{font-weight:700}.state-legend dd{margin:0;color:var(--muted)}
+.page-tabs{margin-top:0}.page-tabs [role=tab]:focus-visible{outline:3px solid var(--p-400);outline-offset:2px}
+/* M11 · Diálogos y confirmaciones comunes (dialogs.js). */
+.confirm-box .confirm-message{font-size:15px;color:var(--ink);font-weight:600}.confirm-box .dialog-body p.help{margin-bottom:12px}
+.dialog-footer .danger{background:var(--error);border-color:var(--error);color:#fff}.dialog-footer .danger:disabled{opacity:.55}
