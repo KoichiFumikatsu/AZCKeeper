@@ -12249,6 +12249,324 @@ paths:
               $ref: '#/components/schemas/MonitoringExclusions'
       x-permission: usuarios.editar
       x-max-body-bytes: 16384
+  /onboarding:
+    get:
+      tags:
+      - admin
+      operationId: getOnboarding
+      summary: Estado guardado de la puesta en marcha
+      description: "Decisiones humanas del cliente: piloto, responsable, revisión o aplazamiento por paso y cierre (autor, fecha, versión de criterios). La evidencia técnica no se guarda: el panel la calcula. Sin nada guardado: version 0 y estado abierto. Nombres de personas y equipos solo si la cuenta puede ver personas y equipos."
+      security:
+      - adminSession: []
+      x-tenant-boundary: Tenant validado contra sesión; alcance de empresa completa y algún permiso de administración (organizacion.editar, usuarios.crear, usuarios.editar, horarios.editar o equipos.enrolar). Nunca el cliente de la plataforma.
+      x-resources:
+      - Onboarding
+      responses:
+        '200':
+          description: Estado guardado de la puesta en marcha
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardingState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      x-permission: organizacion.editar
+    patch:
+      tags:
+      - admin
+      operationId: patchOnboarding
+      summary: Guardar piloto, responsable o decisiones de pasos
+      description: "Concurrencia optimista: version es la leída; si otro administrador guardó antes, 409 version_conflict y no se sobrescribe nada. El piloto exige persona activa y, si se indica, un equipo activo asignado a esa persona; elegirlo exige poder ver personas y equipos. Cambiar el piloto reinicia la comprobación de comunicación. Con la puesta en marcha cerrada, 409 invalid_transition (onboarding_closed): primero reabrir."
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant validado contra sesión; alcance de empresa completa y algún permiso de administración (organizacion.editar, usuarios.crear, usuarios.editar, horarios.editar o equipos.enrolar). Nunca el cliente de la plataforma.
+      x-resources:
+      - Onboarding
+      responses:
+        '200':
+          description: Guardar piloto, responsable o decisiones de pasos
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardingState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardingPatch'
+      x-permission: organizacion.editar
+      x-max-body-bytes: 16384
+  /onboarding/close:
+    post:
+      tags:
+      - admin
+      operationId: closeOnboarding
+      summary: Finalizar puesta en marcha
+      description: "Vuelve a comprobar en el servidor: cliente activo; piloto con persona activa (sede, área y cargo válidos) y equipo activo suyo que reportó después de elegirlo; un administrador del cliente habilitado; horario con días si Presencia está contratada (o paso 3 Para después) y Protección revisada si el endurecimiento es automático. Si falta algo, 409 invalid_transition (onboarding_not_ready) con errors y nada cambia. Declara primer equipo operativo, no la flota completa."
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant validado contra sesión; alcance de empresa completa y algún permiso de administración (organizacion.editar, usuarios.crear, usuarios.editar, horarios.editar o equipos.enrolar). Nunca el cliente de la plataforma.
+      x-resources:
+      - Onboarding
+      responses:
+        '200':
+          description: Finalizar puesta en marcha
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardingState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardingVersion'
+      x-permission: organizacion.editar
+      x-max-body-bytes: 16384
+  /onboarding/reopen:
+    post:
+      tags:
+      - admin
+      operationId: reopenOnboarding
+      summary: Reabrir la puesta en marcha
+      description: "Permite revisar y volver a cerrar. Conserva la fecha y el autor del último cierre."
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant validado contra sesión; alcance de empresa completa y algún permiso de administración (organizacion.editar, usuarios.crear, usuarios.editar, horarios.editar o equipos.enrolar). Nunca el cliente de la plataforma.
+      x-resources:
+      - Onboarding
+      responses:
+        '200':
+          description: Reabrir la puesta en marcha
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardingState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardingReopen'
+      x-permission: organizacion.editar
+      x-max-body-bytes: 16384
+  /onboarding/summary:
+    get:
+      tags:
+      - admin
+      operationId: getOnboardingSummary
+      summary: Resumen autorizado de la puesta en marcha
+      description: "Estado de tareas que el administrador del cliente puede no tener permiso de leer (cuentas del panel, plan predeterminado, origen de datos, cuenta de IT), sin listas, correos, nombres de cuentas, configuración de fuentes ni contraseñas. No amplía los permisos de las operaciones de esas pantallas. Un alcance parcial recibe 403 scope_denied."
+      security:
+      - adminSession: []
+      x-tenant-boundary: Tenant validado contra sesión; alcance de empresa completa y algún permiso de administración (organizacion.editar, usuarios.crear, usuarios.editar, horarios.editar o equipos.enrolar). Nunca el cliente de la plataforma.
+      x-resources:
+      - Onboarding
+      responses:
+        '200':
+          description: Resumen autorizado de la puesta en marcha
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardingSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      x-permission: organizacion.editar
   /doors:
     get:
       tags:
@@ -13686,6 +14004,414 @@ components:
           type: boolean
         confirm_sensitive:
           type: boolean
+    OnboardingAuthor:
+      type: object
+      additionalProperties: false
+      description: Quién decidió. La plataforma figura como AZC Keeper; nunca se da el correo de la cuenta.
+      required:
+      - kind
+      - name
+      properties:
+        kind:
+          enum:
+          - platform
+          - client
+          - unknown
+        name:
+          anyOf:
+          - type: string
+            maxLength: 160
+          - type: 'null'
+    OnboardingState:
+      type: object
+      additionalProperties: false
+      required:
+      - tenant_id
+      - criteria_version
+      - status
+      - version
+      - pilot
+      - responsible
+      - steps
+      - closed
+      - reopened
+      - updated_at
+      - updated_by
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        criteria_version:
+          type: integer
+          minimum: 1
+          description: Versión vigente de los criterios de «hecho» y de cierre.
+        status:
+          enum:
+          - open
+          - closed
+        version:
+          type: integer
+          minimum: 0
+          description: 0 = nada guardado todavía. Se envía en cada escritura.
+        pilot:
+          anyOf:
+          - type: object
+            additionalProperties: false
+            required:
+            - user_id
+            - display_name
+            - device_id
+            - hostname
+            - selected_at
+            - selected_by
+            properties:
+              user_id:
+                type: string
+                format: uuid
+              display_name:
+                anyOf:
+                - type: string
+                  maxLength: 160
+                - type: 'null'
+              device_id:
+                anyOf:
+                - type: string
+                  format: uuid
+                - type: 'null'
+              hostname:
+                anyOf:
+                - type: string
+                  maxLength: 120
+                - type: 'null'
+              selected_at:
+                type: string
+                format: date-time
+                description: Desde aquí cuenta la comprobación de comunicación del piloto.
+              selected_by:
+                anyOf:
+                - $ref: '#/components/schemas/OnboardingAuthor'
+                - type: 'null'
+          - type: 'null'
+        responsible:
+          anyOf:
+          - type: object
+            additionalProperties: false
+            required:
+            - kind
+            - user_id
+            - display_name
+            properties:
+              kind:
+                enum:
+                - platform
+                - person
+              user_id:
+                anyOf:
+                - type: string
+                  format: uuid
+                - type: 'null'
+              display_name:
+                anyOf:
+                - type: string
+                  maxLength: 160
+                - type: 'null'
+          - type: 'null'
+        steps:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - step
+            - decision
+            - note
+            - criteria_version
+            - stale
+            - decided_at
+            - decided_by
+            properties:
+              step:
+                type: integer
+                minimum: 1
+                maximum: 8
+              decision:
+                enum:
+                - reviewed
+                - deferred
+              note:
+                anyOf:
+                - type: string
+                  maxLength: 300
+                - type: 'null'
+              criteria_version:
+                type: integer
+                minimum: 1
+              stale:
+                type: boolean
+                description: Decidido con criterios anteriores a los vigentes; conviene revisarlo de nuevo.
+              decided_at:
+                type: string
+                format: date-time
+              decided_by:
+                $ref: '#/components/schemas/OnboardingAuthor'
+        closed:
+          description: Último cierre. Se conserva al reabrir (fecha histórica).
+          anyOf:
+          - type: object
+            additionalProperties: false
+            required:
+            - at
+            - by
+            - criteria_version
+            properties:
+              at:
+                type: string
+                format: date-time
+              by:
+                $ref: '#/components/schemas/OnboardingAuthor'
+              criteria_version:
+                type: integer
+                minimum: 1
+          - type: 'null'
+        reopened:
+          anyOf:
+          - type: object
+            additionalProperties: false
+            required:
+            - at
+            - by
+            - reason
+            properties:
+              at:
+                type: string
+                format: date-time
+              by:
+                $ref: '#/components/schemas/OnboardingAuthor'
+              reason:
+                anyOf:
+                - type: string
+                  maxLength: 300
+                - type: 'null'
+          - type: 'null'
+        updated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        updated_by:
+          anyOf:
+          - $ref: '#/components/schemas/OnboardingAuthor'
+          - type: 'null'
+    OnboardingPatch:
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        pilot:
+          anyOf:
+          - type: object
+            additionalProperties: false
+            required:
+            - user_id
+            - device_id
+            properties:
+              user_id:
+                type: string
+                format: uuid
+              device_id:
+                anyOf:
+                - type: string
+                  format: uuid
+                - type: 'null'
+          - type: 'null'
+        responsible:
+          anyOf:
+          - type: object
+            additionalProperties: false
+            required:
+            - kind
+            properties:
+              kind:
+                enum:
+                - platform
+                - person
+              user_id:
+                anyOf:
+                - type: string
+                  format: uuid
+                - type: 'null'
+          - type: 'null'
+        steps:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - step
+            - decision
+            properties:
+              step:
+                type: integer
+                minimum: 1
+                maximum: 8
+              decision:
+                description: null quita la decisión del paso.
+                anyOf:
+                - enum:
+                  - reviewed
+                  - deferred
+                - type: 'null'
+              note:
+                anyOf:
+                - type: string
+                  maxLength: 300
+                - type: 'null'
+    OnboardingVersion:
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      properties:
+        version:
+          type: integer
+          minimum: 0
+    OnboardingReopen:
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        reason:
+          anyOf:
+          - type: string
+            maxLength: 300
+          - type: 'null'
+    OnboardingSummary:
+      type: object
+      additionalProperties: false
+      description: Solo estados y responsables; sin listas, correos, nombres de cuentas, configuración ni secretos.
+      required:
+      - tenant_id
+      - generated_at
+      - access
+      - plan
+      - origin
+      - hardening
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        generated_at:
+          type: string
+          format: date-time
+        access:
+          type: object
+          additionalProperties: false
+          required:
+          - status
+          - prepared_by
+          - managed_by
+          properties:
+            status:
+              description: prepared = cuenta del cliente activa sobre persona activa con rol de administración y alcance Todo el cliente; tested = además ya inició sesión y cambió la contraseña temporal; partial = hay cuentas pero ninguna así.
+              enum:
+              - pending
+              - partial
+              - prepared
+              - tested
+            prepared_by:
+              anyOf:
+              - enum:
+                - platform
+                - client
+              - type: 'null'
+            managed_by:
+              enum:
+              - platform
+              - client
+        plan:
+          type: object
+          additionalProperties: false
+          required:
+          - default_plan
+          - managed_by
+          properties:
+            default_plan:
+              anyOf:
+              - type: object
+                additionalProperties: false
+                required:
+                - name
+                - active
+                properties:
+                  name:
+                    type: string
+                    maxLength: 80
+                  active:
+                    type: boolean
+              - type: 'null'
+            managed_by:
+              const: platform
+        origin:
+          type: object
+          additionalProperties: false
+          required:
+          - mode
+          - live
+          - owned_domains
+          - last_full_applied_at
+          - pending_decisions
+          - managed_by
+          properties:
+            mode:
+              description: one_pending = AZC One contratado y todavía sin fuente conectada.
+              enum:
+              - local
+              - one
+              - one_pending
+            live:
+              type: boolean
+            owned_domains:
+              type: array
+              maxItems: 20
+              items:
+                type: string
+                maxLength: 40
+            last_full_applied_at:
+              anyOf:
+              - type: string
+                format: date-time
+              - type: 'null'
+            pending_decisions:
+              type: integer
+              minimum: 0
+            managed_by:
+              const: platform
+        hardening:
+          anyOf:
+          - type: object
+            additionalProperties: false
+            required:
+            - configured
+            - mode
+            properties:
+              configured:
+                type: boolean
+              mode:
+                enum:
+                - auto
+                - panel
+          - type: 'null'
     MonitoringExclusions:
       type: object
       additionalProperties: false

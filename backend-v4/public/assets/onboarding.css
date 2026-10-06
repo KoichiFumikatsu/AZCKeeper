@@ -1,0 +1,17 @@
+/* Puesta en marcha P1 (F10): lo guardado (piloto, responsable, cierre) y decisiones por paso. Complementa k3.css. */
+.onboarding-shared{margin-bottom:24px}
+.onboarding-shared>h2{margin-bottom:8px}
+.onboarding-shared .onboarding-field{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.onboarding-shared .onboarding-field h3{margin:0 0 6px;font-size:15px}
+.onboarding-shared .onboarding-field p{margin:4px 0;overflow-wrap:anywhere}
+.onboarding-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:10px}
+.onboarding-row label{font-size:13px;font-weight:600;color:var(--muted)}
+.onboarding-row select,.onboarding-row input{min-width:0;max-width:100%;flex:1 1 240px}
+.onboarding-closed strong{display:block;font-size:16px;margin-bottom:4px;color:#2f5c47}
+.onboarding-closed{padding:12px 14px;border:1px solid #9fc2b0;border-left:4px solid #5e8b75;border-radius:10px;background:#eef5f1}
+.onboarding-flash{margin:8px 0 4px}
+.onboarding-flash ul{margin:6px 0 0;padding-left:20px}
+.onboarding-flash.error{border-color:var(--error);color:var(--error)}
+.onboarding-step .step-decision{margin:10px 0 0;font-weight:600}
+.onboarding-step .step-decision[data-decision=deferred]{color:#6b5a2e}
+@media (max-width:640px){.onboarding-row{align-items:stretch}.onboarding-row>*{flex:1 1 100%}}

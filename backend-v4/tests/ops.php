@@ -38,6 +38,9 @@ function opsTests(Database $db): void
     // Guardia: toda operacion de escritura del contrato tiene su traduccion en Auditoria (si no, sale en ingles tecnico).
     $js = file_get_contents(dirname(__DIR__) . '/public/assets/k3.js');
     $block = substr($js, strpos($js, 'const AUDIT_ACTIONS = {'), strpos($js, 'const AUDIT_VERBS') - strpos($js, 'const AUDIT_ACTIONS = {'));
+    // Puesta en marcha: sus etiquetas viven en onboarding.js (AUDIT_LABELS) para no tocar k3.js en paralelo; k3.js las suma a AUDIT_ACTIONS.
+    $onb = file_get_contents(dirname(__DIR__) . '/public/assets/onboarding.js');
+    $block .= substr($onb, strpos($onb, 'export const AUDIT_LABELS = {'), strpos($onb, '};', strpos($onb, 'export const AUDIT_LABELS = {')) - strpos($onb, 'export const AUDIT_LABELS = {'));
     foreach ($contract['paths'] as $path => $ops) {
         foreach (['post', 'put', 'patch', 'delete'] as $m) {
             $op = $ops[$m]['operationId'] ?? null;

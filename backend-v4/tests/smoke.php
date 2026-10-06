@@ -27,6 +27,7 @@ require __DIR__ . '/features.php';
 require __DIR__ . '/plans.php';
 require __DIR__ . '/access.php';
 require __DIR__ . '/batch-users.php';
+require __DIR__ . '/onboarding.php';
 
 use Keeper\{Config, Database, Util, Validator};
 
@@ -407,6 +408,7 @@ try {
     accessDelegationTests($db);
     accessRoleTests($db);
     batchUsersTests($db);
+    onboardingTests($db);
     echo "SMOKE PASS: $checks assertions\n";
 } catch (Throwable $e) {
     fwrite(STDERR, $e instanceof PDOException ? 'Database fixture failure SQLSTATE=' . $e->getCode() . ' driver=' . ($e->errorInfo[1]??0) . "\n" : $e->getMessage() . "\n");

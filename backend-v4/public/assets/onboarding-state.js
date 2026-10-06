@@ -5,6 +5,9 @@ import { allowed, canSeeOnboarding } from './nav-access.js';
 // calcula con datos guardados, no se persiste ni se marca por visitas. Un error nunca se convierte en lista vacía:
 // cada consulta devuelve { ok, data } o { ok: false, kind } con kind = not_contracted | denied | scope | reauth |
 // network | error, y cada paso lo muestra como estado propio. El objetivo es el primer equipo, no la flota completa.
+// P1 (B1/B2): lo único guardado son decisiones humanas (GET /onboarding: piloto, responsable, revisiones, cierre) y el
+// resumen autorizado (GET /onboarding/summary) completa lo que la cuenta no puede leer por sí misma. Si fallan, se
+// muestra el avance calculado y nunca se supone un piloto o un cierre guardado.
 
 export const STATUS = {
   done: ['Hecho', 'good'], progress: ['En curso', 'info'], pending: ['Pendiente', 'warn'],
@@ -45,7 +48,7 @@ export const FAILURE_TEXT = {
   error: 'La API respondió con un error al consultar este dato.',
   partial: 'Solo se obtuvo una parte de la lista: el total no es fiable.',
 };
-const retryable = f => f && ['network', 'error', 'reauth'].includes(f.kind);
+export const retryable = f => !!f && ['network', 'error', 'reauth'].includes(f.kind);
 
 async function probe(fn) {
   try { return { ok: true, data: await fn() }; } catch (error) { return { ok: false, ...failure(error) }; }
@@ -99,7 +102,7 @@ export async function evaluate({ tenant, apiFn = realApi }) {
   const has = code => features.has(code);
   const ruleFeatures = RULE_FEATURES.filter(has);
   const skip = Promise.resolve(null);
-  const [tenantP, sourcesP, domainsP, runsP, orgP, schedP, calP, usersP, accountsP, rolesP, plansP, hardP, policiesP, devicesP, approvedP] = await Promise.all([
+  const [tenantP, sourcesP, domainsP, runsP, orgP, schedP, calP, usersP, accountsP, rolesP, plansP, hardP, policiesP, devicesP, approvedP, savedP, summaryP] = await Promise.all([
     probe(() => get(`/tenants/${tenant}`)),
     probe(() => get('/data-sources')), probe(() => get('/data-domains')), probe(() => get('/sync-runs')),
     probe(() => fetchAll(apiFn, '/organization')), probe(() => fetchAll(apiFn, '/schedules')),
@@ -111,15 +114,20 @@ export async function evaluate({ tenant, apiFn = realApi }) {
     ruleFeatures.length ? probe(() => fetchAll(apiFn, '/policies')) : skip,
     probe(() => fetchAll(apiFn, `/tenants/${tenant}/devices`)),
     probe(() => fetchAll(apiFn, '/enrollments/requests?status=approved', { mode: 'offset' })),
+    probe(() => get('/onboarding')), probe(() => get('/onboarding/summary')),
   ]);
+  const summary = summaryP.ok ? summaryP.data : null;
+  const saved = savedP.ok ? savedP.data : null;
   const can = key => platform || allowed(access, key);
 
   // ---- Origen de los datos: qué dominios manda una fuente (AZC One) ------------------------------------------------
   const sources = sourcesP.ok ? sourcesP.data.data || [] : null;
   const owned = new Map();
   if (domainsP.ok) for (const d of domainsP.data.data || []) if (d.source_id) owned.set(d.domain, sources?.find(s => s.id === d.source_id)?.name || 'AZC One');
+  // Sin permiso para leer dominios, el resumen autorizado dice cuáles manda una fuente (sin nombres ni configuración).
+  else if (summary) for (const d of summary.origin.owned_domains) owned.set(d, 'AZC One');
   const ownerOf = domain => owned.get(domain) || null;
-  const usesOne = has('one') || (sources?.length ?? 0) > 0;
+  const usesOne = has('one') || (sources?.length ?? 0) > 0 || summary?.origin.mode === 'one';
   const runs = runsP.ok ? runsP.data.data || [] : [];
   const applied = latestBy(runs.filter(r => r.status === 'applied' && !r.simulate && r.kind === 'full'), 'started_at');
   const reviewOne = (n, href, key) => link('Revisar lo que trae AZC One', at(href, n), key);
@@ -140,10 +148,14 @@ export async function evaluate({ tenant, apiFn = realApi }) {
     if (plansP.ok) {
       const p = plansP.data; const def = (p.data || []).find(x => x.id === p.default_plan_id);
       s1.lines.push(def ? `Plan predeterminado: ${def.name}.` : 'Sin plan predeterminado: quien no tenga plan propio solo recibe el núcleo (recomendado definirlo antes de instalar).');
+    } else if (summary) {
+      const def = summary.plan.default_plan;
+      s1.lines.push(def ? `Plan predeterminado: ${def.name}${def.active ? '' : ' (inactivo)'} · lo define AZC Keeper.` : 'Sin plan predeterminado: quien no tenga plan propio solo recibe el núcleo (lo define AZC Keeper).');
     } else s1.lines.push(`Plan predeterminado: ${FAILURE_TEXT[plansP.kind] || FAILURE_TEXT.error}`);
     // Origen: Keeper (local) o una fuente. Si no se pudo leer, no se supone local.
     let origin;
     if (!usesOne && (sourcesP.ok || sourcesP.kind === 'not_contracted')) origin = { status: 'done', text: 'Origen de los datos: Keeper (se cargan en este panel).' };
+    else if (!sourcesP.ok && sourcesP.kind !== 'not_contracted' && summary) origin = originFromSummary(summary.origin);
     else if (!sourcesP.ok) origin = { status: 'unavailable', text: `Origen de los datos: ${FAILURE_TEXT[sourcesP.kind] || FAILURE_TEXT.error}`, failure: sourcesP };
     else if (!sources.length) origin = { status: 'pending', text: platform ? 'Origen de los datos: el cliente usará AZC One y todavía no hay una fuente conectada.' : 'Conectar AZC One (lo hace AZC Keeper): todavía no hay una fuente conectada.' };
     else if (!domainsP.ok) origin = { status: 'unavailable', text: `Dueño de cada dato: ${FAILURE_TEXT[domainsP.kind] || FAILURE_TEXT.error}`, failure: domainsP };
@@ -151,6 +163,7 @@ export async function evaluate({ tenant, apiFn = realApi }) {
     else if (!sources.some(s => s.mode === 'live' && s.active !== false)) origin = { status: 'progress', text: 'AZC One está en simulación: todavía no cambia datos reales. Una simulación no completa la carga.' };
     else if (!applied) origin = { status: 'progress', text: runsP.ok ? 'Aún no hay una carga completa aplicada desde AZC One.' : `Historial de cargas: ${FAILURE_TEXT[runsP.kind] || FAILURE_TEXT.error}` };
     else origin = { status: 'done', text: `Origen de los datos: AZC One manda en ${[...owned.keys()].map(d => DOMAIN_NAMES[d] || d).join(', ')} · última carga completa aplicada: ${exactTime(applied.finished_at || applied.started_at)}` };
+    if (!sourcesP.ok && summary?.origin.pending_decisions) s1.warnings.push(`Hay ${summary.origin.pending_decisions} decisiones pendientes de AZC One: las revisa AZC Keeper en Fuentes de datos.`);
     if (usesOne && applied?.pending) s1.warnings.push(`Hay ${applied.pending} decisiones pendientes de la última carga: revísalas en Fuentes de datos.`);
     s1.lines.push(origin.text);
     s1.failure = origin.failure || null;
@@ -175,7 +188,12 @@ export async function evaluate({ tenant, apiFn = realApi }) {
   const readyPeople = activeUsers && org ? activeUsers.filter(u => valid(u.site_id, 'site') && valid(u.area_id, 'area') && valid(u.position_id, 'position')) : null;
   const devices = devicesP.ok ? devicesP.data.rows : null;
   const assigned = devices ? devices.filter(d => d.status === 'active' && d.user_id && (!users || activeIds.has(d.user_id))) : null;
-  const pilotDevice = assigned?.length ? latestBy(assigned, 'last_seen_at') : null;
+  // Piloto: el guardado (B1) manda; sin guardar, el equipo asignado que reportó más recientemente.
+  const savedPilot = saved?.pilot || null;
+  let pilotDevice = null; let pilotLost = false;
+  if (savedPilot?.device_id) { pilotDevice = assigned?.find(d => d.id === savedPilot.device_id && d.user_id === savedPilot.user_id) || null; pilotLost = !!assigned && !pilotDevice; }
+  else if (savedPilot) { const own = (assigned || []).filter(d => d.user_id === savedPilot.user_id); pilotDevice = own.length ? latestBy(own, 'last_seen_at') : null; }
+  else pilotDevice = assigned?.length ? latestBy(assigned, 'last_seen_at') : null;
   const pilotUser = pilotDevice ? users?.find(u => u.id === pilotDevice.user_id) || null : null;
 
   // ---- 2. Organizar el cliente ----------------------------------------------------------------------------------
@@ -270,6 +288,11 @@ export async function evaluate({ tenant, apiFn = realApi }) {
     s5 = step(5, { status: 'done', summary: 'Tu cuenta administra este cliente.' });
     if (accountsP.ok) s5.lines.push(`Cuentas del panel del cliente: ${(accountsP.data.data || []).filter(a => a.active).length} activas.`);
     else if (accountsP.kind === 'not_contracted') s5.lines.push('Más cuentas y roles: los prepara AZC Keeper (autogestión de accesos no contratada).');
+    if (summary) {
+      const a = summary.access;
+      if (a.prepared_by === 'platform') s5.lines.push(`Acceso preparado por la plataforma${a.status === 'tested' ? '; ya se probó con un inicio de sesión.' : '.'}`);
+      else if (!accountsP.ok && a.status === 'tested') s5.lines.push('Hay un administrador del cliente que ya inició sesión.');
+    }
     s5.action = accountsP.ok ? link('Revisar cuentas', at('/cuentas.php', 5), 'accounts') : null;
   } else if (!accountsP.ok) s5 = unavailable(5, accountsP);
   else {
@@ -290,17 +313,19 @@ export async function evaluate({ tenant, apiFn = realApi }) {
   }
 
   // ---- 6. Protección inicial ------------------------------------------------------------------------------------
-  const hardening = has('endurecimiento') ? (hardP?.ok ? { ...hardP.data, configured: hardP.data.shared_password !== null } : null) : null;
+  // Sin permiso de endurecimiento, el resumen autorizado dice si la cuenta de IT está configurada y su modo (sin nombre ni contraseña).
+  const fromSummary = has('endurecimiento') && !hardP?.ok && hardP?.kind !== 'not_contracted' && summary?.hardening ? { hardening_mode: summary.hardening.mode, configured: summary.hardening.configured, admin_name: null } : null;
+  const hardening = has('endurecimiento') ? (hardP?.ok ? { ...hardP.data, configured: hardP.data.shared_password !== null } : fromSummary) : null;
   let s6;
   if (!has('endurecimiento') && !ruleFeatures.length) s6 = step(6, { status: 'na', required: false, summary: 'No aplica: el cliente no tiene funciones de protección contratadas.' });
   else {
     s6 = step(6, { required: false });
     let itOk = true;
     if (has('endurecimiento')) {
-      if (!hardP.ok) { itOk = false; s6.lines.push(`Cuenta de IT: ${FAILURE_TEXT[hardP.kind] || FAILURE_TEXT.error}`); s6.failure = hardP; }
+      if (!hardP.ok && !hardening) { itOk = false; s6.lines.push(`Cuenta de IT: ${FAILURE_TEXT[hardP.kind] || FAILURE_TEXT.error}`); s6.failure = hardP; }
       else {
         itOk = hardening.configured;
-        s6.lines.push(hardening.configured ? `Cuenta de IT configurada (${hardening.admin_name}) · modo ${hardening.hardening_mode === 'auto' ? 'automático al instalar' : 'desde el panel'}.` : 'Cuenta de IT sin contraseña: necesaria antes de endurecer equipos.');
+        s6.lines.push(hardening.configured ? `Cuenta de IT configurada${hardening.admin_name ? ` (${hardening.admin_name})` : ''} · modo ${hardening.hardening_mode === 'auto' ? 'automático al instalar' : 'desde el panel'}.` : 'Cuenta de IT sin contraseña: necesaria antes de endurecer equipos.');
         if (hardening.hardening_mode === 'auto') s6.warnings.push('Endurecimiento automático: cada equipo se endurece solo al instalar Keeper. Para el piloto se recomienda «desde el panel».');
       }
     }
@@ -341,7 +366,8 @@ export async function evaluate({ tenant, apiFn = realApi }) {
   // ---- 8. Comprobar el primer equipo ----------------------------------------------------------------------------
   let s8;
   if (!devicesP.ok) s8 = unavailable(8, devicesP);
-  else if (!pilotDevice) s8 = step(8, { status: 'pending', summary: 'Falta un equipo registrado y asignado a una persona activa.' });
+  else if (pilotLost) s8 = step(8, { status: 'pending', summary: 'El equipo del piloto guardado ya no está activo o cambió de persona: elige otro piloto.' });
+  else if (!pilotDevice) s8 = step(8, { status: 'pending', summary: savedPilot ? 'Falta un equipo registrado y activo de la persona del piloto.' : 'Falta un equipo registrado y asignado a una persona activa.' });
   else {
     s8 = step(8, { status: 'progress', summary: 'Comprobando que el equipo siga reportando.' });
     s8.lines.push(`Equipo ${pilotDevice.hostname} · ${pilotUser?.display_name || 'persona asignada'}.`, `Última conexión: ${exactTime(pilotDevice.last_seen_at)}.`);
@@ -356,8 +382,12 @@ export async function evaluate({ tenant, apiFn = realApi }) {
   }
   const others = Object.entries(OTHER_FEATURES).filter(([c]) => has(c)).map(([, name]) => name);
   const pendingFeatures = Object.entries(PENDING_FEATURES).filter(([c]) => has(c)).map(([, name]) => name);
+  const candidates = (assigned || []).map(d => ({ id: d.id, hostname: d.hostname, user_id: d.user_id, user_name: users?.find(u => u.id === d.user_id)?.display_name || null, last_seen_at: d.last_seen_at || null }));
   return { kind: 'ready', platform, tenant: tenantP.ok ? tenantP.data : null, steps, pilot: pilotDevice ? { device: pilotDevice, user: pilotUser } : null,
-    hardening, canHardening: has('endurecimiento') && !!hardP?.ok, others, pendingFeatures, checkedAt: new Date().toISOString(), counts: count(steps) };
+    hardening, canHardening: has('endurecimiento') && !!hardP?.ok, others, pendingFeatures, checkedAt: new Date().toISOString(), counts: count(steps),
+    saved, savedFailure: savedP.ok ? null : savedP, summary, pilotLost, candidates,
+    people: (activeUsers || []).map(u => ({ id: u.id, name: u.display_name })),
+    canChoosePilot: platform || (tenantWide(access, 'usuarios.ver') && tenantWide(access, 'equipos.ver')), canChooseResponsible: platform || tenantWide(access, 'usuarios.ver') };
 }
 
 // «X de Y pasos necesarios»: excluye opcionales y No aplica; el paso 8 solo cuenta con la comprobación hecha.
@@ -367,9 +397,25 @@ export function count(steps) {
     optional: steps.filter(s => !s.required && s.status !== 'na').length, na: steps.filter(s => s.status === 'na').map(s => s.title) };
 }
 export const nextPending = steps => steps.find(s => s.required && s.status !== 'done' && s.status !== 'na') || null;
-// Sin cierre persistido (B1), Inicio da por terminada la puesta en marcha cuando los pasos necesarios 1–7 están hechos
-// y el equipo piloto ya reportó alguna vez. La prueba de que last_seen avanza se hace en la pantalla Puesta en marcha.
-export function operational(result) {
+// Avance calculado: pasos necesarios 1–7 hechos y el equipo piloto ya reportó alguna vez (la prueba de que last_seen
+// avanza se hace en la pantalla Puesta en marcha).
+export function calculatedOperational(result) {
   if (result?.kind !== 'ready') return false;
   return result.steps.slice(0, 7).every(s => !s.required || s.status === 'done' || s.status === 'na') && !!result.pilot?.device?.last_seen_at;
+}
+// Terminada para Inicio: cierre guardado (B1) o el avance calculado (también si no se pudo leer lo guardado).
+export function operational(result) {
+  if (result?.kind !== 'ready') return false;
+  return result.saved?.status === 'closed' || calculatedOperational(result);
+}
+
+// Origen de los datos desde el resumen autorizado, para quien no puede leer Fuentes de datos (lo gestiona AZC Keeper).
+function originFromSummary(o) {
+  const date = o.last_full_applied_at ? exactTime(o.last_full_applied_at) : null;
+  if (o.mode === 'local') return { status: 'done', text: 'Origen de los datos: Keeper (se cargan en este panel).' };
+  if (o.mode === 'one_pending') return { status: 'pending', text: 'Conectar AZC One (lo hace AZC Keeper): todavía no hay una fuente conectada.' };
+  if (!o.owned_domains.length) return { status: 'progress', text: 'AZC One está conectado, pero todavía no manda en ningún dato (lo configura AZC Keeper).' };
+  if (!o.live) return { status: 'progress', text: 'AZC One está en simulación: todavía no cambia datos reales (lo configura AZC Keeper).' };
+  if (!date) return { status: 'progress', text: 'Aún no hay una carga completa aplicada desde AZC One (la aplica AZC Keeper).' };
+  return { status: 'done', text: `Origen de los datos: AZC One manda en ${o.owned_domains.map(d => DOMAIN_NAMES[d] || d).join(', ')} · última carga completa aplicada: ${date}` };
 }

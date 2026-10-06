@@ -20,6 +20,8 @@ final class AdminApi
         }
         // Lote de personas: el permiso del paso principal (datos > acceso > plan); los demas pasos se exigen en batchUsers().
         if ($r->operation['operationId']==='batchUpdateUsers' && !isset($r->body->changes)) { $permission=isset($r->body->access)?'roles.gestionar':(isset($r->body->plan)?'planes.asignar':$permission); }
+        // Puesta en marcha: cualquier permiso de administracion del cliente (Onboarding::permission); el alcance se exige alli.
+        if (in_array($r->operation['operationId'],Onboarding::OPERATIONS,true)) { $permission=Onboarding::permission($db,$c); }
         $this->access=new AdminAccess($db,$c,$permission,$r->operation['operationId']);
         if ($permission==='roles.gestionar') { $this->access->rolesGate(); }
         if (in_array($r->operation['operationId'],['createDeviceCommand','createHardeningCommand','assignDevice'],true)) { $this->authorizedDevice=$this->row('devices',Util::bin($r->resourceId)); $this->deviceUser=$this->access->user($this->authorizedDevice['user_id']); }
@@ -159,6 +161,7 @@ final class AdminApi
             'purgeTenant'=>$this->purgeTenant($b),
             'listCompanyGroups','createCompanyGroup','patchCompanyGroup','deleteCompanyGroup'=>(new CompanyGroups($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
             'listDataSources','createDataSource','patchDataSource','getDataDomains','putDataDomains','runDataSource','listSyncRuns','listSyncItems','approveSyncRun','listPendingSyncItems','resolveSyncItem'=>(new DataSources($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
+            'getOnboarding','patchOnboarding','closeOnboarding','reopenOnboarding','getOnboardingSummary'=>(new Onboarding($this->db,$this->c,$this->access,$this->r))->dispatch($op,$b),
             'getProductivity'=>$this->report(), 'listAudit'=>$this->auditPage(),
             default=>throw new ApiError(404,'resource_not_found')
         };
