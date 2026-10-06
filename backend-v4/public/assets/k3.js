@@ -1,7 +1,7 @@
 import { api, isUuid, setTenant, readSession, refreshCsrf, goToLogin, errorMessage, PLATFORM_TENANT } from './api.js';
 import './menu.js';
 import './tablekit.js';
-import { applyNavAccess } from './nav-access.js';
+import { applyNavAccess, loadAccess, allowed } from './nav-access.js';
 import { scopeSummary, sameAccess } from './access-scope.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings } from './hardening-settings.js';
 
@@ -2102,11 +2102,13 @@ async function settingsPage() {
   const agg = num('Meses que se guardan los resúmenes', cfg.aggregate_months, 1, 120, 'Productividad, presencia y reportes por día.');
   const logs = num('Días que se guardan los registros técnicos', cfg.log_days, 1, 365, 'Lo que se ve en Logs de los equipos.');
   const save = el('button', 'Guardar ajustes', 'primary'); save.type = 'submit'; form.append(save);
-  const msg = el('p', '', 'help'); form.append(msg);
+  // Éxito como estado y error como alerta: un fallo no se lee como mensaje informativo (revisión UX AJU-2).
+  const msg = el('p', '', 'help'); msg.setAttribute('role', 'status');
+  const bad = el('p', '', 'error-text'); bad.setAttribute('role', 'alert'); bad.hidden = true; form.append(msg, bad);
   form.addEventListener('submit', async ev => {
-    ev.preventDefault(); save.disabled = true;
-    try { await api('PUT', '/tenants/panel-settings', { body: { install_coverage_heartbeat_days: Number(heartbeat.value), raw_days: Number(raw.value), aggregate_months: Number(agg.value), log_days: Number(logs.value) } }); msg.textContent = 'Guardado.'; done(); }
-    catch (e) { msg.textContent = e.problem?.detail === 'raw_days_below_late_arrival' ? 'El detalle no puede guardarse menos días que el plazo en que llegan datos atrasados de los equipos (30).' : errorMessage(e); }
+    ev.preventDefault(); save.disabled = true; msg.textContent = ''; bad.hidden = true;
+    try { await api('PUT', '/tenants/panel-settings', { body: { install_coverage_heartbeat_days: Number(heartbeat.value), raw_days: Number(raw.value), aggregate_months: Number(agg.value), log_days: Number(logs.value) } }); msg.textContent = 'Ajustes guardados.'; done(); }
+    catch (e) { bad.textContent = e.problem?.detail === 'raw_days_below_late_arrival' ? 'El detalle no puede guardarse menos días que el plazo en que llegan datos atrasados de los equipos (30).' : errorMessage(e); bad.hidden = false; }
     finally { save.disabled = false; }
   });
   // Cuenta de IT para endurecer equipos: ajuste de toda la empresa (permiso de endurecimiento con alcance empresa y
@@ -2124,13 +2126,20 @@ async function settingsPage() {
       const actions = el('div', undefined, 'actions'); actions.append(open); hs.append(actions, hmsg);
     }
   }
+  // Atajos según el acceso de la cuenta (misma regla que el menú, nav-access.js): no se ofrece lo que daría «Sin permiso».
+  // Empresas (marca) y Planes son de la plataforma. Si el acceso no se pudo leer se muestran y decide la API.
+  const platform = !!readSession()?.is_platform_admin;
+  const access = await loadAccess();
+  const shortcuts = [['Horarios', '/horarios.php', 'schedules'], ['Festivos', '/festivos.php', 'holidays'], ['Clasificación de apps', '/clasificacion.php', 'classification'],
+    ['Fuentes de datos (AZC One)', '/fuentes.php', 'sources']].filter(([, , key]) => !access || allowed(access, key));
+  if (platform) { shortcuts.unshift(['Marca, logo y colores', '/empresas.php']); shortcuts.push(['Planes y paquetes', '/planes.php']); }
   const more = surface('Otros ajustes');
-  const ul = el('ul');
-  // Planes y paquetes son de la plataforma: solo superadmin los administra.
-  [['Marca, logo y colores', '/empresas.php'], ['Horarios', '/horarios.php'], ['Festivos', '/festivos.php'], ['Clasificación de apps', '/clasificacion.php'],
-    ...(readSession()?.is_platform_admin ? [['Planes y paquetes', '/planes.php']] : []), ['Fuentes de datos (AZC One)', '/fuentes.php']]
-    .forEach(([t, href]) => { const li = el('li'); const a = el('a', t); a.href = href; li.append(a); ul.append(li); });
-  more.append(ul);
+  if (shortcuts.length) {
+    const ul = el('ul');
+    shortcuts.forEach(([t, href]) => { const li = el('li'); const a = el('a', t); a.href = href; li.append(a); ul.append(li); });
+    more.append(ul);
+  } else more.append(el('p', 'Tu cuenta no tiene acceso a otras pantallas de ajustes.', 'help'));
+  if (!platform) more.append(el('p', 'Marca, logo y colores: los gestiona la plataforma. Pide el cambio al administrador de AZC Keeper.', 'help'));
 }
 
 // ---- Festivos -------------------------------------------------------------------------------------------------------

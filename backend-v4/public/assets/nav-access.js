@@ -23,9 +23,16 @@ export function allowed(access, key) {
   return !!grant && (!need[1] || grant.scopes.includes('tenant'));
 }
 
+// Una sola consulta por página: el menú y los atajos de Ajustes leen el mismo acceso (null si no se pudo leer).
+let accessRequest = null;
+export function loadAccess() {
+  accessRequest ??= api('GET', '/me/access').catch(() => null);
+  return accessRequest;
+}
+
 export async function applyNavAccess() {
-  let access;
-  try { access = await api('GET', '/me/access'); } catch { return null; }
+  const access = await loadAccess();
+  if (!access) return null;
   for (const link of document.querySelectorAll('#navigation a[data-key]')) {
     if (link.closest('#platform-group, #group-group')) continue;
     link.hidden = !allowed(access, link.dataset.key);
