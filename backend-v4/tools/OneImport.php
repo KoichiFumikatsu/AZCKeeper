@@ -2,20 +2,20 @@
 declare(strict_types=1);
 namespace Keeper\Tools;
 
-use Keeper\{AccessGrants, Database, DeviceIntake, HolidayCalendars, Placeholders, Util};
+use Keeper\{AccessGrants, Database, DeviceIntake, Placeholders, Util};
 
 /**
  * Carga unica de la instantanea de AZC One legacy (keeper.roster.v1, tools/one-legacy-snapshot) como datos LOCALES y
  * editables: sin fuente de datos, sin entity_links y sin dominios con dueño. Todo queda en un lote (import_batches,
- * migracion 0047) para que wipe() quite despues exactamente lo creado, antes de cargar desde la API de One v2.
+ * migracion 0047) para que wipe() quite despues SOLO lo que la carga creo y nadie toco despues.
  *
- * Emparejamiento: unidades y horarios por nombre exacto (mismo tipo, sin eliminar); personas por cedula
- * (user_external_refs 'document' o 'k3:cc'). Un lote anterior sin borrar manda sobre el nombre (renombrar en el panel
- * no duplica). Lo emparejado nunca pierde su acceso, su cuenta de panel, su nombre ni su estado: solo se actualiza su
- * ubicacion (empresa, firma, sede, area, cargo, horario) y su jefe, y se anota lo anterior (solo ids) en el lote.
+ * Lo que ya existia en Keeper manda (decision del dueño, 2026-10-06): una unidad emparejada por nombre exacto o una
+ * persona emparejada por cedula solo se VINCULA (item 'matched'); no se le cambia nada (ni ubicacion, jefe, correo,
+ * estado, plan, acceso, asignaciones ni pais/ciudad). Si One trae otro valor, el dry-run lo cuenta (codigo differs_*).
+ * Lo creado por un lote anterior tambien se vincula sin cambios: repetir la carga nunca deshace ediciones del panel.
  *
  * Dry-run = la misma carga dentro de una transaccion que se revierte: los conteos son exactos. Sin datos personales en
- * conteos ni salida: solo codigos.
+ * conteos, salida ni auditoria: solo codigos, ids y nombres de campo.
  */
 final class OneImport
 {
@@ -24,21 +24,27 @@ final class OneImport
     private const ORG = ['company' => 'empresas', 'firm' => 'firmas', 'site' => 'sedes', 'area' => 'areas', 'position' => 'cargos'];
     private const REFS = ['company' => 'company_external_id', 'firm' => 'firm_external_id', 'site' => 'site_external_id',
         'area' => 'area_external_id', 'position' => 'position_external_id', 'schedule' => 'schedule_external_id'];
-    private const PLACE = ['company_id', 'firm_id', 'site_id', 'area_id', 'position_id', 'schedule_id'];
+    private const AUDIT_FIELDS = [
+        'org_unit' => ['kind', 'name', 'parent_id', 'country_code', 'city'],
+        'schedule' => ['name', 'timezone', 'start_local', 'end_local', 'days'],
+        'user' => ['display_name', 'email', 'status', 'company_id', 'firm_id', 'site_id', 'area_id', 'position_id', 'schedule_id', 'document', 'reports_to_user_id', 'access', 'subscription'],
+    ];
 
     private string $tenant = '';
     private array $counts = [];
-    /** Lote: "tipo|id" => [tipo, id, external_id, accion, previous] */
+    /** Lote: "tipo|hexid" => [tipo, id, external_id, accion] */
     private array $items = [];
     /** "org_unit|ext", "schedule|ext", "user|ext" => id */
     private array $map = [];
+    /** Unidades y horarios que existian antes de esta corrida: [id => fila] */
     private array $existingUnits = [];
     private array $existingSchedules = [];
+    private array $seenDocuments = [];
     private bool $manifestTable = false;
 
     public function __construct(private Database $db) {}
 
-    // ---- Lectura de la instantanea --------------------------------------------------------------------------------
+    // ---- Lectura y guardas ------------------------------------------------------------------------------------------
     /** Lee <dir>/manifest.json y las paginas NNNN.json de org-units, schedules y people. */
     public static function readSnapshot(string $dir): array
     {
@@ -62,32 +68,72 @@ final class OneImport
         return $out;
     }
 
+    /** "Grupo AZC" -> "grupo-azc" (lo que la instantanea trae en manifest.company). */
+    public static function slug(string $name): string
+    {
+        $v = mb_strtolower(trim($name), 'UTF-8');
+        $v = strtr($v, ['á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'ü' => 'u', 'ñ' => 'n']);
+        return trim((string) preg_replace('/[^a-z0-9]+/', '-', $v), '-');
+    }
+
+    /**
+     * El cliente existe, no esta eliminado y se llama EXACTAMENTE como --confirm-tenant; con instantanea, su
+     * manifest.company es el slug de ese nombre. Devuelve la fila del cliente.
+     */
+    public static function guardTenant(Database $db, string $tenant, string $confirmName, ?array $manifest = null): array
+    {
+        $row = $db->one('SELECT tenant_id,name FROM tenants WHERE tenant_id=? AND deleted_at IS NULL', [$tenant]);
+        if (!$row) { throw new \RuntimeException('tenant_not_found'); }
+        if ($row['name'] !== $confirmName) { throw new \RuntimeException('tenant_name_mismatch: --confirm-tenant no coincide con el nombre del cliente'); }
+        if ($manifest !== null && ($manifest['company'] ?? null) !== self::slug($row['name'])) { throw new \RuntimeException('manifest_company_mismatch: la instantanea es de otra empresa'); }
+        return $row;
+    }
+
     public static function hasManifestTables(Database $db): bool
     {
         return (int) $db->one("SELECT COUNT(*) n FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('import_batches','import_batch_items')")['n'] === 2;
     }
 
+    /** Resumen de un lote (sin datos personales) para mostrar antes de borrar. */
+    public static function batchSummary(Database $db, string $tenant, string $batch): array
+    {
+        $b = $db->one('SELECT * FROM import_batches WHERE tenant_id=? AND id=?', [$tenant, $batch]);
+        if (!$b) { throw new \RuntimeException('batch_not_found: el lote no existe en este cliente'); }
+        $items = [];
+        foreach ($db->run('SELECT entity_type,action,wiped_at IS NOT NULL w,COUNT(*) n FROM import_batch_items WHERE tenant_id=? AND batch_id=? GROUP BY entity_type,action,w', [$tenant, $batch])->fetchAll() as $r) {
+            $items[$r['entity_type']][$r['action'] . ($r['w'] ? '_wiped' : '')] = (int) $r['n'];
+        }
+        return ['kind' => $b['kind'], 'status' => $b['status'], 'created_at' => $b['created_at'], 'source_generated_at' => $b['source_generated_at'], 'items' => $items];
+    }
+
+    private function lock(): void
+    {
+        if ((int) ($this->db->one('SELECT GET_LOCK(?,0) l', ['keeper-one-import-' . bin2hex($this->tenant)])['l'] ?? 0) !== 1) { throw new \RuntimeException('import_locked: otra carga o borrado corre en este cliente'); }
+    }
+    private function unlock(): void { $this->db->run('DO RELEASE_LOCK(?)', ['keeper-one-import-' . bin2hex($this->tenant)]); }
+
     // ---- Importacion ------------------------------------------------------------------------------------------------
     /**
-     * @return array{applied:bool,batch:?string,counts:array}
-     * Sin $apply todo se revierte. Con $apply y errores, se niega salvo $allowErrors.
+     * @return array{applied:bool,batch:?string,counts:array,errors:int,changed:bool}
+     * Sin $apply todo se revierte. Con $apply y errores por item, se niega salvo $allowErrors.
      */
     public function import(string $tenant, array $snap, bool $apply, bool $allowErrors = false): array
     {
-        $this->tenant = $tenant; $this->counts = []; $this->items = []; $this->map = [];
+        $this->tenant = $tenant; $this->counts = []; $this->items = []; $this->map = []; $this->seenDocuments = [];
         if (!$this->db->one('SELECT tenant_id FROM tenants WHERE tenant_id=? AND deleted_at IS NULL', [$tenant])) { throw new \RuntimeException('tenant_not_found'); }
         $this->manifestTable = self::hasManifestTables($this->db);
         if ($apply && !$this->manifestTable) { throw new \RuntimeException('migration_missing: aplicar 0047_import_batches.sql antes de --apply'); }
+        $this->lock();
         $this->db->pdo->beginTransaction();
         try {
-            $this->existingUnits = array_fill_keys(array_column($this->db->run('SELECT id FROM org_units WHERE tenant_id=?', [$tenant])->fetchAll(), 'id'), true);
-            $this->existingSchedules = array_fill_keys(array_column($this->db->run('SELECT id FROM schedules WHERE tenant_id=?', [$tenant])->fetchAll(), 'id'), true);
+            foreach ($this->db->run('SELECT * FROM org_units WHERE tenant_id=?', [$tenant])->fetchAll() as $o) { $this->existingUnits[$o['id']] = $o; }
+            foreach ($this->db->run('SELECT * FROM schedules WHERE tenant_id=?', [$tenant])->fetchAll() as $s) { $this->existingSchedules[$s['id']] = $s; }
             $this->orgUnits($snap['org-units']);
             $this->schedules($snap['schedules']);
             $this->people($snap['people']);
             $this->hierarchy($snap['people']);
             $changed = false;
-            foreach ($this->items as $i) { if ($i[3] !== 'matched') { $changed = true; break; } }
+            foreach ($this->items as $i) { if ($i[3] === 'created') { $changed = true; break; } }
             $errors = 0; foreach ($this->counts as $c) { $errors += $c['error'] ?? 0; }
             if (!$apply || !$changed || ($errors > 0 && !$allowErrors)) {
                 $this->db->pdo->rollBack();
@@ -96,38 +142,35 @@ final class OneImport
             $batch = Util::bin(Util::uuid());
             $this->db->run('INSERT INTO import_batches (tenant_id,id,kind,source_generated_at,counts) VALUES (?,?,?,?,?)',
                 [$tenant, $batch, self::KIND, is_string($snap['manifest']['generated_at'] ?? null) ? substr($snap['manifest']['generated_at'], 0, 32) : null, Util::json($this->counts)]);
-            foreach ($this->items as [$type, $id, $ext, $action, $prev]) {
+            $audit = $this->auditor(Util::bin(Util::uuid()));
+            foreach ($this->items as [$type, $id, $ext, $action]) {
+                // Lo creado guarda la version con que quedo: si el panel la cambia despues, el borrado no lo toca.
+                $version = $action === 'created' ? (int) $this->db->one('SELECT version FROM ' . self::table($type) . ' WHERE tenant_id=? AND id=?', [$tenant, $id])['version'] : null;
                 $this->db->run('INSERT INTO import_batch_items (tenant_id,batch_id,entity_type,entity_id,external_id,action,previous) VALUES (?,?,?,?,?,?,?)',
-                    [$tenant, $batch, $type, $id, $ext, $action, $prev ? Util::json($prev) : null]);
+                    [$tenant, $batch, $type, $id, $ext, $action, $version === null ? null : Util::json(['imported_version' => $version])]);
+                if ($action === 'created') { $audit('import.one_snapshot.create', $type, $id, self::AUDIT_FIELDS[$type]); }
             }
-            $this->audit($batch, 'import.one_snapshot.applied', ['org_units', 'schedules', 'users'], self::summary($this->counts));
-            $this->db->run('INSERT INTO admin_policy_recompiles (tenant_id) VALUES (?) ON DUPLICATE KEY UPDATE revision=revision+1,requested_at=UTC_TIMESTAMP(6)', [$tenant]);
-            HolidayCalendars::refresh($this->db, $tenant);
+            $audit('import.one_snapshot.applied', 'import_batch', $batch, ['org_units', 'schedules', 'users'], self::summary($this->counts));
             $this->db->pdo->commit();
             return ['applied' => true, 'batch' => Util::id($batch), 'counts' => $this->counts, 'errors' => $errors, 'changed' => true];
         } catch (\Throwable $e) {
             if ($this->db->pdo->inTransaction()) { $this->db->pdo->rollBack(); }
             throw $e;
-        }
+        } finally { $this->unlock(); }
     }
 
+    private static function table(string $type): string { return ['org_unit' => 'org_units', 'schedule' => 'schedules', 'user' => 'users'][$type]; }
     private function count(string $entity, string $action, ?string $code = null): void
     {
         $this->counts[$entity][$action] = ($this->counts[$entity][$action] ?? 0) + 1;
-        if ($code !== null) { $this->counts[$entity]['codes'][$code] = ($this->counts[$entity]['codes'][$code] ?? 0) + 1; }
+        if ($code !== null) { $this->note($entity, $code); }
     }
     private function note(string $entity, string $code): void { $this->counts[$entity]['codes'][$code] = ($this->counts[$entity]['codes'][$code] ?? 0) + 1; }
-    private function record(string $type, string $id, ?string $ext, string $action, ?array $prev = null): void
+    private function record(string $type, string $id, ?string $ext, string $action): void
     {
         $key = "$type|" . bin2hex($id);
-        if (isset($this->items[$key])) {
-            // Ya anotado (p. ej. la persona y luego su jefe): creado manda; lo anterior se conserva del primer cambio.
-            [, , $e0, $a0, $p0] = $this->items[$key];
-            $action = $a0 === 'created' ? 'created' : ($a0 === 'updated' || $action === 'updated' ? 'updated' : 'matched');
-            $prev = ($p0 ?? []) + ($prev ?? []);
-            $ext ??= $e0;
-        }
-        $this->items[$key] = [$type, $id, $ext, $action, $prev ?: null];
+        if (($this->items[$key][3] ?? null) === 'created') { return; }
+        $this->items[$key] = [$type, $id, $ext, $action];
     }
     private static function ext(mixed $v): ?string { return is_string($v) && $v !== '' && strlen($v) <= 160 ? $v : null; }
     private static function clean(mixed $v): string { return is_string($v) ? trim((string) preg_replace('/\s+/u', ' ', $v)) : ''; }
@@ -143,11 +186,7 @@ final class OneImport
     {
         if (!$this->manifestTable) { return null; }
         foreach ($this->db->run("SELECT i.entity_id FROM import_batch_items i JOIN import_batches b ON b.tenant_id=i.tenant_id AND b.id=i.batch_id WHERE i.tenant_id=? AND b.kind=? AND i.entity_type=? AND i.external_id=? AND i.wiped_at IS NULL ORDER BY b.created_at DESC", [$this->tenant, self::KIND, $type, $ext])->fetchAll() as $r) {
-            $alive = match ($type) {
-                'org_unit' => $this->db->one('SELECT id FROM org_units WHERE tenant_id=? AND id=? AND deleted_at IS NULL', [$this->tenant, $r['entity_id']]),
-                'schedule' => $this->db->one('SELECT id FROM schedules WHERE tenant_id=? AND id=?', [$this->tenant, $r['entity_id']]),
-                default => $this->db->one('SELECT id FROM users WHERE tenant_id=? AND id=?', [$this->tenant, $r['entity_id']]),
-            };
+            $alive = $this->db->one('SELECT id FROM ' . self::table($type) . ' WHERE tenant_id=? AND id=?' . ($type === 'org_unit' ? ' AND deleted_at IS NULL' : ''), [$this->tenant, $r['entity_id']]);
             if ($alive) { return $r['entity_id']; }
         }
         return null;
@@ -192,9 +231,10 @@ final class OneImport
         }
         $id = $this->previous('org_unit', $ext); $how = 'previous_import';
         if ($id === null) {
+            // Solo contra lo que existia antes de esta corrida (dos unidades de One con el mismo nombre no se funden).
             $same = []; $similar = false;
-            // Los placeholders (marca de 0046) nunca se emparejan por nombre.
-            foreach ($this->db->run('SELECT id,name,active FROM org_units WHERE tenant_id=? AND kind=? AND deleted_at IS NULL AND placeholder=FALSE', [$this->tenant, $kind])->fetchAll() as $o) {
+            foreach ($this->existingUnits as $o) {
+                if ($o['kind'] !== $kind || $o['deleted_at'] !== null || $o['placeholder']) { continue; }
                 if (self::clean($o['name']) === $name) { $same[] = $o; } elseif (self::fold($o['name']) === self::fold($name)) { $similar = true; }
             }
             if (count($same) > 1) { $active = array_values(array_filter($same, fn ($o) => (bool) $o['active'])); $same = count($active) === 1 ? $active : $same; }
@@ -210,20 +250,14 @@ final class OneImport
             $this->count($entity, 'create');
             return 'done';
         }
+        // Emparejada: solo se vincula. Lo distinto en One se cuenta, no se escribe.
         $this->map["org_unit|$ext"] = $id;
         $unit = $this->db->one('SELECT * FROM org_units WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
         if (!$unit['active']) { $this->note($entity, 'matched_inactive'); }
-        // Sede emparejada: solo se completan pais y ciudad vacios; nunca se pisa lo que el panel ya tiene.
-        $prev = [];
-        foreach ($geo as $f => $v) { if ($v !== null && $unit[$f] === null) { $prev[$f] = null; } }
-        if ($prev) {
-            $this->db->run('UPDATE org_units SET country_code=COALESCE(country_code,?),city=COALESCE(city,?),version=version+1 WHERE tenant_id=? AND id=?', [$geo['country_code'], $geo['city'], $this->tenant, $id]);
-            $this->record('org_unit', $id, $ext, 'updated', $prev);
-            $this->count($entity, 'update', "match_$how");
-        } else {
-            $this->record('org_unit', $id, $ext, 'matched');
-            $this->count($entity, 'match', $how);
-        }
+        foreach ($geo as $f => $v) { if ($v !== null && $unit[$f] !== $v) { $this->note($entity, "differs_$f"); } }
+        if ($kind === 'area' && $unit['parent_id'] !== $parent) { $this->note($entity, 'differs_parent'); }
+        $this->record('org_unit', $id, $ext, 'matched');
+        $this->count($entity, 'match', $how);
         return 'done';
     }
 
@@ -245,12 +279,11 @@ final class OneImport
             if (($it['active'] ?? true) === false) { $this->count('horarios', 'skip', 'inactive_in_source'); continue; }
             $id = $this->previous('schedule', $ext); $how = 'previous_import';
             if ($id === null) {
-                $same = array_values(array_filter($this->db->run('SELECT id,name FROM schedules WHERE tenant_id=? AND placeholder=FALSE', [$this->tenant])->fetchAll(), fn ($s) => self::clean($s['name']) === $name));
+                $same = array_values(array_filter($this->existingSchedules, fn ($s) => !$s['placeholder'] && self::clean($s['name']) === $name));
                 if (count($same) > 1) { $this->count('horarios', 'error', 'name_ambiguous'); continue; }
                 if ($same) { $id = $same[0]['id']; $how = 'name'; }
             }
             if ($id !== null) {
-                // Emparejado: el horario de Keeper se conserva tal cual.
                 $this->map["schedule|$ext"] = $id; $this->record('schedule', $id, $ext, 'matched'); $this->count('horarios', 'match', $how);
                 continue;
             }
@@ -280,11 +313,17 @@ final class OneImport
             if ($email !== null && (!is_string($email) || strlen($email) > 254 || filter_var($email, FILTER_VALIDATE_EMAIL) === false)) { $email = null; $this->note('personas', 'invalid_email_dropped'); }
             $document = is_string($it['document'] ?? null) ? DeviceIntake::document($it['document']) : null;
             if ($document !== null && (strlen($document) < 3 || strlen($document) > 40)) { $document = null; $this->note('personas', 'invalid_document_dropped'); }
+            // La misma cedula dos veces en la instantanea: falla la segunda persona, no el lote.
+            if ($document !== null && isset($this->seenDocuments[$document])) { $this->count('personas', 'error', 'document_duplicate_in_snapshot'); continue; }
+            if ($document !== null) { $this->seenDocuments[$document] = true; }
+            // Lo anotado dentro del SAVEPOINT (p. ej. un placeholder creado) se descarta si la persona se revierte.
+            [$items0, $counts0] = [$this->items, $this->counts];
             $this->db->run('SAVEPOINT one_import_person');
             try { $this->person($it, $ext, $name, $email, $status, $document, $tier); $this->db->run('RELEASE SAVEPOINT one_import_person'); }
             catch (\PDOException $e) {
                 if (($e->errorInfo[1] ?? 0) !== 1062) { throw $e; }
                 $this->db->run('ROLLBACK TO SAVEPOINT one_import_person');
+                [$this->items, $this->counts] = [$items0, $counts0];
                 unset($this->map["user|$ext"]);
                 $this->count('personas', 'error', 'duplicate_value');
             }
@@ -299,8 +338,8 @@ final class OneImport
             if (count($match) > 1) { $this->count('personas', 'error', 'document_ambiguous'); return; }
             if ($match) { $id = $match[0]; $how = 'document'; }
         }
+        if ($id !== null) { $this->linkMatched($id, $it, $ext, $email, $status, $how); return; }
         $refs = $this->refs($it, $retired);
-        if ($id !== null) { $this->updateMatched($id, $ext, $email, $retired, $refs, $how); return; }
         if (is_string($refs)) { $this->count('personas', 'error', $refs); return; }
         // Correo de otra persona (activa o retirada): entra sin correo; se completa luego en el panel.
         if ($email !== null && $this->db->one('SELECT id FROM users WHERE tenant_id=? AND email=?', [$this->tenant, $email])) { $email = null; $this->note('personas', 'email_in_use_dropped'); }
@@ -319,41 +358,28 @@ final class OneImport
         $this->count('personas', 'create', $retired ? 'inactive_created' : 'active_created');
     }
     /**
-     * Persona que ya estaba en Keeper (por cedula) o que creo un lote anterior. Nunca se tocan su acceso, cuenta de panel,
-     * nombre ni estado. Activa en One: su ubicacion pasa a la de One (lo anterior queda en el lote, solo ids) y el correo
-     * solo se completa si estaba vacio. Retirada en One: se vincula sin cambios.
+     * Persona que ya estaba (por cedula) o que creo un lote anterior: solo se vincula, nada se escribe. Lo que One trae
+     * distinto se cuenta (differs_*), sin valores.
      */
-    private function updateMatched(string $id, string $ext, ?string $email, bool $retired, array|string $refs, string $how): void
+    private function linkMatched(string $id, array $it, string $ext, ?string $email, string $status, string $how): void
     {
         $this->map["user|$ext"] = $id;
-        if ($retired) { $this->record('user', $id, $ext, 'matched'); $this->count('personas', 'match', "{$how}_inactive_in_source_kept"); return; }
-        if (is_string($refs)) { $this->record('user', $id, $ext, 'matched'); $this->count('personas', 'error', "matched_$refs"); return; }
         $u = $this->db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
-        $prev = []; $set = [];
-        foreach (self::PLACE as $col) { if ($u[$col] !== $refs[$col]) { $prev[$col] = $u[$col] === null ? null : bin2hex($u[$col]); $set[$col] = $refs[$col]; } }
-        if ($u['email'] === null && $email !== null && !$this->db->one('SELECT id FROM users WHERE tenant_id=? AND email=?', [$this->tenant, $email])) { $prev['email'] = null; $set['email'] = $email; }
-        if (!$set) { $this->record('user', $id, $ext, 'matched'); $this->count('personas', 'match', $how); return; }
-        $cols = implode(',', array_map(fn ($c) => "$c=?", array_keys($set)));
-        $this->db->run("UPDATE users SET $cols,version=version+1 WHERE tenant_id=? AND id=?", [...array_values($set), $this->tenant, $id]);
-        if (array_intersect(array_keys($set), self::PLACE)) { $this->reassign($id); }
-        $this->record('user', $id, $ext, 'updated', $prev);
-        $this->count('personas', 'update', "match_$how");
-    }
-    /** Cierra la asignacion abierta y abre otra con la ubicacion actual (igual que el panel). */
-    private function reassign(string $id): void
-    {
-        $u = $this->db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
-        $at = $this->db->one('SELECT UTC_TIMESTAMP(6) at')['at'];
-        $this->db->run('UPDATE user_assignments SET ends_at=? WHERE tenant_id=? AND user_id=? AND ends_at IS NULL AND starts_at<?', [$at, $this->tenant, $id, $at]);
-        $this->db->run('DELETE FROM user_assignments WHERE tenant_id=? AND user_id=? AND ends_at IS NULL', [$this->tenant, $id]);
-        $this->db->run('INSERT INTO user_assignments (tenant_id,id,user_id,firm_id,site_id,area_id,position_id,schedule_id,company_id,starts_at) VALUES (?,?,?,?,?,?,?,?,?,?)', [$this->tenant, Util::bin(Util::uuid()), $id, $u['firm_id'], $u['site_id'], $u['area_id'], $u['position_id'], $u['schedule_id'], $u['company_id'], $at]);
+        if ($u['status'] !== $status) { $this->note('personas', 'differs_status'); }
+        if ($email !== null && $u['email'] !== $email) { $this->note('personas', 'differs_email'); }
+        $refs = $status === 'active' ? $this->refs($it, false, false) : [];
+        if (is_string($refs)) { $this->note('personas', "differs_$refs"); $refs = []; }
+        foreach ($refs as $col => $v) { if ($v !== null && $u[$col] !== $v) { $this->note('personas', "differs_$col"); } }
+        $this->record('user', $id, $ext, 'matched');
+        $this->count('personas', 'match', $how);
     }
     /**
      * Columnas de ubicacion o el codigo de error. Sin dato: empresa vacia; «Sin firma/área/cargo/horario»
      * (Placeholders, el mismo de panel y DataSync, por la marca de 0046). Una referencia que no resuelve: error en una
      * activa, placeholder en una retirada. Sin sede: error en una activa, «Sin sede» en una retirada (como DataSync).
+     * $placeholders=false (solo comparar): lo que faltaria queda null y no se crea nada.
      */
-    private function refs(array $it, bool $lenient): array|string
+    private function refs(array $it, bool $lenient, bool $placeholders = true): array|string
     {
         $out = [];
         foreach (self::REFS as $kind => $field) {
@@ -363,7 +389,7 @@ final class OneImport
             if ($id !== null && $kind !== 'schedule' && !$this->db->one('SELECT id FROM org_units WHERE tenant_id=? AND id=? AND kind=?', [$this->tenant, $id, $kind])) { $id = null; }
             if ($id === null && $v !== null && !$lenient) { return 'unknown_reference'; }
             if ($id === null && $kind === 'site' && !$lenient) { return 'missing_site'; }
-            $out[$kind . '_id'] = $id ?? $this->placeholder($kind);
+            $out[$kind . '_id'] = $id ?? ($placeholders ? $this->placeholder($kind) : null);
         }
         return $out;
     }
@@ -372,211 +398,182 @@ final class OneImport
         if ($kind === 'company') { return null; }
         if ($kind === 'schedule') {
             $id = Placeholders::schedule($this->db, $this->tenant, $this->db->one('SELECT timezone FROM tenants WHERE tenant_id=?', [$this->tenant])['timezone'] ?? 'UTC');
-            if (!isset($this->existingSchedules[$id]) && !isset($this->items['schedule|' . bin2hex($id)])) { $this->record('schedule', $id, null, 'created'); $this->count('placeholders', 'create', 'schedule'); }
-            elseif (isset($this->existingSchedules[$id]) && !isset($this->counts['placeholders']['codes']['reused_schedule'])) { $this->note('placeholders', 'reused_schedule'); }
+            $this->placeholderSeen('schedule', $id, isset($this->existingSchedules[$id]), 'schedule');
             return $id;
         }
         $id = Placeholders::unit($this->db, $this->tenant, $kind);
-        if (!isset($this->existingUnits[$id]) && !isset($this->items['org_unit|' . bin2hex($id)])) { $this->record('org_unit', $id, null, 'created'); $this->count('placeholders', 'create', $kind); }
-        elseif (isset($this->existingUnits[$id]) && !isset($this->counts['placeholders']['codes']["reused_$kind"])) { $this->note('placeholders', "reused_$kind"); }
+        $this->placeholderSeen('org_unit', $id, isset($this->existingUnits[$id]), $kind);
         return $id;
+    }
+    private function placeholderSeen(string $type, string $id, bool $existed, string $kind): void
+    {
+        if ($existed) { if (!isset($this->counts['placeholders']['codes']["reused_$kind"])) { $this->note('placeholders', "reused_$kind"); } return; }
+        if (isset($this->items["$type|" . bin2hex($id)])) { return; }
+        $this->record($type, $id, null, 'created'); $this->count('placeholders', 'create', $kind);
     }
 
     // ---- Jerarquia --------------------------------------------------------------------------------------------------
+    /** Solo personas CREADAS en esta corrida reciben jefe (puede ser una emparejada). A una emparejada no se le cambia. */
     private function hierarchy(array $items): void
     {
         foreach ($items as $it) {
             $ext = self::ext($it['external_id'] ?? null);
-            if ($ext === null || ($it['status'] ?? null) !== 'active' || !array_key_exists('reports_to_external_id', $it)) { continue; }
+            if ($ext === null || ($it['status'] ?? null) !== 'active' || !is_string($it['reports_to_external_id'] ?? null)) { continue; }
             $id = $this->map["user|$ext"] ?? null; if ($id === null) { continue; }
-            $bossExt = $it['reports_to_external_id'];
-            if ($bossExt === null) { continue; }  // Sin jefe en One: se conserva lo que haya en Keeper.
-            $boss = is_string($bossExt) ? ($this->map["user|$bossExt"] ?? null) : null;
-            if ($boss === null) { $this->count('jerarquia', 'error', 'unknown_reference'); continue; }
+            $boss = $this->map['user|' . $it['reports_to_external_id']] ?? null;
+            $created = ($this->items['user|' . bin2hex($id)][3] ?? null) === 'created';
             $u = $this->db->one('SELECT reports_to_user_id FROM users WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
-            if ($u['reports_to_user_id'] === $boss) { $this->count('jerarquia', 'match'); continue; }
+            if (!$created) { $this->count('jerarquia', 'skip', $boss !== null && $u['reports_to_user_id'] === $boss ? 'matched_same' : 'matched_kept_differs'); continue; }
+            if ($boss === null) { $this->count('jerarquia', 'error', 'unknown_reference'); continue; }
             for ($m = $boss, $n = 0; $m !== null && $n < 60; $n++) {
                 if ($m === $id) { $this->count('jerarquia', 'error', 'hierarchy_cycle'); continue 2; }
                 $m = $this->db->one('SELECT reports_to_user_id r FROM users WHERE tenant_id=? AND id=?', [$this->tenant, $m])['r'] ?? null;
             }
             $this->db->run('UPDATE users SET reports_to_user_id=?,version=version+1 WHERE tenant_id=? AND id=?', [$boss, $this->tenant, $id]);
-            $created = ($this->items['user|' . bin2hex($id)][3] ?? null) === 'created';
-            $this->record('user', $id, $ext, $created ? 'created' : 'updated', $created ? null : ['reports_to_user_id' => $u['reports_to_user_id'] === null ? null : bin2hex($u['reports_to_user_id'])]);
-            $this->count('jerarquia', 'update', $created ? 'created_person' : 'matched_person');
+            $this->count('jerarquia', 'update', ($this->items['user|' . bin2hex($boss)][3] ?? null) === 'created' ? 'boss_created' : 'boss_matched');
         }
     }
 
     // ---- Borrado de un lote -------------------------------------------------------------------------------------------
     /**
-     * Quita SOLO lo que el lote creo. Lo emparejado se deja (con $forceUnassign, las personas emparejadas que apuntan a
-     * algo que se borra vuelven a su valor anterior anotado, o al placeholder). Personas creadas con equipos o cuenta de
-     * panel: se informan y se saltan; con $forceUnassign se retiran (como en el panel). Unidades: misma regla que el
-     * panel (en uso = no; solo historial = deleted_at). Nunca se borra auditoria.
+     * Quita SOLO lo que el lote creo y sigue exactamente como quedo (misma version). Nunca toca lo emparejado ni lo que el
+     * dueño edito despues. Se informa y se deja: persona editada, con equipos, cuenta de panel, acceso propio, historial o
+     * jefe de alguien que se queda; horario o unidad editados, en uso, con hijas que se quedan o con historial ajeno.
+     * No hay retiros ni reasignaciones: si algo se queda, lo decide el dueño en el panel. La auditoria nunca se borra.
      */
-    public function wipe(string $batch, bool $apply, bool $forceUnassign = false): array
+    public function wipe(string $tenant, string $batch, bool $apply): array
     {
         if (!self::hasManifestTables($this->db)) { throw new \RuntimeException('migration_missing'); }
-        $b = $this->db->one('SELECT * FROM import_batches WHERE id=?', [$batch]);
-        if (!$b) { throw new \RuntimeException('batch_not_found'); }
-        $this->tenant = $t = $b['tenant_id']; $this->counts = [];
+        if (!$this->db->one('SELECT id FROM import_batches WHERE tenant_id=? AND id=?', [$tenant, $batch])) { throw new \RuntimeException('batch_not_found: el lote no existe en este cliente'); }
+        $this->tenant = $t = $tenant; $this->counts = [];
+        $this->lock();
         $this->db->pdo->beginTransaction();
         try {
             $items = $this->db->run('SELECT * FROM import_batch_items WHERE tenant_id=? AND batch_id=? AND wiped_at IS NULL', [$t, $batch])->fetchAll();
             $created = ['org_unit' => [], 'schedule' => [], 'user' => []];
-            foreach ($items as $i) { if ($i['action'] === 'created') { $created[$i['entity_type']][$i['entity_id']] = true; } }
-            $result = [];  // "tipo|hexid" => wipe_result
-            $doomed = fn (string $col, ?string $v): bool => $v !== null && isset($created[$col === 'schedule_id' ? 'schedule' : ($col === 'reports_to_user_id' ? 'user' : 'org_unit')][$v]);
-
-            // 1) Personas que NO creo el lote y apuntan a algo que se borra.
-            $blockers = [];
-            foreach ($this->db->run('SELECT * FROM users WHERE tenant_id=?', [$t])->fetchAll() as $u) {
-                if (isset($created['user'][$u['id']])) { continue; }
-                $hit = array_values(array_filter([...self::PLACE, 'reports_to_user_id'], fn ($c) => $doomed($c, $u[$c])));
-                if (!$hit) { continue; }
-                if (!$forceUnassign) { foreach ($hit as $c) { $blockers[$c][$u[$c]] = true; } $this->count('personas_existentes', 'skip', 'points_to_import'); continue; }
-                $prev = $this->previousFor($u['id']);
-                $set = [];
-                foreach ($hit as $c) {
-                    $p = isset($prev[$c]) && $prev[$c] !== null ? hex2bin($prev[$c]) : null;
-                    if ($p !== null && ($doomed($c, $p) || !$this->exists($c, $p))) { $p = null; }
-                    if ($p === null && $c !== 'reports_to_user_id' && $c !== 'company_id') {
-                        $p = $c === 'site_id' ? null : ($c === 'schedule_id' ? Placeholders::schedule($this->db, $t, $this->db->one('SELECT timezone FROM tenants WHERE tenant_id=?', [$t])['timezone'] ?? 'UTC') : Placeholders::unit($this->db, $t, substr($c, 0, -3)));
-                        if ($p !== null && $doomed($c, $p)) { unset($created[$c === 'schedule_id' ? 'schedule' : 'org_unit'][$p]); $this->note('placeholders', 'kept_in_use'); }
-                    }
-                    if ($p === null && $c === 'site_id') { $blockers[$c][$u[$c]] = true; $this->count('personas_existentes', 'error', 'site_without_previous'); continue 2; }
-                    $set[$c] = $p;
-                }
-                $cols = implode(',', array_map(fn ($c) => "$c=?", array_keys($set)));
-                $this->db->run("UPDATE users SET $cols,version=version+1 WHERE tenant_id=? AND id=?", [...array_values($set), $t, $u['id']]);
-                if (array_intersect(array_keys($set), self::PLACE)) { $this->tenant = $t; $this->reassign($u['id']); }
-                $this->count('personas_existentes', 'update', 'restored_previous');
+            foreach ($items as $i) {
+                if ($i['action'] !== 'created') { $this->count('emparejados', 'keep', $i['entity_type']); continue; }
+                $created[$i['entity_type']][$i['entity_id']] = (int) (json_decode((string) $i['previous'], true)['imported_version'] ?? 0);
             }
+            $result = [];
+            $audit = $this->auditor(Util::bin(Util::uuid()));
+            $keep = function (string $type, string $id, string $entity, string $why) use (&$result): void { $result["$type|" . bin2hex($id)] = "skip:$why"; $this->count($entity, 'skip', $why); };
 
-            // 2) Personas creadas.
-            $deletable = [];
-            foreach (array_keys($created['user']) as $id) {
+            // 1) Personas creadas.
+            $remaining = [];
+            foreach ($created['user'] as $id => $version) {
                 $u = $this->db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$t, $id]);
-                if (!$u) { $result["user|" . bin2hex($id)] = 'gone'; continue; }
+                if (!$u) { $result['user|' . bin2hex($id)] = 'gone'; continue; }
                 $why = null;
-                if ($this->db->one('SELECT id FROM devices WHERE tenant_id=? AND user_id=? LIMIT 1', [$t, $id]) || $this->db->one('SELECT id FROM device_assignments WHERE tenant_id=? AND user_id=? LIMIT 1', [$t, $id])) { $why = 'has_devices'; }
+                if ((int) $u['version'] !== $version) { $why = 'owner_edited'; }
+                elseif ($this->db->one('SELECT id FROM devices WHERE tenant_id=? AND user_id=? LIMIT 1', [$t, $id]) || $this->db->one('SELECT id FROM device_assignments WHERE tenant_id=? AND user_id=? LIMIT 1', [$t, $id]) || $this->db->one('SELECT id FROM enrollments WHERE tenant_id=? AND user_id=? LIMIT 1', [$t, $id])) { $why = 'has_devices'; }
                 elseif ($this->db->one('SELECT id FROM admin_accounts WHERE tenant_id=? AND user_id=? LIMIT 1', [$t, $id]) || $u['panel_login_enabled']) { $why = 'has_panel_account'; }
-                elseif (isset($blockers['reports_to_user_id'][$id])) { $why = 'boss_of_existing_person'; }
-                if ($why !== null) {
-                    if (!$forceUnassign || $why === 'boss_of_existing_person') { $this->count('personas', 'skip', $why); $result["user|" . bin2hex($id)] = "skip:$why"; $this->keepRefs($u, $created); continue; }
-                    $this->retire($id); $this->count('personas', 'retire', $why); $result["user|" . bin2hex($id)] = 'retired'; $this->keepRefs($u, $created); continue;
-                }
-                $deletable[$id] = $u;
+                elseif ($this->db->one("SELECT g.id FROM access_grants g WHERE g.tenant_id=? AND g.user_id=? AND (g.source<>'default' OR EXISTS (SELECT 1 FROM access_grant_units x WHERE x.tenant_id=g.tenant_id AND x.grant_id=g.id) OR EXISTS (SELECT 1 FROM access_grant_cities y WHERE y.tenant_id=g.tenant_id AND y.grant_id=g.id)) LIMIT 1", [$t, $id])) { $why = 'has_access_grant'; }
+                if ($why !== null) { $keep('user', $id, 'personas', $why); continue; }
+                $remaining[$id] = true;
             }
-            foreach (array_keys($deletable) as $id) { $this->db->run('UPDATE users SET reports_to_user_id=NULL WHERE tenant_id=? AND reports_to_user_id=?', [$t, $id]); }
-            foreach ($deletable as $id => $u) {
-                $this->db->run('SAVEPOINT one_wipe_user');
-                try {
-                    AccessGrants::removeForUser($this->db, $t, $id);
-                    foreach (['subscriptions', 'user_assignments', 'user_external_refs'] as $table) { $this->db->run("DELETE FROM $table WHERE tenant_id=? AND user_id=?", [$t, $id]); }
-                    $this->db->run('DELETE FROM users WHERE tenant_id=? AND id=?', [$t, $id]);
-                    $this->db->run('RELEASE SAVEPOINT one_wipe_user');
-                    $this->count('personas', 'delete'); $result["user|" . bin2hex($id)] = 'deleted';
-                } catch (\PDOException $e) {
-                    if (($e->errorInfo[1] ?? 0) !== 1451) { throw $e; }
-                    $this->db->run('ROLLBACK TO SAVEPOINT one_wipe_user');
-                    $this->retire($id); $this->keepRefs($u, $created);
-                    $this->count('personas', 'retire', 'has_history'); $result["user|" . bin2hex($id)] = 'retired';
+            // Hojas primero: quien tiene a alguien que le reporta espera; si ese alguien se queda, el jefe tambien.
+            while ($remaining) {
+                $progress = false;
+                foreach (array_keys($remaining) as $id) {
+                    if ($this->db->one('SELECT id FROM users WHERE tenant_id=? AND reports_to_user_id=? LIMIT 1', [$t, $id])) { continue; }
+                    unset($remaining[$id]); $progress = true;
+                    $this->db->run('SAVEPOINT one_wipe_user');
+                    try {
+                        AccessGrants::removeForUser($this->db, $t, $id);
+                        foreach (['subscriptions', 'user_assignments', 'user_external_refs'] as $table) { $this->db->run("DELETE FROM $table WHERE tenant_id=? AND user_id=?", [$t, $id]); }
+                        $this->db->run('DELETE FROM users WHERE tenant_id=? AND id=?', [$t, $id]);
+                        $this->db->run('RELEASE SAVEPOINT one_wipe_user');
+                        $this->count('personas', 'delete'); $result['user|' . bin2hex($id)] = 'deleted';
+                        $audit('import.one_snapshot.delete', 'user', $id, self::AUDIT_FIELDS['user']);
+                    } catch (\PDOException $e) {
+                        if (($e->errorInfo[1] ?? 0) !== 1451) { throw $e; }
+                        $this->db->run('ROLLBACK TO SAVEPOINT one_wipe_user');
+                        $keep('user', $id, 'personas', 'has_history');
+                    }
                 }
+                if (!$progress) { foreach (array_keys($remaining) as $id) { $keep('user', $id, 'personas', 'boss_of_kept_person'); } break; }
             }
 
-            // 3) Horarios creados.
-            foreach (array_keys($created['schedule']) as $id) {
-                $key = 'schedule|' . bin2hex($id);
-                if (isset($blockers['schedule_id'][$id]) || $this->db->one('SELECT id FROM users WHERE tenant_id=? AND schedule_id=? LIMIT 1', [$t, $id])) { $this->count('horarios', 'skip', 'in_use'); $result[$key] = 'skip:in_use'; continue; }
+            // 2) Horarios creados.
+            foreach ($created['schedule'] as $id => $version) {
+                $s = $this->db->one('SELECT version FROM schedules WHERE tenant_id=? AND id=?', [$t, $id]);
+                if (!$s) { $result['schedule|' . bin2hex($id)] = 'gone'; continue; }
+                if ((int) $s['version'] !== $version) { $keep('schedule', $id, 'horarios', 'owner_edited'); continue; }
+                if ($this->db->one('SELECT id FROM users WHERE tenant_id=? AND schedule_id=? LIMIT 1', [$t, $id])) { $keep('schedule', $id, 'horarios', 'in_use_people'); continue; }
+                if ($this->db->one('SELECT id FROM user_assignments WHERE tenant_id=? AND schedule_id=? LIMIT 1', [$t, $id])) { $keep('schedule', $id, 'horarios', 'has_history'); continue; }
                 $this->db->run('SAVEPOINT one_wipe_schedule');
                 try {
                     $this->db->run('DELETE FROM schedule_days WHERE tenant_id=? AND schedule_id=?', [$t, $id]);
                     $this->db->run('DELETE FROM schedules WHERE tenant_id=? AND id=?', [$t, $id]);
                     $this->db->run('RELEASE SAVEPOINT one_wipe_schedule');
-                    $this->count('horarios', 'delete'); $result[$key] = 'deleted';
+                    $this->count('horarios', 'delete'); $result['schedule|' . bin2hex($id)] = 'deleted';
+                    $audit('import.one_snapshot.delete', 'schedule', $id, self::AUDIT_FIELDS['schedule']);
                 } catch (\PDOException $e) {
                     if (($e->errorInfo[1] ?? 0) !== 1451) { throw $e; }
                     $this->db->run('ROLLBACK TO SAVEPOINT one_wipe_schedule');
-                    $this->count('horarios', 'skip', 'in_use'); $result[$key] = 'skip:in_use';
+                    $keep('schedule', $id, 'horarios', 'in_use');
                 }
             }
 
-            // 4) Unidades creadas: hijas primero; misma regla que «Eliminar» del panel.
-            $pending = array_keys($created['org_unit']);
+            // 3) Unidades creadas: hijas primero. Una hija que no se borra (ajena, editada, en uso) deja al padre.
+            $pending = $created['org_unit'];
             while ($pending) {
-                $next = [];
-                foreach ($pending as $id) {
+                $progress = false;
+                foreach ($pending as $id => $version) {
                     $key = 'org_unit|' . bin2hex($id);
                     $unit = $this->db->one('SELECT * FROM org_units WHERE tenant_id=? AND id=?', [$t, $id]);
-                    if (!$unit || $unit['deleted_at'] !== null) { $result[$key] = 'gone'; continue; }
+                    if (!$unit || $unit['deleted_at'] !== null) { $result[$key] = 'gone'; unset($pending[$id]); $progress = true; continue; }
+                    $entity = $unit['placeholder'] ? 'placeholders' : (self::ORG[$unit['kind']] ?? 'unidades');
+                    $children = array_column($this->db->run('SELECT id FROM org_units WHERE tenant_id=? AND parent_id=? AND deleted_at IS NULL', [$t, $id])->fetchAll(), 'id');
+                    if ($children && array_diff($children, array_keys($pending)) === [] ) { continue; }  // esperan sus hijas del lote
+                    unset($pending[$id]); $progress = true;
+                    if ((int) $unit['version'] !== $version) { $keep('org_unit', $id, $entity, 'owner_edited'); continue; }
+                    if ($children) { $keep('org_unit', $id, $entity, 'has_children'); continue; }
+                    if ($this->db->one('SELECT id FROM users WHERE tenant_id=? AND ? IN (firm_id,site_id,area_id,position_id,company_id) LIMIT 1', [$t, $id])) { $keep('org_unit', $id, $entity, 'in_use_people'); continue; }
+                    if ($this->db->one('SELECT id FROM user_assignments WHERE tenant_id=? AND ? IN (firm_id,site_id,area_id,position_id,company_id) LIMIT 1', [$t, $id])) { $keep('org_unit', $id, $entity, 'has_history'); continue; }
                     $busy = $this->unitBusy($id);
-                    foreach ($blockers as $col => $ids) { if ($busy === null && $col !== 'reports_to_user_id' && isset($ids[$id])) { $busy = 'existing_person'; } }
-                    if ($busy === 'child') { $next[] = $id; continue; }
-                    $entity = self::ORG[$unit['kind']] ?? 'unidades';
-                    if ($busy !== null) { $this->count($entity, 'skip', "in_use_$busy"); $result[$key] = "skip:in_use_$busy"; continue; }
+                    if ($busy !== null) { $keep('org_unit', $id, $entity, "in_use_$busy"); continue; }
                     $this->db->run('SAVEPOINT one_wipe_unit');
-                    try { $this->db->run('DELETE FROM org_units WHERE tenant_id=? AND id=?', [$t, $id]); $this->db->run('RELEASE SAVEPOINT one_wipe_unit'); $this->count($entity, 'delete'); $result[$key] = 'deleted'; }
-                    catch (\PDOException $e) {
+                    try {
+                        $this->db->run('DELETE FROM org_units WHERE tenant_id=? AND id=?', [$t, $id]);
+                        $this->db->run('RELEASE SAVEPOINT one_wipe_unit');
+                        $this->count($entity, 'delete'); $result[$key] = 'deleted';
+                        $audit('import.one_snapshot.delete', 'org_unit', $id, self::AUDIT_FIELDS['org_unit']);
+                    } catch (\PDOException $e) {
                         if (($e->errorInfo[1] ?? 0) !== 1451) { throw $e; }
                         $this->db->run('ROLLBACK TO SAVEPOINT one_wipe_unit');
-                        $this->db->run('UPDATE org_units SET deleted_at=UTC_TIMESTAMP(6),active=FALSE,version=version+1 WHERE tenant_id=? AND id=?', [$t, $id]);
-                        $this->count($entity, 'delete', 'marked_deleted_history'); $result[$key] = 'marked_deleted';
+                        $keep('org_unit', $id, $entity, 'has_history');
                     }
                 }
-                if (count($next) === count($pending)) {
-                    foreach ($next as $id) { $u = $this->db->one('SELECT kind FROM org_units WHERE tenant_id=? AND id=?', [$t, $id]); $this->count(self::ORG[$u['kind']] ?? 'unidades', 'skip', 'in_use_child'); $result['org_unit|' . bin2hex($id)] = 'skip:in_use_child'; }
+                if (!$progress) {
+                    foreach (array_keys($pending) as $id) { $u = $this->db->one('SELECT kind,placeholder FROM org_units WHERE tenant_id=? AND id=?', [$t, $id]); $keep('org_unit', $id, $u['placeholder'] ? 'placeholders' : (self::ORG[$u['kind']] ?? 'unidades'), 'has_children'); }
                     break;
                 }
-                $pending = $next;
             }
-            foreach ($items as $i) { if ($i['action'] !== 'created') { $this->count('emparejados', 'keep', $i['entity_type']); } }
 
             $left = 0;
             foreach ($items as $i) {
-                $r = $i['action'] === 'created' ? ($result[$i['entity_type'] . '|' . bin2hex($i['entity_id'])] ?? 'skip:used_by_kept_person') : 'kept_matched';
-                if ($r === 'skip:used_by_kept_person') { $this->count($i['entity_type'] === 'schedule' ? 'horarios' : 'unidades', 'skip', 'used_by_kept_person'); }
-                $done = in_array($r, ['deleted', 'marked_deleted', 'gone', 'kept_matched'], true);
+                $r = $i['action'] === 'created' ? ($result[$i['entity_type'] . '|' . bin2hex($i['entity_id'])] ?? 'skip:unknown') : 'kept_matched';
+                $done = in_array($r, ['deleted', 'gone', 'kept_matched'], true);
                 if (!$done) { $left++; }
                 $this->db->run('UPDATE import_batch_items SET wipe_result=?,wiped_at=' . ($done ? 'UTC_TIMESTAMP(6)' : 'NULL') . ' WHERE tenant_id=? AND batch_id=? AND entity_type=? AND entity_id=?', [substr($r, 0, 40), $t, $batch, $i['entity_type'], $i['entity_id']]);
             }
             $this->db->run('UPDATE import_batches SET status=?,wipe_counts=?,wiped_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?', [$left ? 'partially_wiped' : 'wiped', Util::json($this->counts), $t, $batch]);
-            if (!$apply) { $this->db->pdo->rollBack(); return ['applied' => false, 'tenant' => Util::id($t), 'counts' => $this->counts, 'left' => $left]; }
-            $this->audit($batch, 'import.one_snapshot.wiped', ['org_units', 'schedules', 'users'], self::summary($this->counts));
-            $this->db->run('INSERT INTO admin_policy_recompiles (tenant_id) VALUES (?) ON DUPLICATE KEY UPDATE revision=revision+1,requested_at=UTC_TIMESTAMP(6)', [$t]);
-            HolidayCalendars::refresh($this->db, $t);
+            if (!$apply) { $this->db->pdo->rollBack(); return ['applied' => false, 'counts' => $this->counts, 'left' => $left]; }
+            $audit('import.one_snapshot.wiped', 'import_batch', $batch, ['org_units', 'schedules', 'users'], self::summary($this->counts));
             $this->db->pdo->commit();
-            return ['applied' => true, 'tenant' => Util::id($t), 'counts' => $this->counts, 'left' => $left];
+            return ['applied' => true, 'counts' => $this->counts, 'left' => $left];
         } catch (\Throwable $e) {
             if ($this->db->pdo->inTransaction()) { $this->db->pdo->rollBack(); }
             throw $e;
-        }
+        } finally { $this->unlock(); }
     }
-    /** Lo que una persona retirada o saltada sigue usando no se puede borrar. */
-    private function keepRefs(array $u, array &$created): void
-    {
-        foreach (self::PLACE as $c) { if ($u[$c] !== null) { unset($created[$c === 'schedule_id' ? 'schedule' : 'org_unit'][$u[$c]]); } }
-    }
-    private function exists(string $col, string $id): bool
-    {
-        if ($col === 'reports_to_user_id') { return (bool) $this->db->one('SELECT id FROM users WHERE tenant_id=? AND id=?', [$this->tenant, $id]); }
-        if ($col === 'schedule_id') { return (bool) $this->db->one('SELECT id FROM schedules WHERE tenant_id=? AND id=?', [$this->tenant, $id]); }
-        return (bool) $this->db->one('SELECT id FROM org_units WHERE tenant_id=? AND id=? AND deleted_at IS NULL', [$this->tenant, $id]);
-    }
-    /** Valores anteriores anotados para una persona emparejada (el primer lote que la cambio manda). */
-    private function previousFor(string $user): array
-    {
-        $out = [];
-        foreach ($this->db->run("SELECT i.previous FROM import_batch_items i JOIN import_batches b ON b.tenant_id=i.tenant_id AND b.id=i.batch_id WHERE i.tenant_id=? AND i.entity_type='user' AND i.entity_id=? AND i.action='updated' AND i.previous IS NOT NULL ORDER BY b.created_at", [$this->tenant, $user])->fetchAll() as $r) {
-            $out += json_decode($r['previous'], true) ?: [];
-        }
-        return $out;
-    }
+    /** Mismos usos que bloquean «Eliminar» en el panel (personas e hijas se miran aparte). */
     private function unitBusy(string $id): ?string
     {
         $t = $this->tenant;
         $checks = [
-            'child' => ['SELECT COUNT(*) n FROM org_units WHERE tenant_id=? AND parent_id=? AND deleted_at IS NULL', [$t, $id]],
-            'people' => ["SELECT COUNT(*) n FROM users WHERE tenant_id=? AND status='active' AND ? IN (firm_id,site_id,area_id,position_id,company_id)", [$t, $id]],
             'access' => ['SELECT COUNT(*) n FROM access_grant_units WHERE tenant_id=? AND unit_id=?', [$t, $id]],
             'policies' => ['SELECT COUNT(*) n FROM policy_assignments WHERE tenant_id=? AND (area_id=? OR site_id=?)', [$t, $id, $id]],
             'doors' => ['SELECT COUNT(*) n FROM doors WHERE tenant_id=? AND site_id=?', [$t, $id]],
@@ -588,25 +585,17 @@ final class OneImport
         foreach ($checks as $what => [$sql, $args]) { if ((int) $this->db->one($sql, $args)['n'] > 0) { return $what; } }
         return null;
     }
-    /** Retiro con la misma semantica que el panel (estado inactivo, equipos revocados, sesiones cerradas). */
-    private function retire(string $id): void
-    {
-        $t = $this->tenant;
-        $this->db->run("UPDATE users SET status='inactive',panel_login_enabled=FALSE,version=version+1,auth_version=auth_version+1 WHERE tenant_id=? AND id=?", [$t, $id]);
-        $this->db->run("UPDATE enrollments SET status='revoked' WHERE tenant_id=? AND user_id=? AND status='pending'", [$t, $id]);
-        $this->db->run("UPDATE devices SET status='revoked',auth_version=auth_version+1,version=version+1 WHERE tenant_id=? AND user_id=? AND status='active'", [$t, $id]);
-        $this->db->run("UPDATE device_command c JOIN devices d ON d.tenant_id=c.tenant_id AND d.id=c.device_id SET c.status='cancelled' WHERE d.tenant_id=? AND d.user_id=? AND c.status IN ('pending','delivered')", [$t, $id]);
-        $this->db->run('UPDATE device_sessions SET revoked_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND user_id=? AND revoked_at IS NULL', [$t, $id]);
-        $this->db->run('UPDATE admin_accounts SET auth_version=auth_version+1 WHERE tenant_id=? AND user_id=?', [$t, $id]);
-    }
 
     // ---- Auditoria y salida -------------------------------------------------------------------------------------------
-    private function audit(string $batch, string $action, array $fields, string $reason): void
+    /** Escritor de auditoria del actor system del cliente; una fila por entidad (solo nombres de campo, sin valores). */
+    private function auditor(string $request): \Closure
     {
         $actor = $this->db->one("SELECT id FROM principals WHERE tenant_id=? AND kind='system' ORDER BY id LIMIT 1", [$this->tenant]);
         if (!$actor) { $actor = ['id' => Util::bin(Util::uuid())]; $this->db->run("INSERT INTO principals (tenant_id,id,kind) VALUES (?,?,'system')", [$this->tenant, $actor['id']]); }
-        $this->db->run("INSERT INTO audit_log (tenant_id,id,actor_id,actor_type,action,resource_type,resource_id,request_id,outcome,changed_fields,reason) VALUES (?,?,?,'system',?,'import_batch',?,?,'allowed',?,?)",
-            [$this->tenant, Util::bin(Util::uuid()), $actor['id'], $action, $batch, Util::bin(Util::uuid()), Util::json($fields), mb_substr($reason, 0, 500)]);
+        return function (string $action, string $type, string $id, array $fields, ?string $reason = null) use ($actor, $request): void {
+            $this->db->run("INSERT INTO audit_log (tenant_id,id,actor_id,actor_type,action,resource_type,resource_id,request_id,outcome,changed_fields,reason) VALUES (?,?,?,'system',?,?,?,?,'allowed',?,?)",
+                [$this->tenant, Util::bin(Util::uuid()), $actor['id'], $action, $type, $id, $request, Util::json($fields), $reason === null ? null : mb_substr($reason, 0, 500)]);
+        };
     }
     /** Una linea por entidad: "personas create=219 match=3 ..." (solo conteos y codigos). */
     public static function summary(array $counts): string
