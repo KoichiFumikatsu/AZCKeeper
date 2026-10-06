@@ -31,16 +31,19 @@ final class Features
         'autogestion_accesos' => ['name' => 'El cliente gestiona sus roles y cuentas', 'group' => 'Autogestión del cliente', 'level' => 'client', 'ops' => ['listPanelAccounts', 'createPanelAccount', 'patchPanelAccount', 'resetPanelAccountPassword'], 'permissions' => ['roles.gestionar', 'roles.reglas', 'permisos.gestionar'], 'rules' => [], 'pending' => false, 'description' => 'El cliente crea sus propios roles y cuentas del panel.'],
         'auditoria' => ['name' => 'Auditoría visible para el cliente', 'group' => 'Autogestión del cliente', 'level' => 'client', 'ops' => [], 'permissions' => ['auditoria.ver'], 'rules' => [], 'pending' => false, 'description' => 'El cliente ve quién hizo qué en su panel.'],
         'api' => ['name' => 'API para otros sistemas', 'group' => 'Integraciones', 'level' => 'client', 'ops' => [], 'permissions' => [], 'rules' => [], 'pending' => true, 'description' => 'Acceso por API para que otros sistemas lean datos de Keeper.'],
-        'one' => ['name' => 'Conexión con AZC One', 'group' => 'Integraciones', 'level' => 'client', 'ops' => [], 'permissions' => ['integraciones.ver', 'integraciones.gestionar', 'integraciones.aprobar'], 'rules' => [], 'pending' => false, 'description' => 'Sincroniza personas, sedes y cargos desde AZC One.'],
+        'one' => ['name' => 'Conexión con AZC One', 'group' => 'Integraciones', 'level' => 'client', 'ops' => [], 'permissions' => ['integraciones.ver'], 'rules' => [], 'pending' => false, 'description' => 'Sincroniza personas, sedes y cargos desde AZC One.'],
         'webhooks' => ['name' => 'Avisos automáticos (webhooks)', 'group' => 'Integraciones', 'level' => 'client', 'ops' => [], 'permissions' => ['notificaciones.ver', 'notificaciones.gestionar'], 'rules' => [], 'pending' => true, 'description' => 'Avisos automáticos a otros sistemas cuando pasa algo en Keeper.'],
     ];
     /** Siempre incluido: no se vende aparte. */
     public const CORE_PERMISSIONS = ['empresas.ver', 'empresas.editar', 'equipos.ver', 'equipos.enrolar', 'equipos.asignar', 'equipos.editar', 'equipos.transferir',
         'horarios.ver', 'horarios.editar', 'organizacion.ver', 'organizacion.editar', 'usuarios.ver', 'roles.ver', 'reglas.ver', 'reglas.editar', 'reglas.aplicar',
         'tiers.ver', 'operacion.ajustes_ver', 'operacion.ajustes_editar', 'operacion.logs', 'sesion', 'planes.asignar'];
-    /** Solo de la plataforma: nunca se vende (lo protege x-platform-only o el rol de superadmin). */
+    /**
+     * Solo de la plataforma: nunca se vende (lo protege x-platform-only o el rol de superadmin). Gestionar y aprobar
+     * integraciones deciden cargos y jefes, y con ellos los roles de las reglas por cargo (0044): no van a un cliente.
+     */
     public const PLATFORM_PERMISSIONS = ['empresas.gestionar', 'empresas.rbac_habilitar', 'releases.ver', 'releases.publicar', 'releases.desplegar',
-        'migracion.ver', 'migracion.gestionar', 'migracion.recuperar', 'operacion.salud', 'tiers.gestionar'];
+        'migracion.ver', 'migracion.gestionar', 'migracion.recuperar', 'operacion.salud', 'tiers.gestionar', 'integraciones.gestionar', 'integraciones.aprobar'];
 
     /** @return list<string> */
     public static function codes(): array { return array_keys(self::CATALOG); }

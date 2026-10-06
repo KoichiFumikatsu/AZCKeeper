@@ -1,5 +1,5 @@
 {
-  "source_sha256": "cfeec6fdae070839ea5eafc04726bc8f97a82bf8ccff2463b64a00247cef6bdd",
+  "source_sha256": "431854b93c07b1a786b91cabf098056cee38d2f7dfd0d3385ada7b40bdf01e87",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -16133,7 +16133,7 @@
         ],
         "operationId": "createDataSource",
         "summary": "Crear fuente de datos",
-        "description": "Fuente REST con formato keeper.roster.v1. Arranca en simulación.",
+        "description": "Fuente REST con formato keeper.roster.v1. Arranca en simulación. Solo la plataforma (superadmin) crea, edita, corre o aprueba fuentes y dueños de dominio, porque la fuente decide cargos y jefes y con ellos los roles de las reglas por cargo; un cliente solo las ve (integraciones.ver).",
         "security": [
           {
             "adminSession": [],
@@ -16228,6 +16228,7 @@
           }
         },
         "x-permission": "integraciones.gestionar",
+        "x-platform-only": true,
         "x-max-body-bytes": 16384
       }
     },
@@ -16339,6 +16340,7 @@
           }
         },
         "x-permission": "integraciones.gestionar",
+        "x-platform-only": true,
         "x-max-body-bytes": 16384
       }
     },
@@ -16447,6 +16449,7 @@
           }
         },
         "x-permission": "integraciones.gestionar",
+        "x-platform-only": true,
         "x-max-body-bytes": 16384
       }
     },
@@ -16643,6 +16646,7 @@
           }
         },
         "x-permission": "integraciones.gestionar",
+        "x-platform-only": true,
         "x-max-body-bytes": 16384
       }
     },
@@ -16939,6 +16943,7 @@
           }
         ],
         "x-permission": "integraciones.aprobar",
+        "x-platform-only": true,
         "x-max-body-bytes": 16384
       }
     },
@@ -17140,6 +17145,7 @@
           }
         },
         "x-permission": "integraciones.aprobar",
+        "x-platform-only": true,
         "x-max-body-bytes": 16384
       }
     },

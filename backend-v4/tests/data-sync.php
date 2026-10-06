@@ -136,5 +136,30 @@ function dataSyncTests(Database $db): void
     expect(adminRequest($platform, 'PUT', '/data-domains', ['domains' => [['domain' => 'personas', 'source_id' => null]]]), 200, 'return people to Keeper');
     $again = expect(adminRequest($platform, 'GET', '/users/' . Util::id($u['id'])), 200, 'read person after release');
     check($again['managed_by'] === null, 'person editable again');
+
+    // 10) R1: configurar la fuente de verdad de RR. HH. equivale a controlar cargos y jefes (y con ellos las reglas por
+    // cargo): gestionar y aprobar integraciones son solo de la plataforma; ni la plataforma los pone en un rol del cliente.
+    foreach (['integraciones.gestionar', 'integraciones.aprobar'] as $code) {
+        $flags = $db->one('SELECT delegable,platform_only FROM permissions WHERE code=?', [$code]);
+        check((bool) $flags['platform_only'] && !(bool) $flags['delegable'], "$code is platform-only and not delegable");
+    }
+    check((int) $db->one("SELECT COUNT(*) n FROM role_template_permissions t JOIN role_templates r ON r.seed_key=t.seed_key WHERE r.platform_only=FALSE AND t.permission_code IN ('integraciones.gestionar','integraciones.aprobar')")['n'] === 0, 'no client template carries integration management');
+    $db->run("INSERT IGNORE INTO tenant_features (tenant_id,feature_code) VALUES (?,'one')", [$tenant]);
+    // Admin del cliente con todo lo que un rol del cliente puede tener.
+    $client = adminFixture($db, adminMember($db, $u), array_column($db->run('SELECT code FROM permissions WHERE platform_only=FALSE')->fetchAll(), 'code')); $client['tenant'] = $tenant;
+    accessResetPreloginQuota();
+    $role = expect(adminRequest($platform, 'POST', '/roles', ['name' => 'Integrador', 'permissions' => ['integraciones.ver'], 'active' => true]), 201, 'client role for integrations');
+    check(adminRequest($platform, 'PATCH', '/roles/' . $role['id'], ['name' => 'Integrador', 'permissions' => ['integraciones.ver', 'integraciones.gestionar'], 'active' => true], ['if-match' => '"' . $role['version'] . '"'])[0] === 403, 'not even superadmin puts integration management in a client role');
+    $srcNow = fn () => array_values(array_filter(expect(adminRequest($platform, 'GET', '/data-sources'), 200, 'list sources')['data'], fn ($s) => $s['id'] === $src['id']))[0];
+    expect(adminRequest($client, 'GET', '/data-sources'), 200, 'client admin still sees the sources');
+    $refused = fn (array $r) => $r[0] === 403 && ($r[1]['code'] ?? null) === 'permission_denied';
+    check($refused(adminRequest($client, 'POST', '/data-sources', ['name' => 'Fuente propia', 'base_url' => 'https://atacante.example/api'])), 'client admin cannot create a data source');
+    check($refused(adminRequest($client, 'PATCH', '/data-sources/' . $src['id'], ['base_url' => 'https://atacante.example/api'], ['if-match' => '"' . $srcNow()['version'] . '"'])), 'client admin cannot edit a data source');
+    check($refused(adminRequest($client, 'POST', '/data-sources/' . $src['id'] . '/runs', ['kind' => 'full', 'simulate' => true])), 'client admin cannot run a sync');
+    check($refused(adminRequest($client, 'PUT', '/data-domains', ['domains' => [['domain' => 'cargos', 'source_id' => $src['id']]]])), 'client admin cannot assign domain owners');
+    check($refused(adminRequest($client, 'POST', '/sync-runs/' . Util::id($blocked['id']) . '/approve')), 'client admin cannot approve a sync run');
+    $renamed = expect(adminRequest($platform, 'PATCH', '/data-sources/' . $src['id'], ['name' => 'AZC One (plataforma)'], ['if-match' => '"' . $srcNow()['version'] . '"']), 200, 'superadmin still edits the source');
+    check($renamed['name'] === 'AZC One (plataforma)', 'superadmin edit applied');
+    expect(adminRequest($platform, 'POST', '/data-sources/' . $src['id'] . '/runs', ['kind' => 'full', 'simulate' => true]), 201, 'superadmin still runs a sync');
     echo 'PASS data sync (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

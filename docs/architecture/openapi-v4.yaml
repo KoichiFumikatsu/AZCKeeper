@@ -3273,6 +3273,7 @@ paths:
       - $ref: '#/components/parameters/Cursor'
       - $ref: '#/components/parameters/Limit'
       x-permission: integraciones.gestionar
+      x-platform-only: true
     post:
       tags:
       - admin
@@ -3341,6 +3342,7 @@ paths:
             schema:
               $ref: '#/components/schemas/IntegrationInput'
       x-permission: integraciones.gestionar
+      x-platform-only: true
       x-max-body-bytes: 65536
   /webhooks:
     get:
@@ -7540,6 +7542,7 @@ paths:
       - $ref: '#/components/parameters/Id'
       - $ref: '#/components/parameters/Tenant'
       x-permission: integraciones.gestionar
+      x-platform-only: true
   /integrations/{id}:
     delete:
       tags:
@@ -7591,6 +7594,7 @@ paths:
       - $ref: '#/components/parameters/Id'
       - $ref: '#/components/parameters/Tenant'
       x-permission: integraciones.gestionar
+      x-platform-only: true
   /webhooks/{id}:
     delete:
       tags:
@@ -10962,7 +10966,7 @@ paths:
       - admin
       operationId: createDataSource
       summary: Crear fuente de datos
-      description: Fuente REST con formato keeper.roster.v1. Arranca en simulación.
+      description: Fuente REST con formato keeper.roster.v1. Arranca en simulación. Solo la plataforma (superadmin) crea, edita, corre o aprueba fuentes y dueños de dominio, porque la fuente decide cargos y jefes y con ellos los roles de las reglas por cargo; un cliente solo las ve (integraciones.ver).
       security:
       - adminSession: []
         csrfToken: []
@@ -11022,6 +11026,7 @@ paths:
             schema:
               $ref: '#/components/schemas/DataSourceInput'
       x-permission: integraciones.gestionar
+      x-platform-only: true
       x-max-body-bytes: 16384
   /data-sources/{id}:
     patch:
@@ -11091,6 +11096,7 @@ paths:
             schema:
               $ref: '#/components/schemas/DataSourcePatch'
       x-permission: integraciones.gestionar
+      x-platform-only: true
       x-max-body-bytes: 16384
   /data-sources/{id}/runs:
     post:
@@ -11159,6 +11165,7 @@ paths:
             schema:
               $ref: '#/components/schemas/SyncRunInput'
       x-permission: integraciones.gestionar
+      x-platform-only: true
       x-max-body-bytes: 16384
   /data-domains:
     get:
@@ -11284,6 +11291,7 @@ paths:
             schema:
               $ref: '#/components/schemas/DataDomainInput'
       x-permission: integraciones.gestionar
+      x-platform-only: true
       x-max-body-bytes: 16384
   /sync-runs:
     get:
@@ -11471,6 +11479,7 @@ paths:
       - $ref: '#/components/parameters/Tenant'
       - $ref: '#/components/parameters/Id'
       x-permission: integraciones.aprobar
+      x-platform-only: true
       x-max-body-bytes: 16384
   /sync-items/pending:
     get:
@@ -11598,6 +11607,7 @@ paths:
             schema:
               $ref: '#/components/schemas/SyncItemResolve'
       x-permission: integraciones.aprobar
+      x-platform-only: true
       x-max-body-bytes: 16384
   /company-groups:
     get:
