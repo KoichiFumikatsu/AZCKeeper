@@ -32,6 +32,41 @@ export async function loadHardeningSettings(tenant) {
 export const hardeningSummary = s => !s?.configured ? 'Sin configurar: falta la contraseña de la cuenta de IT.'
   : `Cuenta de IT: ${s.admin_name} · ${s.hardening_mode === 'auto' ? 'automático al instalar' : 'desde el panel, equipo por equipo'}${s.deny_network_logon ? ' · inicio de sesión por red bloqueado a cuentas locales' : ''}.`;
 
+// Fijar o ver la contraseña de la cuenta de IT exige haber confirmado la contraseña del panel en los últimos 5 minutos
+// (403 reauth_required, como las claves de alta): se pide, se confirma con /auth/reauth y se repite la operación una vez.
+const canceled = Symbol('canceled');
+function askReauth() {
+  return new Promise(resolve => {
+    let confirmed = false;
+    const dialog = el('dialog'); const form = el('form'); form.noValidate = true; form.append(el('h2', 'Confirma tu contraseña'));
+    const body = el('div', undefined, 'dialog-body'); form.append(body);
+    body.append(el('p', 'Para fijar o ver la contraseña de la cuenta de IT, confirma la contraseña con la que entras al panel.'));
+    const label = el('label', 'Tu contraseña'); const pw = el('input'); pw.type = 'password'; pw.autocomplete = 'current-password'; label.append(pw); body.append(label);
+    const error = el('p', '', 'error-text'); error.hidden = true; error.setAttribute('role', 'alert');
+    const footer = el('div', undefined, 'dialog-footer'); const cancel = el('button', 'Cancelar'); cancel.type = 'button'; const ok = el('button', 'Confirmar', 'primary'); ok.type = 'submit';
+    footer.append(cancel, ok); form.append(error, footer); dialog.append(form); document.body.append(dialog);
+    const show = e => { error.textContent = !e ? '' : typeof e === 'string' ? e : errorMessage(e); error.hidden = !e; };
+    cancel.addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => { dialog.remove(); resolve(confirmed); });
+    form.addEventListener('submit', async ev => {
+      ev.preventDefault(); show(null);
+      if (!pw.value) { show('Escribe tu contraseña para confirmar.'); return; }
+      ok.disabled = true;
+      try { await api('POST', '/auth/reauth', { body: { password: pw.value } }); confirmed = true; dialog.close(); }
+      catch (e) { pw.value = ''; show(e.status === 401 || e.code === 'invalid_credentials' ? 'Tu contraseña no es correcta.' : e); ok.disabled = false; pw.focus(); }
+    });
+    dialog.showModal();
+    pw.focus();
+  });
+}
+async function withReauth(call) {
+  try { return await call(); } catch (e) {
+    if (e?.status !== 403 || e.code !== 'reauth_required') throw e;
+    if (!await askReauth()) return canceled;
+    return call();
+  }
+}
+
 export async function openHardeningSettings(tenant, { onSaved } = {}) {
   let current;
   try { current = await loadHardeningSettings(tenant); } catch (error) { alert(errorMessage(error)); return; }
@@ -73,8 +108,11 @@ export async function openHardeningSettings(tenant, { onSaved } = {}) {
     reveal.addEventListener('click', async () => {
       if (!confirm('La consulta de la contraseña queda registrada en la auditoría. ¿Mostrarla?')) return;
       reveal.disabled = true; show(null);
-      try { secret.textContent = (await api('POST', `/admin/tenants/${tenant}/hardening/reveal`)).shared_password; secret.hidden = false; reveal.hidden = true; }
-      catch (e) { show(e); reveal.disabled = false; }
+      try {
+        const r = await withReauth(() => api('POST', `/admin/tenants/${tenant}/hardening/reveal`));
+        if (r === canceled) { reveal.disabled = false; return; }
+        secret.textContent = r.shared_password; secret.hidden = false; reveal.hidden = true;
+      } catch (e) { show(e); reveal.disabled = false; }
     });
     body.append(reveal, secret);
   }
@@ -93,7 +131,8 @@ export async function openHardeningSettings(tenant, { onSaved } = {}) {
     if (mode.value === 'auto' && current.hardening_mode !== 'auto' && !confirm('En modo automático los equipos se endurecen solos al instalar el agente. ¿Continuar?')) return;
     ok.disabled = true;
     try {
-      const saved = await api('PUT', `/admin/tenants/${tenant}/hardening`, { body: payload });
+      const saved = await withReauth(() => api('PUT', `/admin/tenants/${tenant}/hardening`, { body: payload }));
+      if (saved === canceled) { show('No se guardó: confirma tu contraseña para fijar la de la cuenta de IT.'); ok.disabled = false; return; }
       password.value = ''; again.value = '';
       dialog.close();
       onSaved?.({ ...saved, configured: saved.shared_password !== null });

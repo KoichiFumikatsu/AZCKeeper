@@ -40,6 +40,10 @@ function hardeningTests(Database $db): void
     $unconfigured = $input; unset($unconfigured['shared_password']);
     expect(adminRequest($admin, 'PUT', $path, $unconfigured), 409, 'initial settings require recovery password');
     expect(adminRequest($admin, 'PUT', $path, $input, ['x-csrf-token' => '']), 403, 'set requires CSRF');
+    // La contraseña de la cuenta de IT abre todos los equipos: fijarla exige reautenticación reciente (300 s).
+    check(expect(adminRequest($admin, 'PUT', $path, $input), 403, 'set password needs reauth')['code'] === 'reauth_required', 'set password reauth code');
+    check(!$db->one('SELECT 1 x FROM tenant_hardening_settings WHERE tenant_id=?', [$tenant]), 'refused set stores nothing');
+    expect(adminRequest($admin, 'POST', '/auth/reauth', ['password' => $admin['password']]), 200, 'reauth for hardening password');
     $set = adminRequest($admin, 'PUT', $path, $input);
     check(expect($set, 200, 'set hardening')['shared_password'] === '********' && !str_contains($set[3], $password), 'write response masks password');
     $row = $db->one('SELECT * FROM tenant_hardening_settings WHERE tenant_id=?', [$tenant]);
@@ -50,12 +54,20 @@ function hardeningTests(Database $db): void
     check($read[2]['cache-control'] === 'no-store', 'settings not cached');
     expect(adminRequest($admin, 'POST', $path . '/reveal', null, ['x-csrf-token' => '']), 403, 'reveal requires CSRF');
     expect(adminRequest($admin, 'POST', $path . '/reveal', null, ['origin' => 'https://attacker.invalid']), 403, 'reveal requires same origin');
+    // Reautenticación vencida: ver la contraseña la exige de nuevo; cambiar solo el modo no.
+    $db->run('UPDATE admin_sessions SET reauthenticated_at=UTC_TIMESTAMP(6)-INTERVAL 301 SECOND WHERE tenant_id=? AND admin_id=?', [$tenant, $admin['id']]);
+    $stale = adminRequest($admin, 'POST', $path . '/reveal');
+    check(expect($stale, 403, 'reveal needs recent reauth')['code'] === 'reauth_required' && !str_contains($stale[3], $password), 'reveal reauth code without secret');
+    $modeOnly = $input; unset($modeOnly['shared_password']);
+    check(expect(adminRequest($admin, 'PUT', $path, $modeOnly), 200, 'settings without password need no reauth')['shared_password'] === '********', 'mode-only change keeps the password');
+    check(expect(adminRequest($admin, 'PUT', $path, $input), 403, 'changing the password needs recent reauth')['code'] === 'reauth_required', 'stale reauth refuses password change');
+    expect(adminRequest($admin, 'POST', '/auth/reauth', ['password' => $admin['password']]), 200, 'reauth for reveal');
     for ($i = 0; $i < 2; $i++) {
         $reveal = adminRequest($admin, 'POST', $path . '/reveal');
         check(expect($reveal, 200, 'audited reveal')['shared_password'] === $password && $reveal[2]['cache-control'] === 'no-store', 'reveal returns original secret without caching');
     }
     check((int) $db->one("SELECT COUNT(*) n FROM audit_log WHERE tenant_id=? AND action='hardening.password.reveal'", [$tenant])['n'] === 2, 'every reveal is audited');
-    check((int) $db->one("SELECT COUNT(*) n FROM audit_log WHERE tenant_id=? AND action='hardening.settings.set'", [$tenant])['n'] === 1, 'set audited');
+    check((int) $db->one("SELECT COUNT(*) n FROM audit_log WHERE tenant_id=? AND action='hardening.settings.set'", [$tenant])['n'] === 2, 'set audited');
     foreach ([['GET', $path, null], ['PUT', $path, $input], ['POST', $path . '/reveal', null], ['GET', $devicePath, null], ['POST', $devicePath . '/command', ['action' => 'harden']]] as [$method, $route, $body]) {
         expect(adminRequest($reader, $method, $route, $body, ['idempotency-key' => Util::uuid()]), 403, 'hardening permission required: ' . $method);
     }
@@ -69,6 +81,7 @@ function hardeningTests(Database $db): void
     expect(adminRequest($admin, 'GET', $path, null, ['x-tenant-id' => $bid]), 404, 'conflicting tenant selector rejected');
     expect(adminRequest($admin, 'GET', $foreignPath), 404, 'foreign device status rejected');
     expect(adminRequest($admin, 'POST', $foreignPath . '/command', ['action' => 'harden'], ['idempotency-key' => Util::uuid()]), 404, 'foreign command rejected');
+    expect(adminRequest($other, 'POST', '/auth/reauth', ['password' => $other['password']]), 200, 'reauth tenant B');
     expect(adminRequest($other, 'PUT', '/admin/tenants/' . $bid . '/hardening', array_replace($input, ['shared_password' => $otherPassword, 'hardening_mode' => 'auto'])), 200, 'configure tenant B');
     $agent = request('GET', '/client/hardening', null, $key, $token['access_token']);
     $settings = expect($agent, 200, 'signed agent hardening');

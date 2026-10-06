@@ -1,5 +1,5 @@
 {
-  "source_sha256": "431854b93c07b1a786b91cabf098056cee38d2f7dfd0d3385ada7b40bdf01e87",
+  "source_sha256": "474a617d370f47593e879bd8bb6027f250bc305956077e56e7b5ebfb29e48b33",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -274,6 +274,7 @@
         ],
         "operationId": "setTenantHardening",
         "summary": "Configurar endurecimiento y auditar campos modificados",
+        "description": "Si trae shared_password (la contraseña de la cuenta de IT), exige reauth <5 min (403 reauth_required); cambiar solo el nombre, el modo o deny_network_logon no la exige.",
         "security": [
           {
             "adminSession": [],
@@ -444,7 +445,7 @@
           }
         },
         "x-permission": "hardening.gestionar",
-        "description": "Sin cache ni replay de idempotencia: cada revelado exitoso registra hardening.password.reveal en la misma transacci?n. Sesi?n, Origin, CSRF y hardening.gestionar con alcance tenant obligatorios."
+        "description": "Sin cache ni replay de idempotencia: cada revelado exitoso registra hardening.password.reveal en la misma transacci?n. Sesi?n, Origin, CSRF y hardening.gestionar con alcance tenant obligatorios. Exige reauth <5 min (403 reauth_required)."
       }
     },
     "/admin/devices/{id}/hardening": {

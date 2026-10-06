@@ -25,6 +25,10 @@ final class Hardening
         if ($plain === false) { throw new \RuntimeException('Invalid hardening ciphertext'); }
         return $plain;
     }
+    private function requireReauth(): void
+    {
+        if ($this->c['reauthenticated_at'] === null || strtotime($this->c['reauthenticated_at'] . ' UTC') < time() - 300) { throw new ApiError(403, 'reauth_required'); }
+    }
     private function settings(): array
     {
         $row = $this->db->one('SELECT admin_name,hardening_mode,deny_network_logon,shared_password_enc IS NOT NULL configured,updated_by,updated_at FROM tenant_hardening_settings WHERE tenant_id=?', [$this->c['tenant_id']]);
@@ -68,6 +72,8 @@ final class Hardening
         if (str_starts_with($this->r->route, '/admin/tenants/')) {
             $access->requireFull();
             if ($id !== $tenant) { throw new ApiError(404, 'resource_not_found'); }
+            // La contraseña de la cuenta de IT abre todos los equipos: fijarla o verla exige reautenticación reciente.
+            if ($op === 'revealTenantHardening' || ($op === 'setTenantHardening' && isset($b->shared_password))) { $this->requireReauth(); }
             if ($op === 'setTenantHardening') {
                 $adminName = trim($b->admin_name);
                 if ($adminName === '' || str_ends_with($adminName, '.')) { throw new ApiError(422, 'validation_failed'); }

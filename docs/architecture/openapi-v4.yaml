@@ -193,6 +193,7 @@ paths:
       - admin
       operationId: setTenantHardening
       summary: Configurar endurecimiento y auditar campos modificados
+      description: Si trae shared_password (la contraseña de la cuenta de IT), exige reauth <5 min (403 reauth_required); cambiar solo el nombre, el modo o deny_network_logon no la exige.
       security:
       - adminSession: []
         csrfToken: []
@@ -303,7 +304,8 @@ paths:
           $ref: '#/components/responses/Unavailable'
       x-permission: hardening.gestionar
       description: 'Sin cache ni replay de idempotencia: cada revelado exitoso registra hardening.password.reveal
-        en la misma transacci?n. Sesi?n, Origin, CSRF y hardening.gestionar con alcance tenant obligatorios.'
+        en la misma transacci?n. Sesi?n, Origin, CSRF y hardening.gestionar con alcance tenant obligatorios.
+        Exige reauth <5 min (403 reauth_required).'
   /admin/devices/{id}/hardening:
     get:
       tags:
