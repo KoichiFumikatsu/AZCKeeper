@@ -4,7 +4,7 @@
 # Pide email y contrasena del admin de plataforma por consola; la contrasena no se muestra ni queda en disco.
 set -euo pipefail
 RELEASE_JSON=${1:?uso: register-release.sh <release.json> [tenant_id]}
-TENANT=${2:-00000000-0000-4000-8000-000000000002}      # Grupo AZC
+TENANT=${2:-6e888b88-b3ef-4ac8-adae-d2fcf12d6b12}      # Grupo AZC (cliente actual, 2026-10)
 PLATFORM=00000000-0000-4000-8000-000000000001
 BASE=${KEEPER_BASE:-https://devkeep.azclegal.com}
 API=$BASE/v1
