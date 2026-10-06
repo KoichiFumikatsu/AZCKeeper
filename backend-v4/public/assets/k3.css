@@ -154,3 +154,6 @@ tr.group-row th{background:#d6d6d6;color:var(--ink);white-space:normal;padding:4
 .assign-count{font-weight:600;color:var(--ink)}.assign-review h3{margin:0 0 8px}.assign-review .assign-sentence{font-size:15px;font-weight:650;color:var(--ink);margin:0 0 6px}.assign-review ul{margin:0 0 12px;padding-left:20px;font-size:13px;max-height:260px;overflow:auto}.assign-review li{margin:3px 0}
 .week-details summary{min-height:32px;padding-block:4px;font-size:12px;color:var(--accent)}.week-list{margin:4px 0 0;padding-left:16px;font-size:12px;white-space:nowrap}.week-list li.muted{color:var(--muted)}
 .week-preview{margin:6px 0 0;overflow-x:auto}.week-table{width:100%;min-width:480px;border-collapse:collapse;font-size:13px}.week-table caption{text-align:left;font-weight:650;padding:0 0 6px}.week-table th,.week-table td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}.week-table tbody th{font-weight:600}.week-table tr.off td,.week-table tr.off th{color:var(--muted)}.week-table tfoot th,.week-table tfoot td{font-weight:700;border-bottom:0}
+/* M11 · Ajustes: grupos separados y revisión de cambios antes de guardar. */
+.settings-group{margin:0 0 20px}.settings-group>.help{margin:0 0 10px}.settings-review{margin:0 0 16px}
+input[aria-invalid=true],select[aria-invalid=true]{border-color:var(--error);box-shadow:0 0 0 1px var(--error)}

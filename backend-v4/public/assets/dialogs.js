@@ -28,8 +28,10 @@ export function wireDialog(dialog, { title = dialog.querySelector('h2'), error =
   const nativeShow = dialog.showModal.bind(dialog);
   dialog.showModal = () => { nativeShow(); focusFirst(dialog); };
   dialog.addEventListener('close', () => {
-    // Si otro diálogo quedó abierto (p. ej. la contraseña temporal tras crear la cuenta), el foco ya está donde debe.
-    if (document.querySelector('dialog[open]')) return;
+    // Si otro diálogo quedó abierto (p. ej. la contraseña temporal tras crear la cuenta), el foco ya está donde debe;
+    // salvo que sea el diálogo desde el que se abrió esta confirmación: entonces vuelve a su botón.
+    const openNow = document.querySelector('dialog[open]');
+    if (openNow && !(opener && openNow.contains(opener))) return;
     const here = document.activeElement;
     if (here && here !== document.body && !dialog.contains(here)) return;
     if (opener?.isConnected && visible(opener) && !opener.disabled) { opener.focus(); return; }

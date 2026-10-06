@@ -618,7 +618,7 @@ async function organization() {
     more.addEventListener('toggle', () => { if (more.open) document.querySelectorAll('details.row-more[open]').forEach(d => { if (d !== more) d.open = false; }); });
     const toggle = el('button', o.active ? 'Desactivar' : 'Activar', 'link-button'); toggle.type = 'button';
     toggle.addEventListener('click', async () => {
-      if (o.active && !confirm(`¿Desactivar ${o.name}?`)) return;
+      if (o.active && !await confirmBox({ title: `Desactivar ${kinds[o.kind] ? kinds[o.kind].toLowerCase() : 'unidad'}`, message: `¿Desactivar ${o.name}?`, details: ['Deja de ofrecerse para asignar; quien ya la tiene la conserva. Puedes activarla de nuevo cuando quieras.'], okText: 'Desactivar' })) return;
       try { quiet(); await save(o, { active: !o.active }); }
       catch (e) {
         const count = usedBy(o);
@@ -630,7 +630,7 @@ async function organization() {
     // Eliminar: desaparece del panel; si el historial la menciona se conserva como eliminada para ese historial.
     const remove = el('button', 'Eliminar', 'link-button danger'); remove.type = 'button';
     remove.addEventListener('click', async () => {
-      if (!confirm(`¿Eliminar "${o.name}"? Desaparece de Organización y de las listas. El historial de quien la tuvo se conserva.`)) return;
+      if (!await confirmBox({ title: `Eliminar ${o.name}`, message: `¿Eliminar "${o.name}"? Desaparece de Organización y de las listas. El historial de quien la tuvo se conserva.`, okText: 'Eliminar', danger: true })) return;
       try { quiet(); await api('DELETE', `/organization/${o.id}`, { ifMatch: o.version }); org = org.filter(x => x.id !== o.id); render(); $('page-status').textContent = `«${o.name}» eliminada.`; }
       catch (e) {
         const uses = (e.problem?.detail || '').match(/^org_unit_in_use:(.+)$/)?.[1];
@@ -682,6 +682,7 @@ async function assignments() {
       const footer = el('div', undefined, 'dialog-footer'); const cancel = el('button', 'Cancelar'); cancel.type = 'button'; const ok = el('button', 'Reasignar', 'primary'); ok.type = 'submit';
       if (!who.options.length) { ok.disabled = true; error.textContent = 'No hay otra persona activa a quien asignarlo.'; error.hidden = false; }
       footer.append(cancel, ok); form.append(error, footer); dialog.append(form); document.body.append(dialog);
+      wireDialog(dialog, { error });
       cancel.addEventListener('click', () => dialog.close()); dialog.addEventListener('close', () => dialog.remove());
       form.addEventListener('submit', async ev => {
         ev.preventDefault(); ok.disabled = true;
@@ -1228,7 +1229,7 @@ async function tenantsPage() {
       // Eliminar: sus empresas quedan independientes; con cuentas de grupo atadas se rechaza (reasignarlas en Cuentas).
       const del = el('button', 'Eliminar grupo'); del.type = 'button'; ok.before(del);
       del.addEventListener('click', async () => {
-        if (!confirm(`¿Eliminar el grupo "${x.name}"? Sus empresas no se borran: quedan independientes.`)) return;
+        if (!await confirmBox({ title: 'Eliminar grupo', message: `¿Eliminar el grupo "${x.name}"? Sus empresas no se borran: quedan independientes.`, okText: 'Eliminar grupo', danger: true })) return;
         del.disabled = ok.disabled = true;
         try { await api('DELETE', `/company-groups/${x.id}`, { tenant: PLATFORM_TENANT, ifMatch: x.version }); groups = (await api('GET', '/company-groups', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done(); }
         catch (e) {
@@ -1354,7 +1355,7 @@ async function tenantsPage() {
       const f = file.files[0];
       if (!name.value.trim() || !display.value.trim()) { show('Escribe el nombre interno y el visible.'); return; }
       if (f && (!LOGO_TYPES.includes(f.type) || f.size > 512 * 1024)) { show('El logo debe ser PNG, JPG o WebP de máximo 512 KB.'); return; }
-      if (status?.value === 'suspended' && c.status !== 'suspended' && !confirm(`¿Suspender ${c.name}? Nadie de esa empresa podrá entrar al panel.`)) return;
+      if (status?.value === 'suspended' && c.status !== 'suspended' && !await confirmBox({ title: 'Suspender cliente', message: `¿Suspender ${c.name}? Nadie de esa empresa podrá entrar al panel.`, okText: 'Suspender y guardar', danger: true })) return;
       ok.disabled = true;
       try {
         const patch = { name: name.value.trim(), timezone: tz.value.trim(), branding: { display_name: display.value.trim(), logo_url: brand.logo_url || `${location.origin}/branding.svg`, primary_color: primary.value.toUpperCase(), accent_color: accent.value.toUpperCase() } };
@@ -2078,10 +2079,11 @@ function personProfile(ctx, u, { tab = 'datos', subtab = null, created = null, d
     else devicesPanel(v.panel, ctx, devicesReq);
     draft = null;
   };
-  const go = (key, { force = false } = {}) => {
+  const go = async (key, { force = false } = {}) => {
     if (key === current) return;
     const leaving = current && views[current];
-    if (!force && leaving?.dirty() && !confirm(`Hay cambios sin guardar en «${leaving.label}». Si cambias de pestaña se descartan. ¿Cambiar de pestaña?`)) { leaving.button.focus(); return; }
+    if (!force && leaving?.dirty() && !await confirmBox({ title: 'Cambios sin guardar', message: `Hay cambios sin guardar en «${leaving.label}». Si cambias de pestaña se descartan. ¿Cambiar de pestaña?`, okText: 'Descartar y cambiar', cancelText: 'Seguir editando' })) { leaving.button.focus(); return; }
+    if (key === current) return;
     if (leaving?.dirty()) leaving.drawn = false; // descartados: al volver se dibuja con lo guardado
     current = key;
     for (const [k, v] of Object.entries(views)) { const on = k === key; v.button.setAttribute('aria-selected', String(on)); v.button.tabIndex = on ? 0 : -1; v.panel.hidden = !on; }
@@ -2136,7 +2138,7 @@ function dataPanel(panel, ctx, getUser, onSaved) {
     if (!basicData.display_name) { foot.fail('Escribe el nombre.'); id.name.focus(); return; }
     const missing = labor.missing();
     if (missing.length) { foot.fail(`Falta ${missing.join(', ')}: elígela${ctx.canUnits ? ' o créala con «+ Nueva …»' : ''}.`); return; }
-    if (status.value === 'inactive' && cur.status === 'active' && !confirm(`¿Marcar a ${cur.display_name} como inactiva? Sus equipos quedan revocados y dejan de reportar.`)) return;
+    if (status.value === 'inactive' && cur.status === 'active' && !await confirmBox({ title: 'Retirar persona', message: `¿Marcar a ${cur.display_name} como inactiva? Sus equipos quedan revocados y dejan de reportar.`, details: ['Si solo quieres que no entre al panel, desactiva su cuenta en Cuentas del panel: eso no revoca sus equipos.'], okText: 'Marcar inactiva y guardar', danger: true })) return;
     const payload = { ...basicData, ...labor.read() };
     if (status.value !== cur.status) payload.status = status.value;
     foot.busy(true);
@@ -2549,11 +2551,11 @@ async function sourcesPage() {
       const action = { create: 'Nueva', update: 'Cambio', link: 'Vinculada', deactivate: 'Retiro / baja', error: 'Error', pending: 'Pendiente' };
       table(t, 'Detalle', [['Qué', i => action[i.action] || i.action], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain], ['Nombre', i => i.label || i.external_id || '—'],
         ['Detalle', i => i.reason || (i.fields ? Object.keys(i.fields).join(', ') : '')]], items, { filters: [['Qué', i => action[i.action] || i.action], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain]], stateKey: null });
-    } catch (e) { body.append(el('p', errorMessage(e), 'error-text')); }
+    } catch (e) { const p = el('p', errorMessage(e), 'error-text'); p.setAttribute('role', 'alert'); body.append(p); }
     if (r.status === 'blocked' && manage) {
       const b = el('button', 'Aplicar igualmente (vuelve a leer la fuente)', 'danger'); b.type = 'button';
       b.addEventListener('click', async () => {
-        if (!confirm('Se aplicarán los retiros sin frenos. ¿Seguro?')) return;
+        if (!await confirmBox({ title: 'Aplicar sin frenos', message: 'Se aplicarán los retiros sin frenos. ¿Seguro?', details: ['La fuente se vuelve a leer y se aplican todos sus cambios, aunque superen los límites de seguridad.'], okText: 'Aplicar igualmente', danger: true })) return;
         try { const nr = await api('POST', `/sync-runs/${r.id}/approve`); dialog.close(); await reload(); showRun(nr); } catch (e) { fail(e); }
       });
       body.append(b);
@@ -2593,7 +2595,7 @@ async function sourcesPage() {
     dialog.showModal();
   };
   const setMode = async (s, mode) => {
-    if (mode === 'live' && !confirm(`Desde ahora ${s.name} cambiará datos reales en Keeper (crear, actualizar y retirar personas según la fuente). ¿Continuar?`)) return;
+    if (mode === 'live' && !await confirmBox({ title: 'Activar sincronización real', message: `Desde ahora ${s.name} cambiará datos reales en Keeper (crear, actualizar y retirar personas según la fuente). ¿Continuar?`, okText: 'Activar' })) return;
     try { await api('PATCH', `/data-sources/${s.id}`, { body: { mode }, ifMatch: s.version }); await reload(); }
     catch (e) { fail(e.problem?.detail === 'simulation_required' ? new Error('Primero corre y revisa una simulación completa.') : e); }
   };
@@ -2609,7 +2611,7 @@ async function sourcesPage() {
           for (const [text, approve] of [[yes, true], [no, false]]) {
             const b = el('button', text, approve ? 'link-button' : 'link-button'); b.type = 'button';
             b.addEventListener('click', async () => {
-              if (approve && i.reason === 'orphan' && !confirm(`¿Retirar a ${i.label}? Sus equipos dejan de reportar.`)) return;
+              if (approve && i.reason === 'orphan' && !await confirmBox({ title: 'Retirar persona', message: `¿Retirar a ${i.label}? Sus equipos dejan de reportar.`, okText: 'Retirar', danger: true })) return;
               try { await api('POST', `/sync-items/${i.id}/resolve`, { body: { approve } }); await reload(); }
               catch (e) { fail(e.code === 'org_unit_in_use' ? new Error('Todavía tiene personas o áreas activas: muévelas primero.') : e); }
             });
@@ -2653,7 +2655,7 @@ async function sourcesPage() {
         const changed = selects.filter(([row, sel]) => (row.source_id || '') !== sel.value);
         if (!changed.length) return;
         const toKeeper = changed.filter(([, sel]) => !sel.value).map(([row]) => DOMAIN_LABELS[row.domain]);
-        if (!confirm(toKeeper.length ? `${toKeeper.join(', ')} volverán a editarse en Keeper y la fuente dejará de actualizarlos. ¿Continuar?` : 'Esos datos pasarán a editarse solo en la fuente. ¿Continuar?')) return;
+        if (!await confirmBox({ title: 'Cambiar quién manda en los datos', message: toKeeper.length ? `${toKeeper.join(', ')} volverán a editarse en Keeper y la fuente dejará de actualizarlos. ¿Continuar?` : 'Esos datos pasarán a editarse solo en la fuente. ¿Continuar?', okText: 'Guardar cambios' })) return;
         try { await api('PUT', '/data-domains', { body: { domains: changed.map(([row, sel]) => ({ domain: row.domain, source_id: sel.value || null })) } }); await reload(); } catch (e) { fail(e); }
       });
     }
@@ -2760,7 +2762,7 @@ async function absencesPage() {
         if (owner || a.status !== 'approved') return '';
         const b = el('button', 'Cancelar', 'link-button'); b.type = 'button';
         b.addEventListener('click', async () => {
-          if (!confirm('¿Cancelar esta ausencia? Esos días vuelven a contar como laborales.')) return;
+          if (!await confirmBox({ title: 'Cancelar ausencia', message: '¿Cancelar esta ausencia? Esos días vuelven a contar como laborales.', okText: 'Cancelar ausencia', cancelText: 'Volver', danger: true })) return;
           try { const r = await api('PATCH', `/absences/${a.id}`, { body: { status: 'cancelled' }, ifMatch: a.version }); list = list.map(x => x.id === a.id ? r : x); render(); done(); } catch (e) { fail(e); }
         });
         return b;
@@ -3520,21 +3522,63 @@ async function healthPage() {
 async function settingsPage() {
   const cfg = await api('GET', '/tenants/panel-settings');
   const s = surface('Ajustes de la empresa');
-  const form = el('form'); s.append(form);
-  const grid = el('div', undefined, 'form-grid'); form.append(grid);
-  const num = (label, value, min, max, help) => { const i = labeled(grid, label, el('input'), help); i.type = 'number'; i.min = min; i.max = max; i.value = value ?? ''; return i; };
-  const heartbeat = num('Días sin conexión para alertar en Cobertura', cfg.install_coverage_heartbeat_days, 1, 90, 'Un equipo que no reporta en estos días aparece como "sin conexión reciente".');
-  const raw = num('Días que se guarda el detalle (ventanas, apps)', cfg.raw_days, 30, 3650, 'Después se borra el detalle y quedan solo los resúmenes.');
-  const agg = num('Meses que se guardan los resúmenes', cfg.aggregate_months, 1, 120, 'Productividad, presencia y reportes por día.');
-  const logs = num('Días que se guardan los registros técnicos', cfg.log_days, 1, 365, 'Lo que se ve en Logs de los equipos.');
+  const form = el('form'); form.noValidate = true; s.append(form);
+  // Revisión UX AJU-1: el aviso de Cobertura y la conservación de datos se ven por separado; reducir un plazo de
+  // conservación no se guarda sin ver antes el efecto (Antes → Después).
+  const group = (title, help) => { const fs = el('fieldset', undefined, 'perm-group settings-group'); fs.append(el('legend', title)); if (help) fs.append(el('p', help, 'help')); const g = el('div', undefined, 'form-grid'); fs.append(g); form.append(fs); return g; };
+  const fields = [];
+  const num = (grid, key, label, unit, value, min, max, help) => {
+    const i = labeled(grid, label, el('input'), help); i.type = 'number'; i.min = min; i.max = max; i.value = value ?? ''; i.name = key;
+    fields.push({ key, input: i, label, unit, before: value, min, max }); return i;
+  };
+  const alerts = group('Aviso de Cobertura', 'Solo cambia cuándo se avisa; no borra nada.');
+  const heartbeat = num(alerts, 'install_coverage_heartbeat_days', 'Días sin conexión para alertar en Cobertura', 'días', cfg.install_coverage_heartbeat_days, 1, 90, 'Un equipo que no reporta en estos días aparece como "sin conexión reciente".');
+  const keep = group('Conservación de datos', 'Cuánto tiempo se guarda cada tipo de dato. Reducir un plazo deja fuera del panel lo que quede más atrás.');
+  const raw = num(keep, 'raw_days', 'Días que se guarda el detalle (ventanas, apps)', 'días', cfg.raw_days, 30, 3650, 'Después se borra el detalle y quedan solo los resúmenes.');
+  const agg = num(keep, 'aggregate_months', 'Meses que se guardan los resúmenes', 'meses', cfg.aggregate_months, 1, 120, 'Productividad, presencia y reportes por día.');
+  const logs = num(keep, 'log_days', 'Días que se guardan los registros técnicos', 'días', cfg.log_days, 1, 365, 'Lo que se ve en Logs de los equipos.');
+  const retention = ['raw_days', 'aggregate_months', 'log_days'];
+  // Lo que cambia respecto a lo guardado, siempre visible antes de guardar.
+  const review = el('div', undefined, 'change-review settings-review'); review.setAttribute('aria-live', 'polite'); form.append(review);
+  const changes = () => fields.filter(f => f.input.value !== '' && Number(f.input.value) !== Number(f.before));
+  const drawReview = () => {
+    const list = changes(); review.replaceChildren(); review.hidden = !list.length;
+    if (!list.length) return;
+    review.append(el('strong', 'Cambios sin guardar'));
+    const ul = el('ul');
+    list.forEach(f => { const down = retention.includes(f.key) && Number(f.input.value) < Number(f.before); ul.append(el('li', `${f.label}: ${f.before} → ${f.input.value} ${f.unit}${down ? ' (reduce lo que se conserva)' : ''}`, down ? 'review-remove' : 'review-add')); });
+    review.append(ul);
+  };
+  form.addEventListener('input', drawReview); drawReview();
   const save = el('button', 'Guardar ajustes', 'primary'); save.type = 'submit'; form.append(save);
   // Éxito como estado y error como alerta: un fallo no se lee como mensaje informativo (revisión UX AJU-2).
   const msg = el('p', '', 'help'); msg.setAttribute('role', 'status');
-  const bad = el('p', '', 'error-text'); bad.setAttribute('role', 'alert'); bad.hidden = true; form.append(msg, bad);
+  const bad = el('p', '', 'error-text'); bad.setAttribute('role', 'alert'); bad.hidden = true; bad.id = 'settings-error'; form.append(msg, bad);
+  // El error queda asociado al campo que lo causó (aria-invalid + aria-describedby) y ese campo recibe el foco.
+  const clearInvalid = () => fields.forEach(f => { f.input.removeAttribute('aria-invalid'); f.input.removeAttribute('aria-describedby'); });
+  const failOn = (text, input) => {
+    bad.textContent = text; bad.hidden = false; msg.textContent = '';
+    if (input) { input.setAttribute('aria-invalid', 'true'); input.setAttribute('aria-describedby', bad.id); input.focus(); }
+  };
   form.addEventListener('submit', async ev => {
-    ev.preventDefault(); save.disabled = true; msg.textContent = ''; bad.hidden = true;
-    try { await api('PUT', '/tenants/panel-settings', { body: { install_coverage_heartbeat_days: Number(heartbeat.value), raw_days: Number(raw.value), aggregate_months: Number(agg.value), log_days: Number(logs.value) } }); msg.textContent = 'Ajustes guardados.'; done(); }
-    catch (e) { bad.textContent = e.problem?.detail === 'raw_days_below_late_arrival' ? 'El detalle no puede guardarse menos días que el plazo en que llegan datos atrasados de los equipos (30).' : errorMessage(e); bad.hidden = false; }
+    ev.preventDefault(); msg.textContent = ''; bad.hidden = true; clearInvalid();
+    const wrong = fields.find(f => f.input.value === '' || !Number.isInteger(Number(f.input.value)) || Number(f.input.value) < f.min || Number(f.input.value) > f.max);
+    if (wrong) { failOn(`${wrong.label}: escribe un número entero entre ${wrong.min} y ${wrong.max}.`, wrong.input); return; }
+    const reduced = changes().filter(f => retention.includes(f.key) && Number(f.input.value) < Number(f.before));
+    if (reduced.length && !await confirmBox({ title: 'Reducir la conservación de datos', message: 'Vas a reducir cuánto tiempo se conservan estos datos:',
+      details: [...reduced.map(f => `${f.label}: antes ${f.before} ${f.unit}, después ${f.input.value} ${f.unit}.`),
+        'Desde que guardes, lo que quede fuera del nuevo plazo deja de verse en el panel y queda sujeto al borrado por retención. No cuentes con recuperarlo al volver a ampliar el plazo.'],
+      okText: 'Reducir y guardar', danger: true })) return;
+    save.disabled = true;
+    try {
+      await api('PUT', '/tenants/panel-settings', { body: { install_coverage_heartbeat_days: Number(heartbeat.value), raw_days: Number(raw.value), aggregate_months: Number(agg.value), log_days: Number(logs.value) } });
+      fields.forEach(f => { f.before = Number(f.input.value); }); drawReview();
+      msg.textContent = 'Ajustes guardados.'; done();
+    }
+    catch (e) {
+      if (e.problem?.detail === 'raw_days_below_late_arrival') failOn('El detalle no puede guardarse menos días que el plazo en que llegan datos atrasados de los equipos (30).', raw);
+      else failOn(errorMessage(e), null);
+    }
     finally { save.disabled = false; }
   });
   // Cuenta de IT para endurecer equipos: ajuste de toda la empresa (permiso de endurecimiento con alcance empresa y

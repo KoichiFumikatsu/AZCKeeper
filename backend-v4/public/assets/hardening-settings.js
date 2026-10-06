@@ -1,4 +1,5 @@
 import { api, errorMessage } from './api.js';
+import { wireDialog, confirmBox, noticeBox } from './dialogs.js';
 
 // Seguridad de cuentas de Windows de la empresa (GET/PUT /admin/tenants/{id}/hardening): la cuenta de IT que el
 // endurecimiento crea en cada equipo y su contraseña compartida. Sin contraseña cargada la API niega "Endurecer" (409).
@@ -47,6 +48,7 @@ export function askReauth(text = reauthText) {
     const error = el('p', '', 'error-text'); error.hidden = true; error.setAttribute('role', 'alert');
     const footer = el('div', undefined, 'dialog-footer'); const cancel = el('button', 'Cancelar'); cancel.type = 'button'; const ok = el('button', 'Confirmar', 'primary'); ok.type = 'submit';
     footer.append(cancel, ok); form.append(error, footer); dialog.append(form); document.body.append(dialog);
+    wireDialog(dialog, { error });
     const show = e => { error.textContent = !e ? '' : typeof e === 'string' ? e : errorMessage(e); error.hidden = !e; };
     cancel.addEventListener('click', () => dialog.close());
     dialog.addEventListener('close', () => { dialog.remove(); resolve(confirmed); });
@@ -71,13 +73,14 @@ export async function withReauth(call, text) {
 
 export async function openHardeningSettings(tenant, { onSaved } = {}) {
   let current;
-  try { current = await loadHardeningSettings(tenant); } catch (error) { alert(errorMessage(error)); return; }
-  if (!current) { alert('Tu cuenta no puede configurar la seguridad de cuentas de Windows de esta empresa (requiere el permiso de endurecimiento sobre toda la empresa).'); return; }
+  try { current = await loadHardeningSettings(tenant); } catch (error) { await noticeBox({ title: 'Seguridad de cuentas de Windows', message: errorMessage(error) }); return; }
+  if (!current) { await noticeBox({ title: 'Seguridad de cuentas de Windows', message: 'Tu cuenta no puede configurar la seguridad de cuentas de Windows de esta empresa (requiere el permiso de endurecimiento sobre toda la empresa).' }); return; }
   const dialog = el('dialog'); const form = el('form'); form.noValidate = true; form.append(el('h2', 'Seguridad de cuentas de Windows'));
   const body = el('div', undefined, 'dialog-body'); form.append(body);
   const error = el('p', '', 'error-text'); error.hidden = true; error.setAttribute('role', 'alert');
-  const footer = el('div', undefined, 'dialog-footer'); const cancel = el('button', 'Cancelar'); cancel.type = 'button'; const ok = el('button', 'Guardar', 'primary'); ok.type = 'submit';
+  const footer = el('div', undefined, 'dialog-footer'); const cancel = el('button', 'Cancelar'); cancel.type = 'button'; const ok = el('button', 'Guardar cuenta de IT', 'primary'); ok.type = 'submit';
   footer.append(cancel, ok); form.append(error, footer); dialog.append(form); document.body.append(dialog);
+  wireDialog(dialog, { error });
   cancel.addEventListener('click', () => dialog.close()); dialog.addEventListener('close', () => dialog.remove());
   const show = e => { error.textContent = !e ? '' : typeof e === 'string' ? e : errorMessage(e); error.hidden = !e; };
   const labeled = (text, input, help) => { const l = el('label', text); l.append(input); body.append(l); if (help) body.append(el('p', help, 'help')); return input; };
@@ -108,7 +111,7 @@ export async function openHardeningSettings(tenant, { onSaved } = {}) {
     const reveal = el('button', 'Ver contraseña actual'); reveal.type = 'button';
     const secret = el('pre', '', 'secret'); secret.hidden = true;
     reveal.addEventListener('click', async () => {
-      if (!confirm('La consulta de la contraseña queda registrada en la auditoría. ¿Mostrarla?')) return;
+      if (!await confirmBox({ title: 'Ver contraseña de IT', message: 'La consulta de la contraseña queda registrada en la auditoría. ¿Mostrarla?', okText: 'Mostrar contraseña' })) return;
       reveal.disabled = true; show(null);
       try {
         const r = await withReauth(() => api('POST', `/admin/tenants/${tenant}/hardening/reveal`));
@@ -130,7 +133,7 @@ export async function openHardeningSettings(tenant, { onSaved } = {}) {
       if (password.value !== again.value) { show('Las contraseñas no coinciden.'); return; }
       payload.shared_password = password.value;
     }
-    if (mode.value === 'auto' && current.hardening_mode !== 'auto' && !confirm('En modo automático los equipos se endurecen solos al instalar el agente. ¿Continuar?')) return;
+    if (mode.value === 'auto' && current.hardening_mode !== 'auto' && !await confirmBox({ title: 'Modo automático', message: 'En modo automático los equipos se endurecen solos al instalar el agente. ¿Continuar?', details: ['Cada equipo nuevo queda endurecido al instalar, sin confirmación equipo por equipo: sus cuentas administradoras pasan a usuario estándar.'], okText: 'Usar modo automático' })) return;
     ok.disabled = true;
     try {
       const saved = await withReauth(() => api('PUT', `/admin/tenants/${tenant}/hardening`, { body: payload }));

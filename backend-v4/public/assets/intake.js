@@ -1,5 +1,6 @@
 import { api, errorMessage } from './api.js';
 import { loadHardeningSettings } from './hardening-settings.js';
+import { confirmBox } from './dialogs.js';
 
 // Alta de equipos a escala (docs/architecture/v4-alta-equipos.md): cola de solicitudes, equipos esperados (manual
 // y CSV) y claves de alta/configuracion. Todo lo que cruza por serie se aprueba solo; aqui llega lo que no cruzo.
@@ -21,6 +22,9 @@ const alertNames = {
   person_excluded: 'La persona no se monitorea (directivo o dueño): apruébalo solo si es una excepción.',
 };
 const message = error => (error?.problem?.detail && rowErrors[error.problem.detail]) || errorMessage(error);
+// Error junto a la fila que falló, anunciado como alerta (revisión UX M11).
+const alertText = text => { const n = el('p', text, 'error-message'); n.setAttribute('role', 'alert'); return n; };
+const inlineError = text => { const n = el('span', text, 'error-message'); n.setAttribute('role', 'alert'); return n; };
 
 function section(parent, title, help) {
   const s = el('section', undefined, 'work-surface'); s.append(el('h2', title));
@@ -151,7 +155,7 @@ function protectionNotice(parent, state) {
   if (state.kind === 'na') return;
   const settingsLink = text => { const a = el('a', text); a.href = '/ajustes.php'; return a; };
   if (state.kind === 'denied') { parent.append(el('p', 'No se pudo revisar el modo de endurecimiento ni la cuenta de IT: tu cuenta no tiene permiso para verlos.', 'help')); return; }
-  if (state.kind === 'error') { parent.append(el('p', `No se pudo revisar el endurecimiento antes de instalar: ${message(state.error)}`, 'error-message')); return; }
+  if (state.kind === 'error') { parent.append(alertText(`No se pudo revisar el endurecimiento antes de instalar: ${message(state.error)}`)); return; }
   const s = state.settings;
   if (s.hardening_mode === 'auto') {
     const n = el('div', undefined, 'notice install-warning'); n.setAttribute('role', 'note');
@@ -235,7 +239,7 @@ function installer(parent, tenant, keys, guard = { kind: 'na' }, { tabs = null, 
       line(`Registradas solas por coincidir con un equipo esperado: ${n(matched)}`, devices);
       checked.replaceChildren(el('p', `Comprobado a las ${clock}. Aprobada no es registrada: el equipo se registra al conectarse.`, 'help'), ul);
       if (!pending.data.length && !approved.data.length && !enrolled.data.length && !matched.data.length) checked.append(el('p', 'Aún no aparece ningún equipo: falta ejecutar el instalador o el equipo todavía no se conecta. Vuelve a comprobar en unos minutos.', 'help'));
-    } catch (error) { checked.replaceChildren(el('p', message(error), 'error-message')); }
+    } catch (error) { checked.replaceChildren(alertText(message(error))); }
     finally { check.disabled = false; }
   });
   // El servidor crea una clave nueva y la mete en installation.json del paquete publicado.
@@ -243,7 +247,7 @@ function installer(parent, tenant, keys, guard = { kind: 'na' }, { tabs = null, 
     event.preventDefault(); fb.clear(); result.replaceChildren();
     if (!password.value) { fb.fail('Escribe tu contraseña para confirmar.'); return; }
     if (guard.kind === 'ok' && guard.settings.hardening_mode === 'auto'
-      && !confirm('El endurecimiento está en modo automático: los equipos donde se instale este paquete se endurecerán solos. ¿Descargar igualmente?')) return;
+      && !await confirmBox({ title: 'Endurecimiento automático', message: 'El endurecimiento está en modo automático: los equipos donde se instale este paquete se endurecerán solos. ¿Descargar igualmente?', okText: 'Descargar igualmente' })) return;
     download.disabled = true;
     let keyId = null, delivered = false;
     try {
@@ -308,7 +312,7 @@ async function requests(content, tenant, { count = () => {} } = {}) {
   // «Ver seguimiento» muestra las aprobadas que esperan la conexión del equipo (aprobada no es registrada).
   const decision = feedback(s);
   const follow = el('button', 'Ver seguimiento', 'link-button decision-follow'); follow.type = 'button'; follow.hidden = true; s.append(follow);
-  follow.addEventListener('click', () => { status.value = 'approved'; load().catch(error => { holder.replaceChildren(el('p', message(error), 'error-message')); }); });
+  follow.addEventListener('click', () => { status.value = 'approved'; load().catch(error => { holder.replaceChildren(alertText(message(error))); }); });
   const holder = el('div'); s.append(holder);
   const pager = morePager(s);
   let body = null; let pending = '';
@@ -353,7 +357,7 @@ async function requests(content, tenant, { count = () => {} } = {}) {
           } catch (error) { fb.fail(error); } finally { approve.disabled = false; }
         });
         reject.addEventListener('click', async () => {
-          if (!confirm(`¿Rechazar el alta de ${r.hostname}? El equipo no quedará gestionado por Keeper.`)) return;
+          if (!await confirmBox({ title: 'Rechazar alta', message: `¿Rechazar el alta de ${r.hostname}? El equipo no quedará gestionado por Keeper.`, okText: 'Rechazar alta', danger: true })) return;
           reject.disabled = true;
           try { await api('POST', `/enrollments/requests/${r.id}/reject`, { tenant }); decision.ok(`${r.hostname}: alta rechazada. Aparece en «Rechazadas».`); follow.hidden = true; await load(); }
           catch (error) { fb.fail(error); reject.disabled = false; }
@@ -368,7 +372,7 @@ async function requests(content, tenant, { count = () => {} } = {}) {
     pager.update(result, 'solicitudes');
   }
   pager.onMore(() => load(true));
-  const reload = () => load().catch(error => { holder.replaceChildren(el('p', message(error), 'error-message')); });
+  const reload = () => load().catch(error => { holder.replaceChildren(alertText(message(error))); });
   status.addEventListener('change', reload);
   await load();
   return { pending: () => pending, show: value => { status.value = value; reload(); } };
@@ -456,9 +460,9 @@ async function expected(content, tenant, { count = () => {} } = {}) {
       if (e.status === 'pending') {
         const cancel = el('button', 'Cancelar'); cancel.type = 'button';
         cancel.addEventListener('click', async () => {
-          if (!confirm(`¿Cancelar el equipo esperado ${e.asset_code || e.serial_number} de ${e.user_name}?`)) return;
+          if (!await confirmBox({ title: 'Cancelar equipo esperado', message: `¿Cancelar el equipo esperado ${e.asset_code || e.serial_number} de ${e.user_name}?`, details: ['Si ese equipo se instala después, llegará como solicitud sin coincidencia.'], okText: 'Cancelar equipo esperado', cancelText: 'Volver', danger: true })) return;
           cancel.disabled = true;
-          try { await api('DELETE', `/enrollments/expected-devices/${e.id}`, { tenant }); await load(); } catch (error) { cell.append(el('span', message(error), 'error-message')); cancel.disabled = false; }
+          try { await api('DELETE', `/enrollments/expected-devices/${e.id}`, { tenant }); await load(); } catch (error) { cell.append(inlineError(message(error))); cancel.disabled = false; }
         });
         cell.append(cancel);
       } else if (e.device_id) { const a = el('a', 'Ver equipo'); a.href = `/equipo.php?id=${encodeURIComponent(e.device_id)}`; cell.append(a); }
@@ -467,7 +471,7 @@ async function expected(content, tenant, { count = () => {} } = {}) {
     pager.update(result, 'equipos');
   }
   pager.onMore(() => load(true));
-  status.addEventListener('change', () => load().catch(error => { holder.replaceChildren(el('p', message(error), 'error-message')); }));
+  status.addEventListener('change', () => load().catch(error => { holder.replaceChildren(alertText(message(error))); }));
   await load();
 }
 
@@ -517,9 +521,9 @@ async function keysAndSettings(content, tenant, rerender, hooks = {}) {
         if (!k.revoked_at) {
           const revoke = el('button', 'Revocar'); revoke.type = 'button';
           revoke.addEventListener('click', async () => {
-            if (prompt(`Los paquetes con la clave kek_${k.hint}… dejarán de poder dar de alta equipos nuevos. Escribe REVOCAR para confirmar.`) !== 'REVOCAR') return;
+            if (!await confirmBox({ title: 'Revocar clave de alta', message: `Los paquetes con la clave kek_${k.hint}… dejarán de poder dar de alta equipos nuevos. Escribe REVOCAR para confirmar.`, details: ['Los equipos ya enrolados no se afectan.'], typed: 'REVOCAR', typedLabel: 'Escribe REVOCAR para confirmar', okText: 'Revocar clave', danger: true })) return;
             revoke.disabled = true;
-            try { await api('DELETE', `/enrollments/keys/${k.id}`, { tenant }); await rerender(); } catch (error) { cell.append(el('span', message(error), 'error-message')); revoke.disabled = false; }
+            try { await api('DELETE', `/enrollments/keys/${k.id}`, { tenant }); await rerender(); } catch (error) { cell.append(inlineError(message(error))); revoke.disabled = false; }
           });
           cell.append(revoke);
         }

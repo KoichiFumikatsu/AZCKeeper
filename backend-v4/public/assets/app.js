@@ -6,6 +6,7 @@ import { operations, operationPaths } from './operations.js';
 import { intake, intakeProbe } from './intake.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings, withReauth, canceled } from './hardening-settings.js';
 import './menu.js';
+import { wireDialog } from './dialogs.js';
 import { onboardingBanner, returnBand } from './onboarding.js';
 
 const page = document.body.dataset.page;
@@ -22,7 +23,8 @@ function node(tag, text, className) {
   return result;
 }
 function showError(target, error) { target.textContent = error ? errorMessage(error) : ''; target.hidden = !error; }
-function appendError(target, error) { target.append(node('p', errorMessage(error), 'error-message')); }
+// Error anunciado como alerta (revisión UX M11): no se lee como un mensaje informativo más.
+function appendError(target, error) { const p = node('p', errorMessage(error), 'error-message'); p.setAttribute('role', 'alert'); target.append(p); }
 function query(path, values) {
   const url = new URL(path, location.origin);
   Object.entries(values).forEach(([key, value]) => { if (value !== null && value !== undefined) url.searchParams.set(key, value); });
@@ -546,6 +548,7 @@ function confirmDialog({ title, paragraphs, warning, typed, okText, okClass = 'p
   const footer = node('div', undefined, 'dialog-footer'); const cancel = node('button', 'Cancelar'); cancel.type = 'button';
   const ok = node('button', okText, okClass); ok.type = 'submit';
   footer.append(cancel, ok); form.append(error, footer); dialog.append(form); document.body.append(dialog);
+  wireDialog(dialog, { error });
   const sync = () => { ok.disabled = !!typed && typedInput.value !== typed; };
   if (typed) { typedInput.addEventListener('input', sync); sync(); }
   const show = e => { error.textContent = e ? errorMessage(e) : ''; error.hidden = !e; };
@@ -805,6 +808,7 @@ function openRemoteAction(d, action, { onSent }) {
   const footer = node('div', undefined, 'dialog-footer'); const cancel = node('button', 'Cancelar'); cancel.type = 'button';
   const ok = node('button', wipe ? 'Borrar el equipo' : action.label, wipe ? 'danger' : 'primary'); ok.type = 'submit';
   footer.append(cancel, ok); form.append(error, footer); dialog.append(form); document.body.append(dialog);
+  wireDialog(dialog, { error });
   const sync = () => { ok.disabled = wipe && confirmInput.value !== d.hostname; };
   if (wipe) { confirmInput.addEventListener('input', sync); sync(); }
   const show = e => { error.textContent = e ? errorMessage(e) : ''; error.hidden = !e; };
@@ -829,7 +833,7 @@ function openRemoteAction(d, action, { onSent }) {
     finally { if (dialog.open) { cancel.disabled = false; ok.disabled = false; sync(); } }
   });
   dialog.showModal();
-  (wipe ? confirmInput : ok).focus();
+  (wipe ? confirmInput : reason).focus();
 }
 async function reports() {
   const data = await get(reportPath());
