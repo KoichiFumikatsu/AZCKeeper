@@ -21,7 +21,9 @@ require_once __DIR__ . '/brand.php';
 ?>
 <!doctype html>
 <html lang="es">
-<head><?php require __DIR__ . '/head.php'; ?></head>
+<head><?php require __DIR__ . '/head.php'; ?>
+<?php if (in_array($page, ['device', 'reports'], true)): ?><link rel="stylesheet" href="/assets/device-reports.css?v=<?= filemtime(dirname(__DIR__) . '/assets/device-reports.css') ?>"><?php endif; ?>
+</head>
 <body data-page="<?= $h($page) ?>" data-surface="<?= $h($surface) ?>" class="<?= $surface === 'public' ? 'public' : '' ?>">
 <a class="skip" href="#main">Saltar al contenido</a>
 <?php if ($surface === 'public'): ?>
@@ -62,7 +64,14 @@ require_once __DIR__ . '/brand.php';
   <p id="page-error" class="error-message" role="alert" hidden></p>
   <div id="workspace" hidden>
     <div id="tenant-control" class="toolbar" hidden><label for="tenant-select">Empresa<select id="tenant-select"></select></label></div>
-    <?php if (in_array($page, ['reports', 'audit'], true)): ?>
+    <?php if ($page === 'reports'): ?>
+    <form id="date-form" class="toolbar report-form" data-inclusive="true" aria-describedby="date-help">
+      <label for="from">Desde<input id="from" name="from" type="date" required></label>
+      <label for="to">Hasta (incluido)<input id="to" name="to" type="date" required></label>
+      <button class="primary" type="submit">Consultar</button>
+      <p id="date-help" class="help report-date-help">Las dos fechas se incluyen. Máximo 31 días.</p>
+    </form>
+    <?php elseif ($page === 'audit'): ?>
     <form id="date-form" class="toolbar">
       <label for="from">Desde (incluido)<input id="from" name="from" type="date" required></label>
       <label for="to">Hasta (excluido)<input id="to" name="to" type="date" required></label>
