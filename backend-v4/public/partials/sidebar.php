@@ -7,7 +7,7 @@ if (!isset($page)) { http_response_code(404); exit; }
 $surface ??= 'portal';
 $current = ['member' => 'users', 'device' => 'devices'][$page] ?? $page;
 $portal = [
-    'Principal' => [['home', 'Inicio', '/'], ['sites', 'Sedes', '/sedes.php', false], ['users', 'Personas', '/usuarios.php'],
+    'Principal' => [['home', 'Inicio', '/'], ['onboarding', 'Puesta en marcha', '/puesta-en-marcha.php', false], ['sites', 'Sedes', '/sedes.php', false], ['users', 'Personas', '/usuarios.php'],
         ['devices', 'Equipos', '/equipos.php'], ['reports', 'Productividad', '/reportes.php'], ['intake', 'Registrar equipos nuevos', '/alta.php']],
     'Organización' => [['organization', 'Unidades (firmas, sedes, áreas, cargos)', '/organizacion.php', false], ['schedules', 'Horarios', '/horarios.php', false],
         ['holidays', 'Festivos', '/festivos.php', false], ['absences', 'Ausencias', '/ausencias.php', false], ['doors', 'Puertas', '/puertas.php', false],

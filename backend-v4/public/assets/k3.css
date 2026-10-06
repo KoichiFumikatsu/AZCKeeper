@@ -91,3 +91,20 @@ tr.group-row th{background:#d6d6d6;color:var(--ink);white-space:normal;padding:4
 /* Acciones remotas del equipo (equipo.php) */
 .remote-reasons{margin:10px 0 0;padding-left:18px;font-size:12px}.remote-reasons li{margin:3px 0}.danger-zone h3{color:var(--error)}.remote-feedback{margin-top:14px;font-weight:600;color:var(--accent)}.remote-feedback:empty{display:none}.remote-history-head{margin:26px 0 10px}
 .remote-history>.help{margin-top:10px}
+/* Puesta en marcha (fase 4): lista de pasos, banda de retorno y aviso de Inicio. */
+.onboarding-head{margin-bottom:24px}.onboarding-head h2{margin-bottom:8px}.onboarding-client{font-weight:650;color:var(--accent);margin-bottom:6px}.onboarding-count{font-size:16px;font-weight:650;margin:8px 0 6px}.onboarding-head .help{margin-top:4px}
+.onboarding-steps{list-style:none;margin:0 0 24px;padding:0;display:grid;gap:14px}
+.onboarding-step{border:1px solid #b5b5b5;border-left:4px solid var(--line);border-radius:12px;background:var(--surface);box-shadow:var(--relief);padding:18px 20px;min-width:0}
+.onboarding-step[data-status=done]{border-left-color:#5e8b75}.onboarding-step[data-status=progress]{border-left-color:var(--p-500)}.onboarding-step[data-status=pending]{border-left-color:#ac9872}.onboarding-step[data-status=unavailable]{border-left-color:var(--error)}
+.onboarding-step .step-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}.onboarding-step .step-head h3{margin:0;font-size:17px}.onboarding-step .step-head small{margin-left:auto}
+.onboarding-step .step-summary{margin:10px 0 4px;font-weight:600}.step-lines{margin:6px 0 0;padding-left:20px;font-size:13px;color:var(--muted)}.step-lines li{margin:3px 0;overflow-wrap:anywhere}
+.onboarding-step .notice,.onboarding-step .error-text{margin:12px 0 0}.onboarding-step>.help{margin-top:10px}
+.onboarding-step .step-actions,.onboarding-banner .step-actions,.onboarding-finished .step-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:10px 16px;margin-top:14px}
+.onboarding-step .step-actions .link-button{font-size:13px}
+.pilot-check{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);display:grid;gap:8px;justify-items:start}
+.onboarding-more{margin-bottom:24px}.onboarding-more p{margin:8px 0;font-size:13px}
+.onboarding-finished strong,.onboarding-banner strong{display:block;font-size:15px;margin-bottom:4px}
+.onboarding-band{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 16px;margin:0 0 18px;padding:10px 14px;border:1px solid var(--p-200);border-radius:10px;background:var(--p-50);font-size:13px;font-weight:600;color:var(--accent)}
+.onboarding-band .button{min-height:38px;padding:6px 14px;font-size:13px}
+.install-warning strong{display:block;margin-bottom:4px}.install-warning p{margin:4px 0}.list-more{align-items:center}
+@media(max-width:600px){.onboarding-step .step-head small{margin-left:0;flex-basis:100%}.onboarding-step{padding:16px}}

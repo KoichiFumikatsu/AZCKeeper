@@ -5,6 +5,7 @@ import { applyNavAccess, loadAccess, allowed } from './nav-access.js';
 import { scopeSummary, sameAccess, scopeConditions, SCOPE_RULE, TEAM_LABEL } from './access-scope.js';
 import { coordinator } from './coordinator.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings } from './hardening-settings.js';
+import { onboardingPage, returnBand } from './onboarding.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
 // de la API; lo que la cuenta no puede ver se explica en vez de mostrarse vacío.
@@ -1246,7 +1247,11 @@ async function tenantsPage() {
 // Recorrido tras crear un cliente: la cuenta pertenece a una persona, así que la persona va antes que la cuenta.
 function nextSteps(created) {
   const { dialog, body, ok, cancel } = dialogShell(`${created.branding?.display_name || created.name} quedó creada`);
-  body.append(el('p', 'Siguientes pasos, en este orden:'));
+  // Puesta en marcha (fase 4): el recorrido guiado del cliente recién creado, ya elegido en el selector.
+  const guide = el('p', undefined, 'next-steps-guide');
+  guide.append(clientLink('Configurar este cliente', created.id, '/puesta-en-marcha.php', 'button primary'), el('small', 'Abre Puesta en marcha: ocho pasos hasta comprobar su primer equipo.', 'help'));
+  body.append(guide);
+  body.append(el('p', 'O, directamente, en este orden:'));
   const ol = el('ol', undefined, 'next-steps'); body.append(ol);
   const step = (text, note, link) => { const li = el('li'); li.append(el('strong', text), ' · ', link); if (note) li.append(el('small', note)); ol.append(li); };
   step('Configurar la organización', 'Sedes (con su país), áreas y cargos.', clientLink('Abrir Organización', created.id, '/organizacion.php'));
@@ -3102,6 +3107,7 @@ async function start() {
   if (!isUuid(tenant)) { fail(new Error('La sesión no tiene una empresa válida: vuelve a iniciar sesión.')); return; }
   setTenant(tenant);
   applyNavAccess(); // menu segun los permisos de la cuenta en esta empresa
+  returnBand(); // llegó desde un paso de Puesta en marcha (?pm=N): «Volver al progreso»
   if (globalPage && session.is_platform_admin) { $('tenant-name').textContent = ownerName(); $('tenant-name').nextElementSibling.textContent = 'Administración de la plataforma'; }
   else { try { const t = await api('GET', `/tenants/${tenant}`); $('tenant-name').textContent = t.branding?.display_name || t.name; if (t.timezone) tenantZone = t.timezone; } catch { /* el nombre es decorativo */ } }
   try {
@@ -3125,6 +3131,7 @@ async function start() {
     else if (page === 'panel-settings') await settingsPage();
     else if (page === 'holidays') await holidaysPage();
     else if (page === 'suspicious-apps') await suspiciousPage();
+    else if (page === 'onboarding') await onboardingPage({ tenant, content: $('page-content'), status: $('page-status') });
     else if (page === 'tenants') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await tenantsPage(); }
     else if (page === 'plans') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await plansPage(); }
     done();
