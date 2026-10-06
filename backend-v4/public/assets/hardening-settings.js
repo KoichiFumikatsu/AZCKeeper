@@ -34,13 +34,15 @@ export const hardeningSummary = s => !s?.configured ? 'Sin configurar: falta la 
 
 // Fijar o ver la contraseña de la cuenta de IT exige haber confirmado la contraseña del panel en los últimos 5 minutos
 // (403 reauth_required, como las claves de alta): se pide, se confirma con /auth/reauth y se repite la operación una vez.
-const canceled = Symbol('canceled');
-function askReauth() {
+// Exportado: el borrado remoto (app.js) usa el mismo diálogo con su propio texto.
+export const canceled = Symbol('canceled');
+const reauthText = 'Para fijar o ver la contraseña de la cuenta de IT, confirma la contraseña con la que entras al panel.';
+export function askReauth(text = reauthText) {
   return new Promise(resolve => {
     let confirmed = false;
     const dialog = el('dialog'); const form = el('form'); form.noValidate = true; form.append(el('h2', 'Confirma tu contraseña'));
     const body = el('div', undefined, 'dialog-body'); form.append(body);
-    body.append(el('p', 'Para fijar o ver la contraseña de la cuenta de IT, confirma la contraseña con la que entras al panel.'));
+    body.append(el('p', text));
     const label = el('label', 'Tu contraseña'); const pw = el('input'); pw.type = 'password'; pw.autocomplete = 'current-password'; label.append(pw); body.append(label);
     const error = el('p', '', 'error-text'); error.hidden = true; error.setAttribute('role', 'alert');
     const footer = el('div', undefined, 'dialog-footer'); const cancel = el('button', 'Cancelar'); cancel.type = 'button'; const ok = el('button', 'Confirmar', 'primary'); ok.type = 'submit';
@@ -59,10 +61,10 @@ function askReauth() {
     pw.focus();
   });
 }
-async function withReauth(call) {
+export async function withReauth(call, text) {
   try { return await call(); } catch (e) {
     if (e?.status !== 403 || e.code !== 'reauth_required') throw e;
-    if (!await askReauth()) return canceled;
+    if (!await askReauth(text)) return canceled;
     return call();
   }
 }

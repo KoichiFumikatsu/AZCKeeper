@@ -88,3 +88,6 @@ tr.group-row th{background:#d6d6d6;color:var(--ink);white-space:normal;padding:4
 .account-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;margin-bottom:12px}.account-line p{margin:0}.access-now,.plan-now{margin:0 0 12px}.step-actions{justify-content:end}.step-actions .button{text-decoration:none}
 .person-form label{margin:12px 0}.person-form .unit-field>label{margin:12px 0 0}.person-form fieldset{margin:0 0 20px}.person-form .form-grid{gap:4px 20px}.person-form .check{margin:10px 0}
 .page-head h1 .badge{font-size:12px;letter-spacing:0;vertical-align:middle;font-weight:600}
+/* Acciones remotas del equipo (equipo.php) */
+.remote-reasons{margin:10px 0 0;padding-left:18px;font-size:12px}.remote-reasons li{margin:3px 0}.danger-zone h3{color:var(--error)}.remote-feedback{margin-top:14px;font-weight:600;color:var(--accent)}.remote-feedback:empty{display:none}.remote-history-head{margin:26px 0 10px}
+.remote-history>.help{margin-top:10px}
