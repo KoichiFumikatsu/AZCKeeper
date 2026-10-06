@@ -18,8 +18,8 @@ const ADMIN_PERMS = ['organizacion.editar', 'usuarios.crear', 'usuarios.editar',
 const RULE_FEATURES = ['web', 'usb', 'descargas', 'instalaciones'];
 const OTHER_FEATURES = { clasificacion: 'Clasificación de apps propia', ausencias: 'Ausencias de RR. HH.', puertas: 'Entradas por puerta', cumplimiento: 'Doble empleo y apps sospechosas', cobertura: 'Cobertura de instalación' };
 const PENDING_FEATURES = { api: 'API para otros sistemas', webhooks: 'Avisos automáticos (webhooks)' };
-const DOMAIN_NAMES = { firmas: 'empresas y firmas', sedes: 'sedes', areas: 'áreas', cargos: 'cargos', horarios: 'horarios', festivos: 'festivos', personas: 'personas', jerarquia: 'jerarquía', ausencias: 'ausencias' };
-const UNIT_DOMAIN = { company: 'firmas', site: 'sedes', area: 'areas', position: 'cargos' };
+const DOMAIN_NAMES = { empresas: 'empresas', firmas: 'firmas', sedes: 'sedes', areas: 'áreas', cargos: 'cargos', horarios: 'horarios', festivos: 'festivos', personas: 'personas', jerarquia: 'jerarquía', ausencias: 'ausencias' };
+const UNIT_DOMAIN = { company: 'empresas', site: 'sedes', area: 'areas', position: 'cargos' };
 const UNIT_NAME = { site: 'una sede', area: 'un área', position: 'un cargo' };
 const listY = items => items.length > 1 ? `${items.slice(0, -1).join(', ')} y ${items[items.length - 1]}` : items.join('');
 
