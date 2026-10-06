@@ -85,6 +85,6 @@ public sealed class DeviceLock(string statePath, PinVerifier? verifier = null) :
         await AtomicFile.WriteAsync(statePath, JsonSerializer.SerializeToUtf8Bytes(state), ct);
         _state = state;
     }
-    public override ModuleSnapshot Snapshot() => base.Snapshot() with { State = Locked ? "locked" : "unlocked" };
+    public override ModuleSnapshot Snapshot() => base.Snapshot() with { State = Locked ? "locked" : "unlocked", ErrorCode = Locked ? "Bloqueado" : "Desbloqueado" };
     public override Task ShutdownAsync() { _gate.Dispose(); return Task.CompletedTask; }
 }

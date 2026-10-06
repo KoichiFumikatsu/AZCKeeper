@@ -18,6 +18,8 @@ public sealed class SessionSupervisor(WindowsSessionLauncher launcher, string se
     private readonly Dictionary<int, Peer> _peers = [];
     private readonly Dictionary<int, DateTimeOffset> _retry = [];
     private DateTimeOffset _scan;
+    private IReadOnlyList<InteractiveSession> _sessions = [];
+    private readonly SessionTaskManagerPolicies _taskManagers = SessionTaskManagerPolicies.Windows();
     public static PipeSecurity CreateSecurity(string sid)
     {
         var security = new PipeSecurity();
@@ -34,6 +36,8 @@ public sealed class SessionSupervisor(WindowsSessionLauncher launcher, string se
         {
             _scan = now.AddSeconds(10);
             var sessions = launcher.Enumerate();
+            _sessions = sessions;
+            _taskManagers.Reconcile(sessions.Select(s => s.Sid).ToArray(), deviceLock.Locked);
             foreach (var id in _peers.Keys.Where(id => !sessions.Any(s => s.Id == id)).ToArray()) Remove(id);
             foreach (var session in sessions)
             {
@@ -50,6 +54,8 @@ public sealed class SessionSupervisor(WindowsSessionLauncher launcher, string se
                 catch { pipe.Dispose(); _retry[session.Id] = now.AddSeconds(30); throw; }
             }
         }
+        else _taskManagers.Reconcile(_sessions.Select(s => s.Sid).ToArray(), deviceLock.Locked);
+        if (deviceLock.Locked) CloseExistingTaskManagers();
         foreach (var (id, peer) in _peers.ToArray())
         {
             try
@@ -117,18 +123,37 @@ public sealed class SessionSupervisor(WindowsSessionLauncher launcher, string se
         if (!peer.Process.HasExited) peer.Process.Kill();
         peer.Process.Dispose(); _peers.Remove(id);
     }
+    private void CloseExistingTaskManagers()
+    {
+        foreach (var process in Process.GetProcessesByName("Taskmgr"))
+        {
+            using (process)
+            {
+                try
+                {
+                    if (!process.HasExited && _sessions.Any(s => s.Id == process.SessionId)) process.Kill();
+                }
+                catch (InvalidOperationException) { } // Puede terminar entre la enumeracion y Kill.
+            }
+        }
+    }
+
     public override async Task ShutdownAsync()
     {
-        foreach (var (id, peer) in _peers.ToArray())
+        try
         {
-            try
+            foreach (var (id, peer) in _peers.ToArray())
             {
-                if (peer.Exchange is not null) await peer.Exchange;
-                if (peer.Verified) await ExchangeAsync(peer, CancellationToken.None, shutdown: true);
+                try
+                {
+                    if (peer.Exchange is not null) await peer.Exchange;
+                    if (peer.Verified) await ExchangeAsync(peer, CancellationToken.None, shutdown: true);
+                }
+                catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException or InvalidDataException) { }
+                finally { Remove(id); }
             }
-            catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException or InvalidDataException) { }
-            finally { Remove(id); }
         }
+        finally { _taskManagers.Reconcile([], locked: false); }
     }
     private sealed class Peer(NamedPipeServerStream pipe, Process process, InteractiveSession session, Task connecting, DateTimeOffset started)
     {

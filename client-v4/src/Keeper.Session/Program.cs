@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using Keeper.Agent.Hosting;
 using Keeper.Session.Ipc;
 using Keeper.Session.Modules.Activity;
@@ -24,10 +24,12 @@ internal static class Program
         using var process = Process.GetCurrentProcess();
         using var mutex = new Mutex(true, $"Local\\AZCKeeper.v4.Session.{process.SessionId}", out var created);
         if (!created) return;
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
         ApplicationConfiguration.Initialize();
         using var dispatcher = new Control();
         _ = dispatcher.Handle;
         using var stopping = new CancellationTokenSource();
+        using var screen = new LockScreen(dispatcher);
         Application.ApplicationExit += (_, _) => stopping.Cancel();
         var task = Task.Run(async () =>
         {
@@ -36,7 +38,6 @@ internal static class Program
             var calls = new CallDetector(foreground);
             var activityState = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AZCKeeper", "v4", "activity-state.json");
             var activity = new ActivityTracker(new WindowsInputIdleSource(), () => calls.IsInCall, statePath: activityState);
-            var screen = new LockScreen(dispatcher);
             var presenceFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AZCKeeper", "v4", "presence-day.txt");
             await using var modules = new ModuleHost([calls, activity, new WindowTracker(foreground, activity), new PresenceTracker(presenceFile), screen],
                 new ModuleContext(sink, TimeProvider.System, _ => { }, stopping.Token));
@@ -45,7 +46,12 @@ internal static class Program
             catch (Exception ex) when (ex is IOException or OperationCanceledException or UnauthorizedAccessException) { }
         });
         _ = task.ContinueWith(_ => dispatcher.BeginInvoke(Application.Exit), TaskScheduler.Default);
-        Application.Run();
+        try { Application.Run(); }
+        finally
+        {
+            try { stopping.Cancel(); }
+            finally { screen.Dispose(); }
+        }
     }
 
     // Modo identificacion del alta: solo la ventana de cedula, sin modulos de captura.
