@@ -71,7 +71,8 @@ function writeTableState(key, value) { try { localStorage.setItem(key, JSON.stri
 // `stateKey` nombra el estado guardado (por defecto el título); null no guarda nada (tablas dentro de diálogos).
 // Cambiar búsqueda o filtros vuelve a la primera página y conserva el orden; «Limpiar filtros» vuelve a los valores
 // iniciales de los filtros y también conserva el orden.
-function table(parent, caption, columns, rows, { filters = [], search: searchFields, selection = null, stateKey = caption } = {}) {
+// defaultSort ({ name, dir }): orden inicial cuando no hay uno guardado (p. ej. festivos del año, del más próximo al más lejano).
+function table(parent, caption, columns, rows, { filters = [], search: searchFields, selection = null, stateKey = caption, defaultSort = null } = {}) {
   if (selection) {
     const { set, key, label } = selection;
     // Casillas por clave (tablekit ordena y pagina moviendo las filas: el orden del DOM no sirve para ubicarlas).
@@ -82,7 +83,7 @@ function table(parent, caption, columns, rows, { filters = [], search: searchFie
   const key = stateKey ? tableKey(stateKey) : null;
   const saved = key ? readTableState(key) : {};
   const savedFilters = saved.filters && typeof saved.filters === 'object' && !Array.isArray(saved.filters) ? saved.filters : {};
-  const st = { sort: saved.sort && typeof saved.sort.name === 'string' ? { name: saved.sort.name, dir: saved.sort.dir > 0 ? 1 : -1 } : null, page: Number.isInteger(saved.page) && saved.page > 0 ? saved.page : 0 };
+  const st = { sort: saved.sort && typeof saved.sort.name === 'string' ? { name: saved.sort.name, dir: saved.sort.dir > 0 ? 1 : -1 } : defaultSort, page: Number.isInteger(saved.page) && saved.page > 0 ? saved.page : 0 };
   const bar = el('div', undefined, 'toolbar');
   const search = el('input'); search.type = 'search'; search.placeholder = 'Buscar';
   if (typeof saved.term === 'string') search.value = saved.term;
@@ -3696,7 +3697,7 @@ async function holidaysPage() {
           try { await api('DELETE', `/schedules/holidays/${h.id}`); list = list.filter(x => x.id !== h.id); render('festivos'); announce(`Festivo «${h.name}» quitado.`); } catch (er) { fail(er); }
         }));
         return box;
-      }]], rows, { stateKey: 'Festivos' });
+      }]], rows, { stateKey: 'Festivos', defaultSort: { name: 'Fecha', dir: 1 } });
   };
   const renderCalendars = parent => {
     const c = surface('Calendarios', parent);
