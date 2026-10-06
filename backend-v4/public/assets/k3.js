@@ -57,9 +57,11 @@ function table(parent, caption, columns, rows, { filters = [], search: searchFie
   const bar = el('div', undefined, 'toolbar');
   const search = el('input'); search.type = 'search'; search.placeholder = 'Buscar';
   const searchLabel = el('label', 'Buscar'); searchLabel.append(search); bar.append(searchLabel);
-  const selects = filters.map(([label, getter]) => {
+  // Un filtro puede traer valor inicial ([etiqueta, getter, inicial]); si no hay filas con ese valor queda en Todos.
+  const selects = filters.map(([label, getter, initial]) => {
     const l = el('label', label); const s = el('select'); s.append(new Option('Todos', ''));
     [...new Set(rows.map(getter).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es')).forEach(v => s.append(new Option(v, v)));
+    if (initial && [...s.options].some(o => o.value === initial)) s.value = initial;
     l.append(s); bar.append(l); return [s, getter];
   });
   parent.append(bar);
@@ -2122,19 +2124,24 @@ async function holidaysPage() {
   const link = (text, fn) => { const b = el('button', text, 'link-button'); b.type = 'button'; b.addEventListener('click', fn); return b; };
   const render = () => {
     $('page-content').replaceChildren();
+    $('page-action').textContent = calendars.length ? 'Agregar festivo' : 'Crear calendario';
     const upcoming = list.filter(h => h.day >= today).sort((a, b) => a.day.localeCompare(b.day));
     kpis([['Calendarios', String(calendars.filter(c => c.active).length)], ['Festivos este año', String(list.filter(h => h.day.startsWith(today.slice(0, 4))).length)],
       ['Próximo festivo', upcoming[0] ? upcoming[0].name : 'Ninguno', upcoming[0] ? `${fmt(upcoming[0].day)} · ${cname(upcoming[0].calendar_id)}` : '']]);
     const c = surface('Calendarios');
     c.append(el('p', 'Cada persona usa el calendario que se le asigne aquí (o en su ficha de Personas). Si no tiene uno, usa el del país de su sede; si su sede no tiene país, el calendario por defecto. En un festivo la persona no tiene jornada: no cuenta como ausencia ni tardanza.', 'help'));
     if (owner) c.append(el('p', `Los festivos llegan de ${owner}.`, 'notice'));
-    else { const tools = el('div', undefined, 'actions no-margin'); const add = el('button', 'Crear calendario'); add.type = 'button'; add.addEventListener('click', () => calendarEditor(null)); tools.append(add); c.append(tools); }
-    if (!calendars.length) empty(c, 'Sin calendarios', 'Crea uno por país (Colombia, Estados Unidos, Honduras…) con "Crear calendario" y agrégale sus festivos.');
+    else if (calendars.length) { const tools = el('div', undefined, 'actions no-margin'); const add = el('button', 'Crear calendario'); add.type = 'button'; add.addEventListener('click', () => calendarEditor(null)); tools.append(add); c.append(tools); }
+    if (!calendars.length) {
+      empty(c, 'Sin calendarios', owner ? `Los calendarios llegan de ${owner}.` : 'Crea un calendario y después agrega sus festivos. Lo normal es uno por país (Colombia, Estados Unidos, Honduras…).');
+      if (!owner) { const add = el('button', 'Crear calendario', 'primary'); add.type = 'button'; add.addEventListener('click', () => calendarEditor(null)); c.querySelector('.empty').append(add); }
+    }
     else table(c, 'Calendarios', [['Calendario', x => x.name], ['País', x => countryName(x.country_code)], ['Festivos', x => String(x.holidays)],
       ['Personas que lo usan', x => users ? String(users.filter(u => u.status === 'active' && effective(u)[0]?.id === x.id).length) : '—'], ['Asignadas a mano', x => String(x.people)],
       ['Estado', x => { const d = el('div'); d.append(badge(x.active ? 'Activo' : 'Inactivo', x.active ? 'good' : '')); if (x.is_default) d.append(' ', badge('Por defecto', 'info')); return d; }],
-      ['Acciones', x => { if (owner) return ''; const box = el('div', undefined, 'actions no-margin'); box.append(link('Editar', () => calendarEditor(x))); if (users && x.active) box.append(link('Asignar a personas', () => assign(x))); return box; }]], calendars);
+      ['Acciones', x => { if (owner) return ''; const box = el('div', undefined, 'actions no-margin'); box.append(link('Editar', () => calendarEditor(x))); if (x.active) box.append(link('Agregar festivo', () => editor(null, x.id))); if (users && x.active) box.append(link('Asignar a personas', () => assign(x))); return box; }]], calendars);
     const s = surface('Festivos');
+    if (!calendars.length) { empty(s, 'Sin festivos', 'Los festivos se agregan a un calendario: primero crea uno con «Crear calendario».'); return; }
     if (!list.length) { empty(s, 'Sin festivos', 'Agrega los festivos con "Agregar festivo".'); return; }
     table(s, 'Festivos', [['Fecha', h => h.day], ['Día', h => fmt(h.day)], ['Festivo', h => h.name], ['Calendario', h => cname(h.calendar_id)],
       ['', h => {
@@ -2142,15 +2149,15 @@ async function holidaysPage() {
         const box = el('div', undefined, 'actions no-margin');
         box.append(link('Editar', () => editor(h)), link('Quitar', async () => { if (!confirm(`¿Quitar ${h.name} (${cname(h.calendar_id)})?`)) return; try { await api('DELETE', `/schedules/holidays/${h.id}`); list = list.filter(x => x.id !== h.id); render(); done(); } catch (er) { fail(er); } }));
         return box;
-      }]], list, { filters: [['Calendario', h => cname(h.calendar_id)], ['Año', h => h.day.slice(0, 4)]] });
+      }]], list, { filters: [['Calendario', h => cname(h.calendar_id)], ['Año', h => h.day.slice(0, 4), today.slice(0, 4)]] });
   };
-  const editor = h => {
-    if (!calendars.length) { fail(new Error('Primero crea un calendario (por ejemplo "Colombia").')); return; }
+  const editor = (h, presetCalendar) => {
+    if (!calendars.length) { calendarEditor(null); return; }
     const { dialog, body, ok, show } = dialogShell(h ? `Editar ${h.name}` : 'Agregar festivo');
     const name = labeled(body, 'Nombre', el('input')); name.maxLength = 160; name.value = h?.name || '';
     const dayIn = labeled(body, 'Fecha', el('input')); dayIn.type = 'date'; dayIn.value = h?.day || '';
     const cal = el('select'); calendars.filter(x => x.active || x.id === h?.calendar_id).forEach(x => cal.append(new Option(x.name, x.id)));
-    cal.value = h?.calendar_id || calendars.find(x => x.is_default)?.id || calendars[0].id; labeled(body, 'Calendario', cal, 'El festivo aplica a las personas que usan este calendario.');
+    cal.value = h?.calendar_id || presetCalendar || calendars.find(x => x.is_default && x.active)?.id || cal.options[0]?.value || ''; labeled(body, 'Calendario', cal, 'El festivo aplica a las personas que usan este calendario.');
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault(); if (!name.value.trim() || !dayIn.value) { show('Escribe el nombre y la fecha.'); return; }
       ok.disabled = true;
@@ -2231,7 +2238,8 @@ async function holidaysPage() {
     });
     draw(); dialog.showModal();
   };
-  const action = $('page-action'); action.textContent = 'Agregar festivo'; action.hidden = !!owner; action.addEventListener('click', () => editor(null));
+  // Sin calendarios la acción principal es crear uno (un festivo siempre pertenece a un calendario).
+  const action = $('page-action'); action.hidden = !!owner; action.addEventListener('click', () => calendars.length ? editor(null) : calendarEditor(null));
   render();
 }
 
