@@ -3,6 +3,7 @@ import './menu.js';
 import './tablekit.js';
 import { applyNavAccess, loadAccess, allowed } from './nav-access.js';
 import { scopeSummary, sameAccess, scopeConditions, SCOPE_RULE, TEAM_LABEL } from './access-scope.js';
+import { coordinator } from './coordinator.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings } from './hardening-settings.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
@@ -176,7 +177,6 @@ const PARENT_ORDER = { site: ['company', 'site', 'area', 'position', 'firm'], ar
 const ORG_TREE_HELP = 'Dependencia organizativa: cada unidad aparece bajo la unidad de la que depende («Depende de»); primero las que no dependen de ninguna. No es un árbol de permisos: cambiar una dependencia no mueve personas ni cambia accesos.';
 let orgPickerSeq = 0;
 
-async function organization() {
 // Ruta legible por parent_id ("Tequendama › Agentes de servicio"); se corta si los datos tuvieran un círculo.
 function orgPath(o, map) {
   const parts = []; const seen = new Set();
@@ -279,6 +279,7 @@ function openOrgCreate({ kind, org, country: suggested = '', city: suggestedCity
   });
   dialog.showModal(); name.focus();
 }
+async function organization() {
   let org = await allPages('/organization');
   // null = la cuenta no puede consultar Personas: el conteo es "No disponible", nunca cero.
   const users = await optional(allPages('/users'));
@@ -899,12 +900,12 @@ async function accounts() {
         companyBox.append(need);
       }
       person.addEventListener('change', () => { const u = users.find(x => x.id === person.value); if (u?.email && !email.value) email.value = u.email; });
-      accessEd = d.roles.length ? accessEditor(companyBox, { roles: d.roles, org: d.org, current: null }) : null;
       if (wanted) {
         if ([...person.options].some(o => o.value === wanted)) { person.value = wanted; person.dispatchEvent(new Event('change')); }
         else companyBox.prepend(el('p', 'Esa persona no está disponible para una cuenta nueva: ya tiene cuenta o está inactiva.', 'notice'));
         wanted = null;
       }
+      accessEd = d.roles.length ? accessEditor(companyBox, { roles: d.roles, org: d.org, current: null }) : null;
       if (!d.roles.length) companyBox.append(el('p', 'Aún no hay roles en esta empresa: créalos en Roles y permisos. Sin rol, la cuenta no verá nada.', 'help'));
       group = platform ? await groupSection(companyBox, id, null) : null;
     };
@@ -1303,6 +1304,7 @@ async function people() {
   // Acceso al panel en la ficha (§5): lo edita quien puede dar accesos (superadmin o roles.gestionar).
   const myAccess = isSuper ? null : await optional(api('GET', '/me/access'));
   const canAssign = isSuper || !!myAccess?.permissions?.some(p => p.code === 'roles.gestionar');
+  const canCreatePeople = isSuper || !myAccess || !!myAccess.permissions?.some(p => p.code === 'usuarios.crear');
   const roles = canAssign ? ((await optional(allPages('/roles'))) || []) : [];
   const planName = id => avail?.data.find(p => p.id === id)?.name || allPlans.find(p => p.id === id)?.name || null;
   const defaultLabel = avail ? `Por defecto (${planName(avail.default_plan_id) || 'sin plan'})` : '';
@@ -1501,8 +1503,509 @@ async function people() {
     });
     dialog.showModal();
   };
-  const action = $('page-action'); action.textContent = 'Crear persona'; action.hidden = !!owner; action.addEventListener('click', () => editor(null));
+  // Revisión UX M3: el alta es por bloques en su propia pantalla (miembro.php?nueva=1); «Editar» sigue siendo el atajo.
+  const action = $('page-action'); action.textContent = 'Crear persona'; action.hidden = !!owner || !canCreatePeople; action.addEventListener('click', () => { location.href = '/miembro.php?nueva=1'; });
   render();
+}
+
+// ---- Ficha única de la persona (revisión UX G1 · PER-4) y alta por bloques (M3 · PER-2/3) ---------------------------
+// miembro.php?id=<persona>&tab=datos|acceso|actividad|equipos (los enlaces antiguos «#equipos» siguen sirviendo) y
+// miembro.php?nueva=1 para crear. Cada bloque guarda por separado (datos: PATCH; acceso: PUT …/access; plan: PUT …/plan)
+// y dice qué quedó guardado. Los bloques que la cuenta no puede editar se muestran en lectura; la API valida igual.
+const PERSON_TABS = [['datos', 'Datos'], ['acceso', 'Acceso y plan'], ['actividad', 'Actividad'], ['equipos', 'Equipos']];
+const PERSON_HASH = { datos: ['datos'], acceso: ['acceso'], equipos: ['equipos'], actividad: ['actividad', 'actividad'], resumen: ['actividad', 'resumen'], presencia: ['actividad', 'presencia'], politicas: ['actividad', 'politicas'] };
+const DEVICE_STATUS = { active: ['Activo', 'good'], inactive: ['Inactivo', ''], revoked: ['Revocado', 'bad'], decommissioned: ['Retirado', ''] };
+const UNIT_EMPTY = { company: 'Aún no hay empresas del grupo (es opcional).', site: 'Aún no hay sedes: crea la primera para asignarla a personas.', area: 'Aún no hay áreas: crea la primera para asignarla a personas.', position: 'Aún no hay cargos: crea el primero para asignarlo a personas.' };
+const clock = () => new Intl.DateTimeFormat('es-CO', { timeStyle: 'short' }).format(new Date()).replace(/\.$/, '');
+// Guardado fallido de una persona, en español (conflictos, validaciones y §7 de v4-clientes-funciones-accesos.md).
+function personError(e) {
+  const d = e?.problem?.detail;
+  if (d === 'hierarchy_cycle') return 'Ese jefe reporta (directa o indirectamente) a esta persona: no puede ser su jefe.';
+  if (d === 'document_in_use') return 'Esa cédula ya pertenece a otra persona de la empresa.';
+  if (d === 'invalid_document') return 'La cédula no es válida.';
+  if (d === 'unknown_plan') return 'Ese plan está inactivo; actívalo o elige otro.';
+  if (e?.status === 412) return 'Alguien más la modificó: recarga la página.';
+  if (e?.status === 403 && !d) return 'Tu cuenta no tiene permiso para guardar este cambio.';
+  return errorMessage(e);
+}
+// Lo que la ficha y el alta necesitan del cliente y de la cuenta. Los permisos solo deciden qué se muestra editable.
+async function personContext() {
+  const isSuper = !!readSession()?.is_platform_admin;
+  const me = isSuper ? null : await loadAccess();
+  const has = code => isSuper || !!me?.permissions?.some(p => p.code === code);
+  const canAssign = has('roles.gestionar');
+  const [org, users, schedules, calendarPage, avail, allPlans, domains, sources, roles] = await Promise.all([
+    optional(allPages('/organization')), optional(allPages('/users')), optional(allPages('/schedules')), optional(api('GET', '/schedules/holiday-calendars?limit=100')),
+    optional(api('GET', '/person-plans/available')), isSuper ? optional(api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).then(r => r?.data || []) : [],
+    optional(api('GET', '/data-domains')), optional(api('GET', '/data-sources')), canAssign ? optional(allPages('/roles')).then(r => r || []) : []]);
+  const ownerId = domains?.data?.find(d => d.domain === 'personas')?.source_id || null;
+  const ctx = {
+    isSuper, me, has, org: org || [], orgDenied: !org, users: users || [], roles, avail,
+    schedules: (schedules || []).sort((a, b) => a.name.localeCompare(b.name, 'es')), calendarPage, calendars: (calendarPage?.data || []).filter(c => c.active),
+    owner: ownerId ? (sources?.data?.find(x => x.id === ownerId)?.name || 'una fuente externa') : null,
+    canEdit: has('usuarios.editar'), canCreate: has('usuarios.crear'), canAssign: canAssign && roles.length > 0, canUnits: has('organizacion.editar'),
+    canAccounts: isSuper || (!!me && allowed(me, 'accounts')), canIntake: isSuper || (!!me && allowed(me, 'intake')),
+  };
+  ctx.units = kind => ctx.org.filter(o => o.kind === kind && o.active).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  ctx.unitName = id => ctx.org.find(o => o.id === id)?.name || null;
+  ctx.planName = id => avail?.data.find(p => p.id === id)?.name || allPlans.find(p => p.id === id)?.name || null;
+  ctx.defaultLabel = avail ? `Por defecto (${ctx.planName(avail.default_plan_id) || 'sin plan'})` : '';
+  ctx.receives = planId => {
+    const plan = avail.data.find(p => p.id === planId) || avail.data.find(p => p.id === avail.default_plan_id);
+    const list = plan ? avail.features.filter(f => plan.features.includes(f.code)).map(f => f.name) : [];
+    return `Recibe: ${list.length ? list.join(', ') : 'ninguna función de persona'}.`;
+  };
+  // Plan efectivo (no Tier): el propio si está activo; si no, el por defecto del cliente.
+  ctx.effectivePlan = u => {
+    if (!avail) return null;
+    const own = avail.data.find(p => p.id === u.plan_id);
+    if (own) return { name: own.name, origin: 'Propio', planId: own.id };
+    return { name: ctx.defaultLabel, origin: u.plan_id ? `Su plan propio (${ctx.planName(u.plan_id) || 'Plan'}) está inactivo` : 'Heredado del cliente', planId: avail.default_plan_id };
+  };
+  ctx.defaultRole = roles.find(r => r.active && fold(r.name) === 'colaborador') || null;
+  ctx.accountsHref = (u, create) => {
+    const q = new URLSearchParams(); if (isSuper) q.set('empresa', tenant);
+    if (create) { q.set('persona', u.id); q.set('crear', '1'); }
+    return `/cuentas.php${q.toString() ? `?${q}` : ''}`;
+  };
+  return ctx;
+}
+// Selector de una unidad (sede, área, cargo, empresa del grupo) con «+ Nueva …» si la cuenta puede crearla: el
+// catálogo vacío se anticipa con su mensaje y la unidad creada queda elegida sin salir del formulario.
+function unitField(parent, ctx, kind, label, value, { optionalText = null, onCreated } = {}) {
+  const wrap = el('div', undefined, 'unit-field'); parent.append(wrap);
+  const sel = el('select');
+  const fill = v => {
+    sel.replaceChildren(new Option(optionalText || `Elige ${label.toLowerCase()}…`, ''));
+    ctx.units(kind).forEach(o => sel.append(new Option(o.name, o.id)));
+    if (v && ![...sel.options].some(o => o.value === v)) sel.append(new Option(`${ctx.unitName(v) || 'Unidad no disponible'} (inactiva)`, v));
+    sel.value = v || '';
+  };
+  fill(value); labeled(wrap, label, sel);
+  const hint = el('p', '', 'help'); wrap.append(hint);
+  const tab = ORG_TABS.find(t => t.kind === kind);
+  const syncHint = () => {
+    const none = !ctx.units(kind).length;
+    hint.textContent = none ? `${UNIT_EMPTY[kind]}${ctx.canUnits || kind === 'company' ? '' : ' Pide a quien administra Organización que la cree.'}` : '';
+    hint.hidden = !none;
+  };
+  syncHint();
+  if (ctx.canUnits && tab?.create) {
+    const add = el('button', tab.create, 'link-button'); add.type = 'button'; wrap.append(add);
+    add.addEventListener('click', () => openOrgCreate({ kind, org: ctx.org, onCreated: created => {
+      ctx.org.push(created); fill(created.id); syncHint(); sel.dispatchEvent(new Event('change', { bubbles: true }));
+      onCreated?.(created); sel.focus();
+    } }));
+  }
+  return sel;
+}
+// Datos básicos de la persona (nombre, cédula, correo) y, aparte, jefe y monitoreo.
+function identityFields(parent, ctx, u, extras = parent) {
+  const name = labeled(parent, 'Nombre completo', el('input')); name.maxLength = 160; name.value = u?.display_name || ''; name.autocomplete = 'off';
+  const doc = labeled(parent, 'Cédula', el('input'), 'Con ella, al instalar Keeper en su PC, el equipo queda asignado a esta persona.'); doc.maxLength = 40; doc.inputMode = 'numeric'; doc.value = u?.document || '';
+  const email = labeled(parent, 'Correo (opcional)', el('input')); email.type = 'email'; email.maxLength = 254; email.value = u?.email || '';
+  const boss = el('select'); boss.append(new Option('Nadie', ''));
+  ctx.users.filter(x => x.status === 'active' && x.id !== u?.id).sort((a, b) => a.display_name.localeCompare(b.display_name, 'es')).forEach(x => boss.append(new Option(x.display_name, x.id)));
+  if (u?.reports_to_user_id && ![...boss.options].some(o => o.value === u.reports_to_user_id)) boss.append(new Option('Persona fuera de tu alcance o inactiva', u.reports_to_user_id));
+  boss.value = u?.reports_to_user_id || ''; labeled(extras, 'Reporta a (jefe)', boss, 'Con esto el jefe puede ver a su equipo si su acceso tiene el alcance "Su equipo".');
+  const mon = el('select'); [['auto', 'Automático (según el cargo)'], ['monitored', 'Siempre monitorear'], ['excluded', 'No monitorear (directivo, dueño)']].forEach(([v, t]) => mon.append(new Option(t, v)));
+  mon.value = u?.monitoring_override || 'auto'; labeled(extras, 'Monitoreo', mon);
+  return { name, doc, email, boss, mon,
+    read: () => ({ display_name: name.value.trim(), document: doc.value.trim() || null, email: email.value.trim() || null, reports_to_user_id: boss.value || null, monitoring_override: mon.value }) };
+}
+// Ubicación laboral: empresa del grupo, sede, área, cargo (y firma si existen), horario y festivos.
+function laborFields(parent, ctx, u, extras = parent) {
+  const grid = el('div', undefined, 'form-grid'); parent.append(grid);
+  const fallback = kind => { const list = ctx.units(kind); return list.length === 1 ? list[0] : list.find(o => fold(o.name).startsWith('sin ')) || null; };
+  const pick = kind => u ? u[`${kind}_id`] : fallback(kind)?.id;
+  const company = unitField(grid, ctx, 'company', 'Empresa del grupo', u?.company_id, { optionalText: 'Sin empresa (todo el grupo)' });
+  const selects = { site: unitField(grid, ctx, 'site', 'Sede', pick('site')), area: unitField(grid, ctx, 'area', 'Área', pick('area')), position: unitField(grid, ctx, 'position', 'Cargo', pick('position')) };
+  // Firmas: solo mientras existan (no se crean nuevas; las reemplazan las empresas del grupo).
+  if (ctx.units('firm').length || u?.firm_id) selects.firm = unitField(grid, ctx, 'firm', 'Firma', pick('firm'), { optionalText: 'Sin firma (se asigna después)' });
+  const sched = el('select'); sched.append(new Option('Sin horario (no se espera jornada)', '')); ctx.schedules.forEach(x => sched.append(new Option(x.name, x.id)));
+  const named = ctx.schedules.find(s => fold(s.name).includes('por defecto'));
+  const suggested = u ? null : named || ctx.schedules[0] || null;
+  sched.value = u ? (u.schedule_id || '') : (suggested?.id || '');
+  const schedWrap = el('div'); grid.append(schedWrap);
+  labeled(schedWrap, 'Horario', sched, !ctx.schedules.length ? 'Aún no hay horarios: sin horario no se espera jornada (puedes crearlos en Horarios).'
+    : suggested ? `Sugerido: «${suggested.name}» (${named ? 'el horario llamado «por defecto»' : 'el primero de la lista'}). Elige otro o «Sin horario» si no aplica.` : null);
+  let holidays = null;
+  if (ctx.calendarPage) {
+    holidays = el('select'); holidays.append(new Option('Automático (festivos del país de su sede)', '')); ctx.calendars.forEach(c => holidays.append(new Option(c.name, c.id)));
+    holidays.value = u?.holiday_calendar_id || ''; labeled(extras, 'Festivos', holidays, 'Solo cambia si esta persona sigue un calendario distinto al del país de su sede.');
+  }
+  const missing = () => ['site', 'area', 'position'].filter(k => !selects[k].value).map(k => kinds[k].toLowerCase());
+  const read = () => {
+    const out = { schedule_id: sched.value || null };
+    for (const [k] of ORG_FIELDS) out[`${k}_id`] = selects[k] ? (selects[k].value || null) : (u?.[`${k}_id`] ?? null);
+    if (!u || (company.value || null) !== (u.company_id || null)) out.company_id = company.value || null;
+    if (holidays && (!u || (holidays.value || null) !== (u.holiday_calendar_id || null))) out.holiday_calendar_id = holidays.value || null;
+    return out;
+  };
+  return { missing, read, company, selects, sched, holidays };
+}
+const formValues = root => JSON.stringify([...root.querySelectorAll('input, select, textarea')].map(i => i.type === 'checkbox' ? i.checked : i.value));
+// Pie de un bloque: botón de guardar con su propio estado (éxito u error), independiente de los demás bloques.
+function blockFooter(parent, text) {
+  const bar = el('div', undefined, 'block-actions'); parent.append(bar);
+  const save = el('button', text, 'primary'); save.type = 'submit';
+  const status = el('p', '', 'help'); status.setAttribute('role', 'status');
+  const error = el('p', '', 'error-text'); error.setAttribute('role', 'alert'); error.hidden = true;
+  bar.append(save, status); parent.append(error);
+  return { save, ok: t => { status.textContent = t; error.hidden = true; }, fail: t => { error.textContent = t; error.hidden = false; status.textContent = ''; }, busy: on => { save.disabled = on; if (on) { status.textContent = 'Guardando…'; error.hidden = true; } } };
+}
+function personHeader(ctx, u, title) {
+  const name = title || u.display_name;
+  const h1 = document.querySelector('.page-head h1'); h1.replaceChildren(name);
+  if (u) h1.append(' ', badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : ''));
+  const sub = document.querySelector('.page-head p');
+  if (u) {
+    const site = ctx.org.find(o => o.id === u.site_id);
+    sub.textContent = [['Empresa', ctx.unitName(u.company_id)], ['Sede', site ? `${site.name}${site.city ? ` (${site.city})` : ''}` : null], ['Área', ctx.unitName(u.area_id)], ['Cargo', ctx.unitName(u.position_id)]]
+      .filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(' · ') || (u.email || 'Sin datos laborales visibles');
+  } else sub.textContent = 'Paso a paso: datos básicos, ubicación laboral y, si quieres, acceso y plan.';
+  const crumbs = document.querySelector('.breadcrumb');
+  const people = el('a', 'Personas'); people.href = '/usuarios.php';
+  crumbs.replaceChildren(crumbs.firstElementChild, el('span', '/'), people, el('span', '/'), el('span', name));
+  document.title = `${name} · ${document.title.split(' · ').slice(1).join(' · ') || 'Keeper'}`;
+}
+// Fechas de la pestaña Actividad en la zona horaria del cliente (igual que el resto de pantallas del coordinador).
+let tenantZone = 'UTC';
+const zoneToday = () => { const p = new Intl.DateTimeFormat('en', { timeZone: tenantZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date()); const g = t => p.find(x => x.type === t).value; return `${g('year')}-${g('month')}-${g('day')}`; };
+const shiftDay = (day, days) => { const d = new Date(`${day}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
+const withQuery = (path, values) => { const url = new URL(path, location.origin); Object.entries(values).forEach(([k, v]) => { if (v !== null && v !== undefined) url.searchParams.set(k, v); }); return url.pathname + url.search; };
+
+async function personPage() {
+  const params = new URLSearchParams(location.search);
+  const ctx = await personContext();
+  if (params.get('nueva') === '1') { personCreate(ctx); return; }
+  const id = params.get('id');
+  if (!isUuid(id)) { personHeader(ctx, null, 'Persona'); empty($('page-content'), 'Elige una persona', 'Abre la ficha desde Personas.'); return; }
+  let u;
+  try { u = await api('GET', `/users/${id}`); }
+  catch (e) {
+    if (e.status !== 404) throw e;
+    personHeader(ctx, null, 'Persona no encontrada'); document.querySelector('.page-head p').textContent = '';
+    empty($('page-content'), 'Persona no encontrada', 'No existe en este cliente o está fuera de tu alcance. Vuelve a Personas y búscala allí.'); return;
+  }
+  const hash = PERSON_HASH[location.hash.slice(1)];
+  const tab = PERSON_TABS.some(([k]) => k === params.get('tab')) ? params.get('tab') : hash?.[0] || 'datos';
+  personProfile(ctx, u, { tab, subtab: hash?.[1] || null });
+}
+
+function personProfile(ctx, u, { tab = 'datos', subtab = null, created = null, draft = null } = {}) {
+  const content = $('page-content'); content.replaceChildren(); personHeader(ctx, u);
+  const devicesReq = optional(allPages(`/tenants/${tenant}/devices?user_id=${encodeURIComponent(u.id)}`));
+  if (created) {
+    const n = el('div', undefined, 'notice'); n.setAttribute('role', created.pending.length ? 'alert' : 'status');
+    if (created.pending.length) {
+      const what = created.pending.map(([k, msg]) => `${k === 'plan' ? 'el plan' : 'el acceso'} no se guardó (${msg})`).join(' y ');
+      n.append(el('p', `«${u.display_name}» quedó creada, pero ${what}. Lo que elegiste sigue abajo: revísalo y pulsa ${created.pending.map(([k]) => k === 'plan' ? '«Guardar plan»' : '«Guardar acceso»').join(' y ')} para reintentar.`));
+    } else n.append(el('p', `«${u.display_name}» quedó creada con ${created.extras || 'el acceso y el plan por defecto'}.`));
+    const next = el('div', undefined, 'actions no-margin');
+    if (ctx.canAccounts && !u.panel_login_enabled) { const a = el('a', 'Crear cuenta del panel para esta persona', 'button'); a.href = ctx.accountsHref(u, true); next.append(a); }
+    if (ctx.canIntake) { const a = el('a', 'Registrar su equipo', 'link-button'); a.href = '/alta.php'; next.append(a); }
+    const more = el('a', 'Crear otra persona', 'link-button'); more.href = '/miembro.php?nueva=1'; next.append(more);
+    n.append(el('p', u.panel_login_enabled ? '' : 'Todavía no puede iniciar sesión en el panel: necesita una cuenta.', 'help'), next); content.append(n);
+  }
+  const tabs = el('div', undefined, 'tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Ficha de la persona'); content.append(tabs);
+  const views = {};
+  for (const [key, label] of PERSON_TABS) {
+    const b = el('button', label); b.type = 'button'; b.id = `person-tab-${key}`; b.dataset.key = key; b.setAttribute('role', 'tab'); b.setAttribute('aria-controls', `person-panel-${key}`);
+    const p = el('div'); p.id = `person-panel-${key}`; p.setAttribute('role', 'tabpanel'); p.setAttribute('aria-labelledby', b.id); p.tabIndex = 0; p.hidden = true;
+    tabs.append(b); content.append(p); views[key] = { button: b, panel: p, drawn: false, dirty: () => false, label };
+    b.addEventListener('click', () => go(key));
+  }
+  let current = null;
+  const draw = key => {
+    const v = views[key]; v.panel.replaceChildren(); v.dirty = () => false; v.drawn = true;
+    if (key === 'datos') v.dirty = dataPanel(v.panel, ctx, () => u, saved => { u = saved; personHeader(ctx, u); });
+    else if (key === 'acceso') v.dirty = accessPanel(v.panel, ctx, () => u, saved => { u = saved; personHeader(ctx, u); }, draft);
+    else if (key === 'actividad') activityPanel(v.panel, u, subtab);
+    else devicesPanel(v.panel, ctx, devicesReq);
+    draft = null;
+  };
+  const go = (key, { force = false } = {}) => {
+    if (key === current) return;
+    const leaving = current && views[current];
+    if (!force && leaving?.dirty() && !confirm(`Hay cambios sin guardar en «${leaving.label}». Si cambias de pestaña se descartan. ¿Cambiar de pestaña?`)) { leaving.button.focus(); return; }
+    if (leaving?.dirty()) leaving.drawn = false; // descartados: al volver se dibuja con lo guardado
+    current = key;
+    for (const [k, v] of Object.entries(views)) { const on = k === key; v.button.setAttribute('aria-selected', String(on)); v.button.tabIndex = on ? 0 : -1; v.panel.hidden = !on; }
+    if (!views[key].drawn) draw(key);
+    history.replaceState(null, '', `/miembro.php?id=${encodeURIComponent(u.id)}&tab=${key}`);
+  };
+  tabs.addEventListener('keydown', e => {
+    const list = [...tabs.children]; const i = list.indexOf(document.activeElement); let next;
+    if (e.key === 'ArrowRight') next = (i + 1) % list.length; if (e.key === 'ArrowLeft') next = (i + list.length - 1) % list.length; if (e.key === 'Home') next = 0; if (e.key === 'End') next = list.length - 1;
+    if (next !== undefined) { e.preventDefault(); list[next].click(); if (current === list[next].dataset.key) list[next].focus(); }
+  });
+  window.addEventListener('beforeunload', e => { if (Object.values(views).some(v => v.drawn && v.dirty())) { e.preventDefault(); e.returnValue = ''; } });
+  // Equipos: el conteo va en la pestaña en cuanto se conoce.
+  devicesReq.then(list => { if (list) { const c = el('span', String(list.length), 'tab-count'); views.equipos.button.append(' ', c); } }).catch(() => {});
+  const action = $('page-action');
+  if (ctx.canEdit && !u.managed_by) {
+    action.textContent = 'Editar persona'; action.hidden = false;
+    action.onclick = () => { go('datos'); views.datos.panel.querySelector('input')?.focus(); };
+  }
+  go(tab, { force: true });
+}
+
+// Pestaña Datos: datos básicos y ubicación laboral, un solo «Guardar datos» (PATCH /users/{id}).
+function dataPanel(panel, ctx, getUser, onSaved) {
+  const u = getUser();
+  const s = surface('Datos de la persona', panel);
+  if (!ctx.canEdit || u.managed_by) {
+    s.append(el('p', u.managed_by ? `Los datos laborales los gestiona ${u.managed_by}: cámbialos allá y llegarán solos. El acceso y el plan sí se editan aquí.`
+      : 'Tu cuenta puede ver estos datos, pero no editarlos (se necesita el permiso para editar personas).', 'notice'));
+    const site = ctx.org.find(o => o.id === u.site_id);
+    const dl = el('dl', undefined, 'details');
+    [['Nombre', u.display_name], ['Cédula', u.document || '—'], ['Correo', u.email || '—'], ['Empresa del grupo', ctx.unitName(u.company_id) || 'Sin empresa (todo el grupo)'],
+      ['Sede', site ? `${site.name} · ${placeOf(site)}` : '—'], ['Área', ctx.unitName(u.area_id) || '—'], ['Cargo', ctx.unitName(u.position_id) || '—'],
+      ['Jefe', ctx.users.find(x => x.id === u.reports_to_user_id)?.display_name || (u.reports_to_user_id ? 'Fuera de tu alcance' : 'Nadie')],
+      ['Horario', ctx.schedules.find(x => x.id === u.schedule_id)?.name || (u.schedule_id ? 'No disponible' : 'Sin horario')],
+      ['Festivos', ctx.calendars.find(c => c.id === u.holiday_calendar_id)?.name || 'Automático (país de su sede)'], ['Estado', u.status === 'active' ? 'Activa' : 'Inactiva (retirada)']]
+      .forEach(([k, v]) => { const r = el('div'); r.append(el('dt', k), el('dd', v)); dl.append(r); });
+    s.append(dl);
+    return () => false;
+  }
+  const form = el('form', undefined, 'person-form'); form.noValidate = true; s.append(form);
+  const basic = el('fieldset', undefined, 'perm-group'); basic.append(el('legend', 'Datos básicos')); form.append(basic);
+  const id = identityFields(basic, ctx, u);
+  const work = el('fieldset', undefined, 'perm-group'); work.append(el('legend', 'Ubicación laboral')); form.append(work);
+  const labor = laborFields(work, ctx, u);
+  const status = el('select'); status.append(new Option('Activa', 'active'), new Option('Inactiva (retirada)', 'inactive')); status.value = u.status; labeled(work, 'Estado', status);
+  const foot = blockFooter(form, 'Guardar datos');
+  let baseline = formValues(form);
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const cur = getUser(); const basicData = id.read();
+    if (!basicData.display_name) { foot.fail('Escribe el nombre.'); id.name.focus(); return; }
+    const missing = labor.missing();
+    if (missing.length) { foot.fail(`Falta ${missing.join(', ')}: elígela${ctx.canUnits ? ' o créala con «+ Nueva …»' : ''}.`); return; }
+    if (status.value === 'inactive' && cur.status === 'active' && !confirm(`¿Marcar a ${cur.display_name} como inactiva? Sus equipos quedan revocados y dejan de reportar.`)) return;
+    const payload = { ...basicData, ...labor.read() };
+    if (status.value !== cur.status) payload.status = status.value;
+    foot.busy(true);
+    try {
+      const saved = await api('PATCH', `/users/${cur.id}`, { body: payload, ifMatch: cur.version });
+      onSaved(saved); baseline = formValues(form); foot.ok(`Datos guardados a las ${clock()}.`);
+    } catch (e) { foot.fail(`Los datos no se guardaron: ${personError(e)}`); }
+    finally { foot.save.disabled = false; }
+  });
+  return () => formValues(form) !== baseline;
+}
+
+// Pestaña Acceso y plan: cuenta del panel (estado y enlace), acceso (1 rol + 1 alcance) y plan por persona.
+function accessPanel(panel, ctx, getUser, onSaved, draft) {
+  const u = getUser(); const n = names(ctx.org);
+  const summaryOf = x => x.access ? scopeSummary(x.access.role_name, x.access.scope, n) : 'Sin acceso al panel';
+  const s = surface('Cuenta y acceso al panel', panel);
+  const account = el('div', undefined, 'account-line'); s.append(account);
+  const drawAccount = async () => {
+    const x = getUser(); account.replaceChildren();
+    const p = el('p');
+    if (!x.panel_login_enabled) {
+      p.append(badge('Sin cuenta', 'warn'), ' ', x.status === 'active' ? 'Todavía no puede iniciar sesión: no tiene cuenta del panel.' : 'La persona está inactiva: no puede iniciar sesión.');
+      account.append(p);
+      if (ctx.canAccounts && x.status === 'active') { const a = el('a', 'Crear cuenta del panel para esta persona', 'button'); a.href = ctx.accountsHref(x, true); account.append(a); }
+      else if (!ctx.canAccounts) account.append(el('p', 'Las cuentas del panel las crea quien administra Cuentas.', 'help'));
+      return;
+    }
+    p.append(badge('Cuenta habilitada', 'good')); account.append(p);
+    if (ctx.canAccounts) {
+      const list = await optional(api('GET', '/panel-accounts', ctx.isSuper ? { tenant: PLATFORM_TENANT } : {}));
+      const acc = list?.data?.find(a => a.user_id === x.id);
+      if (acc) p.append(' ', `${acc.email} · ${!acc.active ? 'Cuenta desactivada' : acc.must_change_password ? 'Primer ingreso pendiente (contraseña temporal)' : 'Primer ingreso completado'}`);
+      const a = el('a', 'Gestionar en Cuentas', 'link-button'); a.href = ctx.accountsHref(x, false); account.append(a);
+    }
+  };
+  drawAccount().catch(() => {});
+  const now = el('p', undefined, 'access-now'); s.append(now);
+  const drawNow = () => { now.replaceChildren(el('strong', 'Acceso actual: '), summaryOf(getUser())); };
+  drawNow();
+  s.append(el('p', 'El rol define qué puede hacer y el alcance qué datos ve. No crean la cuenta: sin cuenta del panel no puede iniciar sesión.', 'help'));
+  let accessDirty = () => false;
+  if (ctx.canAssign) {
+    const form = el('form', undefined, 'person-form'); form.noValidate = true; s.append(form);
+    const ed = accessEditor(form, { roles: ctx.roles, org: ctx.org, current: draft?.access || u.access });
+    const foot = blockFooter(form, 'Guardar acceso');
+    const saved = () => { const x = getUser(); return x.access ? { role_id: x.access.role_id, scope: x.access.scope } : null; };
+    accessDirty = () => { const w = ed.read(); return !!w && !sameAccess(w, saved()); };
+    form.addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const p = ed.problem(); if (p) { foot.fail(p); return; }
+      const wanted = ed.read();
+      if (sameAccess(wanted, saved())) { foot.ok('El acceso no cambió.'); return; }
+      foot.busy(true);
+      try { const x = await api('PUT', `/users/${getUser().id}/access`, { body: wanted, ifMatch: getUser().version }); onSaved(x); drawNow(); foot.ok(`Acceso guardado a las ${clock()}: ${summaryOf(x)}.`); }
+      catch (e) { foot.fail(`El acceso no se guardó: ${personError(e)}`); }
+      finally { foot.save.disabled = false; }
+    });
+  } else s.append(el('p', 'Tu cuenta no puede cambiar accesos: se necesita el permiso para gestionar roles y accesos.', 'notice'));
+
+  const ps = surface('Plan por persona', panel);
+  let planDirty = () => false;
+  if (!ctx.avail) {
+    ps.append(el('p', 'Tu cuenta no puede ver ni asignar planes (se necesita el permiso para asignar planes).', 'notice'));
+    return () => accessDirty();
+  }
+  const eff = el('p', undefined, 'plan-now'); ps.append(eff);
+  const drawPlan = () => { const e = ctx.effectivePlan(getUser()); eff.replaceChildren(el('strong', 'Plan vigente: '), e.name, ' ', badge(e.origin, e.origin === 'Propio' ? 'info' : '')); };
+  drawPlan();
+  const form = el('form', undefined, 'person-form'); form.noValidate = true; ps.append(form);
+  const sel = el('select'); sel.append(new Option(ctx.defaultLabel, ''));
+  ctx.avail.data.forEach(x => sel.append(new Option(x.name, x.id)));
+  if (u.plan_id && !ctx.avail.data.some(p => p.id === u.plan_id)) sel.append(new Option(`${ctx.planName(u.plan_id) || 'Plan'} (inactivo: usa el por defecto)`, u.plan_id));
+  sel.value = draft && 'plan' in draft ? (draft.plan || '') : (u.plan_id || '');
+  labeled(form, 'Plan', sel, 'Define qué funciones de persona recibe. Sin plan propio usa el del cliente; nunca recibe lo que el cliente no compró.');
+  const receives = el('p', '', 'help'); receives.setAttribute('aria-live', 'polite'); form.append(receives);
+  const sync = () => { receives.textContent = ctx.receives(sel.value); }; sel.addEventListener('change', sync); sync();
+  form.append(el('p', 'El plan no concede permisos para administrar el panel.', 'help'));
+  const foot = blockFooter(form, 'Guardar plan');
+  planDirty = () => (sel.value || null) !== (getUser().plan_id || null);
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    if (!planDirty()) { foot.ok('El plan no cambió.'); return; }
+    foot.busy(true);
+    try { const x = await api('PUT', `/users/${getUser().id}/plan`, { body: { plan_id: sel.value || null }, ifMatch: getUser().version }); onSaved(x); drawPlan(); foot.ok(`Plan guardado a las ${clock()}.`); }
+    catch (e) { foot.fail(`El plan no se guardó: ${personError(e)}`); }
+    finally { foot.save.disabled = false; }
+  });
+  return () => accessDirty() || planDirty();
+}
+
+// Pestaña Actividad: las vistas del coordinador (productividad, presencia y reglas efectivas) para esta persona.
+function activityPanel(panel, u, subtab) {
+  const get = path => api('GET', path);
+  coordinator({ page: 'member', tenant, timezone: tenantZone, get, allPages: path => allPages(path), today: zoneToday, shiftDay, query: withQuery, permissions: new Map(), root: panel, user: u, subtab })
+    .catch(e => { const p = el('p', errorMessage(e), 'error-text'); p.setAttribute('role', 'alert'); panel.append(p); });
+}
+
+// Pestaña Equipos: los equipos asignados a la persona, cada uno con su ficha.
+async function devicesPanel(panel, ctx, request) {
+  const s = surface('Equipos asignados', panel);
+  const wait = el('p', 'Consultando equipos…', 'help'); s.append(wait);
+  let list;
+  try { list = await request; } catch (e) { const p = el('p', errorMessage(e), 'error-text'); p.setAttribute('role', 'alert'); wait.replaceWith(p); return; }
+  wait.remove();
+  if (!list) { s.append(el('p', 'Tu cuenta no puede consultar equipos.', 'notice')); return; }
+  if (!list.length) {
+    const box = el('div', undefined, 'empty'); box.append(el('h2', 'Sin equipos'), el('p', 'Esta persona aún no tiene equipos registrados. Al instalar Keeper con su cédula, el equipo queda asignado a ella.'));
+    if (ctx.canIntake) { const a = el('a', 'Registrar equipos', 'button'); a.href = '/alta.php'; box.append(a); }
+    s.append(box); return;
+  }
+  const wrap = el('div', undefined, 'table-wrap'); wrap.tabIndex = 0; s.append(wrap);
+  const t = el('table'); t.append(el('caption', `Equipos de la persona · ${list.length}`));
+  const hr = el('tr'); ['Equipo', 'Estado', 'Última conexión', 'Sistema', 'Agente'].forEach(h => { const th = el('th', h); th.scope = 'col'; hr.append(th); });
+  const head = el('thead'); head.append(hr); const body = el('tbody');
+  for (const d of list) {
+    const tr = el('tr'); const a = el('a', d.hostname || 'Equipo sin nombre'); a.href = `/equipo.php?id=${encodeURIComponent(d.id)}`;
+    const [st, tone] = DEVICE_STATUS[d.status] || [d.status || '—', ''];
+    const status = el('div'); status.append(badge(st, tone)); if (online(d)) status.append(' ', badge('En línea', 'info'));
+    [a, status, when(d.last_seen_at), d.os_edition || '—', d.agent_version || '—'].forEach(v => { const td = el('td'); if (v instanceof Node) td.append(v); else td.textContent = v; tr.append(td); });
+    body.append(tr);
+  }
+  t.append(head, body); wrap.append(t);
+}
+
+// Alta por bloques: 1) datos básicos, 2) ubicación laboral (con «+ Nueva …» si falta el catálogo), 3) acceso y plan
+// (opcional, con el valor por defecto a la vista). Crear guarda la persona y luego, por separado, plan y acceso: si uno
+// falla, se dice qué quedó guardado y se sigue en la ficha de la persona para reintentarlo.
+function personCreate(ctx) {
+  personHeader(ctx, null, 'Crear persona');
+  const content = $('page-content'); content.replaceChildren();
+  if (!ctx.canCreate) { empty(content, 'Sin permiso', 'Tu cuenta no puede crear personas (se necesita el permiso para crear personas).'); return; }
+  if (ctx.owner) { content.append(el('p', `Las personas las gestiona ${ctx.owner}: las altas se hacen allá y llegan solas.`, 'notice')); return; }
+  const steps = [['basicos', 'Datos básicos'], ['ubicacion', 'Ubicación laboral'], ['acceso', 'Acceso y plan (opcional)']];
+  const ol = el('ol', undefined, 'person-steps'); ol.setAttribute('aria-label', 'Pasos para crear la persona'); content.append(ol);
+  const items = steps.map(([, t], i) => { const li = el('li'); li.append(el('span', String(i + 1), 'step-number'), ` ${t}`); ol.append(li); return li; });
+  const form = el('form', undefined, 'person-form'); form.noValidate = true; content.append(form);
+  const sections = steps.map(([key, title]) => { const s = surface(title, form); s.dataset.step = key; return s; });
+  // 1) Datos básicos
+  const extras1 = el('details', undefined, 'more-options'); extras1.append(el('summary', 'Opciones adicionales: jefe y monitoreo'));
+  const id = identityFields(sections[0], ctx, null, extras1); sections[0].append(extras1);
+  // 2) Ubicación laboral
+  sections[1].append(el('p', 'Sede, área y cargo son obligatorios. Si falta alguno, puedes crearlo aquí mismo sin perder lo que ya escribiste.', 'help'));
+  const extras2 = el('details', undefined, 'more-options'); extras2.append(el('summary', 'Opciones adicionales: festivos'));
+  const labor = laborFields(sections[1], ctx, null, extras2); if (labor.holidays) sections[1].append(extras2);
+  // 3) Acceso y plan
+  const a = sections[2];
+  a.append(el('p', 'Puedes dejarlo como está y cambiarlo después en su ficha.', 'help'));
+  const defaultAccess = ctx.defaultRole || !ctx.canAssign ? 'Colaborador · Solo lo propio' : 'Sin acceso al panel (no hay un rol Colaborador activo)';
+  const accessNow = el('p'); accessNow.append(el('strong', 'Acceso por defecto: '), defaultAccess); a.append(accessNow);
+  a.append(el('p', 'Una regla por cargo puede proponer otro rol. El acceso no crea la cuenta: la cuenta del panel se crea después, como paso aparte.', 'help'));
+  let accessEd = null, custom = null;
+  if (ctx.canAssign) {
+    custom = el('input'); custom.type = 'checkbox';
+    const l = el('label', undefined, 'check'); l.append(custom, ' Darle otro acceso ahora'); a.append(l);
+    const holder = el('div'); a.append(holder); accessEd = accessEditor(holder, { roles: ctx.roles, org: ctx.org, current: null });
+    const sync = () => { holder.hidden = !custom.checked; }; custom.addEventListener('change', sync); sync();
+  } else a.append(el('p', 'Tu cuenta no puede asignar accesos: quedará con el acceso por defecto.', 'help'));
+  let planSel = null;
+  if (ctx.avail) {
+    planSel = el('select'); planSel.append(new Option(ctx.defaultLabel, '')); ctx.avail.data.forEach(x => planSel.append(new Option(x.name, x.id)));
+    labeled(a, 'Plan', planSel, 'Por defecto usa el plan del cliente. El plan no concede permisos para administrar el panel.');
+    const rec = el('p', '', 'help'); rec.setAttribute('aria-live', 'polite'); a.append(rec);
+    const sync = () => { rec.textContent = ctx.receives(planSel.value); }; planSel.addEventListener('change', sync); sync();
+  } else a.append(el('p', 'Plan: el por defecto del cliente.', 'help'));
+  const error = el('p', '', 'error-text'); error.setAttribute('role', 'alert'); error.hidden = true; form.append(error);
+  const bar = el('div', undefined, 'dialog-footer step-actions'); form.append(bar);
+  const cancel = el('a', 'Cancelar', 'button'); cancel.href = '/usuarios.php';
+  const back = el('button', 'Anterior'); back.type = 'button';
+  const next = el('button', 'Siguiente', 'primary'); next.type = 'button';
+  const submit = el('button', 'Crear persona', 'primary'); submit.type = 'submit';
+  bar.append(cancel, back, next, submit);
+  let step = 0;
+  const show = i => {
+    step = i; error.hidden = true;
+    sections.forEach((s, k) => { s.hidden = k !== i; });
+    items.forEach((li, k) => { li.classList.toggle('done', k < i); if (k === i) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current'); });
+    back.hidden = i === 0; next.hidden = i === steps.length - 1; submit.hidden = i !== steps.length - 1;
+    sections[i].querySelector('input, select')?.focus();
+  };
+  const problem = i => {
+    if (i >= 0 && !id.name.value.trim()) return [0, 'Escribe el nombre.'];
+    if (i >= 1) { const m = labor.missing(); if (m.length) return [1, `Falta ${m.join(', ')}: elígela${ctx.canUnits ? ' o créala con «+ Nueva …»' : ' (pídela a quien administra Organización)'}.`]; }
+    if (i >= 2 && custom?.checked && accessEd.read() && !accessEd.valid()) return [2, accessEd.problem()];
+    if (i >= 2 && custom?.checked && !accessEd.read()) return [2, 'Elige el rol o desmarca «Darle otro acceso ahora».'];
+    return null;
+  };
+  const fault = ([i, text]) => { if (i !== step) show(i); error.textContent = text; error.hidden = false; };
+  next.addEventListener('click', () => { const p = problem(step); if (p) { fault(p); return; } show(step + 1); });
+  back.addEventListener('click', () => show(step - 1));
+  let baseline = formValues(form);
+  window.addEventListener('beforeunload', e => { if (baseline !== null && formValues(form) !== baseline) { e.preventDefault(); e.returnValue = ''; } });
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    if (step !== steps.length - 1) { next.click(); return; }
+    const p = problem(2); if (p) { fault(p); return; }
+    submit.disabled = true; error.hidden = true;
+    const payload = { ...id.read(), ...labor.read() };
+    let u;
+    try { u = await api('POST', '/users', { body: payload }); }
+    catch (e) {
+      const d = e.problem?.detail;
+      fault([['document_in_use', 'invalid_document'].includes(d) ? 0 : d === 'hierarchy_cycle' ? 0 : step, `La persona no se creó: ${personError(e)}`]);
+      submit.disabled = false; return;
+    }
+    // Desde aquí la persona existe: plan y acceso se guardan aparte y cada fallo se informa sin repetir el alta.
+    baseline = null; ctx.users.push(u);
+    const pending = []; const saved = []; const draft = {};
+    if (planSel?.value) {
+      try { u = await api('PUT', `/users/${u.id}/plan`, { body: { plan_id: planSel.value }, ifMatch: u.version }); saved.push(`plan ${ctx.planName(planSel.value)}`); }
+      catch (e) { pending.push(['plan', personError(e)]); draft.plan = planSel.value; }
+    }
+    const wanted = custom?.checked ? accessEd.read() : null;
+    if (wanted && !sameAccess(wanted, u.access ? { role_id: u.access.role_id, scope: u.access.scope } : null)) {
+      try { u = await api('PUT', `/users/${u.id}/access`, { body: wanted, ifMatch: u.version }); saved.push(`acceso ${scopeSummary(u.access?.role_name, u.access?.scope, names(ctx.org))}`); }
+      catch (e) { pending.push(['acceso', personError(e)]); draft.access = wanted; }
+    }
+    history.replaceState(null, '', `/miembro.php?id=${encodeURIComponent(u.id)}&tab=acceso`);
+    personProfile(ctx, u, { tab: 'acceso', created: { pending, extras: saved.join(' y ') }, draft: pending.length ? draft : null });
+    done();
+  });
+  show(0);
 }
 
 // ---- Horarios ---------------------------------------------------------------------------------------------------
@@ -2683,7 +3186,7 @@ async function start() {
   setTenant(tenant);
   applyNavAccess(); // menu segun los permisos de la cuenta en esta empresa
   if (globalPage && session.is_platform_admin) { $('tenant-name').textContent = ownerName(); $('tenant-name').nextElementSibling.textContent = 'Administración de la plataforma'; }
-  else { try { const t = await api('GET', `/tenants/${tenant}`); $('tenant-name').textContent = t.branding?.display_name || t.name; } catch { /* el nombre es decorativo */ } }
+  else { try { const t = await api('GET', `/tenants/${tenant}`); $('tenant-name').textContent = t.branding?.display_name || t.name; if (t.timezone) tenantZone = t.timezone; } catch { /* el nombre es decorativo */ } }
   try {
     if (page === 'sites') await sites();
     else if (page === 'organization') await organization();
@@ -2691,6 +3194,7 @@ async function start() {
     else if (page === 'accounts') await accounts();
     else if (page === 'roles') await rolesPage();
     else if (page === 'users') await people();
+    else if (page === 'member') await personPage();
     else if (page === 'schedules') await schedulesPage();
     else if (page === 'sources') await sourcesPage();
     else if (page === 'group') await groupPage();

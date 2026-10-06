@@ -78,7 +78,7 @@ async function pool(items, task, alive = () => true) {
 
 export async function coordinator(ctx) {
   const { page, tenant, get, allPages, today, shiftDay, query } = ctx;
-  const root = document.getElementById('content');
+  const root = ctx.root || document.getElementById('content');
   const host = el('div', undefined, 'coordinator'); root.append(host);
   const alive = () => host.isConnected;
   const time = v => v ? new Intl.DateTimeFormat('es-CO', { timeZone: ctx.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(v)) : 'Sin registro';
@@ -247,18 +247,17 @@ export async function coordinator(ctx) {
       section(host, 'Presencia', async p => { const list = rows(await report('presence', range, values)); p.append(el('p', `Los estados salen del horario de cada persona y de su calendario de festivos: un festivo o una ausencia aprobada cuentan como «No laborable». Horas en la zona horaria de la empresa (${ctx.timezone}).`, 'help')); pagedTable(p, 'Presencia diaria', presenceColumns, list); csvButton(p, `presencia-${from}-${to}`, presenceColumns, list); }),
     ]);
   } else if (page === 'member') {
-    const id = new URLSearchParams(location.search).get('id'); if (!isUuid(id)) throw new Error('Selecciona una persona desde Usuarios.');
-    const [u, org, tiers, subscription] = await Promise.all([get(`/users/${id}`), optional('/organization'), optional('/tiers'), optional(`/users/${id}/subscription`, false)]);
-    const header = panel(host, u.display_name); header.append(el('p', u.email || 'Sin correo', 'help'));
-    details(header, [['Cargo', orgName(org, u.position_id)], ['Área / sede', `${orgName(org, u.area_id)} / ${orgName(org, u.site_id)}`], ['Estado', label(u.status)], ['Tier', tiers.data?.find(t => t.id === (subscription.data?.tier_id || u.tier_id))?.name || (u.tier_id ? 'Nombre no disponible' : 'Sin tier')]]);
-    dependency(header, org, 'Organización'); dependency(header, tiers, 'Tiers'); if (subscription.error?.status !== 404) dependency(header, subscription, 'Suscripción');
+    // Pestaña «Actividad» de la ficha única de la persona (k3.js, revisión UX G1): la ficha ya muestra datos, plan y
+    // equipos; aquí solo productividad, presencia y reglas efectivas. Sin Tier: el plan vigente está en «Acceso y plan».
+    const id = ctx.user?.id || new URLSearchParams(location.search).get('id'); if (!isUuid(id)) throw new Error('Selecciona una persona desde Personas.');
+    const u = ctx.user || await get(`/users/${id}`);
     const rangeBar = el('div', undefined, 'toolbar'); const rangeLabel = el('label', 'Período'); rangeLabel.htmlFor = 'member-range'; const rangeSelect = el('select'); rangeSelect.id = 'member-range'; for (const n of [7, 30]) { const o = el('option', `${n} días`); o.value = n; rangeSelect.append(o); } rangeBar.append(rangeLabel, rangeSelect); host.append(rangeBar);
     const kpis = el('div'); host.append(kpis);
-    const tabs = el('div', undefined, 'tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Ficha de la persona'); host.append(tabs);
+    const tabs = el('div', undefined, 'tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Actividad de la persona'); host.append(tabs);
     const panels = el('div'); host.append(panels); let cycle = 0;
     async function renderMember() {
       const version = ++cycle, range = { from: shiftDay(today(), 1 - Number(rangeSelect.value)), to: shiftDay(today(), 1) };
-      const activeTab = tabs.querySelector('[aria-selected="true"]')?.dataset.key || location.hash.slice(1) || 'resumen';
+      const activeTab = tabs.querySelector('[aria-selected="true"]')?.dataset.key || ctx.subtab || 'resumen';
       rangeSelect.disabled = true; kpis.replaceChildren(); tabs.replaceChildren(); panels.replaceChildren();
       const [act, devices, schedules, effective] = await Promise.all([optional(query(`/users/${id}/activity`, range), false), optional(query(devicesPath, { user_id: id })), optional('/schedules'), optional(`/users/${id}/policies`, false)]);
       if (!alive() || cycle !== version) return;
@@ -267,6 +266,7 @@ export async function coordinator(ctx) {
         rows(act.data); const days = act.data.data, t = act.data.totals; if (!t) throw invalid(); const punctual = days.filter(d => ['a_tiempo', 'tarde'].includes(d.status));
         metrics(kpis, [['Primera actividad del período', time(days.map(d => d.first_activity).filter(Boolean).sort()[0])], ['Horas activas', days.length ? hours(t.active_seconds) : 'Sin datos'], ['Productividad', percent(t.productivity_percent)], ['Focus /100', numeric(t.focus_score) ? fmt.format(t.focus_score) : 'Sin dato'], ['Puntualidad', punctual.length ? percent(punctual.filter(d => d.status === 'a_tiempo').length * 100 / punctual.length) : 'Sin dato', 'Sobre días laborables con actividad']]);
       } else if (canActivity) error(kpis, act.error);
+      else kpis.append(el('p', 'Tu cuenta no puede consultar la actividad de esta persona (requiere el permiso de ver reportes).', 'notice'));
       function tab(key, title) {
         const button = el('button', title); button.type = 'button'; button.id = `tab-${key}`; button.dataset.key = key; button.setAttribute('role', 'tab'); button.setAttribute('aria-controls', `panel-${key}`);
         const p = panel(panels, title); p.id = `panel-${key}`; p.setAttribute('role', 'tabpanel'); p.setAttribute('aria-labelledby', button.id); p.tabIndex = 0;
@@ -293,15 +293,6 @@ export async function coordinator(ctx) {
         else {
           const sources = rows(effective.data, 'devices').flatMap(d => d.rules.map(r => ({ ...r, device: devices.data?.find(x => x.id === d.device_id)?.hostname || d.device_id || 'Sin equipo' })));
           pagedTable(policies, 'Reglas efectivas y origen de cada regla', [['Equipo', 'device'], ['Tipo', r => r.rule.kind], ['Efecto', r => label(r.rule.effect)], ['Destinos', r => r.rule.targets.join(', ') || 'Sin destinos'], ['Scope de origen', r => label(r.scope)], ['Asignaciones de origen', r => r.assignment_ids.join(', ') || 'Sin asignación'], ['Prioridad', r => r.rule.priority]], sources);
-        }
-      }
-      if (![401, 403].includes(devices.error?.status)) {
-        const equipment = tab('equipos', 'Equipos');
-        if (devices.error) error(equipment, devices.error);
-        else {
-          pagedTable(equipment, 'Equipos asignados', [['Equipo', 'hostname'], ['Estado', r => label(r.status)], ['Última conexión', r => time(r.last_seen_at)], ['Sistema', 'os_edition'], ['Agente', 'agent_version']], devices.data);
-          await Promise.all(devices.data.map(d => section(equipment, `Comandos · ${d.hostname}`, async p => { const commands = await allPages(`/devices/${d.id}/commands`); pagedTable(p, 'Historial de acciones remotas', [['Acción', 'type'], ['Estado', 'status'], ['Creado', r => time(r.created_at)]], commands); })));
-          await migration(equipment, devices.data);
         }
       }
       activate([...tabs.children].some(b => b.dataset.key === activeTab) ? activeTab : 'resumen'); rangeSelect.disabled = false;

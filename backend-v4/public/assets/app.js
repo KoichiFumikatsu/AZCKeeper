@@ -330,25 +330,6 @@ function details(parent, fields) {
   fields.forEach(([key, value]) => { const row = node('div'); row.append(node('dt', key), node('dd', value === null || value === undefined ? 'Sin dato' : String(value))); list.append(row); });
   parent.append(list);
 }
-async function member() {
-  const id = new URLSearchParams(location.search).get('id');
-  if (!isUuid(id)) throw new Error('Selecciona un miembro desde Usuarios.');
-  const user = await get(`/users/${id}`);
-  const panel = node('section', undefined, 'work-surface');
-  panel.append(node('h2', user.display_name));
-  details(panel, [['Correo', user.email], ['Estado', label(user.status)], ['Cuenta del panel', user.panel_login_enabled ? 'Habilitada' : 'Sin cuenta'], ['ID de firma', user.firm_id], ['ID de área', user.area_id], ['ID de sede', user.site_id], ['ID de cargo', user.position_id], ['ID de horario', user.schedule_id], ['Acceso al panel', user.access?.role_name || 'Sin acceso al panel']]);
-  $('content').append(panel);
-  const subscription = node('section', undefined, 'work-surface'); subscription.append(node('h2', 'Suscripción'));
-  try {
-    const data = await get(`/users/${id}/subscription`);
-    details(subscription, [['Tier (ID)', data.tier_id], ['Estado', label(data.status)], ['Inicio', dateTime(data.starts_at)], ['Fin', data.ends_at ? dateTime(data.ends_at) : 'Sin fecha de fin']]);
-  } catch (error) {
-    if (error.status === 403) return;
-    if (error.status === 404) subscription.append(node('p', 'No hay una suscripción disponible para este miembro en tu alcance.', 'empty-state'));
-    else appendError(subscription, error);
-  }
-  $('content').append(subscription);
-}
 const controlStates = { applied: 'Aplicado', failed: 'Fallido', unsupported: 'No soportado', unknown: 'Desconocido' };
 async function device() {
   const id = new URLSearchParams(location.search).get('id');
@@ -557,16 +538,15 @@ async function load() {
     }
     if (page === 'intake') await intake({ tenant, content: $('content') });
     else if (operationPaths[page]) await operations({ page, tenant, today, shiftDay });
-    else if (surface === 'portal' && ['home', 'users', 'member', 'reports', 'policies'].includes(page)) {
+    else if (surface === 'portal' && ['home', 'users', 'reports', 'policies'].includes(page)) {
       await coordinator({ page, tenant, timezone, get, allPages, today, shiftDay, query, permissions });
     }
     else if (page === 'home') await dashboard();
-    else if (page === 'member') await member();
     else if (page === 'device') await device();
     else if (page === 'reports') await reports();
     else await listing(page);
     // Las pantallas del coordinador fechan en la zona de la empresa; las demás, en la del navegador. Se dice cuál.
-    const companyZone = surface === 'portal' && ['home', 'users', 'member', 'reports', 'policies'].includes(page);
+    const companyZone = surface === 'portal' && ['home', 'users', 'reports', 'policies'].includes(page);
     const zoneText = companyZone ? `Fechas y horas en la zona horaria de la empresa (${timezone})` : 'Fechas de eventos en la zona horaria del navegador';
     if ($('tz-note')) $('tz-note').textContent = zoneText;
     $('page-status').textContent = `Consulta finalizada a las ${new Intl.DateTimeFormat('es-CO', { timeStyle: 'medium' }).format(new Date()).replace(/\.$/, '')}. ${zoneText}.`;
