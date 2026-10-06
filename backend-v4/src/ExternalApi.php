@@ -179,7 +179,7 @@ final class ExternalApi
     }
     private function organization(): array
     {
-        return $this->page('SELECT id,tenant_id,kind,name,parent_id,active,version,created_at,country_code,city FROM org_units WHERE tenant_id=? AND deleted_at IS NULL',[$this->tenant],static fn($rows)=>array_map(static fn($r)=>['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'kind'=>$r['kind'],'name'=>$r['name'],'parent_id'=>$r['parent_id']===null?null:Util::id($r['parent_id']),'active'=>(bool)$r['active'],'version'=>(int)$r['version'],'country_code'=>$r['country_code'],'city'=>$r['city']],$rows));
+        return $this->page('SELECT id,tenant_id,kind,name,parent_id,active,version,created_at,country_code,city,placeholder FROM org_units WHERE tenant_id=? AND deleted_at IS NULL',[$this->tenant],static fn($rows)=>array_map(static fn($r)=>['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'kind'=>$r['kind'],'name'=>$r['name'],'parent_id'=>$r['parent_id']===null?null:Util::id($r['parent_id']),'active'=>(bool)$r['active'],'version'=>(int)$r['version'],'country_code'=>$r['country_code'],'city'=>$r['city'],'placeholder'=>(bool)$r['placeholder']],$rows));
     }
     private function notifications(): array
     {

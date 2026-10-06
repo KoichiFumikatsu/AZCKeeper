@@ -242,9 +242,12 @@ Las sedes (`kind: "site"`) pueden traer además `country_code` (ISO 3166-1 alfa-
 
 - `document`: cédula u otro documento, solo dígitos y letras (Keeper la normaliza igual que hoy).
 - `status: "inactive"` + `terminated_on` = retiro. Keeper **no borra personas**: las marca inactivas (lo que revoca sus equipos, §5.4).
+- Una persona que llega `inactive` y Keeper no tiene **también se carga, como retirada** (vínculo, cédula e historial listos si vuelve; o se vincula por cédula y, si estaba activa, se retira). Sus referencias se resuelven con tolerancia: lo que no resuelve o no viene va a "Sin firma/área/cargo/horario" y, sin sede, a "Sin sede" (solo para retiradas). No recibe plan, no le quita el correo a nadie (si está en uso entra sin correo) y cuenta como alta en el freno de altas (§5.4). Solo la fuente la reactiva (`status: "active"`, con sede obligatoria); al reactivarla recibe el plan por defecto.
 - Las referencias (`*_external_id`) deben existir en la misma vuelta o en una anterior, y ser del tipo que corresponde. Un id **enviado** que no resuelve deja a la persona como error `unknown_reference` (se reintenta en la siguiente vuelta); un valor que no es un id (número, texto vacío) es `invalid_reference`.
 - Las referencias son **opcionales**, salvo la sede: `null` o ausente deja la empresa vacía y a la persona en "Sin firma", "Sin área", "Sin cargo" o "Sin horario" (unidades locales que Keeper crea al necesitarlas, como al dar de alta desde el panel). Sin sede: error `missing_site`. Si la fuente no es dueña del dominio de una referencia, Keeper conserva el valor que la persona ya tiene.
-- Un correo que ya usa otra persona de la empresa deja a esta como error `email_in_use`; el resto de la vuelta se aplica. Cualquier otro choque con un valor único se registra como `duplicate_value`.
+- Esas unidades vacías ("placeholders") se reconocen por la marca `placeholder` (columna de `org_units`/`schedules`, campo `placeholder` del DTO de unidad), nunca por el nombre: una unidad real de la fuente llamada "Sin área" es otra unidad y no se empareja por nombre con la vacía.
+- Que una persona existente pase de un valor real a "Sin …" (la fuente manda `null`) es un cambio de organización como cualquier otro: se registra con el nombre anterior y el nuevo (`fields.area_id = ["Litigio", "Sin área"]`) y cuenta para el freno `too_many_org_changes` (§5.4). Si pasa a un cargo vacío y eso cambiaría su monitoreo (p. ej. un directivo excluido), Keeper fija el estado anterior en `monitoring_override` (también registrado) para que el cambio no tenga ese efecto lateral; se quita a mano.
+- Un correo que ya usa otra persona **activa** de la empresa deja a esta como error `email_in_use`; el resto de la vuelta se aplica. Si solo lo conserva una persona **retirada**, se le quita (queda sin correo, item `update` con motivo `email_released`) y lo toma la activa. Cualquier otro choque con un valor único se registra como `duplicate_value` (solo esa persona se revierte).
 
 ### 4.6 Ausencia (evento)
 
@@ -300,6 +303,7 @@ Una cédula que coincide con **dos** personas activas (no debería pasar, Keeper
 
 Cuando un dominio tiene dueño externo:
 - La API de administración rechaza crear o editar esas entidades con `409 managed_by_source` (detalle con el nombre de la fuente). Solo se permiten los campos de Keeper (por ejemplo, `panel_login_enabled`, roles manuales).
+- El bloqueo de una persona vinculada es **por dominio y por campo**: `display_name`, `email`, `status` y `document` dependen de `personas`; `company_id` de `empresas`, `firm_id` de `firmas`, `site_id` de `sedes`, `area_id` de `areas`, `position_id` de `cargos`, `schedule_id` de `horarios` y `reports_to_user_id` de `jerarquia`. Un `PATCH` solo da 409 si toca un campo cuyo dominio gestiona la fuente de esa persona; si la fuente no es dueña de `areas`, el área se edita en Keeper (y la vuelta la conserva). `holiday_calendar_id` y `monitoring_override` son siempre de Keeper. Crear personas sigue bloqueado mientras `personas` tenga dueño externo.
 - El panel muestra "Gestionado por AZC One", oculta "Crear" y deshabilita los campos.
 - Una persona creada en Keeper **antes** de conectar la fuente (a mano, por CSV o desde K3) y que la fuente no trae queda como **huérfana**: nunca se retira automáticamente. Aparece en la bandeja de aprobación y un administrador decide, una por una o en grupo: **vincular** con alguien de la fuente, **retirar** o **dejar** como persona local (decidido 2026-09-30).
 
@@ -310,12 +314,19 @@ Una vuelta pasa a `blocked` (nada se aplica) y avisa en el panel si:
 | Freno | Umbral por defecto |
 |---|---|
 | Lista completa vacía o con menos del 50 % de las personas activas vinculadas | siempre |
-| Retiros en una sola vuelta | más de `max(5, 5 % de las activas vinculadas)` |
+| Retiros en una sola vuelta (`too_many_deactivations`) | más de `max(5, 5 % de las activas vinculadas)` |
+| Altas en una sola vuelta (`too_many_creations`), activas o retiradas | mismo límite; con 0 vinculadas (primera carga) el límite es 5, así que la primera carga **siempre** espera aprobación |
+| Personas existentes con cambio de empresa, firma, sede, área, cargo u horario (`too_many_org_changes`), incluido pasar a "Sin …" | mismo límite |
+| Dominio recién asignado a la fuente (`domains_changed`) | siempre, en la primera vuelta real tras `PUT /data-domains` que le da un dominio nuevo (ver abajo) |
 | Cambio de cédula de una persona ya vinculada | siempre (por persona: ese elemento queda `pending_approval`, el resto se aplica) |
 | Desactivación de una sede/área/cargo con personas activas | por elemento: `pending_approval` |
 | Error de transporte, HTTP ≠ 200, JSON inválido, paginación incompleta | la vuelta es `failed` (no `blocked`), se reintenta en la siguiente |
 
-Desbloquear requiere permiso `integraciones.aprobar` y queda auditado. Los umbrales se pueden cambiar por fuente.
+Desbloquear requiere permiso `integraciones.aprobar` y queda auditado. Los umbrales se pueden cambiar por fuente (`max_deactivations` y `max_deactivation_percent` valen para retiros, altas y cambios de organización).
+
+Una vuelta frenada guarda sus items (altas, cambios con nombre anterior y nuevo, errores) para revisarla. **Aprobarla** (`POST /sync-runs/{id}/approve`) vuelve a leer la fuente y aplica sin frenos esa misma clase de vuelta; queda auditado quién lo hizo. Una simulación también muestra el freno que se activaría (estado `blocked` con `simulate=true`), salvo `domains_changed`, que solo frena vueltas reales; aprobar una simulación frenada la aplica en real.
+
+**Dominio recién asignado (`approval_required`).** Cuando `PUT /data-domains` le da a una fuente un dominio que no tenía, Keeper marca la fuente (`data_sources.approval_required`, campo `approval_required` del DTO) y borra su `updated_since`: la siguiente vuelta es **completa** (no una incremental con la marca de tiempo de antes, que cargaría solo una parte) y, en modo real, queda `blocked` con `domains_changed` hasta que alguien la apruebe. La marca se limpia con la primera vuelta aplicada. Así el cron nunca aplica solo la primera carga de un dominio, aunque la fuente ya esté en `live`. Quitar un dominio no pide aprobación.
 
 ### 5.5 Simulación
 
@@ -497,4 +508,5 @@ Todas resueltas el 2026-09-30 (decisiones 10 a 17). Se reabren con la primera si
 | F5 jerarquía, reglas y directivos | Hecho 2026-09-30: migración 0029 (`users.reports_to_user_id`, `users.monitoring_override`, alcance `team`, `roles.assignable_by_rule`, `panel_role_rules`, `user_roles.rule_id`, `monitoring_excluded_positions`, permiso `roles.reglas`), `RoleRules` (recalcula al cambiar personas, roles, reglas o tras sincronizar), jerarquía desde One, alta con alerta `person_excluded`, pantallas Roles (Asignación automática) y Personas (jefe, monitoreo, cargos excluidos) |
 | F3 puertas (lado Keeper) | Hecho 2026-09-30: migración 0030 (`doors.counts_for_presence`, `unmatched_check_ins`, scope `check-ins:write`), `POST /ext/v1/check-ins:batch`, `DoorEvents` (idempotente, cuarentena 30 días, re-emparejamiento en el cron y al registrar puertas), API `/doors`, pantalla Puertas. **Falta el envío desde el servidor de puertas** (otro sistema; se despliega con autorización) |
 | F4 ausencias | Hecho 2026-09-30: migración 0031 (`absences`), API `/absences`, sincronización del dominio `ausencias` (endpoint `absences` de One), una ausencia aprobada que cubre la jornada deja el día sin tiempo esperado (`ActivityCalendar::expected`), pantalla Ausencias. Las ausencias parciales (un par de horas) se registran pero aún no ajustan la tardanza |
+| Frenos antes de datos reales | Hecho 2026-10-06: migración 0046 (`data_sources.approval_required`, `org_units.placeholder`, `schedules.placeholder`), frenos `too_many_creations`, `too_many_org_changes` y `domains_changed` (§5.4), cambios de referencia con nombres en el registro, monitoreo conservado al pasar a "Sin cargo", bloqueo por campo (§5.3), retiradas cargadas como retiradas y correo de retiradas liberado (§4.5) |
 | F2 en adelante | Pendiente (F2 = conectar One cuando exista su API; el conector ya existe) |

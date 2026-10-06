@@ -37,7 +37,9 @@ function absenceTests(Database $db): void
     $db->run("INSERT INTO entity_links (tenant_id,entity_type,entity_id,source_id,external_id,link_method) VALUES (?,'schedule',?,?,'h','manual')", [$tenant, $o['schedule_id'], Util::bin($src['id'])]);
     $world = ['people' => [$person], 'absences' => [['external_id' => 'aus-1', 'person_external_id' => 'e1', 'kind' => 'incapacidad', 'starts_at' => '2026-10-07T05:00:00Z', 'ends_at' => '2026-10-08T05:00:00Z', 'all_day' => true, 'status' => 'approved']]];
     $sync = new DataSync($db, function ($s, $endpoint, $since) use (&$world) { return ['schema' => DataSync::SCHEMA, 'generated_at' => '2026-10-01T00:00:00Z', 'complete' => $since === null, 'next_cursor' => null, 'items' => $world[$endpoint] ?? []]; });
-    $run = $db->transaction(fn () => $sync->run($tenant, Util::bin($src['id']), 'full', 'manual', false, false));
+    $held = $db->transaction(fn () => $sync->run($tenant, Util::bin($src['id']), 'full', 'manual', false, false));
+    check($db->one('SELECT blocked_reason FROM sync_runs WHERE tenant_id=? AND id=?', [$tenant, $held])['blocked_reason'] === 'domains_changed', 'new domains wait for approval');
+    $run = $db->transaction(fn () => $sync->run($tenant, Util::bin($src['id']), 'full', 'approval', true, false));
     check($db->one('SELECT status FROM sync_runs WHERE tenant_id=? AND id=?', [$tenant, $run])['status'] === 'applied', 'sync applied');
     check($expected('2026-10-07') === 0, 'sick leave from One clears the day');
     $world['absences'][0]['status'] = 'cancelled';

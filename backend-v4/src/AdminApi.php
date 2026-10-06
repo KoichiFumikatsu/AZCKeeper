@@ -274,7 +274,7 @@ final class AdminApi
         $this->audit('org_unit',$id,['name']); $this->dirty();
         return ['status'=>204,'json'=>'','headers'=>[]];
     }
-    private function orgDto(array $r): array { return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'kind'=>$r['kind'],'name'=>$r['name'],'parent_id'=>$r['parent_id']===null?null:Util::id($r['parent_id']),'active'=>(bool)$r['active'],'version'=>(int)$r['version'],'country_code'=>$r['country_code'],'city'=>$r['city']]; }
+    private function orgDto(array $r): array { return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'kind'=>$r['kind'],'name'=>$r['name'],'parent_id'=>$r['parent_id']===null?null:Util::id($r['parent_id']),'active'=>(bool)$r['active'],'version'=>(int)$r['version'],'country_code'=>$r['country_code'],'city'=>$r['city'],'placeholder'=>(bool)$r['placeholder']]; }
     private function organization(string $op,?string $id,?object $b): array
     {
         // Leer la estructura (empresas, sedes, areas, cargos) no es dato de personas: quien delega la necesita para elegir el alcance.
@@ -372,7 +372,14 @@ final class AdminApi
         $document=false; // false = no se envio; null = borrar la cedula
         if ($op==='listUsers') { [$where,$args]=$this->filterUsers(); return $this->page("SELECT u.* FROM users u WHERE u.tenant_id=? AND $where",[$this->tenant,...$args],fn($x)=>$this->userDto($x)); }
         if ($id) { $this->access->user($id); $old=$this->row('users',$id); if ($op==='getUser') { return $this->result($this->userDto($old)); } $this->match($old); }
-        DataSources::guardWrite($this->db,$this->tenant,'personas','user',$id);
+        // Bloqueo por dominio (§5.3): crear exige que Keeper sea dueño de "personas"; editar a una persona vinculada solo se
+        // rechaza en los campos cuyo dominio gestiona su fuente (sin dueño de "areas", su area se edita aqui). Los campos
+        // propios de Keeper (calendario de festivos, excepcion de monitoreo) nunca se bloquean.
+        if (!$id) { DataSources::guardWrite($this->db,$this->tenant,'personas','user',null); }
+        else {
+            $domains=['display_name'=>'personas','email'=>'personas','status'=>'personas','document'=>'personas','company_id'=>'empresas','firm_id'=>'firmas','site_id'=>'sedes','area_id'=>'areas','position_id'=>'cargos','schedule_id'=>'horarios','reports_to_user_id'=>'jerarquia'];
+            foreach (array_unique(array_values(array_intersect_key($domains,get_object_vars($b)))) as $domain) { DataSources::guardWrite($this->db,$this->tenant,$domain,'user',$id); }
+        }
         $values=[]; $fields=get_object_vars($b);
         $document=array_key_exists('document',$fields)?$fields['document']:false; unset($fields['document']);
         if (array_key_exists('reports_to_user_id',$fields) && $fields['reports_to_user_id']!==null) { $this->managerOk(Util::bin($fields['reports_to_user_id']),$id); }

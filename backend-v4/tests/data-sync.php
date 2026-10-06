@@ -52,18 +52,20 @@ function dataSyncTests(Database $db): void
     $run = fn (string $kind, bool $override = false, ?bool $simulate = null) => $db->one('SELECT * FROM sync_runs WHERE tenant_id=? AND id=?', [$tenant, $db->transaction(fn () => $sync->run($tenant, $sid, $kind, 'manual', $override, $simulate))]);
     $users = fn () => (int) $db->one('SELECT COUNT(*) n FROM users WHERE tenant_id=?', [$tenant])['n'];
 
-    // 1) Simulacion: calcula todo y no escribe nada.
+    // 1) Simulacion: calcula todo y no escribe nada. 12 altas superan el freno de altas (5): la simulacion lo muestra.
     $count = $users();
     $sim = $run('full');
     $counts = json_decode($sim['counts'], true);
-    check($sim['status'] === 'simulated' && $users() === $count && ($counts['personas']['create'] ?? 0) === 12 && ($counts['personas']['link'] ?? 0) === 1, 'simulation computes without writing');
+    check($sim['status'] === 'blocked' && $sim['blocked_reason'] === 'too_many_creations' && (int) $sim['simulate'] === 1 && $users() === $count && ($counts['personas']['create'] ?? 0) === 12 && ($counts['personas']['link'] ?? 0) === 1, 'simulation computes without writing');
     check(!$db->one("SELECT id FROM org_units WHERE tenant_id=? AND name='Palmetto'", [$tenant]), 'simulation leaves no org units');
     check(adminRequest($platform, 'GET', '/sync-runs/' . Util::id($sim['id']) . '/items')[0] === 200, 'simulation items visible');
 
     // 2) Real: aplica, vincula por cedula y crea el resto.
     $s1 = expect(adminRequest($platform, 'GET', '/data-sources'), 200, 'list sources')['data'][0];
     expect(adminRequest($platform, 'PATCH', '/data-sources/' . $src['id'], ['mode' => 'live'], ['if-match' => '"' . $s1['version'] . '"']), 200, 'go live after simulation');
-    $live = $run('full');
+    $held = $run('full');
+    check($held['status'] === 'blocked' && $held['blocked_reason'] === 'too_many_creations' && $users() === $count, 'first live load waits for approval');
+    $live = $run('full', true);
     check($live['status'] === 'applied', 'live run applied ' . $live['status'] . ' ' . $live['blocked_reason']);
     check($users() === $count + 12, 'twelve people created');
     $k3 = $db->one("SELECT entity_id,link_method FROM entity_links WHERE tenant_id=? AND source_id=? AND external_id='emp-k3'", [$tenant, $sid]);
@@ -215,15 +217,18 @@ function oneBridgeSyncTests(Database $db): void
         $called[$endpoint] = true;
         return ['schema' => DataSync::SCHEMA, 'company' => 'grupo-azc', 'generated_at' => '2026-10-06T13:00:00Z', 'complete' => $since === null, 'next_cursor' => null, 'items' => $world[$endpoint]];
     });
-    $run = fn (string $kind) => $db->one('SELECT * FROM sync_runs WHERE tenant_id=? AND id=?', [$tenant, $db->transaction(fn () => $sync->run($tenant, $sid, $kind, 'manual', false, false))]);
+    $run = fn (string $kind, bool $override = false) => $db->one('SELECT * FROM sync_runs WHERE tenant_id=? AND id=?', [$tenant, $db->transaction(fn () => $sync->run($tenant, $sid, $kind, 'manual', $override, false))]);
     $items = fn (array $r, string $action) => $db->run('SELECT external_id,reason FROM sync_items WHERE tenant_id=? AND run_id=? AND action=? ORDER BY external_id', [$tenant, $r['id'], $action])->fetchAll();
     $byExt = fn (string $ext) => $db->one("SELECT u.* FROM users u JOIN entity_links l ON l.tenant_id=u.tenant_id AND l.entity_type='user' AND l.entity_id=u.id WHERE l.tenant_id=? AND l.source_id=? AND l.external_id=?", [$tenant, $sid, $ext]);
     $unit = fn (string $ext) => $db->one("SELECT o.* FROM org_units o JOIN entity_links l ON l.tenant_id=o.tenant_id AND l.entity_type='org_unit' AND l.entity_id=o.id WHERE l.tenant_id=? AND l.source_id=? AND l.external_id=?", [$tenant, $sid, $ext]);
     $name = fn (?string $id) => $id === null ? null : ($db->one('SELECT name FROM org_units WHERE tenant_id=? AND id=?', [$tenant, $id]) ?? $db->one('SELECT name FROM schedules WHERE tenant_id=? AND id=?', [$tenant, $id]))['name'];
     $open = fn (array $p) => $db->one('SELECT * FROM user_assignments WHERE tenant_id=? AND user_id=? AND ends_at IS NULL', [$tenant, $p['id']]);
 
-    // 1) Primera vuelta completa: la vuelta termina aplicada aunque haya un correo repetido y referencias malas.
-    $first = $run('full');
+    // 1) Primera vuelta completa: dominios recien asignados -> espera aprobacion; aprobada, termina aplicada aunque haya
+    // un correo repetido y referencias malas.
+    $held = $run('full');
+    check($held['status'] === 'blocked' && $held['blocked_reason'] === 'domains_changed', 'new domains wait for approval ' . $held['status'] . ' ' . $held['blocked_reason']);
+    $first = $run('full', true);
     check($first['status'] === 'applied' && $first['error_code'] === null, 'bridge run applied despite item errors ' . $first['status'] . ' ' . $first['error_code']);
     check(!isset($called['holidays']) && !isset($called['absences']), 'holidays and absences stay with Keeper (not fetched)');
     $counts = json_decode($first['counts'], true);
@@ -268,4 +273,160 @@ function oneBridgeSyncTests(Database $db): void
     $p1c = $byExt('one-emp-1');
     check($p1c['display_name'] === 'Empleado Uno' && $p1c['company_id'] === $p1b['company_id'], 'company kept when Keeper owns empresas');
     echo 'PASS one bridge sync (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+    syncBrakesTests($db);
+}
+
+// Frenos antes de los datos reales (revision one-keeper-changes-review.md): altas masivas y dominios recien asignados
+// (K5/I4), referencias que bajan a "Sin ..." (I1), SAVEPOINT por persona (I2), bloqueo por dominio (I3), placeholders por
+// marca (M1) y correo de una persona retirada (M3).
+function syncBrakesTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $u = secondTenant($db); $tenant = $u['tenant_id'];
+    $platform = sharedPlatform($db); $platform['tenant'] = $tenant;
+    $src = expect(adminRequest($platform, 'POST', '/data-sources', ['name' => 'Fuente con frenos', 'base_url' => 'https://127.0.0.1:9/api/keeper/v1', 'company' => 'grupo-azc', 'token' => 't']), 201, 'brakes source');
+    $sid = Util::bin($src['id']);
+    $srcNow = fn () => array_values(array_filter(expect(adminRequest($platform, 'GET', '/data-sources'), 200, 'list sources')['data'], fn ($s) => $s['id'] === $src['id']))[0];
+    check($srcNow()['approval_required'] === false, 'new source has nothing to approve');
+    $owned = ['firmas', 'sedes', 'areas', 'cargos', 'horarios', 'personas'];
+    expect(adminRequest($platform, 'PUT', '/data-domains', ['domains' => array_map(fn ($d) => ['domain' => $d, 'source_id' => $src['id']], $owned)]), 200, 'brakes source owns people');
+    check($srcNow()['approval_required'] === true, 'assigning domains requires an approved run');
+    $person = fn (int $n, array $extra = []) => $extra + ['external_id' => "brk-$n", 'document' => (string) (8880000 + $n), 'display_name' => "Freno $n", 'email' => "f$n@azc.test",
+        'firm_external_id' => 'brk-f', 'site_external_id' => 'brk-s', 'area_external_id' => 'brk-a1', 'position_external_id' => 'brk-c1', 'schedule_external_id' => 'brk-h', 'status' => 'active'];
+    $world = [
+        'org-units' => [['external_id' => 'brk-f', 'kind' => 'firm', 'name' => 'Firma F', 'parent_external_id' => null, 'active' => true],
+            ['external_id' => 'brk-s', 'kind' => 'site', 'name' => 'Sede F', 'parent_external_id' => null, 'active' => true, 'country_code' => 'CO', 'city' => 'Cali'],
+            ['external_id' => 'brk-a1', 'kind' => 'area', 'name' => 'Litigio F', 'parent_external_id' => null, 'active' => true],
+            ['external_id' => 'brk-c1', 'kind' => 'position', 'name' => 'Abogado F', 'parent_external_id' => null, 'active' => true],
+            ['external_id' => 'brk-cd', 'kind' => 'position', 'name' => 'Director F', 'parent_external_id' => null, 'active' => true]],
+        'schedules' => [['external_id' => 'brk-h', 'name' => 'L-V F', 'timezone' => 'America/Bogota', 'active' => true,
+            'days' => array_map(fn ($w) => ['weekday' => $w, 'start_local' => '08:00', 'end_local' => '17:00', 'lunch' => null], [1, 2, 3, 4, 5])]],
+        'people' => array_merge(array_map(fn ($n) => $person($n), range(1, 7)), [$person(8, ['position_external_id' => 'brk-cd'])]),
+    ];
+    $sync = new DataSync($db, function (array $source, string $endpoint, ?string $since) use (&$world): array {
+        return ['schema' => DataSync::SCHEMA, 'company' => 'grupo-azc', 'generated_at' => '2026-10-06T15:00:00Z', 'complete' => $since === null, 'next_cursor' => null, 'items' => $world[$endpoint] ?? []];
+    });
+    $run = fn (string $kind, bool $override = false, ?bool $simulate = null) => $db->one('SELECT * FROM sync_runs WHERE tenant_id=? AND id=?', [$tenant, $db->transaction(fn () => $sync->run($tenant, $sid, $kind, $override ? 'approval' : 'schedule', $override, $simulate))]);
+    $linkedActive = fn () => (int) $db->one("SELECT COUNT(*) n FROM entity_links l JOIN users u ON u.tenant_id=l.tenant_id AND u.id=l.entity_id WHERE l.tenant_id=? AND l.source_id=? AND l.entity_type='user' AND u.status='active'", [$tenant, $sid])['n'];
+    $byExt = fn (string $ext) => $db->one("SELECT u.* FROM users u JOIN entity_links l ON l.tenant_id=u.tenant_id AND l.entity_type='user' AND l.entity_id=u.id WHERE l.tenant_id=? AND l.source_id=? AND l.external_id=?", [$tenant, $sid, $ext]);
+    $name = fn (?string $id) => $id === null ? null : $db->one('SELECT name FROM org_units WHERE tenant_id=? AND id=?', [$tenant, $id])['name'];
+    $fields = fn (array $r, string $ext) => json_decode((string) ($db->one("SELECT fields FROM sync_items WHERE tenant_id=? AND run_id=? AND external_id=? AND action='update'", [$tenant, $r['id'], $ext])['fields'] ?? 'null'), true);
+
+    // 1) K5: la primera carga (8 altas, base vinculada 0 -> limite 5) no se aplica sola, ni simulada ni en vivo.
+    $sim = $run('full', false, true);
+    check($sim['status'] === 'blocked' && $sim['blocked_reason'] === 'too_many_creations' && (int) $sim['simulate'] === 1, 'simulated first load shows the creation brake ' . $sim['status'] . ' ' . $sim['blocked_reason']);
+    expect(adminRequest($platform, 'PATCH', '/data-sources/' . $src['id'], ['mode' => 'live'], ['if-match' => '"' . $srcNow()['version'] . '"']), 200, 'brakes source live');
+    $first = $run('full');
+    check($first['status'] === 'blocked' && $first['blocked_reason'] === 'too_many_creations' && $linkedActive() === 0, 'live first load blocked, nothing applied');
+    check(!$db->one("SELECT id FROM org_units WHERE tenant_id=? AND name='Litigio F'", [$tenant]), 'blocked first load leaves no org units');
+    check((int) $db->one("SELECT COUNT(*) n FROM sync_items WHERE tenant_id=? AND run_id=? AND domain='personas' AND action='create'", [$tenant, $first['id']])['n'] === 8, 'blocked run lists the 8 creations for review');
+    // Aprobar (approveSyncRun = misma vuelta con override) la aplica completa y limpia la marca de aprobacion.
+    $approved = $run($first['kind'], true);
+    check($approved['status'] === 'applied' && $approved['kind'] === 'full' && $linkedActive() === 8, 'approval applies the first load');
+    check($srcNow()['approval_required'] === false, 'approved run clears the approval mark');
+
+    // 2) Un dominio recien asignado: la siguiente vuelta del cron es completa y espera aprobacion aunque cambie poco.
+    expect(adminRequest($platform, 'PUT', '/data-domains', ['domains' => [['domain' => 'jerarquia', 'source_id' => $src['id']]]]), 200, 'hierarchy newly assigned');
+    $world['people'][1]['reports_to_external_id'] = 'brk-1';
+    $gate = $run('incremental');
+    check($gate['status'] === 'blocked' && $gate['blocked_reason'] === 'domains_changed' && $gate['kind'] === 'full', 'newly assigned domain blocks the next run ' . $gate['status'] . ' ' . $gate['blocked_reason'] . ' ' . $gate['kind']);
+    check($byExt('brk-2')['reports_to_user_id'] === null, 'nothing applied before approval');
+    check($run('incremental', false, true)['status'] === 'simulated', 'simulation is not held by the approval mark');
+    $ok = $run('full', true);
+    check($ok['status'] === 'applied' && $byExt('brk-2')['reports_to_user_id'] === $byExt('brk-1')['id'], 'approval applies the new domain ' . $ok['status'] . ' ' . $ok['counts'] . ' ' . json_encode($db->run('SELECT external_id,action,reason FROM sync_items WHERE tenant_id=? AND run_id=?', [$tenant, $ok['id']])->fetchAll()));
+    check($run('incremental')['status'] === 'applied', 'after approval the cron applies again');
+    // Quitar un dominio no pide aprobacion.
+    expect(adminRequest($platform, 'PUT', '/data-domains', ['domains' => [['domain' => 'jerarquia', 'source_id' => null]]]), 200, 'hierarchy back to Keeper');
+    check($srcNow()['approval_required'] === false, 'removing a domain needs no approval');
+
+    // 3) I1: una referencia que pasa de un valor real a "Sin ..." se registra con nombres, cuenta para el freno y no
+    // cambia el monitoreo (un directivo excluido sigue excluido aunque su cargo pase a "Sin cargo").
+    $director = $byExt('brk-8');
+    $db->run('INSERT INTO monitoring_excluded_positions (tenant_id,position_id) VALUES (?,?)', [$tenant, $director['position_id']]);
+    $world['people'][0]['area_external_id'] = null;
+    $world['people'][7]['position_external_id'] = null;
+    $down = $run('incremental');
+    check($down['status'] === 'applied', 'two downgrades fit the brake');
+    check($fields($down, 'brk-1')['area_id'] === ['Litigio F', 'Sin área'], 'downgrade logged with old and new unit ' . json_encode($fields($down, 'brk-1')));
+    $d2 = $byExt('brk-8');
+    check($name($d2['position_id']) === 'Sin cargo' && Keeper\RoleRules::monitoring($db, $d2) === 'excluded', 'director moved to "Sin cargo" stays excluded from monitoring');
+    $p3 = $byExt('brk-3');
+    foreach (range(1, 6) as $i) { $world['people'][$i]['area_external_id'] = null; }
+    $mass = $run('incremental');
+    check($mass['status'] === 'blocked' && $mass['blocked_reason'] === 'too_many_org_changes', 'mass downgrade to "Sin área" blocked ' . $mass['status'] . ' ' . $mass['blocked_reason']);
+    check($byExt('brk-3')['area_id'] === $p3['area_id'] && $fields($mass, 'brk-3')['area_id'] === ['Litigio F', 'Sin área'], 'blocked downgrade not applied, visible with names');
+    foreach (range(1, 6) as $i) { $world['people'][$i]['area_external_id'] = 'brk-a1'; }
+
+    // 4) M1: una unidad real de la fuente llamada "Sin área" no se confunde con el placeholder (marca, no nombre).
+    $placeholder = $byExt('brk-1')['area_id'];
+    $world['org-units'][] = ['external_id' => 'brk-a-sin', 'kind' => 'area', 'name' => 'Sin área', 'parent_external_id' => null, 'active' => true];
+    $world['people'][2]['area_external_id'] = 'brk-a-sin';
+    $coll = $run('incremental');
+    $oneSin = $db->one("SELECT o.* FROM org_units o JOIN entity_links l ON l.tenant_id=o.tenant_id AND l.entity_id=o.id WHERE l.tenant_id=? AND l.source_id=? AND l.external_id='brk-a-sin'", [$tenant, $sid]);
+    check($coll['status'] === 'applied' && $oneSin && $oneSin['id'] !== $placeholder && !$oneSin['placeholder'], 'source unit named like a placeholder is created apart, not matched by name');
+    check($byExt('brk-3')['area_id'] === $oneSin['id'] && $byExt('brk-1')['area_id'] === $placeholder, 'people keep their own unit and the placeholder');
+    $dto = expect(adminRequest($platform, 'GET', '/organization/' . Util::id($placeholder)), 200, 'read placeholder unit');
+    check($dto['placeholder'] === true && expect(adminRequest($platform, 'GET', '/organization/' . Util::id($oneSin['id'])), 200, 'read source unit')['placeholder'] === false, 'placeholder flag in the unit DTO');
+
+    // 5) I3: bloqueo por dominio. Con "areas" de vuelta en Keeper, el area de una persona vinculada se edita; nombre y cargo no.
+    expect(adminRequest($platform, 'PUT', '/data-domains', ['domains' => [['domain' => 'areas', 'source_id' => null]]]), 200, 'areas back to Keeper');
+    $p1 = $byExt('brk-1'); $pid = Util::id($p1['id']);
+    $dto = expect(adminRequest($platform, 'GET', '/users/' . $pid), 200, 'read linked person');
+    $areaEdit = adminRequest($platform, 'PATCH', '/users/' . $pid, ['area_id' => Util::id($u['area_id'])], ['if-match' => '"' . $dto['version'] . '"']);
+    check($areaEdit[0] === 200 && $byExt('brk-1')['area_id'] === $u['area_id'], 'area editable when the source does not own areas ' . $areaEdit[0] . ' ' . ($areaEdit[1]['detail'] ?? ''));
+    $dto = expect(adminRequest($platform, 'GET', '/users/' . $pid), 200, 'read linked person again');
+    check(adminRequest($platform, 'PATCH', '/users/' . $pid, ['display_name' => 'Otro'], ['if-match' => '"' . $dto['version'] . '"'])[1]['detail'] === 'managed_by_source', 'name still locked (personas)');
+    check(adminRequest($platform, 'PATCH', '/users/' . $pid, ['position_id' => Util::id($u['position_id'])], ['if-match' => '"' . $dto['version'] . '"'])[1]['detail'] === 'managed_by_source', 'position still locked (cargos)');
+    check(adminRequest($platform, 'PATCH', '/users/' . $pid, ['area_id' => Util::id($u['area_id']), 'email' => 'x@azc.test'], ['if-match' => '"' . $dto['version'] . '"'])[1]['detail'] === 'managed_by_source', 'mixed patch with an owned field locked');
+    $run('incremental');
+    check($byExt('brk-1')['area_id'] === $u['area_id'], 'sync keeps the area edited in Keeper');
+
+    // 6) I2: un 1062 que emailTaken no ve (choque forzado al vincular) revierte solo a esa persona; el resto se aplica.
+    $world['people'][] = $person(20, ['display_name' => 'Persona choque']);
+    $world['people'][] = $person(21);
+    $db->run("CREATE TRIGGER sync_dup_probe BEFORE INSERT ON entity_links FOR EACH ROW BEGIN IF NEW.external_id='brk-20' THEN SIGNAL SQLSTATE '23000' SET MYSQL_ERRNO=1062, MESSAGE_TEXT='Duplicate entry (prueba)'; END IF; END");
+    try {
+        foreach ([true, false] as $simulate) {
+            $dup = $run('incremental', false, $simulate);
+            $errors = $db->run("SELECT external_id,reason FROM sync_items WHERE tenant_id=? AND run_id=? AND action='error'", [$tenant, $dup['id']])->fetchAll();
+            $counts = json_decode($dup['counts'], true);
+            check($dup['status'] === ($simulate ? 'simulated' : 'applied') && $errors === [['external_id' => 'brk-20', 'reason' => 'duplicate_value']] && ($counts['personas']['create'] ?? 0) === 1 && !isset($counts['personas']['link']),
+                'duplicate_value isolates one person ' . ($simulate ? '(simulated) ' : '') . $dup['status'] . ' ' . $dup['counts']);
+        }
+        check(!$db->one("SELECT id FROM users WHERE tenant_id=? AND display_name='Persona choque'", [$tenant]) && !$db->one("SELECT 1 FROM user_external_refs WHERE tenant_id=? AND external_ref='8880020'", [$tenant]), 'rolled back person leaves no rows');
+        check((bool) $byExt('brk-21'), 'rest of the run applied');
+    } finally { $db->run('DROP TRIGGER IF EXISTS sync_dup_probe'); }
+    array_splice($world['people'], 8, 1);
+
+    // 7) M3: el correo de una persona retirada se libera para una persona activa nueva (y queda registrado).
+    $world['people'][6]['status'] = 'inactive';
+    $run('incremental');
+    $retired = $byExt('brk-7');
+    check($retired['status'] === 'inactive' && $retired['email'] === 'f7@azc.test', 'retired person keeps the email until someone needs it');
+    $world['people'][] = $person(22, ['email' => 'F7@azc.test']);
+    $reuse = $run('incremental');
+    check($reuse['status'] === 'applied' && $byExt('brk-22') && $byExt('brk-22')['email'] === 'F7@azc.test' && $byExt('brk-7')['email'] === null, 'email of a retired person goes to the new active person');
+    check($db->one("SELECT reason FROM sync_items WHERE tenant_id=? AND run_id=? AND external_id='brk-7' AND action='update'", [$tenant, $reuse['id']])['reason'] === 'email_released', 'release logged on the retired person');
+
+    // 8) Retiradas en la fuente: entran como retiradas (vinculadas, sin plan, "Sin sede"/"Sin ..." si no resuelven), sin
+    // quitarle el correo a nadie; cuentan como altas para el freno; solo la fuente las reactiva.
+    $db->run("INSERT INTO tier (tenant_id,id,name,badge_label,is_default) VALUES (?,?,'Por defecto','Por defecto',1)", [$tenant, Util::bin(Util::uuid())]);
+    $world['people'][] = $person(30, ['status' => 'inactive', 'site_external_id' => null, 'area_external_id' => 'brk-no-existe', 'email' => 'f1@azc.test']);
+    $i30 = count($world['people']) - 1;
+    $ret = $run('incremental');
+    $r30 = $byExt('brk-30');
+    check($ret['status'] === 'applied' && $r30 && $r30['status'] === 'inactive' && $r30['email'] === null && $byExt('brk-1')['email'] === 'f1@azc.test', 'retired person loaded as retired without taking an email ' . $ret['status'] . ' ' . $ret['counts']);
+    check($name($r30['site_id']) === 'Sin sede' && (bool) $db->one('SELECT placeholder FROM org_units WHERE tenant_id=? AND id=?', [$tenant, $r30['site_id']])['placeholder'] && $name($r30['area_id']) === 'Sin área', 'retired person without site goes to the "Sin sede" placeholder');
+    check(!$db->one('SELECT id FROM subscriptions WHERE tenant_id=? AND user_id=?', [$tenant, $r30['id']]) && $db->one("SELECT reason FROM sync_items WHERE tenant_id=? AND run_id=? AND external_id='brk-30' AND action='create'", [$tenant, $ret['id']])['reason'] === 'inactive_in_source', 'retired person gets no plan and is logged as a retired creation');
+    $run('incremental');
+    check($byExt('brk-30')['status'] === 'inactive', 'later runs do not reactivate a retired person');
+    foreach (range(31, 36) as $n) { $world['people'][] = $person($n, ['status' => 'inactive']); }
+    $many = $run('incremental');
+    check($many['status'] === 'blocked' && $many['blocked_reason'] === 'too_many_creations' && !$byExt('brk-31'), 'retired creations count for the creation brake');
+    array_splice($world['people'], -6);
+    $world['people'][$i30] = $person(30);
+    $back = $run('incremental');
+    $r30 = $byExt('brk-30');
+    check($back['status'] === 'applied' && $r30['status'] === 'active' && $name($r30['site_id']) === 'Sede F' && (bool) $db->one("SELECT id FROM subscriptions WHERE tenant_id=? AND user_id=? AND status='active'", [$tenant, $r30['id']]), 'source reactivation restores site and plan');
+    echo 'PASS sync brakes (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

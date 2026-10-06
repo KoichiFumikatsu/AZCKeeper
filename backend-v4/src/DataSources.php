@@ -62,7 +62,7 @@ final class DataSources
         $t = static fn (?string $v): ?string => $v === null ? null : Util::time($v);
         return ['id' => Util::id($s['id']), 'name' => $s['name'], 'kind' => $s['kind'], 'base_url' => $config['base_url'] ?? null, 'company' => $config['company'] ?? null,
             'has_token' => ($config['token'] ?? '') !== '', 'interval_minutes' => $s['interval_minutes'] === null ? null : (int) $s['interval_minutes'],
-            'full_reconcile_local' => substr($s['full_reconcile_local'], 0, 5), 'mode' => $s['mode'], 'active' => (bool) $s['active'],
+            'full_reconcile_local' => substr($s['full_reconcile_local'], 0, 5), 'mode' => $s['mode'], 'approval_required' => (bool) $s['approval_required'], 'active' => (bool) $s['active'],
             'max_deactivations' => (int) $s['max_deactivations'], 'max_deactivation_percent' => (int) $s['max_deactivation_percent'], 'min_list_percent' => (int) $s['min_list_percent'],
             'domains' => $domains, 'last_run_at' => $t($s['last_run_at']), 'last_success_at' => $t($s['last_success_at']), 'last_full_at' => $t($s['last_full_at']), 'version' => (int) $s['version']];
     }
@@ -113,9 +113,18 @@ final class DataSources
             if (isset($seen[$d->domain])) { throw new ApiError(422, 'validation_failed'); } $seen[$d->domain] = true;
             if ($d->source_id !== null && !$this->db->one('SELECT id FROM data_sources WHERE tenant_id=? AND id=?', [$this->tenant, Util::bin($d->source_id)])) { throw new ApiError(422, 'validation_failed', [], 'unknown_source'); }
         }
+        $gained = [];
         foreach ($b->domains as $d) {
-            if ($d->source_id === null) { $this->db->run('DELETE FROM data_domain_owners WHERE tenant_id=? AND domain=?', [$this->tenant, $d->domain]); }
-            else { $this->db->run('INSERT INTO data_domain_owners (tenant_id,domain,source_id) VALUES (?,?,?) ON DUPLICATE KEY UPDATE source_id=VALUES(source_id)', [$this->tenant, $d->domain, Util::bin($d->source_id)]); }
+            if ($d->source_id === null) { $this->db->run('DELETE FROM data_domain_owners WHERE tenant_id=? AND domain=?', [$this->tenant, $d->domain]); continue; }
+            $source = Util::bin($d->source_id);
+            if (!$this->db->one('SELECT 1 FROM data_domain_owners WHERE tenant_id=? AND domain=? AND source_id=?', [$this->tenant, $d->domain, $source])) { $gained[$source] = true; }
+            $this->db->run('INSERT INTO data_domain_owners (tenant_id,domain,source_id) VALUES (?,?,?) ON DUPLICATE KEY UPDATE source_id=VALUES(source_id)', [$this->tenant, $d->domain, $source]);
+        }
+        // Una fuente que gana un dominio (I4): su siguiente vuelta es completa (sin updated_since de antes, que dejaria la
+        // carga a medias) y, en real, queda frenada (domains_changed) hasta que alguien la apruebe. El cron nunca aplica
+        // solo la primera carga de un dominio. Quitar un dominio no pide nada.
+        foreach (array_keys($gained) as $source) {
+            $this->db->run('UPDATE data_sources SET approval_required=TRUE,updated_since=NULL,version=version+1 WHERE tenant_id=? AND id=?', [$this->tenant, $source]);
         }
         $this->audit('putDataDomains', 'data_domains', $this->tenant, array_keys($seen));
         return $this->domains();

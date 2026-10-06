@@ -1,5 +1,5 @@
 {
-  "source_sha256": "b935282725a91ecb9b94be96b91f3d33cbc50a541de0abb88a6134acdb3541f3",
+  "source_sha256": "a87fd90094045ec83478b12c702a186e7135223fbc5c5769ec4f8f27e2a64fd4",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -22205,6 +22205,7 @@
         "interval_minutes",
         "full_reconcile_local",
         "mode",
+        "approval_required",
         "active",
         "max_deactivations",
         "max_deactivation_percent",
@@ -22277,6 +22278,10 @@
             "simulate",
             "live"
           ]
+        },
+        "approval_required": {
+          "type": "boolean",
+          "description": "La fuente ganó un dominio (PUT /data-domains) y aún no tiene una vuelta aplicada: su siguiente vuelta real queda `blocked` con `domains_changed` y es completa. Se limpia al aprobarla (POST /sync-runs/{id}/approve)."
         },
         "active": {
           "type": "boolean"
@@ -25637,9 +25642,14 @@
         "active",
         "version",
         "country_code",
-        "city"
+        "city",
+        "placeholder"
       ],
       "properties": {
+        "placeholder": {
+          "type": "boolean",
+          "description": "Unidad vacía de Keeper (\"Sin firma\", \"Sin sede\", \"Sin área\", \"Sin cargo\") para personas sin ese dato. Se reconoce por esta marca, no por el nombre; conviene distinguirla en filtros y selectores de alcance."
+        },
         "city": {
           "anyOf": [
             {

@@ -13718,6 +13718,7 @@ components:
       - interval_minutes
       - full_reconcile_local
       - mode
+      - approval_required
       - active
       - max_deactivations
       - max_deactivation_percent
@@ -13764,6 +13765,11 @@ components:
           enum:
           - simulate
           - live
+        approval_required:
+          type: boolean
+          description: >-
+            La fuente ganó un dominio (PUT /data-domains) y aún no tiene una vuelta aplicada: su siguiente vuelta real
+            queda `blocked` con `domains_changed` y es completa. Se limpia al aprobarla (POST /sync-runs/{id}/approve).
         active:
           type: boolean
         max_deactivations:
@@ -16098,7 +16104,13 @@ components:
       - version
       - country_code
       - city
+      - placeholder
       properties:
+        placeholder:
+          type: boolean
+          description: >-
+            Unidad vacía de Keeper ("Sin firma", "Sin sede", "Sin área", "Sin cargo") para personas sin ese dato. Se
+            reconoce por esta marca, no por el nombre; conviene distinguirla en filtros y selectores de alcance.
         city:
           anyOf:
           - type: string

@@ -83,7 +83,7 @@ final class DataSync
             $this->db->run('SAVEPOINT keeper_sync');
             try {
                 $this->apply($data, $kind === 'full');
-                $blocked = $override ? null : $this->guards($source, $kind === 'full');
+                $blocked = $override ? null : $this->guards($source, $kind === 'full', $simulate);
             } catch (\Throwable $e) { $this->db->run('ROLLBACK TO SAVEPOINT keeper_sync'); throw $e; }
             if ($blocked !== null || $simulate) { $this->db->run('ROLLBACK TO SAVEPOINT keeper_sync'); $status = $blocked !== null ? 'blocked' : 'simulated'; }
             else { $this->db->run('RELEASE SAVEPOINT keeper_sync'); if ($this->changed()) { $this->markDirty(); } }
@@ -95,7 +95,8 @@ final class DataSync
             $this->db->run('INSERT INTO sync_items (tenant_id,id,run_id,domain,external_id,entity_id,action,reason,label,fields,payload) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
                 [$tenant, Util::bin(Util::uuid()), $runId, $i['domain'], $i['external_id'], $i['entity_id'], $i['action'], $i['reason'], mb_substr((string) $i['label'], 0, 200), $i['fields'] === null ? null : Util::json($i['fields']), $i['payload'] === null ? null : Util::json($i['payload'])]);
         }
-        $this->db->run('UPDATE data_sources SET last_run_at=UTC_TIMESTAMP(6)' . ($status === 'applied' ? ',last_success_at=UTC_TIMESTAMP(6),updated_since=COALESCE(?,updated_since)' . ($kind === 'full' ? ',last_full_at=UTC_TIMESTAMP(6)' : '') : '') . ' WHERE tenant_id=? AND id=?',
+        // Una vuelta aplicada (con dominios nuevos solo puede serlo aprobada) cumple la aprobacion pendiente.
+        $this->db->run('UPDATE data_sources SET last_run_at=UTC_TIMESTAMP(6)' . ($status === 'applied' ? ',last_success_at=UTC_TIMESTAMP(6),approval_required=FALSE,updated_since=COALESCE(?,updated_since)' . ($kind === 'full' ? ',last_full_at=UTC_TIMESTAMP(6)' : '') : '') . ' WHERE tenant_id=? AND id=?',
             $status === 'applied' ? [$genSql, $tenant, $sourceId] : [$tenant, $sourceId]);
         return $runId;
     }
@@ -279,7 +280,7 @@ final class DataSync
         if ($id === null) {
             if (!$it['active']) { return 'done'; }
             $candidate = null;
-            foreach ($this->db->run('SELECT o.id,o.name FROM org_units o WHERE o.tenant_id=? AND o.kind=? AND o.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM entity_links l WHERE l.tenant_id=o.tenant_id AND l.entity_type=\'org_unit\' AND l.entity_id=o.id AND l.source_id=?)', [$this->tenant, $kind, $this->source])->fetchAll() as $o) {
+            foreach ($this->db->run('SELECT o.id,o.name FROM org_units o WHERE o.tenant_id=? AND o.kind=? AND o.deleted_at IS NULL AND o.placeholder=FALSE AND NOT EXISTS (SELECT 1 FROM entity_links l WHERE l.tenant_id=o.tenant_id AND l.entity_type=\'org_unit\' AND l.entity_id=o.id AND l.source_id=?)', [$this->tenant, $kind, $this->source])->fetchAll() as $o) {
                 if (self::fold($o['name']) === self::fold($name) && $this->asked('matched_name', $o['id'], $external) !== 'rejected') { $candidate = $o['id']; break; }
             }
             if ($candidate !== null) {
@@ -358,7 +359,7 @@ final class DataSync
             arsort($freq); $default = explode('|', (string) array_key_first($freq)); $default = array_map(static fn ($x) => $x === '' ? null : $x, $default);
             $id = $this->linked('schedule', $external);
             if ($id === null) {
-                foreach ($this->db->run('SELECT s.id,s.name FROM schedules s WHERE s.tenant_id=? AND NOT EXISTS (SELECT 1 FROM entity_links l WHERE l.tenant_id=s.tenant_id AND l.entity_type=\'schedule\' AND l.entity_id=s.id AND l.source_id=?)', [$this->tenant, $this->source])->fetchAll() as $s) {
+                foreach ($this->db->run('SELECT s.id,s.name FROM schedules s WHERE s.tenant_id=? AND s.placeholder=FALSE AND NOT EXISTS (SELECT 1 FROM entity_links l WHERE l.tenant_id=s.tenant_id AND l.entity_type=\'schedule\' AND l.entity_id=s.id AND l.source_id=?)', [$this->tenant, $this->source])->fetchAll() as $s) {
                     if (self::fold($s['name']) !== self::fold($name)) { continue; }
                     $state = $this->asked('matched_name', $s['id'], $external);
                     if ($state === 'rejected') { continue; }
@@ -487,14 +488,17 @@ final class DataSync
             $this->updatePerson($id, $external, $name, $email, $status, $refs, $document);
             return;
         }
-        if ($status === 'inactive') { return; }
+        // Una persona retirada en la fuente tambien entra (como retirada): historial completo y cedula/vinculo listos si
+        // vuelve. Referencias con tolerancia (lo que no resuelve va a "Sin ..."; sin sede -> "Sin sede"), sin plan, y
+        // cuenta como alta para el freno too_many_creations. Solo la fuente la reactiva (status active).
+        $retired = $status === 'inactive';
         $match = $document === null ? [] : $this->db->run("SELECT DISTINCT r.user_id FROM user_external_refs r WHERE r.tenant_id=? AND r.source IN ('document','k3:cc') AND r.external_ref=? AND NOT EXISTS (SELECT 1 FROM entity_links l WHERE l.tenant_id=r.tenant_id AND l.entity_type='user' AND l.entity_id=r.user_id AND l.source_id=?)", [$this->tenant, $document, $this->source])->fetchAll();
         if (count($match) > 1) { $this->log('personas', 'error', $external, null, 'document_ambiguous', $name); return; }
         if (!$match && $document !== null && $this->db->one("SELECT user_id FROM user_external_refs WHERE tenant_id=? AND source IN ('document','k3:cc') AND external_ref=?", [$this->tenant, $document])) {
             $this->log('personas', 'error', $external, null, 'document_in_use', $name); return;
         }
         $current = $match ? $this->db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$this->tenant, $match[0]['user_id']]) : null;
-        $refs = $this->personRefs($it, $current);
+        $refs = $this->personRefs($it, $current, $retired);
         if (is_string($refs)) { $this->log('personas', 'error', $external, null, $refs, $name); return; }
         if ($match) {
             $id = $match[0]['user_id'];
@@ -503,17 +507,19 @@ final class DataSync
             $this->updatePerson($id, $external, $name, $email, $status, $refs, $document);
             return;
         }
-        if ($this->emailTaken($email, null)) { $this->log('personas', 'error', $external, null, 'email_in_use', $name); return; }
-        $id = $this->createPerson($name, $email, $refs, $document);
+        // Una retirada nunca le quita el correo a nadie: si ya esta en uso, entra sin correo.
+        if ($retired) { if ($email !== null && $this->db->one('SELECT id FROM users WHERE tenant_id=? AND email=?', [$this->tenant, $email])) { $email = null; } }
+        elseif (!$this->claimEmail($email, null)) { $this->log('personas', 'error', $external, null, 'email_in_use', $name); return; }
+        $id = $this->createPerson($name, $email, $refs, $document, $status);
         $this->link('user', $id, $external, 'created');
-        $this->log('personas', 'create', $external, $id, null, $name);
+        $this->log('personas', 'create', $external, $id, $retired ? 'inactive_in_source' : null, $name);
     }
     /**
      * Ubicacion de la persona (columnas de users) o el codigo de error (K1/K2). Un id enviado que no resuelve a una unidad
      * de ese tipo es unknown_reference. Sin id: empresa vacia, "Sin firma/área/cargo/horario"; la sede es obligatoria.
      * De un dominio que la fuente no gestiona se conserva lo que la persona ya tiene en Keeper.
      */
-    private function personRefs(array $it, ?array $current): array|string
+    private function personRefs(array $it, ?array $current, bool $lenient = false): array|string
     {
         $refs = [];
         foreach (self::PERSON_REFS as $kind => [$field, $domain]) {
@@ -522,8 +528,9 @@ final class DataSync
             $owned = in_array($domain, $this->owned, true);
             if (!$owned && $current !== null) { $refs[$col] = $current[$col]; continue; }
             $id = $value === null ? null : $this->ref($kind, $value);
-            if ($id === null && $value !== null && $owned) { return 'unknown_reference'; }
-            if ($id === null && $kind === 'site') { return 'missing_site'; }
+            // $lenient (alta de una retirada): lo que no resuelve va al placeholder, tambien la sede ("Sin sede").
+            if ($id === null && $value !== null && $owned && !$lenient) { return 'unknown_reference'; }
+            if ($id === null && $kind === 'site' && !$lenient) { return 'missing_site'; }
             $refs[$col] = $id ?? $this->placeholder($kind);
         }
         return $refs;
@@ -541,39 +548,67 @@ final class DataSync
             default => Placeholders::unit($this->db, $this->tenant, $kind),
         };
     }
-    /** El correo es unico por empresa: si ya lo usa otra persona, esta queda como error (K4) y la vuelta sigue. */
-    private function emailTaken(?string $email, ?string $user): bool
+    /**
+     * El correo es unico por empresa (incluye a las retiradas). Si lo usa otra persona ACTIVA, esta queda como error (K4)
+     * y la vuelta sigue. Si solo lo conserva una persona retirada, se le quita (email NULL, update `email_released`) y lo
+     * toma la activa: un correo reasignado tras un retiro no queda atascado para siempre. Devuelve false = ocupado.
+     */
+    private function claimEmail(?string $email, ?string $user): bool
     {
-        if ($email === null) { return false; }
-        return (bool) $this->db->one('SELECT id FROM users WHERE tenant_id=? AND email=?' . ($user === null ? '' : ' AND id<>?'), $user === null ? [$this->tenant, $email] : [$this->tenant, $email, $user]);
+        if ($email === null) { return true; }
+        $holders = $this->db->run('SELECT id,status,display_name,email FROM users WHERE tenant_id=? AND email=?' . ($user === null ? '' : ' AND id<>?'), $user === null ? [$this->tenant, $email] : [$this->tenant, $email, $user])->fetchAll();
+        foreach ($holders as $h) { if ($h['status'] === 'active') { return false; } }
+        foreach ($holders as $h) {
+            $this->db->run('UPDATE users SET email=NULL,version=version+1 WHERE tenant_id=? AND id=?', [$this->tenant, $h['id']]);
+            $ext = $this->db->one("SELECT external_id FROM entity_links WHERE tenant_id=? AND source_id=? AND entity_type='user' AND entity_id=?", [$this->tenant, $this->source, $h['id']])['external_id'] ?? null;
+            $this->log('personas', 'update', $ext, $h['id'], 'email_released', $h['display_name'], ['email' => [$h['email'], null]]);
+        }
+        return true;
     }
     /** Quita del registro lo anotado desde $mark (la persona se revirtio). */
     private function unlog(int $mark): void
     {
-        foreach (array_splice($this->items, $mark) as $i) { $this->counts[$i['domain']][$i['action']]--; }
+        foreach (array_splice($this->items, $mark) as $i) {
+            if (--$this->counts[$i['domain']][$i['action']] === 0) { unset($this->counts[$i['domain']][$i['action']]); }
+            if ($this->counts[$i['domain']] === []) { unset($this->counts[$i['domain']]); }
+        }
     }
-    private function createPerson(string $name, ?string $email, array $refs, ?string $document): string
+    private function createPerson(string $name, ?string $email, array $refs, ?string $document, string $status = 'active'): string
     {
         $id = Util::bin(Util::uuid()); $at = $this->now();
-        $this->db->run('INSERT INTO users (tenant_id,id,display_name,email,firm_id,site_id,area_id,position_id,schedule_id,company_id) VALUES (?,?,?,?,?,?,?,?,?,?)', [$this->tenant, $id, $name, $email, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id'], $refs['company_id']]);
+        $this->db->run('INSERT INTO users (tenant_id,id,display_name,email,status,firm_id,site_id,area_id,position_id,schedule_id,company_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)', [$this->tenant, $id, $name, $email, $status, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id'], $refs['company_id']]);
         $this->db->run('INSERT INTO user_assignments (tenant_id,id,user_id,firm_id,site_id,area_id,position_id,schedule_id,company_id,starts_at) VALUES (?,?,?,?,?,?,?,?,?,?)', [$this->tenant, Util::bin(Util::uuid()), $id, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id'], $refs['company_id'], $at]);
         AccessGrants::grantDefault($this->db, $this->tenant, $id);
-        $tier = $this->db->one('SELECT id FROM tier WHERE tenant_id=? AND is_default=1 AND active=TRUE', [$this->tenant]);
-        if ($tier) { $this->db->run("INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at,status) VALUES (?,?,?,?,UTC_TIMESTAMP(6),'active')", [$this->tenant, Util::bin(Util::uuid()), $id, $tier['id']]); }
+        if ($status === 'active') { $this->subscribe($id); }
         if ($document !== null) { $this->db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,'document',?)", [$this->tenant, $id, $document]); }
         return $id;
+    }
+    /** Plan por defecto (una retirada cargada desde la fuente no lo tiene hasta que la fuente la reactiva). */
+    private function subscribe(string $id): void
+    {
+        if ($this->db->one("SELECT id FROM subscriptions WHERE tenant_id=? AND user_id=? AND status IN ('active','scheduled') AND (ends_at IS NULL OR ends_at>UTC_TIMESTAMP(6)) LIMIT 1", [$this->tenant, $id])) { return; }
+        $tier = $this->db->one('SELECT id FROM tier WHERE tenant_id=? AND is_default=1 AND active=TRUE', [$this->tenant]);
+        if ($tier) { $this->db->run("INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at,status) VALUES (?,?,?,?,UTC_TIMESTAMP(6),'active')", [$this->tenant, Util::bin(Util::uuid()), $id, $tier['id']]); }
     }
     private function updatePerson(string $id, string $external, string $name, ?string $email, string $status, array $refs, ?string $document): void
     {
         $u = $this->db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
         if ($status === 'inactive') { if ($u['status'] === 'active') { $this->deactivatePerson($u, $external, 'inactive_in_source'); } return; }
-        if ($u['email'] !== $email && $this->emailTaken($email, $id)) { $this->log('personas', 'error', $external, $id, 'email_in_use', $name); return; }
+        if ($u['email'] !== $email && !$this->claimEmail($email, $id)) { $this->log('personas', 'error', $external, $id, 'email_in_use', $name); return; }
         $changes = [];
         if ($u['display_name'] !== $name) { $changes['display_name'] = [$u['display_name'], $name]; }
         if ($u['email'] !== $email) { $changes['email'] = [$u['email'], $email]; }
         if ($u['status'] !== 'active') { $changes['status'] = ['inactive', 'active']; }
-        $org = false;
-        foreach ($refs as $f => $v) { if ($u[$f] !== $v) { $changes[$f] = true; $org = true; } }
+        // Cada referencia que cambia se registra con el nombre anterior y el nuevo ("Litigio" -> "Sin área"): una
+        // simulacion o una vuelta frenada muestran que se pierde, y el freno too_many_org_changes las cuenta (I1).
+        $org = false; $monitoring = $u['monitoring_override'];
+        foreach ($refs as $f => $v) { if ($u[$f] !== $v) { $changes[$f] = [$this->refName($f, $u[$f]), $this->refName($f, $v)]; $org = true; } }
+        // Pasar a "Sin cargo" no cambia el monitoreo como efecto lateral (un directivo excluido no empieza a ser
+        // monitoreado): si el cargo nuevo es placeholder y el estado efectivo cambiaria, se fija el anterior por persona.
+        if (($refs['position_id'] ?? $u['position_id']) !== $u['position_id'] && $monitoring === 'auto' && Placeholders::is($this->db, $this->tenant, $refs['position_id'], 'position_id')) {
+            $was = RoleRules::monitoring($this->db, $u);
+            if (RoleRules::monitoring($this->db, ['position_id' => $refs['position_id']] + $u) !== $was) { $monitoring = $was; $changes['monitoring_override'] = ['auto', $was]; }
+        }
         // La cedula identifica a la persona en el alta de equipos: un cambio sobre una ya cargada se aprueba a mano.
         $current = $this->db->one("SELECT external_ref FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source IN ('document','k3:cc') ORDER BY source='document' DESC LIMIT 1", [$this->tenant, $id])['external_ref'] ?? null;
         if ($document !== null && $current !== $document) {
@@ -582,14 +617,21 @@ final class DataSync
             else { $this->db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,'document',?) ON DUPLICATE KEY UPDATE external_ref=VALUES(external_ref)", [$this->tenant, $id, $document]); $changes['document'] = [null, self::mask($document)]; }
         }
         if (!$changes) { return; }
-        $this->db->run("UPDATE users SET display_name=?,email=?,status='active',firm_id=?,site_id=?,area_id=?,position_id=?,schedule_id=?,company_id=?,version=version+1 WHERE tenant_id=? AND id=?", [$name, $email, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id'], $refs['company_id'], $this->tenant, $id]);
+        $this->db->run("UPDATE users SET display_name=?,email=?,status='active',firm_id=?,site_id=?,area_id=?,position_id=?,schedule_id=?,company_id=?,monitoring_override=?,version=version+1 WHERE tenant_id=? AND id=?", [$name, $email, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id'], $refs['company_id'], $monitoring, $this->tenant, $id]);
+        if ($u['status'] !== 'active') { $this->subscribe($id); }
         if ($org) {
             $at = $this->now();
             $this->db->run('UPDATE user_assignments SET ends_at=? WHERE tenant_id=? AND user_id=? AND ends_at IS NULL', [$at, $this->tenant, $id]);
             $this->db->run('INSERT INTO user_assignments (tenant_id,id,user_id,firm_id,site_id,area_id,position_id,schedule_id,company_id,starts_at) VALUES (?,?,?,?,?,?,?,?,?,?)', [$this->tenant, Util::bin(Util::uuid()), $id, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id'], $refs['company_id'], $at]);
             if ($refs['site_id'] !== $u['site_id']) { $this->calendars = true; }
         }
-        $this->log('personas', 'update', $external, $id, null, $name, array_map(static fn ($c) => $c === true ? 'organización' : $c, $changes));
+        $this->log('personas', 'update', $external, $id, null, $name, $changes);
+    }
+    /** Nombre de la unidad u horario de una referencia (para el registro); null = sin valor. */
+    private function refName(string $col, ?string $id): ?string
+    {
+        if ($id === null) { return null; }
+        return $this->db->one('SELECT name FROM ' . ($col === 'schedule_id' ? 'schedules' : 'org_units') . ' WHERE tenant_id=? AND id=?', [$this->tenant, $id])['name'] ?? null;
     }
     private function deactivatePerson(array $u, ?string $external, string $reason): void
     {
@@ -606,15 +648,33 @@ final class DataSync
     private static function mask(string $doc): string { return strlen($doc) <= 4 ? $doc : str_repeat('•', strlen($doc) - 4) . substr($doc, -4); }
 
     // ---- Frenos (§5.4) --------------------------------------------------------------------------------------------------
-    private function guards(array $source, bool $full): ?string
+    /**
+     * Motivo para frenar la vuelta (nada se aplica; se desbloquea con approveSyncRun) o null. Mismo limite para retiros,
+     * altas y cambios de organizacion: max(5 personas, 5 % de las vinculadas activas), configurable por fuente. Con base
+     * 0 (primera carga) el limite es 5: la carga inicial nunca se aplica sin aprobacion (K5).
+     */
+    private function guards(array $source, bool $full, bool $simulate): ?string
     {
-        if (!in_array('personas', $this->owned, true)) { return null; }
-        // Se cuenta sobre el estado ANTERIOR a la vuelta: las vinculadas activas antes de aplicar.
-        $deactivated = $this->counts['personas']['deactivate'] ?? 0; $linked = $this->baseline;
-        $limit = max((int) $source['max_deactivations'], (int) ceil($linked * (int) $source['max_deactivation_percent'] / 100));
-        if ($full && $linked > 0 && ($this->incomingActive === 0 || ($linked >= 10 && $this->incomingActive * 100 < $linked * (int) $source['min_list_percent']))) { return 'list_too_small'; }
-        if ($deactivated > $limit) { return 'too_many_deactivations'; }
+        if (in_array('personas', $this->owned, true)) {
+            // Se cuenta sobre el estado ANTERIOR a la vuelta: las vinculadas activas antes de aplicar.
+            $linked = $this->baseline;
+            $limit = max((int) $source['max_deactivations'], (int) ceil($linked * (int) $source['max_deactivation_percent'] / 100));
+            if ($full && $linked > 0 && ($this->incomingActive === 0 || ($linked >= 10 && $this->incomingActive * 100 < $linked * (int) $source['min_list_percent']))) { return 'list_too_small'; }
+            if (($this->counts['personas']['deactivate'] ?? 0) > $limit) { return 'too_many_deactivations'; }
+            if (($this->counts['personas']['create'] ?? 0) > $limit) { return 'too_many_creations'; }
+            if ($this->orgChanges() > $limit) { return 'too_many_org_changes'; }
+        }
+        // Dominio recien asignado (DataSources::putDomains): la primera vuelta real espera aprobacion (I4). Una simulacion
+        // no aplica nada, asi que no se frena por esto.
+        if (!$simulate && $source['approval_required']) { return 'domains_changed'; }
         return null;
+    }
+    /** Personas ya existentes cuya empresa, firma, sede, area, cargo u horario cambia en esta vuelta. */
+    private function orgChanges(): int
+    {
+        $cols = array_map(static fn ($k) => $k . '_id', array_keys(self::PERSON_REFS)); $n = 0;
+        foreach ($this->items as $i) { if ($i['domain'] === 'personas' && $i['action'] === 'update' && is_array($i['fields']) && array_intersect_key($i['fields'], array_flip($cols))) { $n++; } }
+        return $n;
     }
 
     // ---- Resolver pendientes ----------------------------------------------------------------------------------------------
