@@ -112,3 +112,15 @@ tr.group-row th{background:#d6d6d6;color:var(--ink);white-space:normal;padding:4
 .toolbar>.bulk-bar{flex:1 1 100%;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px dashed #aaa;border-radius:8px}.bulk-count{font-size:12px;color:var(--muted);margin-right:auto}.bulk-bar button{font-size:12px}.bulk-bar button:disabled{opacity:.55;cursor:default}
 .batch-field{border-bottom:1px solid var(--line);padding:4px 0 8px}.batch-field>.check{margin:8px 0}.batch-control{padding-left:24px}.batch-control>label{margin:6px 0}.batch-preview{margin-top:16px}
 @media(max-width:420px){.bulk-count{flex-basis:100%}.batch-control{padding-left:0}}
+/* Fase 4 P1: CSV de personas con grupos (F7), reglas que el editor no representa (F11) y Registrar equipos por pestañas (F12) */
+.import-preview{margin-top:12px;display:grid;gap:12px}.import-summary{font-weight:600}
+.import-group h3{font-size:14px;margin:0 0 4px}.import-group .import-issues{color:var(--ink)}.import-group.bad .import-issues{color:var(--error)}.import-group.good .import-issues{color:var(--muted)}
+.csv-columns{font-size:13px}.people-origin{margin:0 0 12px}
+.policy-locked strong{display:block;margin-bottom:4px}.policy-locked ul{margin:8px 0 0;padding-left:18px;font-size:13px}
+.alta-tabs{margin-top:0}.alta-tabs [role=tab]:focus-visible{outline:3px solid var(--p-400);outline-offset:2px}
+.intake-about{margin:0 0 18px;font-size:13px}.intake-about summary{cursor:pointer;font-weight:600;color:var(--accent)}.intake-about p{margin:8px 0 0;max-width:80ch}
+.install-approval{margin:10px 0}.install-approval .link-button,.install-check-list .link-button{min-height:0;display:inline;padding:0}.install-waiting{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin:12px 0}.install-waiting p{flex:1 1 280px}
+.install-follow{margin-top:18px;padding-top:14px;border-top:1px solid var(--line);display:grid;gap:8px;justify-items:start}.install-follow h3{font-size:16px}
+.install-check-list{margin:6px 0 0;padding-left:20px;font-size:14px}.install-check-list li{margin:4px 0}
+.decision-follow{margin:0 0 8px}.devices-csv{margin-top:16px}.devices-csv>summary{cursor:pointer;font-weight:600}
+.perm-group>.new-role{display:block;min-height:0;font-size:12px;margin:-4px 0 8px}

@@ -81,21 +81,61 @@ export function parseCsv(text) {
   return { rows, invalid, problem: rows.length || invalid.length ? null : 'El archivo solo tiene el encabezado.' };
 }
 
-export async function intake({ tenant, content }) {
-  const rerender = () => intake({ tenant, content });
-  content.replaceChildren();
-  // El instalador va primero (revisión UX ALT-1); se llena al final porque depende del alcance y de las reglas.
-  const installSlot = el('div'); content.append(installSlot);
-  const intro = el('div', undefined, 'notice');
-  intro.append(el('strong', '¿Qué es esto?'), el('p', 'Es la puerta de entrada de los computadores a Keeper. Cuando instalas Keeper en un equipo, el equipo pide permiso para empezar a reportar. Según las reglas de aprobación de la empresa se aprueba solo o queda aquí para que decidas a qué persona pertenece.'),
+// Pestañas de Registrar equipos (fase 4, F12): Instalar va primero; Solicitudes, Equipos esperados y Configuración
+// quedan a un clic. La pestaña elegida va en ?tab= (se conserva ?pm= de Puesta en marcha) y sobrevive a «Actualizar».
+const ALTA_TABS = [['instalar', 'Instalar'], ['solicitudes', 'Solicitudes'], ['esperados', 'Equipos esperados'], ['configuracion', 'Configuración']];
+function altaTabs(content) {
+  const bar = el('div', undefined, 'tabs alta-tabs'); bar.setAttribute('role', 'tablist'); bar.setAttribute('aria-label', 'Registrar equipos');
+  content.append(bar);
+  const about = el('details', undefined, 'intake-about');
+  about.append(el('summary', '¿Qué es esto?'), el('p', 'Es la puerta de entrada de los computadores a Keeper. Cuando instalas Keeper en un equipo, el equipo pide permiso para empezar a reportar. Según las reglas de aprobación de la empresa se aprueba solo o queda en Solicitudes para que decidas a qué persona pertenece.'),
     el('p', 'Para no aprobar uno por uno: carga antes la lista de "equipos esperados" (persona + placa + número de serie). Si un equipo que se instala coincide con uno esperado, se asigna solo. También puedes dejar que la persona escriba su cédula al instalar.'));
-  content.append(intro);
+  content.append(about);
+  const views = new Map(); let current = null;
+  for (const [key, label] of ALTA_TABS) {
+    const button = el('button', label); button.type = 'button'; button.id = `alta-tab-${key}`; button.dataset.key = key;
+    button.setAttribute('role', 'tab'); button.setAttribute('aria-controls', `alta-panel-${key}`); button.setAttribute('aria-selected', 'false'); button.tabIndex = -1;
+    const count = el('span', '', 'tab-count'); count.hidden = true; button.append(' ', count);
+    const panel = el('div', undefined, 'alta-panel'); panel.id = `alta-panel-${key}`; panel.setAttribute('role', 'tabpanel'); panel.setAttribute('aria-labelledby', button.id); panel.hidden = true;
+    bar.append(button); content.append(panel); views.set(key, { button, panel, count });
+    button.addEventListener('click', () => show(key));
+  }
+  function show(key, { focus = false } = {}) {
+    if (!views.has(key)) return;
+    current = key;
+    for (const [k, v] of views) { const on = k === key; v.button.setAttribute('aria-selected', String(on)); v.button.tabIndex = on ? 0 : -1; v.panel.hidden = !on; }
+    const url = new URL(location.href); url.searchParams.set('tab', key); history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+    if (focus) views.get(key).button.focus();
+  }
+  bar.addEventListener('keydown', event => {
+    const keys = [...views.keys()]; const i = keys.indexOf(current); let next = null;
+    if (event.key === 'ArrowRight') next = keys[(i + 1) % keys.length]; else if (event.key === 'ArrowLeft') next = keys[(i + keys.length - 1) % keys.length];
+    else if (event.key === 'Home') next = keys[0]; else if (event.key === 'End') next = keys[keys.length - 1];
+    if (next) { event.preventDefault(); show(next, { focus: true }); }
+  });
+  return {
+    panel: key => views.get(key).panel, show, has: key => views.has(key), current: () => current,
+    count(key, text) { const v = views.get(key); if (!v) return; v.count.textContent = text || ''; v.count.hidden = !text; },
+    drop(key) { const v = views.get(key); if (!v) return; v.button.remove(); v.panel.remove(); views.delete(key); bar.hidden = views.size < 2; },
+  };
+}
 
-  let fullScope = true;
-  try { await requests(content, tenant, rerender); }
-  catch (error) { if (error.status === 403) fullScope = false; else throw error; }
-  await expected(content, tenant, rerender);
-  if (fullScope) installer(installSlot, tenant, await keysAndSettings(content, tenant, rerender), await protection(tenant));
+export async function intake({ tenant, content, tab = null }) {
+  content.replaceChildren();
+  const tabs = altaTabs(content);
+  const rerender = () => intake({ tenant, content, tab: tabs.current() });
+  const wanted = tab || new URLSearchParams(location.search).get('tab');
+  let fullScope = true; let queue = null;
+  try { queue = await requests(tabs.panel('solicitudes'), tenant, { count: text => tabs.count('solicitudes', text) }); }
+  catch (error) { if (error.status === 403) { fullScope = false; tabs.drop('solicitudes'); } else throw error; }
+  await expected(tabs.panel('esperados'), tenant, { count: text => tabs.count('esperados', text) });
+  if (fullScope) {
+    const hooks = {};
+    const keys = await keysAndSettings(tabs.panel('configuracion'), tenant, rerender, hooks);
+    installer(tabs.panel('instalar'), tenant, keys, await protection(tenant), { tabs, queue, hooks });
+  } else { tabs.drop('instalar'); tabs.drop('configuracion'); }
+  // Primario según el estado: con equipos esperando decisión se abre Solicitudes; si no, Instalar.
+  tabs.show(tabs.has(wanted) ? wanted : queue?.pending() ? 'solicitudes' : tabs.has('instalar') ? 'instalar' : 'esperados');
 }
 
 // Antes de instalar (fase 4, F8): modo de endurecimiento y cuenta de IT. Solo se leen (la contraseña nunca se revela).
@@ -138,9 +178,23 @@ export function approvalNote(rules) {
     : 'El registro seguirá las reglas de aprobación de este cliente: ningún equipo se aprueba solo, cada uno queda en Solicitudes de alta hasta que lo apruebes.';
 }
 
-function installer(parent, tenant, keys, guard = { kind: 'na' }) {
+function installer(parent, tenant, keys, guard = { kind: 'na' }, { tabs = null, queue = null, hooks = {} } = {}) {
   const s = section(parent, 'Instalar Keeper en los equipos');
   protectionNotice(s, guard);
+  // Aprobación vigente (resumen de Configuración, sin cambiarla) y equipos que ya esperan una decisión.
+  const approval = el('p', '', 'help install-approval'); s.append(approval);
+  const drawApproval = rules => {
+    approval.replaceChildren(approvalNote(rules));
+    if (tabs?.has('configuracion')) { const b = el('button', 'Ver reglas de aprobación', 'link-button'); b.type = 'button'; b.addEventListener('click', () => tabs.show('configuracion', { focus: true })); approval.append(' ', b); }
+  };
+  drawApproval(keys.rules()); hooks.rules = drawApproval;
+  const waiting = queue?.pending();
+  if (waiting && tabs?.has('solicitudes')) {
+    const n = el('div', undefined, 'notice install-waiting'); n.setAttribute('role', 'note');
+    n.append(el('p', `${waiting === '100+' ? 'Más de 100 equipos esperan' : `${waiting} equipo${waiting === '1' ? ' espera' : 's esperan'}`} tu decisión en Solicitudes: ya instalaron Keeper y no cruzaron con un equipo esperado.`));
+    const go = el('button', 'Revisar solicitudes'); go.type = 'button'; go.addEventListener('click', () => { queue.show('pending'); tabs.show('solicitudes', { focus: true }); });
+    n.append(go); s.append(n);
+  }
   const steps = el('ol', undefined, 'next-steps');
   [['Prepara a las personas', 'Registra los equipos esperados (persona + serie) o pide la cédula al instalar: así el alta se asigna sola.'],
     ['Descarga el instalador', 'Es el paquete de esta empresa.'],
@@ -152,9 +206,38 @@ function installer(parent, tenant, keys, guard = { kind: 'na' }) {
   const password = field(form, 'Tu contraseña (confirmación)', 'password', { type: 'password', required: true });
   password.autocomplete = 'current-password';
   const download = el('button', 'Descargar instalador', 'primary'); download.type = 'submit'; form.append(download); s.append(form);
-  s.append(el('p', 'Cada descarga crea una clave de registro nueva dentro del paquete. Trátalo como secreto: quien lo tenga puede pedir el alta de un equipo. Para invalidarlo, revoca su clave en «Claves de alta».', 'help'));
+  s.append(el('p', 'Cada descarga crea una clave de registro nueva dentro del paquete. Trátalo como secreto: quien lo tenga puede pedir el alta de un equipo. Para invalidarlo, revoca su clave en «Claves de alta» (pestaña Configuración).', 'help'));
   const fb = feedback(s);
   const result = el('div'); result.setAttribute('role', 'status'); s.append(result);
+  // Después de descargar (F12): el primario pasa a «Comprobar registro» y una nueva descarga queda como secundaria.
+  const follow = el('div', undefined, 'install-follow'); follow.hidden = true; s.append(follow);
+  const check = el('button', 'Comprobar registro', 'primary'); check.type = 'button';
+  const checked = el('div', undefined, 'install-checked'); checked.setAttribute('aria-live', 'polite');
+  follow.append(el('h3', 'Paquete descargado. Falta ejecutarlo en Windows.'), el('p', 'Cuando el equipo ejecute el instalador y se conecte, comprueba aquí si quedó registrado o si espera tu aprobación.', 'help'), check, checked);
+  const afterDownload = () => {
+    follow.hidden = false; download.classList.remove('primary'); download.textContent = 'Descargar instalador otra vez';
+    if (!s.querySelector('.install-again')) form.after(el('p', 'Otra descarga crea otra clave de registro nueva; la anterior sigue activa hasta que la revoques.', 'help install-again'));
+  };
+  check.addEventListener('click', async () => {
+    check.disabled = true; checked.replaceChildren(el('p', 'Comprobando…', 'help'));
+    try {
+      const read = status => api('GET', `/enrollments/requests?status=${status}&limit=100`, { tenant });
+      const [pending, approved, enrolled, matched] = await Promise.all([read('pending'), read('approved'), read('enrolled'), api('GET', '/enrollments/expected-devices?status=enrolled&limit=100', { tenant })]);
+      const n = r => `${r.data.length}${r.next_offset !== null && r.next_offset !== undefined ? '+' : ''}`;
+      const clock = new Intl.DateTimeFormat('es-CO', { timeStyle: 'short' }).format(new Date()).replace(/\.$/, '');
+      const ul = el('ul', undefined, 'install-check-list');
+      const line = (text, action) => { const li = el('li', text); if (action) li.append(' ', action); ul.append(li); };
+      const toRequests = (text, status) => { if (!tabs?.has('solicitudes') || !queue) return null; const b = el('button', text, 'link-button'); b.type = 'button'; b.addEventListener('click', () => { queue.show(status); tabs.show('solicitudes', { focus: true }); }); return b; };
+      line(`Esperan tu decisión: ${n(pending)}`, pending.data.length ? toRequests('Revisar', 'pending') : null);
+      line(`Aprobadas, esperando conexión: ${n(approved)}`, approved.data.length ? toRequests('Ver seguimiento', 'approved') : null);
+      line(`Registradas por solicitud: ${n(enrolled)}`, enrolled.data.length ? toRequests('Ver', 'enrolled') : null);
+      const devices = el('a', 'Ver Equipos'); devices.href = '/equipos.php';
+      line(`Registradas solas por coincidir con un equipo esperado: ${n(matched)}`, devices);
+      checked.replaceChildren(el('p', `Comprobado a las ${clock}. Aprobada no es registrada: el equipo se registra al conectarse.`, 'help'), ul);
+      if (!pending.data.length && !approved.data.length && !enrolled.data.length && !matched.data.length) checked.append(el('p', 'Aún no aparece ningún equipo: falta ejecutar el instalador o el equipo todavía no se conecta. Vuelve a comprobar en unos minutos.', 'help'));
+    } catch (error) { checked.replaceChildren(el('p', message(error), 'error-message')); }
+    finally { check.disabled = false; }
+  });
   // El servidor crea una clave nueva y la mete en installation.json del paquete publicado.
   form.addEventListener('submit', async event => {
     event.preventDefault(); fb.clear(); result.replaceChildren();
@@ -179,7 +262,7 @@ function installer(parent, tenant, keys, guard = { kind: 'na' }) {
       done.append(el('strong', `Instalador descargado: ${name}`),
         el('p', `Trae la clave de registro nueva${hint ? ` kek_${hint}…` : ''}, ya visible en «Claves de alta». Siguiente paso: ejecútalo en cada equipo Windows.`),
         el('p', approvalNote(keys.rules())));
-      result.append(done);
+      result.append(done); afterDownload();
     } catch (error) {
       password.value = '';
       // La respuesta llegó pero el archivo no: esa clave nunca se entregó, se revoca (mejor esfuerzo).
@@ -216,20 +299,29 @@ function morePager(parent) {
   return pager;
 }
 
-async function requests(content, tenant, rerender) {
+async function requests(content, tenant, { count = () => {} } = {}) {
   const box = el('div'); content.append(box);
   const s = section(box, 'Solicitudes de alta', 'Equipos que se instalaron y no cruzaron con un equipo esperado. Aprueba escribiendo la cédula o el correo de la persona; la placa es opcional.');
   const filter = el('div', undefined, 'toolbar'); s.append(filter);
   const status = select(filter, 'Mostrar', { pending: 'Pendientes', approved: 'Aprobadas sin enrolar', enrolled: 'Enroladas', rejected: 'Rechazadas' }, 'pending');
-  // Resultado de la última decisión fuera de la tabla: recargarla ya no lo borra.
+  // Resultado de la última decisión fuera de la tabla: recargarla o cambiar el filtro ya no lo borra. Tras aprobar,
+  // «Ver seguimiento» muestra las aprobadas que esperan la conexión del equipo (aprobada no es registrada).
   const decision = feedback(s);
+  const follow = el('button', 'Ver seguimiento', 'link-button decision-follow'); follow.type = 'button'; follow.hidden = true; s.append(follow);
+  follow.addEventListener('click', () => { status.value = 'approved'; load().catch(error => { holder.replaceChildren(el('p', message(error), 'error-message')); }); });
   const holder = el('div'); s.append(holder);
   const pager = morePager(s);
-  let body = null;
+  let body = null; let pending = '';
   async function load(append = false) {
     const result = await api('GET', `/enrollments/requests?status=${status.value}&limit=100${append ? `&offset=${pager.next}` : ''}`, { tenant });
     if (!append) { holder.replaceChildren(); body = null; pager.reset(); }
-    if (!append && !result.data.length) { holder.append(el('p', status.value === 'pending' ? 'No hay equipos esperando aprobación.' : 'No hay solicitudes en este estado.', 'empty-state')); return; }
+    if (!append && status.value === 'pending') { pending = result.data.length ? `${result.data.length}${result.next_offset !== null && result.next_offset !== undefined ? '+' : ''}` : ''; count(pending); }
+    if (!append && !result.data.length) {
+      const empty = el('p', status.value === 'pending' ? 'No hay equipos esperando aprobación.' : 'No hay solicitudes en este estado.', 'empty-state');
+      // Sin solicitudes no significa sin instalaciones: pudieron aprobarse solas.
+      if (status.value === 'pending') empty.append(' ', el('small', 'Los equipos que coinciden con un equipo esperado o que se aprueban solos no pasan por aquí: revísalos en Equipos.'));
+      holder.append(empty); return;
+    }
     body ??= table(holder, 'Solicitudes de alta', ['Equipo', 'Serie', 'Coincidencia', 'Persona', 'Última vez', status.value === 'pending' ? 'Decisión' : 'Estado']);
     result.data.forEach(r => {
       const tr = el('tr');
@@ -257,13 +349,13 @@ async function requests(content, tenant, rerender) {
           approve.disabled = true;
           try {
             await api('POST', `/enrollments/requests/${r.id}/approve`, { tenant, body: { person: person.value.trim() || null, asset_code: asset.value.trim() || null } });
-            decision.ok(`${r.hostname}: aprobada, esperando conexión. El equipo se enrola en su próximo reintento (unos minutos); mientras tanto aparece en «Aprobadas sin enrolar».`); await load();
+            decision.ok(`${r.hostname}: aprobada, esperando conexión. El equipo se enrola en su próximo reintento (unos minutos); mientras tanto aparece en «Aprobadas sin enrolar».`); follow.hidden = false; await load();
           } catch (error) { fb.fail(error); } finally { approve.disabled = false; }
         });
         reject.addEventListener('click', async () => {
           if (!confirm(`¿Rechazar el alta de ${r.hostname}? El equipo no quedará gestionado por Keeper.`)) return;
           reject.disabled = true;
-          try { await api('POST', `/enrollments/requests/${r.id}/reject`, { tenant }); decision.ok(`${r.hostname}: alta rechazada. Aparece en «Rechazadas».`); await load(); }
+          try { await api('POST', `/enrollments/requests/${r.id}/reject`, { tenant }); decision.ok(`${r.hostname}: alta rechazada. Aparece en «Rechazadas».`); follow.hidden = true; await load(); }
           catch (error) { fb.fail(error); reject.disabled = false; }
         });
       } else {
@@ -276,17 +368,21 @@ async function requests(content, tenant, rerender) {
     pager.update(result, 'solicitudes');
   }
   pager.onMore(() => load(true));
-  status.addEventListener('change', () => load().catch(error => { holder.replaceChildren(el('p', message(error), 'error-message')); }));
+  const reload = () => load().catch(error => { holder.replaceChildren(el('p', message(error), 'error-message')); });
+  status.addEventListener('change', reload);
   await load();
+  return { pending: () => pending, show: value => { status.value = value; reload(); } };
 }
 
-async function expected(content, tenant, rerender) {
-  const s = section(content, 'Equipos esperados', 'Registra a quién pertenece cada equipo antes de instalarlo. La serie es la del fabricante (etiqueta del equipo o BIOS); con ella el alta es automática.');
+async function expected(content, tenant, { count = () => {} } = {}) {
+  const s = section(content, 'Equipos esperados', 'Registra a quién pertenece cada equipo antes de instalarlo. La serie es la del fabricante (etiqueta del equipo o BIOS); con ella el alta es automática si la regla de aprobación por serie está activa. La placa sola se guarda, pero no basta para asignar el equipo solo.');
   const form = el('form', undefined, 'toolbar'); form.noValidate = true;
   const person = field(form, 'Cédula o correo de la persona', 'person', { required: true, max: 254 });
   const asset = field(form, 'Placa', 'asset', { placeholder: 'ACT_0015', max: 40 });
   const serial = field(form, 'Serie del fabricante', 'serial', { placeholder: 'PF3ABC12', max: 120 });
   const add = el('button', 'Registrar equipo', 'primary'); add.type = 'submit'; form.append(add); s.append(form);
+  const missing = el('p', '¿La persona aún no existe? ', 'help'); const newPerson = el('a', 'Créala en Personas'); newPerson.href = '/miembro.php?nueva=1';
+  missing.append(newPerson, ' y vuelve aquí para registrar su equipo.'); s.append(missing);
   const fb = feedback(s);
   form.addEventListener('submit', async event => {
     event.preventDefault(); fb.clear();
@@ -299,9 +395,18 @@ async function expected(content, tenant, rerender) {
     } catch (error) { fb.fail(error); } finally { add.disabled = false; }
   });
 
-  const csv = el('details'); csv.append(el('summary', 'Carga masiva desde CSV'));
+  // CSV de equipos (F12): separado del CSV de Personas; no crea personas y tiene sus propias columnas y errores.
+  const csv = el('details', undefined, 'devices-csv'); csv.append(el('summary', 'Importar CSV de equipos esperados'));
+  const scopeNote = el('p', 'Este CSV es solo de equipos: no crea personas. Cada fila apunta a una persona que ya existe en Keeper (por cédula o correo). Para cargar personas usa ', 'help');
+  const peopleCsv = el('a', 'Personas › Importar desde CSV'); peopleCsv.href = '/usuarios.php'; scopeNote.append(peopleCsv, '.'); csv.append(scopeNote);
   csv.append(el('p', 'Columnas: cédula (o correo), placa, serie. Separador coma o punto y coma. Primera fila = encabezados. Las filas con error se informan y el resto se carga.', 'help'));
-  const example = el('pre', 'cedula;placa;serie\n1020304050;ACT_0015;PF3ABC12\n1098765432;ACT_0016;'); csv.append(example);
+  const sample = 'cedula;placa;serie\n1020304050;ACT_0015;PF3ABC12\n1098765432;ACT_0016;';
+  const example = el('pre', sample); csv.append(example);
+  const template = el('button', 'Descargar plantilla de equipos'); template.type = 'button'; csv.append(template);
+  template.addEventListener('click', () => {
+    const a = el('a'); a.href = URL.createObjectURL(new Blob(['﻿' + sample.replace(/\n/g, '\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' })); a.download = 'plantilla-equipos-esperados.csv';
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  });
   const fileLabel = el('label', 'Archivo CSV'); const file = el('input'); file.type = 'file'; file.accept = '.csv,text/csv'; fileLabel.append(file); csv.append(fileLabel);
   const upload = el('button', 'Cargar archivo', 'primary'); upload.type = 'button'; upload.disabled = true; csv.append(upload);
   const csvFb = feedback(csv); const errorsList = el('ul'); csv.append(errorsList); s.append(csv);
@@ -341,6 +446,7 @@ async function expected(content, tenant, rerender) {
   async function load(append = false) {
     const result = await api('GET', `/enrollments/expected-devices?status=${status.value}&limit=100${append ? `&offset=${pager.next}` : ''}`, { tenant });
     if (!append) { holder.replaceChildren(); body = null; pager.reset(); }
+    if (!append && status.value === 'pending') count(result.data.length ? `${result.data.length}${result.next_offset !== null && result.next_offset !== undefined ? '+' : ''}` : '');
     if (!append && !result.data.length) { holder.append(el('p', 'No hay equipos en este estado.', 'empty-state')); return; }
     body ??= table(holder, 'Equipos esperados', ['Persona', 'Placa', 'Serie', 'Origen', 'Registrado', '']);
     result.data.forEach(e => {
@@ -365,7 +471,7 @@ async function expected(content, tenant, rerender) {
   await load();
 }
 
-async function keysAndSettings(content, tenant, rerender) {
+async function keysAndSettings(content, tenant, rerender, hooks = {}) {
   const s = section(content, 'Reglas de aprobación y claves de alta', 'La clave de alta va dentro del paquete de instalación de la empresa. Si se filtra, revócala y crea otra: los equipos ya enrolados no se afectan.');
   let settings = await api('GET', '/enrollments/settings', { tenant });
   const form = el('form'); form.noValidate = true;
@@ -383,7 +489,7 @@ async function keysAndSettings(content, tenant, rerender) {
   form.addEventListener('submit', async event => {
     event.preventDefault(); save.disabled = true; fb.clear();
     const body = { auto_approve_serial_match: auto.checked, self_identify: self.checked, self_identify_auto_confirm: confirmSelf.checked };
-    try { await api('PUT', '/enrollments/settings', { tenant, body }); settings = { ...settings, ...body }; fb.ok('Reglas guardadas.'); }
+    try { await api('PUT', '/enrollments/settings', { tenant, body }); settings = { ...settings, ...body }; fb.ok('Reglas guardadas.'); hooks.rules?.(settings); }
     catch (error) { fb.fail(error); } finally { save.disabled = false; }
   });
 
