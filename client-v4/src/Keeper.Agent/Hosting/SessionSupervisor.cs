@@ -1,6 +1,4 @@
-using System.Diagnostics;
 using System.IO.Pipes;
-using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -11,15 +9,33 @@ using Keeper.Shared.Contracts;
 namespace Keeper.Agent.Hosting;
 
 [SupportedOSPlatform("windows")]
-public sealed class SessionSupervisor(WindowsSessionLauncher launcher, string sessionExe, DeviceLock deviceLock,
-    Func<PolicyCoordinator?> policy) : ModuleBase
+public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, DeviceLock deviceLock,
+    Func<PolicyCoordinator?> policy, SessionTaskManagerPolicies taskManagers) : ModuleBase
 {
+    public SessionSupervisor(WindowsSessionLauncher launcher, string sessionExe, DeviceLock deviceLock,
+        Func<PolicyCoordinator?> policy) : this(new WindowsSessionSupervisorPlatform(launcher, sessionExe), deviceLock,
+            policy, SessionTaskManagerPolicies.Windows()) { }
     public override string Name => "SessionSupervisor";
     private readonly Dictionary<int, Peer> _peers = [];
     private readonly Dictionary<int, DateTimeOffset> _retry = [];
     private DateTimeOffset _scan;
     private IReadOnlyList<InteractiveSession> _sessions = [];
-    private readonly SessionTaskManagerPolicies _taskManagers = SessionTaskManagerPolicies.Windows();
+    private readonly Dictionary<string, string> _protectionErrors = [];
+    public override ModuleSnapshot Snapshot() => base.Snapshot() with
+    {
+        ErrorCode = _protectionErrors.Count == 0 ? null : string.Join(";", _protectionErrors.Keys)
+    };
+    private void Protect(string code, Action operation)
+    {
+        try { operation(); _protectionErrors.Remove(code); }
+        catch (Exception ex)
+        {
+            var detail = $"{ex.GetType().Name}: {ex.Message}";
+            if (!_protectionErrors.TryGetValue(code, out var previous) || previous != detail)
+                Context.Log($"SessionSupervisor {code}: {detail}");
+            _protectionErrors[code] = detail;
+        }
+    }
     public static PipeSecurity CreateSecurity(string sid)
     {
         var security = new PipeSecurity();
@@ -35,45 +51,34 @@ public sealed class SessionSupervisor(WindowsSessionLauncher launcher, string se
         if (now >= _scan)
         {
             _scan = now.AddSeconds(10);
-            var sessions = launcher.Enumerate();
+            var sessions = platform.Enumerate();
             _sessions = sessions;
-            _taskManagers.Reconcile(sessions.Select(s => s.Sid).ToArray(), deviceLock.Locked);
+            Protect("session_taskmgr_policy_failed", () => taskManagers.Reconcile(sessions.Select(s => s.Sid).ToArray(), deviceLock.Locked));
             foreach (var id in _peers.Keys.Where(id => !sessions.Any(s => s.Id == id)).ToArray()) Remove(id);
             foreach (var session in sessions)
             {
                 if (_peers.ContainsKey(session.Id) || _retry.GetValueOrDefault(session.Id) > now) continue;
-                var name = $"AZCKeeper.v4.{session.Id}.{Guid.NewGuid():N}";
-                var pipe = NamedPipeServerStreamAcl.Create(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous | PipeOptions.FirstPipeInstance, 128 * 1024, 128 * 1024, CreateSecurity(session.Sid));
-                try
-                {
-                    var connecting = pipe.WaitForConnectionAsync(ct);
-                    var process = launcher.Launch(session, sessionExe, name);
-                    _peers.Add(session.Id, new(pipe, process, session, connecting, now));
-                }
-                catch { pipe.Dispose(); _retry[session.Id] = now.AddSeconds(30); throw; }
+                try { _peers.Add(session.Id, new(platform.Connect(session, ct), session, now)); }
+                catch { _retry[session.Id] = now.AddSeconds(30); throw; }
             }
         }
-        else _taskManagers.Reconcile(_sessions.Select(s => s.Sid).ToArray(), deviceLock.Locked);
-        if (deviceLock.Locked) CloseExistingTaskManagers();
+        else Protect("session_taskmgr_policy_failed", () => taskManagers.Reconcile(_sessions.Select(s => s.Sid).ToArray(), deviceLock.Locked));
+        if (deviceLock.Locked) Protect("session_taskmgr_close_failed", () => platform.CloseExistingTaskManagers(_sessions));
+        else _protectionErrors.Remove("session_taskmgr_close_failed");
         foreach (var (id, peer) in _peers.ToArray())
         {
             try
             {
-                if (peer.Process.HasExited) throw new IOException($"session_exited (exit code {peer.Process.ExitCode})");
-                if (!peer.Connecting.IsCompleted)
+                if (peer.Connection.HasExited) throw new IOException("session_exited");
+                if (!peer.Connection.Connecting.IsCompleted)
                 {
                     if (now - peer.Started > TimeSpan.FromSeconds(20)) throw new IOException("session_connect_timeout");
                     continue;
                 }
-                await peer.Connecting;
+                await peer.Connection.Connecting;
                 if (!peer.Verified)
                 {
-                    if (!GetNamedPipeClientProcessId(peer.Pipe.SafePipeHandle, out var pid) || pid != peer.Process.Id || peer.Process.SessionId != id)
-                        throw new UnauthorizedAccessException("unexpected_session_process");
-                    string? sid = null;
-                    peer.Pipe.RunAsClient(() => { using var user = WindowsIdentity.GetCurrent(); sid = user.User?.Value; });
-                    if (sid != peer.Session.Sid) throw new UnauthorizedAccessException("unexpected_session_sid");
+                    peer.Connection.Verify();
                     peer.Verified = true;
                 }
                 if (peer.Exchange is not null)
@@ -92,7 +97,7 @@ public sealed class SessionSupervisor(WindowsSessionLauncher launcher, string se
                 await ReportAsync("session_capture_lost", ct);
             }
         }
-        State = _peers.Count > 0 ? "ready" : "no_interactive_session";
+        State = _protectionErrors.Count > 0 ? "degraded" : _peers.Count > 0 ? "ready" : "no_interactive_session";
     }
     private async Task ExchangeAsync(Peer peer, CancellationToken ct, bool shutdown = false)
     {
@@ -103,8 +108,7 @@ public sealed class SessionSupervisor(WindowsSessionLauncher launcher, string se
         var version = coordinator?.CurrentVersion;
         var projection = current is null || peer.Version == version ? null : current with { Rules = [], ManagementHosts = [], Composition = [] };
         var request = new SessionRequest(1, Guid.NewGuid(), version, projection, deviceLock.Locked, deviceLock.PinAllowed, peer.Acknowledged, shutdown);
-        await SessionProtocol.WriteAsync(peer.Pipe, request, timeout.Token);
-        var response = await SessionProtocol.ReadAsync<SessionResponse>(peer.Pipe, timeout.Token);
+        var response = await peer.Connection.ExchangeAsync(request, timeout.Token);
         SessionProtocol.Validate(response, request.CorrelationId);
         var ack = new List<Guid>();
         foreach (var episode in response.Episodes) { await Context.Outbox.EnqueueAsync(episode, ct); ack.Add(episode.EventId); }
@@ -113,31 +117,14 @@ public sealed class SessionSupervisor(WindowsSessionLauncher launcher, string se
         if (response.Pin is not null) await deviceLock.ValidatePinAsync(response.Pin, ct);
         peer.Acknowledged = ack;
         peer.Version = version;
-        if (shutdown) await SessionProtocol.WriteAsync(peer.Pipe, request with { Policy = null, Acknowledged = ack }, timeout.Token);
+        if (shutdown) await peer.Connection.SendAsync(request with { Policy = null, Acknowledged = ack }, timeout.Token);
     }
     private void Remove(int id)
     {
         var peer = _peers[id];
-        peer.Pipe.Dispose();
         if (peer.Exchange is not null) _ = peer.Exchange.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
-        if (!peer.Process.HasExited) peer.Process.Kill();
-        peer.Process.Dispose(); _peers.Remove(id);
+        peer.Connection.Dispose(); _peers.Remove(id);
     }
-    private void CloseExistingTaskManagers()
-    {
-        foreach (var process in Process.GetProcessesByName("Taskmgr"))
-        {
-            using (process)
-            {
-                try
-                {
-                    if (!process.HasExited && _sessions.Any(s => s.Id == process.SessionId)) process.Kill();
-                }
-                catch (InvalidOperationException) { } // Puede terminar entre la enumeracion y Kill.
-            }
-        }
-    }
-
     public override async Task ShutdownAsync()
     {
         try
@@ -153,20 +140,16 @@ public sealed class SessionSupervisor(WindowsSessionLauncher launcher, string se
                 finally { Remove(id); }
             }
         }
-        finally { _taskManagers.Reconcile([], locked: false); }
+        finally { taskManagers.Reconcile([], locked: false); }
     }
-    private sealed class Peer(NamedPipeServerStream pipe, Process process, InteractiveSession session, Task connecting, DateTimeOffset started)
+    private sealed class Peer(ISupervisedSession connection, InteractiveSession session, DateTimeOffset started)
     {
-        public NamedPipeServerStream Pipe { get; } = pipe;
-        public Process Process { get; } = process;
+        public ISupervisedSession Connection { get; } = connection;
         public InteractiveSession Session { get; } = session;
-        public Task Connecting { get; } = connecting;
         public DateTimeOffset Started { get; } = started;
         public bool Verified { get; set; }
         public long? Version { get; set; }
         public IReadOnlyList<Guid> Acknowledged { get; set; } = [];
         public Task? Exchange { get; set; }
     }
-    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetNamedPipeClientProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint pid);
 }

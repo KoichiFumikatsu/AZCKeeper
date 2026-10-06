@@ -7,6 +7,7 @@ using Keeper.Session.Modules.Presence;
 using Keeper.Session.Modules.UI;
 using Keeper.Session.Modules.Windows;
 using Keeper.Shared.Contracts;
+using Keeper.Shared.Diagnostics;
 
 namespace Keeper.Session;
 
@@ -29,7 +30,9 @@ internal static class Program
         using var dispatcher = new Control();
         _ = dispatcher.Handle;
         using var stopping = new CancellationTokenSource();
-        using var screen = new LockScreen(dispatcher);
+        var sessionLog = new RollingFileLog(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AZCKeeper", "v4", "logs"), "session");
+        using var screen = new LockScreen(dispatcher, message => sessionLog.Write("ERROR", "LockScreen", message));
         Application.ApplicationExit += (_, _) => stopping.Cancel();
         var task = Task.Run(async () =>
         {

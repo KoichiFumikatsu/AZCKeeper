@@ -41,19 +41,65 @@ public sealed class ScreenLockTests
     [InlineData("hook")]
     [InlineData("window")]
     [InlineData("pin")]
-    public void ExceptionDuringLockAlwaysRemovesHookAndClosesPartialWindows(string stage)
+    public void LockFailureKeepsVisibleWindowsAndRetriesWithoutLeavingSession(string stage)
     {
         var calls = new List<string>();
+        var errors = new List<string>();
         var keyboard = new FakeKeyboard(calls);
         var windows = new FakeWindows(calls);
-        using var screen = new ScreenLockController(keyboard, windows);
+        using var screen = new ScreenLockController(keyboard, windows, errors.Add);
         if (stage == "pin") screen.SetState(true, false);
         keyboard.FailInstall = stage == "hook";
         windows.FailShow = stage != "hook";
-        Assert.Throws<IOException>(() => screen.SetState(true, true));
-        Assert.False(screen.Locked);
+        screen.SetState(true, true);
+        screen.SetState(true, true);
+        Assert.True(screen.Locked);
+        Assert.True(windows.Visible);
+        Assert.NotNull(screen.ErrorCode);
+        Assert.Single(errors);
+        Assert.DoesNotContain("windows.close", calls);
+        Assert.Equal(stage != "hook", keyboard.Installed);
+        if (stage == "hook") Assert.Equal(2, calls.Count(c => c == "hook.remove"));
+        keyboard.FailInstall = windows.FailShow = false;
+        screen.SetState(true, true);
+        Assert.True(keyboard.Installed);
+        Assert.True(windows.Visible);
+        Assert.Null(screen.ErrorCode);
+        Assert.DoesNotContain("windows.close", calls);
+        screen.SetState(false, false);
         Assert.False(keyboard.Installed);
-        Assert.Equal(new[] { "hook.remove", "windows.close" }, calls.TakeLast(2));
+        Assert.False(windows.Visible);
+    }
+
+    [Fact]
+    public void UnlockCleansUpEvenWhenHookAndWindowsAreStillDegraded()
+    {
+        var calls = new List<string>();
+        var keyboard = new FakeKeyboard(calls) { FailInstall = true };
+        var windows = new FakeWindows(calls) { FailShow = true };
+        using var screen = new ScreenLockController(keyboard, windows);
+        screen.SetState(true, false);
+        Assert.True(windows.Visible);
+        screen.SetState(false, false);
+        Assert.False(windows.Visible);
+        Assert.False(keyboard.Installed);
+        Assert.False(screen.Locked);
+    }
+
+    [Fact]
+    public void WatchdogFailureIsLoggedWithoutClosingWindowsAndClearsAfterRecovery()
+    {
+        var calls = new List<string>();
+        var errors = new List<string>();
+        var windows = new FakeWindows(calls);
+        using var screen = new ScreenLockController(new FakeKeyboard(calls), windows, errors.Add);
+        screen.SetState(true, false);
+        Assert.False(screen.TryProtect("maintenance", () => throw new IOException("display_changed")));
+        Assert.True(windows.Visible);
+        Assert.True(screen.Locked);
+        Assert.Single(errors);
+        Assert.True(screen.TryProtect("maintenance", () => { }));
+        Assert.Null(screen.ErrorCode);
     }
 
     [Fact]
@@ -97,6 +143,30 @@ public sealed class ScreenLockTests
         Assert.True(filter.Suppress(0x09, false, false, false));
         Assert.True(filter.Suppress(0x09, true, false, false));
         Assert.False(filter.Suppress(0x09, false, false, false));
+    }
+
+    [Theory]
+    [InlineData(0x5B, false, false)]
+    [InlineData(0x5C, false, false)]
+    [InlineData(0x09, true, false)]
+    [InlineData(0x73, true, false)]
+    [InlineData(0x1B, true, false)]
+    [InlineData(0x1B, false, true)]
+    public void ReleaseWithoutSuppressedDownPassesEvenWhenShortcutModifiersAreHeld(int key, bool alt, bool control)
+    {
+        var filter = new LockKeyFilter();
+        Assert.False(filter.Suppress(key, true, alt, control));
+        Assert.True(filter.Suppress(key, false, alt, control));
+        Assert.True(filter.Suppress(key, true, alt, control));
+        Assert.False(filter.Suppress(key, true, alt, control));
+    }
+
+    [Fact]
+    public void AllowedDownIsNotPairedWithSuppressedReleaseWhenModifierChanges()
+    {
+        var filter = new LockKeyFilter();
+        Assert.False(filter.Suppress(0x09, false, false, false));
+        Assert.False(filter.Suppress(0x09, true, true, false));
     }
 
     public static IEnumerable<object?[]> RegistryValues()
@@ -251,21 +321,24 @@ public sealed class ScreenLockTests
 
     private sealed class FakeWindows(List<string> calls) : ILockWindows
     {
+        public bool Visible { get; private set; }
         public bool FailShow { get; set; }
         public bool FailClose { get; set; }
         public void Show(bool pinAllowed)
         {
             calls.Add("windows.show:" + pinAllowed);
+            Visible = true;
             if (FailShow) throw new IOException("window_failed");
         }
         public void Close()
         {
             calls.Add("windows.close");
+            Visible = false;
             if (FailClose) throw new IOException("close_failed");
         }
     }
 
-    private sealed class FakeRegistry : ILockRegistry
+    internal sealed class FakeRegistry : ILockRegistry
     {
         private readonly Dictionary<(string Path, string Name), LockRegistryValue> _values = [];
         public List<string> Mutations { get; } = [];

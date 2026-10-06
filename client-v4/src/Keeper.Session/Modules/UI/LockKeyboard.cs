@@ -10,13 +10,15 @@ public sealed class LockKeyFilter
     public bool Suppress(int key, bool keyUp, bool alt, bool control)
     {
         if ((uint)key >= _suppressed.Length) return false;
-        var blocked = key is 0x5B or 0x5C || (alt && key is 0x09 or 0x73 or 0x1B) || (control && key == 0x1B);
-        blocked |= _suppressed[key];
         if (keyUp)
         {
+            var suppressed = _suppressed[key];
             _suppressed[key] = false;
+            return suppressed;
         }
-        else _suppressed[key] = blocked;
+        var blocked = _suppressed[key] || key is 0x5B or 0x5C ||
+            (alt && key is 0x09 or 0x73 or 0x1B) || (control && key == 0x1B);
+        _suppressed[key] = blocked;
         return blocked;
     }
 }
