@@ -6,6 +6,7 @@ import { operations, operationPaths } from './operations.js';
 import { intake, intakeProbe } from './intake.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings, withReauth, canceled } from './hardening-settings.js';
 import './menu.js';
+import { onboardingBanner, returnBand } from './onboarding.js';
 
 const page = document.body.dataset.page;
 const surface = document.body.dataset.surface;
@@ -711,6 +712,8 @@ async function load() {
     else if (operationPaths[page]) await operations({ page, tenant, today, shiftDay });
     else if (surface === 'portal' && ['home', 'users', 'reports', 'policies'].includes(page)) {
       await coordinator({ page, tenant, timezone, get, allPages, today, shiftDay, query, permissions });
+      // Puesta en marcha: aviso en Inicio para administradores mientras no haya primer equipo operativo (no bloquea).
+      if (page === 'home') onboardingBanner({ tenant, content: $('content') });
     }
     else if (page === 'home') await dashboard();
     else if (page === 'device') await device();
@@ -737,6 +740,7 @@ async function start() {
     try { await refreshCsrf(); await api('POST', '/auth/logout'); goToLogin(); }
     catch (error) { showError($('page-error'), error); $('logout').disabled = false; }
   });
+  returnBand(); // llegó desde un paso de Puesta en marcha (?pm=N): «Volver al progreso»
   $('refresh').addEventListener('click', load);
   $('tenant-select').addEventListener('change', () => { sessionStorage.setItem('keeper.presentation.tenant', $('tenant-select').value); load(); });
   $('date-form')?.addEventListener('submit', event => { event.preventDefault(); load(); });
