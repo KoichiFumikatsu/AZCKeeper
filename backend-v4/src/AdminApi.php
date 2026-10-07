@@ -623,6 +623,15 @@ final class AdminApi
                 if (!is_string($name) || !preg_match('/^(?![0-9]+$)[A-Za-z0-9-]{1,15}$/',$name)) { throw new ApiError(422,'validation_failed'); }
                 if (version_compare($d['agent_version'],'4.0.8','<')) { throw new ApiError(409,'agent_too_old'); }
                 $parameters=Util::json(['computer_name'=>$name,'restart_now'=>(bool)($b->parameters->restart_now??false)]);
+            } elseif (($b->type==='restart' || $b->type==='shutdown') && isset($b->parameters)) {
+                // Aviso previo (1, 5 o 10 min). Solo notice_seconds; 0 es inmediato y se guarda sin parametros para
+                // que lo ejecute cualquier agente. Con aviso, solo agentes >= 4.0.17 (los anteriores no conocen el campo).
+                $keys=array_keys(get_object_vars($b->parameters)); $notice=$b->parameters->notice_seconds??null;
+                if ($keys!==['notice_seconds'] || !in_array($notice,[0,60,300,600],true)) { throw new ApiError(422,'validation_failed'); }
+                if ($notice>0) {
+                    if (version_compare($d['agent_version'],'4.0.17','<')) { throw new ApiError(409,'agent_too_old'); }
+                    $parameters=Util::json(['notice_seconds'=>$notice]);
+                }
             } elseif (isset($b->parameters)) { throw new ApiError(422,'validation_failed'); }
             $cid=DeviceIntake::enqueueCommand($this->db,$this->tenant,$d,$b->type,$b->reason,$parameters,$expires);
             $this->audit('device_command',$cid,['type','device_id','expires_at']); return self::response($this->commandDto($this->row('device_command',$cid)),202);

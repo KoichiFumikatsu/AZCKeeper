@@ -1,5 +1,5 @@
 {
-  "source_sha256": "c73db4886550f0b676c3fa48fa2e95d1c206e0c0c2bf8acdd02c43746f6e42ab",
+  "source_sha256": "82e093106bfb5338d0d3866bbdf83efcfb99ebea6652a264c480dcdb0efdf825",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -21728,6 +21728,16 @@
         "restart_now": {
           "type": "boolean",
           "description": "rename_computer. Si es false, el nombre se aplica en el proximo reinicio del equipo."
+        },
+        "notice_seconds": {
+          "type": "integer",
+          "enum": [
+            0,
+            60,
+            300,
+            600
+          ],
+          "description": "restart/shutdown. Aviso previo a la persona del equipo (1, 5 o 10 minutos) con cuenta regresiva; 0 o ausente es inmediato. Con aviso exige agente 4.0.17 o posterior (409 agent_too_old); el servidor solo lo entrega cuando es mayor que 0."
         }
       },
       "description": "Parametros de comandos que los necesitan. El servidor solo lo incluye cuando existen (los agentes anteriores a 4.0.8 rechazan campos desconocidos)."

@@ -220,10 +220,25 @@ function adminTests(Database $db): void
     expect(adminRequest($admin,'POST',$cmdPath,array_replace($renameBody,['type'=>'lock']),['idempotency-key'=>Util::uuid()]),422,'parameters only allowed on rename');
     $renamed=expect(adminRequest($admin,'POST',$cmdPath,$renameBody,['idempotency-key'=>Util::uuid()]),202,'rename queued');
     expect(adminRequest($admin,'POST',$cmdPath,array_diff_key(array_replace($renameBody,['type'=>'lock']),['parameters'=>1]),['idempotency-key'=>Util::uuid()]),202,'lock queued');
+    // Reiniciar/apagar con aviso: notice_seconds en {0,60,300,600}, solo en restart/shutdown; con aviso exige 4.0.17.
+    $noticeBody=fn(string $type,$params)=>['type'=>$type,'reason'=>'Aviso previo','expires_at'=>gmdate('Y-m-d\TH:i:s\Z',time()+3600)]+($params===null?[]:['parameters'=>$params]);
+    check(expect(adminRequest($admin,'POST',$cmdPath,$noticeBody('restart',['notice_seconds'=>300]),['idempotency-key'=>Util::uuid()]),409,'notice refused for agents older than 4.0.17')['code']==='agent_too_old','notice agent_too_old code');
+    expect(adminRequest($admin,'POST',$cmdPath,$noticeBody('restart',['notice_seconds'=>120]),['idempotency-key'=>Util::uuid()]),422,'notice only 0/60/300/600');
+    expect(adminRequest($admin,'POST',$cmdPath,$noticeBody('restart',['notice_seconds'=>'300']),['idempotency-key'=>Util::uuid()]),422,'notice must be an integer');
+    expect(adminRequest($admin,'POST',$cmdPath,$noticeBody('shutdown',['notice_seconds'=>60,'restart_now'=>true]),['idempotency-key'=>Util::uuid()]),422,'notice cannot carry other parameters');
+    expect(adminRequest($admin,'POST',$cmdPath,$noticeBody('restart',['computer_name'=>'ACT-0015']),['idempotency-key'=>Util::uuid()]),422,'restart rejects rename parameters');
+    expect(adminRequest($admin,'POST',$cmdPath,$noticeBody('lock',['notice_seconds'=>60]),['idempotency-key'=>Util::uuid()]),422,'notice only on restart/shutdown');
+    $immediate=expect(adminRequest($admin,'POST',$cmdPath,$noticeBody('restart',['notice_seconds'=>0]),['idempotency-key'=>Util::uuid()]),202,'immediate restart works for old agents');
+    check($db->one('SELECT parameters FROM device_command WHERE tenant_id=? AND id=?',[$tenant,Util::bin($immediate['id'])])['parameters']===null,'immediate restart stored without parameters');
+    $db->run("UPDATE devices SET agent_version='4.0.17' WHERE tenant_id=? AND id=?",[$tenant,Util::bin($releaseAgent['device_id'])]);
+    $noticed=expect(adminRequest($admin,'POST',$cmdPath,$noticeBody('shutdown',['notice_seconds'=>600]),['idempotency-key'=>Util::uuid()]),202,'shutdown with notice queued for 4.0.17');
+    check(json_decode($db->one('SELECT parameters FROM device_command WHERE tenant_id=? AND id=?',[$tenant,Util::bin($noticed['id'])])['parameters'],true)===['notice_seconds'=>600],'notice stored with the command');
     $delivered=expect(request('POST','/client/sync',['protocol_version'=>1,'sequence'=>2,'policy_version'=>null,'release_id'=>null],$releaseAgentKey,$releaseAgent['access_token'],Util::uuid()),200,'commands delivered');
     $byType=[]; foreach ($delivered['commands'] as $cmd) { $byType[$cmd['type']]=$cmd; }
     check(($byType['rename_computer']['parameters']['computer_name']??null)==='ACT-0015' && ($byType['rename_computer']['parameters']['restart_now']??null)===false,'rename delivered with its parameters');
     check(isset($byType['lock']) && !array_key_exists('parameters',$byType['lock']),'commands without parameters omit the key (older agents)');
+    check(isset($byType['restart']) && !array_key_exists('parameters',$byType['restart']),'immediate restart delivered without parameters');
+    check(($byType['shutdown']['parameters']['notice_seconds']??null)===600,'shutdown delivered with its notice');
     // Recompilacion acotada: un cambio de persona recompila SUS equipos (no el tenant entero) y, si habia
     // trabajo pendiente anterior, hace la compilacion total para no perderlo. Se usa $member (no vinculada al
     // admin de prueba: editar esa persona invalidaria la sesion del admin).
