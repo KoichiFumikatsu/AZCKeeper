@@ -3380,6 +3380,8 @@ async function plansPage() {
 // Todas las acciones auditables (operaciones del contrato y eventos automaticos), en palabras. auditAction() tiene
 // un respaldo que traduce verbo + objeto, para que una accion nueva nunca salga en ingles tecnico.
 const AUDIT_ACTIONS = {
+  setTenantUnlockPin: 'Cambió el PIN de desbloqueo local',
+  revealTenantUnlockPin: 'Consultó el PIN de desbloqueo local',
   'unlock_pin.changed': 'Cambió el PIN de desbloqueo local',
   'unlock_pin.revealed': 'Consultó el PIN de desbloqueo local',
   'device.local_unlock_reported': 'Reportó un desbloqueo local con PIN',
