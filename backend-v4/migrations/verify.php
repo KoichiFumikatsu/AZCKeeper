@@ -72,7 +72,15 @@ try {
     verify(countRows($pdo, "SELECT COUNT(*) FROM access_grants WHERE tenant_id = 0x00000000000040008000000000000002 AND user_id = 0x10000000000040008000000000000007
         AND role_id = 0x1000000000004000800000000000006b AND scope_kind = 'self' AND source = 'default'") === 1, 'demo collaborator migrated to one default access');
     verify(countRows($pdo, 'SELECT COUNT(*) FROM tenants WHERE rbac_self_management <> 0') === 0, 'RBAC gate defaults OFF');
-    verify(countRows($pdo, 'SELECT COUNT(*) FROM tier') === 3, 'three seed tiers');
+    // 0049: tiers, suscripciones y el RBAC viejo congelado por 0043 ya no existen.
+    verify(countRows($pdo, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()
+        AND table_name IN ('tier','tier_module','subscriptions','user_roles','admin_account_roles','role_area_scopes','role_site_scopes')") === 0, 'legacy tier and RBAC tables dropped');
+    verify(countRows($pdo, "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'roles' AND column_name = 'scope_kind'") === 0, 'roles.scope_kind dropped');
+    verify(countRows($pdo, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'access_migration_report'") === 1, 'access migration report kept');
+    verify(countRows($pdo, "SELECT COUNT(*) FROM permissions WHERE code IN ('tiers.ver','tiers.gestionar')") === 0
+        && countRows($pdo, "SELECT COUNT(*) FROM scopes WHERE code = 'tiers:read'") === 0
+        && countRows($pdo, "SELECT COUNT(*) FROM scopes WHERE code = 'plans:read'") === 1, 'tier permissions and scope replaced by plans:read');
+    verify(countRows($pdo, "SELECT COUNT(*) FROM assignment_intervals WHERE kind = 'subscriptions'") === 0, 'no subscription intervals left');
     verify(countRows($pdo, "SELECT COUNT(*) FROM role_permissions WHERE tenant_id <> 0x00000000000040008000000000000001 AND permission_code = 'roles.gestionar'") === 0, 'meta-permission not delegated by seed');
 
     $pdo->beginTransaction();
@@ -93,7 +101,6 @@ try {
     $pdo->exec($deviceInsert);
     rejected($pdo, "UPDATE users SET firm_id = NULL WHERE tenant_id = $tenant AND id = $user", 1048, 'mandatory firm');
     rejected($pdo, "UPDATE users SET firm_id = " . seedId(2) . " WHERE tenant_id = $tenant AND id = $user", 1452, 'site cannot masquerade as firm');
-    rejected($pdo, "INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES ($other,$user," . seedId(107) . ')', 1452, 'cross-tenant role binding');
     rejected($pdo, "INSERT INTO access_grants (tenant_id,id,user_id,role_id) VALUES ($other," . fixtureId(90) . ",$user," . seedId(107) . ')', 1452, 'cross-tenant access grant');
     rejected($pdo, "INSERT INTO access_grants (tenant_id,id,role_id) VALUES ($tenant," . fixtureId(91) . ',' . seedId(107) . ')', 3819, 'access grant needs exactly one holder');
     rejected($pdo, "INSERT INTO role_permissions VALUES ($tenant," . seedId(104) . ",'empresas.rbac_habilitar')", 1644, 'tenant cannot receive platform permission');
@@ -101,13 +108,6 @@ try {
         VALUES ($tenant,$deviceAssignment,$device,$user,'2026-01-01','test')");
     rejected($pdo, "INSERT INTO device_assignments (tenant_id,id,device_id,user_id,starts_at,ends_at,reason)
         VALUES ($tenant," . fixtureId(6) . ",$device,$user,'2026-02-01','2026-03-01','overlap')", 1644, 'device interval overlap');
-    rejected($pdo, "INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at,ends_at)
-        VALUES ($tenant," . fixtureId(7) . ",$user," . seedId(202) . ",'2026-02-01','2026-03-01')", 1644, 'member subscription overlap');
-    $pdo->exec("UPDATE subscriptions SET ends_at = '2026-02-01' WHERE tenant_id = $tenant AND id = " . seedId(204));
-    $pdo->exec("INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at,ends_at)
-        VALUES ($tenant," . fixtureId(7) . ",$user," . seedId(202) . ",'2026-02-01','2026-03-01')");
-    verify(true, 'adjacent subscription intervals accepted');
-    rejected($pdo, "UPDATE subscriptions SET starts_at = '2026-01-31' WHERE tenant_id = $tenant AND id = " . fixtureId(7), 1644, 'overlap rejected on update');
 
     $episode = "INSERT INTO episodes (tenant_id,device_id,event_id,user_id,device_assignment_id,user_assignment_id,event_date,
         started_at,ended_at,process_name,active_seconds,idle_seconds,body_hash)

@@ -11,7 +11,7 @@ function companyGroupTests(Database $db): void
     $platform = sharedPlatform($db); $platform['tenant'] = $ta;
     $role = function (string $tenant, string $permission) use ($db): string {
         $id = Util::bin(Util::uuid());
-        $db->run("INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,'Directivo','tenant')", [$tenant, $id]);
+        $db->run("INSERT INTO roles (tenant_id,id,name) VALUES (?,?,'Directivo')", [$tenant, $id]);
         $db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)', [$tenant, $id, $permission]);
         return Util::id($id);
     };

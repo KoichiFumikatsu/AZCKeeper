@@ -204,7 +204,7 @@ final class AdminApi
             // Roles base del cliente nuevo (§4): las plantillas ofrecidas, solo con permisos de sus funciones (o del nucleo).
             foreach ($this->db->run('SELECT * FROM role_templates WHERE platform_only=FALSE AND offered=TRUE ORDER BY seed_key')->fetchAll() as $template) {
                 $role=Util::bin(Util::uuid());
-                $this->db->run("INSERT INTO roles (tenant_id,id,name,seed_key,seed_version,scope_kind) VALUES (?,?,?,?,?,'self')",[$id,$role,$template['name'],$template['seed_key'],$template['version']]);
+                $this->db->run("INSERT INTO roles (tenant_id,id,name,seed_key,seed_version) VALUES (?,?,?,?,?)",[$id,$role,$template['name'],$template['seed_key'],$template['version']]);
                 foreach (array_column($this->db->run('SELECT permission_code FROM role_template_permissions WHERE seed_key=?',[$template['seed_key']])->fetchAll(),'permission_code') as $code) {
                     $f=Features::forOperation('',$code);
                     if ($f===null || Features::has($this->db,$id,$f)) { $this->db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)',[$id,$role,$code]); }
@@ -548,8 +548,7 @@ final class AdminApi
             $this->db->run('DELETE FROM role_permissions WHERE tenant_id=? AND role_id=?',[$this->tenant,$id]);
             $this->update('roles',$id,['name'=>$b->name,'active'=>(int)$b->active,'assignable_by_rule'=>(int)($b->assignable_by_rule??$old['assignable_by_rule'])]);
         } else {
-            // scope_kind: columna vieja sin uso (el alcance va en la persona, 0043).
-            $id=Util::bin(Util::uuid()); $this->db->run("INSERT INTO roles (tenant_id,id,name,scope_kind,active,assignable_by_rule) VALUES (?,?,?,'self',?,?)",[$this->tenant,$id,$b->name,(int)$b->active,(int)($b->assignable_by_rule??false)]);
+            $id=Util::bin(Util::uuid()); $this->db->run("INSERT INTO roles (tenant_id,id,name,active,assignable_by_rule) VALUES (?,?,?,?,?)",[$this->tenant,$id,$b->name,(int)$b->active,(int)($b->assignable_by_rule??false)]);
         }
         foreach ($b->permissions as $permission) { $this->db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)',[$this->tenant,$id,$permission]); }
         foreach ($this->db->run('SELECT user_id FROM access_grants WHERE tenant_id=? AND role_id=? AND user_id IS NOT NULL',[$this->tenant,$id])->fetchAll() as $user) { $this->invalidateUser($user['user_id']); }

@@ -56,7 +56,7 @@ function batchUsersTests(Database $db): void
     foreach (['roles.ver', 'roles.gestionar'] as $p) { $db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)', [$t, $juan['role'], $p]); }
     $giver = $juan;
     $viewer = Util::bin(Util::uuid());
-    $db->run("INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,'Solo ver personas lote','self')", [$t, $viewer]);
+    $db->run("INSERT INTO roles (tenant_id,id,name) VALUES (?,?,'Solo ver personas lote')", [$t, $viewer]);
     $db->run("INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,'usuarios.ver')", [$t, $viewer]);
     $grants = $audits('setUserAccess');
     $agentes = accessScopeBody('filters', ['area_ids' => [Util::id($o['agentes'])]]);

@@ -32,8 +32,7 @@ function adminFixture(Database $db,array $u,array $permissions,bool $platform=fa
     $tenant=$platform?Util::bin(AdminAuth::PLATFORM):$u['tenant_id']; $admin=Util::bin(Util::uuid()); $role=Util::bin(Util::uuid()); $password=Util::b64(random_bytes(20)); $email=Util::uuid().'@example.test';
     if (!$platform) {
         $db->run('UPDATE users SET panel_login_enabled=TRUE WHERE tenant_id=? AND id=?',[$tenant,$u['id']]);
-        // scope_kind: columna vieja sin uso: el alcance va en la persona.
-        $db->run("INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,?,'self')",[$tenant,$role,Util::uuid()]);
+        $db->run("INSERT INTO roles (tenant_id,id,name) VALUES (?,?,?)",[$tenant,$role,Util::uuid()]);
         foreach ($permissions as $p) { $db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)',[$tenant,$role,$p]); }
         $kind=['tenant'=>'all','site'=>'filters','area'=>'filters'][$scope]??$scope;
         Keeper\AccessGrants::setForUser($db,$tenant,$u['id'],$role,new Keeper\AccessScope($kind,[],[],$scope==='site'?$scopeIds:[],$scope==='area'?$scopeIds:[]),'manual');

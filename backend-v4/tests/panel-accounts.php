@@ -21,7 +21,7 @@ function panelAccountsTests(Database $db): void
     $platform = adminFixture($db, [], [], true); $platform['tenant'] = $tenant;
     // Rol de empresa con un solo permiso (ver equipos) para comprobar que la cuenta ve solo eso.
     $role = Util::bin(Util::uuid());
-    $db->run("INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,'Solo equipos','tenant')", [$tenant, $role]);
+    $db->run("INSERT INTO roles (tenant_id,id,name) VALUES (?,?,'Solo equipos')", [$tenant, $role]);
     $db->run("INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,'equipos.ver')", [$tenant, $role]);
     $email = 'persona.' . substr(Util::uuid(), 0, 8) . '@example.test';
     $body = ['kind' => 'company', 'email' => $email, 'display_name' => null, 'user_id' => Util::id($u['id']), 'access' => ['role_id' => Util::id($role), 'scope' => accessScopeBody('all')]];
@@ -103,7 +103,7 @@ function panelAccountsTests(Database $db): void
     $exceeds = fn (array $r) => $r[0] === 403 && ($r[1]['detail'] ?? null) === 'delegation_exceeds_own_access' && !isset($r[1]['temporary_password']);
     $mkRole = function (string $name, array $permissions) use ($db, $tenant): string {
         $id = Util::bin(Util::uuid());
-        $db->run("INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,?,'self')", [$tenant, $id, $name]);
+        $db->run("INSERT INTO roles (tenant_id,id,name) VALUES (?,?,?)", [$tenant, $id, $name]);
         foreach ($permissions as $p) { $db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)', [$tenant, $id, $p]); }
         return $id;
     };

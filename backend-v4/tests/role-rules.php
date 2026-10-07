@@ -31,7 +31,7 @@ function roleRulesTests(Database $db): void
     check($byRule($boss) && $byRule($p1['id']) && !$byRule($p2['id']), 'rule assigned the role to managers only');
 
     // Rol por defecto del cliente: al dejar de cumplirse la regla, la persona vuelve a este rol.
-    $db->run("INSERT INTO roles (tenant_id,id,name,seed_key,scope_kind) VALUES (?,?,'Colaborador','colaborador','self')", [$tenant, Util::bin(Util::uuid())]);
+    $db->run("INSERT INTO roles (tenant_id,id,name,seed_key) VALUES (?,?,'Colaborador','colaborador')", [$tenant, Util::bin(Util::uuid())]);
 
     // La regla propone el rol, no el alcance (§4): el jefe queda con «solo lo propio» hasta que alguien le da «su equipo».
     $scopeOf = fn (string $user) => $db->one('SELECT scope_kind FROM access_grants WHERE tenant_id=? AND user_id=?', [$tenant, Util::bin($user)])['scope_kind'];

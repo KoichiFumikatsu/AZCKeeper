@@ -31,7 +31,7 @@ final class TenantPurge
         $this->db->run('UPDATE principals SET detached=TRUE,admin_id=NULL,admin_tenant_id=NULL,device_id=NULL,integration_id=NULL WHERE tenant_id=? OR admin_tenant_id=?', [$tenant, $tenant]);
         $this->db->run('DELETE FROM access_grants WHERE admin_tenant_id=? OR tenant_id=?', [$tenant, $tenant]);
         // Filas de otras empresas que apuntan a las cuentas de esta (admin_tenant_id con FK a admin_accounts) frenarian el borrado.
-        // Incluye las tablas viejas congeladas por 0043 (se borran en la fase 4) sin nombrarlas.
+        // Se descubren en el esquema: no hay que nombrarlas aqui cuando se agregan o se borran (0049).
         foreach (array_column($this->db->run("SELECT DISTINCT table_name t FROM information_schema.key_column_usage
             WHERE table_schema=DATABASE() AND referenced_table_name='admin_accounts' AND column_name='admin_tenant_id'")->fetchAll(), 't') as $table) {
             if (!in_array($table, self::KEEP, true)) { $this->db->run("DELETE FROM `$table` WHERE admin_tenant_id=?", [$tenant]); }

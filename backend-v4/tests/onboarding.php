@@ -111,7 +111,7 @@ function onboardingTests(Database $db): void
     // B2 resumen: acceso preparado por la plataforma, sin cuentas ni secretos; no amplía los permisos existentes.
     expect(adminRequest($platform, 'POST', '/auth/reauth', ['password' => $platform['password']]), 200, 'reauth for account');
     $role = Util::bin(Util::uuid());
-    $db->run("INSERT INTO roles (tenant_id,id,name,scope_kind) VALUES (?,?,'Administración onboarding','self')", [$tenant, $role]);
+    $db->run("INSERT INTO roles (tenant_id,id,name) VALUES (?,?,'Administración onboarding')", [$tenant, $role]);
     $db->run("INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,'organizacion.editar')", [$tenant, $role]);
     expect(adminRequest($platform, 'POST', '/panel-accounts', ['kind' => 'company', 'email' => 'onboarding.' . substr(Util::uuid(), 0, 8) . '@example.test', 'display_name' => null, 'user_id' => Util::id($member['id']),
         'access' => ['role_id' => Util::id($role), 'scope' => accessScopeBody('all')]]), 201, 'platform prepares the client admin account');
