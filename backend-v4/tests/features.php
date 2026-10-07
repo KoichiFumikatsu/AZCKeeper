@@ -79,7 +79,7 @@ function featureExternalAndCommandTests(Database $db): void
     $key = externalCredential($db, $u, 'api_key', Keeper\ExternalAuth::SCOPES);
     $range = '?from=2026-09-10&to=2026-09-12';
     $activity = '/ext/v1/members/' . $uid . '/activity' . $range;
-    check(externalRequest('/ext/v1/tiers', $key['headers'])[0] === 200, 'external API works while contracted');
+    check(externalRequest('/ext/v1/plans', $key['headers'])[0] === 200, 'external API works while contracted');
     check(externalRequest($activity . '&include_titles=true', $key['headers'])[0] === 200, 'titles served while contracted');
     check(externalRequest('/ext/v1/members/' . $uid . '/check-ins' . $range . '&include_location=true', $key['headers'])[0] === 200, 'location served while contracted');
     $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code IN ('sitios','ubicacion','borrado')", [$tenant]);
@@ -100,7 +100,7 @@ function featureExternalAndCommandTests(Database $db): void
     check($lock[0] === 202, 'lock unaffected by borrado being off');
     // La funcion 'api' apagada corta la API externa completa.
     $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='api'", [$tenant]);
-    $off = externalRequest('/ext/v1/tiers', $key['headers']);
+    $off = externalRequest('/ext/v1/plans', $key['headers']);
     check($off[0] === 403 && $off[1]['detail'] === 'feature_not_contracted:api', 'external API needs the api function');
     echo 'PASS feature external and commands (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

@@ -1,5 +1,5 @@
 {
-  "source_sha256": "822a9d233e2eab260ee383fc8e6572d3e93dea3e2c126f0f063a94b87c030638",
+  "source_sha256": "1d75d61b1156d4acb96aa79093e777393a04311df74f5fb05b330a6c495524f0",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -4381,194 +4381,6 @@
         "x-permission": "reportes.ver"
       }
     },
-    "/tiers": {
-      "get": {
-        "tags": [
-          "admin"
-        ],
-        "operationId": "listTiers",
-        "summary": "Leer tiers de empresa",
-        "description": "Leer tiers de empresa",
-        "security": [
-          {
-            "adminSession": []
-          }
-        ],
-        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
-        "x-resources": [
-          "Tier"
-        ],
-        "responses": {
-          "200": {
-            "description": "Leer tiers de empresa",
-            "headers": {
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "RateLimit-Limit": {
-                "$ref": "#/components/headers/RateLimit-Limit"
-              },
-              "RateLimit-Remaining": {
-                "$ref": "#/components/headers/RateLimit-Remaining"
-              },
-              "RateLimit-Reset": {
-                "$ref": "#/components/headers/RateLimit-Reset"
-              },
-              "X-RateLimit-Scope": {
-                "$ref": "#/components/headers/X-RateLimit-Scope"
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TierPage"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "422": {
-            "$ref": "#/components/responses/Unprocessable"
-          },
-          "429": {
-            "$ref": "#/components/responses/RateLimited"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          },
-          "503": {
-            "$ref": "#/components/responses/Unavailable"
-          }
-        },
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Tenant"
-          },
-          {
-            "$ref": "#/components/parameters/Cursor"
-          },
-          {
-            "$ref": "#/components/parameters/Limit"
-          }
-        ],
-        "x-permission": "tiers.ver"
-      },
-      "post": {
-        "tags": [
-          "admin"
-        ],
-        "operationId": "createTier",
-        "summary": "Crear tier parametrizable",
-        "description": "Crear tier parametrizable Autorización de acción/objeto obligatoria además de CSRF; registrar auditoría.",
-        "security": [
-          {
-            "adminSession": [],
-            "csrfToken": []
-          }
-        ],
-        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
-        "x-resources": [
-          "Tier"
-        ],
-        "responses": {
-          "201": {
-            "description": "Crear tier parametrizable",
-            "headers": {
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "RateLimit-Limit": {
-                "$ref": "#/components/headers/RateLimit-Limit"
-              },
-              "RateLimit-Remaining": {
-                "$ref": "#/components/headers/RateLimit-Remaining"
-              },
-              "RateLimit-Reset": {
-                "$ref": "#/components/headers/RateLimit-Reset"
-              },
-              "X-RateLimit-Scope": {
-                "$ref": "#/components/headers/X-RateLimit-Scope"
-              },
-              "ETag": {
-                "schema": {
-                  "type": "string",
-                  "maxLength": 160
-                },
-                "description": "Versión de recurso."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Tier"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "413": {
-            "$ref": "#/components/responses/PayloadTooLarge"
-          },
-          "415": {
-            "$ref": "#/components/responses/UnsupportedMediaType"
-          },
-          "422": {
-            "$ref": "#/components/responses/Unprocessable"
-          },
-          "429": {
-            "$ref": "#/components/responses/RateLimited"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          },
-          "503": {
-            "$ref": "#/components/responses/Unavailable"
-          }
-        },
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Tenant"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TierInput"
-              }
-            }
-          }
-        },
-        "x-permission": "tiers.gestionar",
-        "x-max-body-bytes": 65536
-      }
-    },
     "/releases": {
       "get": {
         "tags": [
@@ -5082,8 +4894,8 @@
           "external"
         ],
         "operationId": "externalTeam",
-        "summary": "Lista y ranking con tier/rol/métricas",
-        "description": "Lista y ranking con tier/rol/métricas",
+        "summary": "Lista y ranking con plan/rol/métricas",
+        "description": "Lista y ranking con plan/rol/métricas",
         "security": [
           {
             "apiKey": []
@@ -5100,7 +4912,7 @@
         "x-tenant-boundary": "Tenant derivado solo de credencial; todos los objetos/filtros/cursors autorizados.",
         "x-resources": [
           "User",
-          "Tier",
+          "PersonPlan",
           "ProductivityReport"
         ],
         "parameters": [
@@ -5134,7 +4946,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Lista y ranking con tier/rol/métricas",
+            "description": "Lista y ranking con plan/rol/métricas",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -5193,7 +5005,7 @@
         }
       }
     },
-    "/ext/v1/tiers": {
+    "/ext/v1/plans": {
       "servers": [
         {
           "url": "/",
@@ -5204,37 +5016,29 @@
         "tags": [
           "external"
         ],
-        "operationId": "externalTiers",
-        "summary": "Catálogo de tiers/badges",
-        "description": "Catálogo de tiers/badges",
+        "operationId": "externalPlans",
+        "summary": "Planes de persona disponibles en la empresa",
+        "description": "Planes activos que la empresa puede asignar, cada uno con las funciones de persona que da en ella (plan ∩ funciones del cliente), el plan por defecto efectivo y las funciones de persona compradas. Sustituye a /ext/v1/tiers (retirada 2026-10-07).",
         "security": [
           {
             "apiKey": []
           },
           {
             "oauth2": [
-              "tiers:read"
+              "plans:read"
             ]
           }
         ],
         "x-required-scopes": [
-          "tiers:read"
+          "plans:read"
         ],
         "x-tenant-boundary": "Tenant derivado solo de credencial; todos los objetos/filtros/cursors autorizados.",
         "x-resources": [
-          "Tier"
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Cursor"
-          },
-          {
-            "$ref": "#/components/parameters/Limit"
-          }
+          "PersonPlan"
         ],
         "responses": {
           "200": {
-            "description": "Catálogo de tiers/badges",
+            "description": "Planes de persona disponibles en la empresa",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -5261,7 +5065,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TierPage"
+                  "$ref": "#/components/schemas/ExternalPlans"
                 }
               }
             }
@@ -10482,447 +10286,6 @@
         "x-max-body-bytes": 65536
       }
     },
-    "/tiers/{id}": {
-      "get": {
-        "tags": [
-          "admin"
-        ],
-        "operationId": "getTier",
-        "summary": "Leer tier",
-        "description": "Leer tier",
-        "security": [
-          {
-            "adminSession": []
-          }
-        ],
-        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
-        "x-resources": [
-          "Tier"
-        ],
-        "responses": {
-          "200": {
-            "description": "Leer tier",
-            "headers": {
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "RateLimit-Limit": {
-                "$ref": "#/components/headers/RateLimit-Limit"
-              },
-              "RateLimit-Remaining": {
-                "$ref": "#/components/headers/RateLimit-Remaining"
-              },
-              "RateLimit-Reset": {
-                "$ref": "#/components/headers/RateLimit-Reset"
-              },
-              "X-RateLimit-Scope": {
-                "$ref": "#/components/headers/X-RateLimit-Scope"
-              },
-              "ETag": {
-                "schema": {
-                  "type": "string",
-                  "maxLength": 160
-                },
-                "description": "Versión de recurso."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Tier"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "422": {
-            "$ref": "#/components/responses/Unprocessable"
-          },
-          "429": {
-            "$ref": "#/components/responses/RateLimited"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          },
-          "503": {
-            "$ref": "#/components/responses/Unavailable"
-          }
-        },
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Id"
-          },
-          {
-            "$ref": "#/components/parameters/Tenant"
-          }
-        ],
-        "x-permission": "tiers.ver"
-      },
-      "patch": {
-        "tags": [
-          "admin"
-        ],
-        "operationId": "patchTier",
-        "summary": "Editar/desactivar tier",
-        "description": "Editar/desactivar tier Autorización de acción/objeto obligatoria además de CSRF; registrar auditoría.",
-        "security": [
-          {
-            "adminSession": [],
-            "csrfToken": []
-          }
-        ],
-        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
-        "x-resources": [
-          "Tier",
-          "AuditEntry"
-        ],
-        "responses": {
-          "200": {
-            "description": "Editar/desactivar tier",
-            "headers": {
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "RateLimit-Limit": {
-                "$ref": "#/components/headers/RateLimit-Limit"
-              },
-              "RateLimit-Remaining": {
-                "$ref": "#/components/headers/RateLimit-Remaining"
-              },
-              "RateLimit-Reset": {
-                "$ref": "#/components/headers/RateLimit-Reset"
-              },
-              "X-RateLimit-Scope": {
-                "$ref": "#/components/headers/X-RateLimit-Scope"
-              },
-              "ETag": {
-                "schema": {
-                  "type": "string",
-                  "maxLength": 160
-                },
-                "description": "Versión de recurso."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Tier"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "412": {
-            "$ref": "#/components/responses/PreconditionFailed"
-          },
-          "413": {
-            "$ref": "#/components/responses/PayloadTooLarge"
-          },
-          "415": {
-            "$ref": "#/components/responses/UnsupportedMediaType"
-          },
-          "422": {
-            "$ref": "#/components/responses/Unprocessable"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          },
-          "429": {
-            "$ref": "#/components/responses/RateLimited"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          },
-          "503": {
-            "$ref": "#/components/responses/Unavailable"
-          }
-        },
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Id"
-          },
-          {
-            "$ref": "#/components/parameters/Tenant"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TierInput"
-              }
-            }
-          }
-        },
-        "x-permission": "tiers.gestionar",
-        "x-max-body-bytes": 65536
-      }
-    },
-    "/users/{id}/subscription": {
-      "get": {
-        "tags": [
-          "admin"
-        ],
-        "operationId": "getSubscription",
-        "summary": "Leer suscripción de miembro",
-        "description": "Leer suscripción de miembro",
-        "security": [
-          {
-            "adminSession": []
-          }
-        ],
-        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
-        "x-resources": [
-          "Subscription"
-        ],
-        "responses": {
-          "200": {
-            "description": "Leer suscripción de miembro",
-            "headers": {
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "RateLimit-Limit": {
-                "$ref": "#/components/headers/RateLimit-Limit"
-              },
-              "RateLimit-Remaining": {
-                "$ref": "#/components/headers/RateLimit-Remaining"
-              },
-              "RateLimit-Reset": {
-                "$ref": "#/components/headers/RateLimit-Reset"
-              },
-              "X-RateLimit-Scope": {
-                "$ref": "#/components/headers/X-RateLimit-Scope"
-              },
-              "ETag": {
-                "schema": {
-                  "type": "string",
-                  "maxLength": 160
-                },
-                "description": "Versión de recurso."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Subscription"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "description": "Sin suscripción; ETag del estado vacío para primera asignación.",
-            "headers": {
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "RateLimit-Limit": {
-                "$ref": "#/components/headers/RateLimit-Limit"
-              },
-              "RateLimit-Remaining": {
-                "$ref": "#/components/headers/RateLimit-Remaining"
-              },
-              "RateLimit-Reset": {
-                "$ref": "#/components/headers/RateLimit-Reset"
-              },
-              "X-RateLimit-Scope": {
-                "$ref": "#/components/headers/X-RateLimit-Scope"
-              },
-              "ETag": {
-                "schema": {
-                  "type": "string",
-                  "maxLength": 160
-                },
-                "description": "Versión de estado vacío de membresía."
-              }
-            },
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "422": {
-            "$ref": "#/components/responses/Unprocessable"
-          },
-          "429": {
-            "$ref": "#/components/responses/RateLimited"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          },
-          "503": {
-            "$ref": "#/components/responses/Unavailable"
-          }
-        },
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Id"
-          },
-          {
-            "$ref": "#/components/parameters/Tenant"
-          }
-        ],
-        "x-permission": "tiers.ver"
-      },
-      "put": {
-        "tags": [
-          "admin"
-        ],
-        "operationId": "setSubscription",
-        "summary": "Asignar/programar tier por miembro",
-        "description": "If-Match de suscripción o estado vacío obtenido por GET. Sin intervalos solapados ni cobros automáticos. Autorización de acción/objeto obligatoria además de CSRF; registrar auditoría.",
-        "security": [
-          {
-            "adminSession": [],
-            "csrfToken": []
-          }
-        ],
-        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
-        "x-resources": [
-          "Subscription",
-          "AuditEntry"
-        ],
-        "responses": {
-          "200": {
-            "description": "Asignar/programar tier por miembro",
-            "headers": {
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "RateLimit-Limit": {
-                "$ref": "#/components/headers/RateLimit-Limit"
-              },
-              "RateLimit-Remaining": {
-                "$ref": "#/components/headers/RateLimit-Remaining"
-              },
-              "RateLimit-Reset": {
-                "$ref": "#/components/headers/RateLimit-Reset"
-              },
-              "X-RateLimit-Scope": {
-                "$ref": "#/components/headers/X-RateLimit-Scope"
-              },
-              "ETag": {
-                "schema": {
-                  "type": "string",
-                  "maxLength": 160
-                },
-                "description": "Versión de recurso."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Subscription"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "412": {
-            "$ref": "#/components/responses/PreconditionFailed"
-          },
-          "413": {
-            "$ref": "#/components/responses/PayloadTooLarge"
-          },
-          "415": {
-            "$ref": "#/components/responses/UnsupportedMediaType"
-          },
-          "422": {
-            "$ref": "#/components/responses/Unprocessable"
-          },
-          "428": {
-            "$ref": "#/components/responses/PreconditionRequired"
-          },
-          "429": {
-            "$ref": "#/components/responses/RateLimited"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          },
-          "503": {
-            "$ref": "#/components/responses/Unavailable"
-          }
-        },
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Id"
-          },
-          {
-            "$ref": "#/components/parameters/Tenant"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SubscriptionInput"
-              }
-            }
-          }
-        },
-        "x-permission": "tiers.gestionar",
-        "x-max-body-bytes": 65536
-      }
-    },
     "/users/{id}/plan": {
       "put": {
         "tags": [
@@ -11489,7 +10852,7 @@
         }
       }
     },
-    "/ext/v1/members/{id}/subscription": {
+    "/ext/v1/members/{id}/plan": {
       "servers": [
         {
           "url": "/",
@@ -11500,9 +10863,9 @@
         "tags": [
           "external"
         ],
-        "operationId": "externalSubscription",
-        "summary": "Suscripción y tier por miembro",
-        "description": "Suscripción y tier por miembro",
+        "operationId": "externalMemberPlan",
+        "summary": "Plan efectivo de la persona",
+        "description": "Plan propio activo o, si no, el por defecto del cliente, con las funciones de persona que da. Sustituye a /ext/v1/members/{id}/subscription (retirada 2026-10-07).",
         "security": [
           {
             "apiKey": []
@@ -11510,17 +10873,17 @@
           {
             "oauth2": [
               "members:read",
-              "tiers:read"
+              "plans:read"
             ]
           }
         ],
         "x-required-scopes": [
           "members:read",
-          "tiers:read"
+          "plans:read"
         ],
         "x-tenant-boundary": "Tenant derivado solo de credencial; todos los objetos/filtros/cursors autorizados.",
         "x-resources": [
-          "Subscription"
+          "PersonPlan"
         ],
         "parameters": [
           {
@@ -11529,7 +10892,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Suscripción y tier por miembro",
+            "description": "Plan efectivo de la persona",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -11556,7 +10919,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Subscription"
+                  "$ref": "#/components/schemas/ExternalMemberPlan"
                 }
               }
             }
@@ -24914,6 +24277,170 @@
         }
       }
     },
+    "ExternalMemberPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "user_id",
+        "plan_id",
+        "name",
+        "badge_label",
+        "source",
+        "features",
+        "generated_at"
+      ],
+      "properties": {
+        "user_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "plan_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 80
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "badge_label": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 120
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "own",
+                "client_default"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "features": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "ExternalPlans": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default_plan_id",
+        "features",
+        "data",
+        "generated_at"
+      ],
+      "properties": {
+        "default_plan_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "features": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "name"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "maxLength": 40
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 120
+              }
+            }
+          }
+        },
+        "data": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "name",
+              "badge_label",
+              "features"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "badge_label": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "features": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "type": "string",
+                  "maxLength": 40
+                }
+              }
+            }
+          }
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
     "Feature": {
       "type": "object",
       "additionalProperties": false,
@@ -29495,96 +29022,6 @@
         }
       }
     },
-    "Subscription": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "tenant_id",
-        "user_id",
-        "tier_id",
-        "starts_at",
-        "ends_at",
-        "status",
-        "version"
-      ],
-      "properties": {
-        "id": {
-          "type": "string",
-          "format": "uuid"
-        },
-        "tenant_id": {
-          "type": "string",
-          "format": "uuid"
-        },
-        "user_id": {
-          "type": "string",
-          "format": "uuid"
-        },
-        "tier_id": {
-          "type": "string",
-          "format": "uuid"
-        },
-        "starts_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "ends_at": {
-          "anyOf": [
-            {
-              "type": "string",
-              "format": "date-time"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "status": {
-          "type": "string",
-          "enum": [
-            "active",
-            "scheduled",
-            "cancelled"
-          ]
-        },
-        "version": {
-          "type": "integer",
-          "minimum": 1
-        }
-      }
-    },
-    "SubscriptionInput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "tier_id",
-        "starts_at",
-        "ends_at"
-      ],
-      "properties": {
-        "tier_id": {
-          "type": "string",
-          "format": "uuid"
-        },
-        "starts_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "ends_at": {
-          "anyOf": [
-            {
-              "type": "string",
-              "format": "date-time"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "description": "starts_at < ends_at cuando ends_at no es null. No solapar vigencias por miembro."
-    },
     "SuspiciousApp": {
       "type": "object",
       "additionalProperties": false,
@@ -30251,7 +29688,7 @@
         "area_id",
         "site_id",
         "role_labels",
-        "tier_id",
+        "plan_id",
         "last_seen_at",
         "focus_score",
         "productivity_percent"
@@ -30285,7 +29722,7 @@
           },
           "maxItems": 30
         },
-        "tier_id": {
+        "plan_id": {
           "anyOf": [
             {
               "type": "string",
@@ -30671,129 +30108,6 @@
         }
       }
     },
-    "Tier": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "tenant_id",
-        "name",
-        "badge_label",
-        "entitlements",
-        "active",
-        "version"
-      ],
-      "properties": {
-        "id": {
-          "type": "string",
-          "format": "uuid"
-        },
-        "tenant_id": {
-          "type": "string",
-          "format": "uuid"
-        },
-        "name": {
-          "type": "string",
-          "maxLength": 80
-        },
-        "badge_label": {
-          "type": "string",
-          "maxLength": 120
-        },
-        "entitlements": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "maxLength": 100
-          },
-          "maxItems": 100
-        },
-        "active": {
-          "type": "boolean"
-        },
-        "version": {
-          "type": "integer",
-          "minimum": 1
-        }
-      },
-      "description": "Essential/Pro/Business son semillas editables, no enum de autorización."
-    },
-    "TierInput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "badge_label",
-        "entitlements",
-        "active"
-      ],
-      "properties": {
-        "name": {
-          "type": "string",
-          "maxLength": 80
-        },
-        "badge_label": {
-          "type": "string",
-          "maxLength": 120
-        },
-        "entitlements": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "maxLength": 100
-          },
-          "maxItems": 100
-        },
-        "active": {
-          "type": "boolean"
-        }
-      }
-    },
-    "TierPage": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "data",
-        "next_cursor",
-        "generated_at",
-        "data_through"
-      ],
-      "properties": {
-        "data": {
-          "type": "array",
-          "items": {
-            "$ref": "#/components/schemas/Tier"
-          },
-          "maxItems": 100
-        },
-        "next_cursor": {
-          "anyOf": [
-            {
-              "type": "string",
-              "maxLength": 1024
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "generated_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "data_through": {
-          "anyOf": [
-            {
-              "type": "string",
-              "format": "date-time"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      }
-    },
     "User": {
       "type": "object",
       "additionalProperties": false,
@@ -30810,7 +30124,6 @@
         "status",
         "access",
         "panel_login_enabled",
-        "tier_id",
         "version",
         "document"
       ],
@@ -30962,17 +30275,6 @@
         },
         "panel_login_enabled": {
           "type": "boolean"
-        },
-        "tier_id": {
-          "anyOf": [
-            {
-              "type": "string",
-              "format": "uuid"
-            },
-            {
-              "type": "null"
-            }
-          ]
         },
         "version": {
           "type": "integer",

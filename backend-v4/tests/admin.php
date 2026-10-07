@@ -140,27 +140,9 @@ function adminTests(Database $db): void
     expect(adminRequest($admin,'POST','/devices/'.$device.'/commands',array_replace($command,['type'=>'wipe','confirmation'=>'admin-device']),['idempotency-key'=>Util::uuid()]),403,'wipe needs reauth');
     expect(adminRequest($admin,'POST','/auth/reauth',['password'=>$admin['password']]),200,'reauth');
     expect(adminRequest($admin,'POST','/devices/'.$device.'/commands',array_replace($command,['type'=>'wipe','confirmation'=>'wrong']),['idempotency-key'=>Util::uuid()]),422,'wipe confirmation');
-    $tierBody=['name'=>'Admin policies','badge_label'=>'Admin','entitlements'=>['policies','devices'],'active'=>true];
-    $tier=expect(adminRequest($admin,'POST','/tiers',$tierBody),201,'create tier');
-    expect(adminRequest($admin,'GET','/tiers'),200,'list tiers'); expect(adminRequest($admin,'GET','/tiers/'.$tier['id']),200,'get tier');
-    expect(adminRequest($admin,'GET','/users/'.$uid.'/subscription'),404,'empty subscription');
-    $sub=expect(adminRequest($admin,'PUT','/users/'.$uid.'/subscription',['tier_id'=>$tier['id'],'starts_at'=>gmdate('Y-m-d\TH:i:s\Z',time()-60),'ends_at'=>null],['if-match'=>'"0"']),200,'assign subscription');
-    expect(adminRequest($admin,'GET','/users/'.$uid.'/subscription'),200,'get subscription');
-    $futureBody=['tier_id'=>$tier['id'],'starts_at'=>gmdate('Y-m-d\TH:i:s\Z',time()+3600),'ends_at'=>gmdate('Y-m-d\TH:i:s\Z',time()+10800)];
-    $futurePath='/users/'.$member['id'].'/subscription';
-    $future=expect(adminRequest($admin,'PUT',$futurePath,$futureBody,['if-match'=>'"0"']),200,'schedule finite subscription');
-    $readFuture=expect(adminRequest($admin,'GET',$futurePath),200,'scheduled subscription visible for If-Match');
-    check($readFuture['id']===$future['id'],'GET returns pending subscription');
-    $futureBody['starts_at']=gmdate('Y-m-d\TH:i:s\Z',time()+7200);
-    expect(adminRequest($admin,'PUT',$futurePath,$futureBody,['if-match'=>'"0"']),412,'future subscription invalidates empty If-Match');
-    $nextFuture=expect(adminRequest($admin,'PUT',$futurePath,$futureBody,['if-match'=>'"'.$future['version'].'"']),200,'close overlapping future subscription');
-    $closedFuture=$db->one('SELECT ends_at FROM subscriptions WHERE tenant_id=? AND id=?',[$tenant,Util::bin($future['id'])]);
-    check($closedFuture['ends_at']===Util::sqlTime($nextFuture['starts_at']),'future intervals meet without overlap');
-    $futureBody['starts_at']=$future['starts_at'];
-    expect(adminRequest($admin,'PUT',$futurePath,$futureBody,['if-match'=>'"'.$nextFuture['version'].'"']),409,'cannot insert before pending subscription');
-    $futureBody['starts_at']=gmdate('Y-m-d\TH:i:s\Z',time()+14400); $futureBody['ends_at']=null;
-    expect(adminRequest($admin,'PUT',$futurePath,$futureBody,['if-match'=>'"'.$nextFuture['version'].'"']),200,'later subscription preserves gap');
-    check($db->one('SELECT ends_at FROM subscriptions WHERE tenant_id=? AND id=?',[$tenant,Util::bin($nextFuture['id'])])['ends_at']===Util::sqlTime($nextFuture['ends_at']),'finite subscription never extended');
+    // Tiers y suscripciones se retiraron (0049): sus rutas ya no existen y la persona no trae tier_id.
+    foreach (['/tiers','/tiers/'.Util::uuid(),'/users/'.$uid.'/subscription'] as $gone) { expect(adminRequest($admin,'GET',$gone),404,"retired route $gone"); }
+    check(!array_key_exists('tier_id',expect(adminRequest($admin,'GET','/users/'.$uid),200,'user without tier')),'user DTO without tier_id');
     $v1=(int)$db->one('SELECT MAX(policy_version) v FROM effective_policies WHERE tenant_id=? AND device_id=?',[$tenant,Util::bin($device)])['v'];
     $policyBody=['name'=>'Web policy','target_type'=>'tenant','target_id'=>$tid,'enabled'=>true,'rules'=>[compilerRule('deny',['example.test'],0,'web')]];
     $policy=expect(adminRequest($admin,'POST','/policies',$policyBody),201,'create policy compiles');
@@ -174,7 +156,6 @@ function adminTests(Database $db): void
     check((int)$db->one('SELECT version FROM policy_documents WHERE tenant_id=? AND id=?',[$tenant,Util::bin($policy['id'])])['version']===2,'invalid policy did not commit');
     check((int)$db->one('SELECT COUNT(*) n FROM policy_versions WHERE tenant_id=? AND policy_id=?',[$tenant,Util::bin($policy['id'])])['n']===2,'policy versions retained');
     expect(adminRequest($admin,'POST','/policies',array_replace($policyBody,['target_id'=>Util::id($bUser['tenant_id'])])),404,'foreign policy assignment rejected');
-    expect(adminRequest($admin,'PATCH','/tiers/'.$tier['id'],array_replace($tierBody,['entitlements'=>['devices']]),['if-match'=>'"1"']),200,'tier module change compiles');
     expect(adminRequest($admin,'GET','/permissions?limit=3'),200,'permission catalog');
     $p=expect(adminRequest($admin,'GET','/permissions/usuarios.ver'),200,'permission detail');
     expect(adminRequest($platform,'PATCH','/permissions/usuarios.ver',['label'=>'View users','delegable'=>true],['if-match'=>'"'.$p['version'].'"']),200,'platform metadata');
@@ -274,7 +255,7 @@ function adminTests(Database $db): void
     expect(adminRequest($admin,'POST','/devices/'.$assignmentId.'/assignment',['user_id'=>Util::id($bUser['id']),'reason'=>'Foreign'],['idempotency-key'=>Util::uuid(),'if-match'=>'"1"']),404,'foreign assignment rejected');
     expect(adminRequest($admin,'POST','/devices/'.$assignmentId.'/assignment',['user_id'=>$member['id'],'reason'=>'Assignment smoke'],['idempotency-key'=>Util::uuid(),'if-match'=>'"1"']),200,'same tenant assignment');
     expect(request('GET','/client/policy',null,$assignmentKey,$assignmentDevice['access_token']),401,'assignment revokes former device credentials');
-    expect(adminRequest($admin,'PUT','/users/'.$member['id'].'/subscription',['tier_id'=>$tier['id'],'starts_at'=>gmdate('Y-m-d\TH:i:s\Z',time()+3600),'ends_at'=>null],['if-match'=>'"0"','x-csrf-token'=>'']),403,'PUT CSRF required');
+    expect(adminRequest($admin,'PUT','/users/'.$member['id'].'/plan',['plan_id'=>null],['if-match'=>'"'.$member['version'].'"','x-csrf-token'=>'']),403,'PUT CSRF required');
     expect(adminRequest($admin,'PATCH','/users/'.$member['id'],['display_name'=>'Forbidden'],['if-match'=>'"'.$member['version'].'"','x-csrf-token'=>'']),403,'PATCH CSRF required');
     expect(adminRequest($admin,'PATCH','/users/'.$member['id'],['status'=>'inactive'],['if-match'=>'"'.$member['version'].'"']),200,'guided deactivation');
     expect(adminRequest($admin,'PATCH','/devices/'.$device,['status'=>'revoked'],['if-match'=>'"'.$d['version'].'"']),200,'revoke device');

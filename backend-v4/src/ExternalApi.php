@@ -50,7 +50,7 @@ final class ExternalApi
         return match ($this->r->operation['operationId']) {
             'externalDashboard'=>$this->dashboard(), 'externalTeam'=>$this->team(), 'externalMember'=>$this->overview(),
             'externalDevices'=>$this->devices(), 'externalActivity'=>$this->activity(), 'externalPresence'=>$this->presence(),
-            'externalSubscription'=>$this->subscription(), 'externalTiers'=>$this->tiers(),
+            'externalMemberPlan'=>$this->memberPlan(), 'externalPlans'=>$this->plans(),
             'externalProductivity'=>$this->metrics->report(), 'externalOrganization'=>$this->organization(), 'externalNotifications'=>$this->notifications(),
             default=>throw new ApiError(404,'resource_not_found'),
         };
@@ -89,7 +89,7 @@ final class ExternalApi
         foreach ($this->filters as $field=>$id) { $where.=self::filterSql('u',$field); $args[]=$id; }
         return ["SELECT u.id,u.display_name,u.firm_id,u.site_id,u.area_id,u.created_at,
             (SELECT MAX(d.last_seen_at) FROM devices d WHERE d.tenant_id=u.tenant_id AND d.user_id=u.id AND d.status='active') last_seen_at,
-            (SELECT s.tier_id FROM subscriptions s WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id AND s.status IN ('active','scheduled') AND s.starts_at<=UTC_TIMESTAMP(6) AND (s.ends_at IS NULL OR s.ends_at>UTC_TIMESTAMP(6)) ORDER BY s.starts_at DESC LIMIT 1) tier_id
+            ".PersonPlans::effectiveSql('u')." plan_id
             FROM users u WHERE $where",$args];
     }
     private function members(array $rows): array
@@ -101,7 +101,7 @@ final class ExternalApi
         return array_map(function($row) use ($stats,$labels) {
             $out=[]; foreach (['id','firm_id','area_id','site_id'] as $key) { $out[$key]=Util::id($row[$key]); }
             $metric=$stats[$row['id']]??null;
-            return $out+['display_name'=>$row['display_name'],'role_labels'=>array_slice($labels[$row['id']]??[],0,30),'tier_id'=>$row['tier_id']===null?null:Util::id($row['tier_id']),
+            return $out+['display_name'=>$row['display_name'],'role_labels'=>array_slice($labels[$row['id']]??[],0,30),'plan_id'=>$row['plan_id']===null?null:Util::id($row['plan_id']),
                 'last_seen_at'=>$row['last_seen_at']===null?null:Util::time($row['last_seen_at']),'focus_score'=>ExternalMetrics::score($metric),'productivity_percent'=>$metric===null?null:ExternalMetrics::percent($metric)];
         },$rows);
     }
@@ -163,19 +163,19 @@ final class ExternalApi
             if ($location && $r['latitude']!==null) { $out['location']=['latitude'=>(float)$r['latitude'],'longitude'=>(float)$r['longitude'],'accuracy_m'=>(float)$r['accuracy_m']]; } return $out;
         },$rows),'occurred_at');
     }
-    private function subscription(): array
+    /** Plan efectivo de la persona: el propio si esta activo, si no el por defecto del cliente; funciones = plan ∩ cliente. */
+    private function memberPlan(): array
     {
-        $r=$this->db->one("SELECT id,tenant_id,user_id,tier_id,starts_at,ends_at,status,version FROM subscriptions WHERE tenant_id=? AND user_id=? AND status IN ('active','scheduled') AND starts_at<=UTC_TIMESTAMP(6) AND (ends_at IS NULL OR ends_at>UTC_TIMESTAMP(6)) ORDER BY starts_at DESC LIMIT 1",[$this->tenant,$this->member['id']]);
-        if (!$r) { throw new ApiError(404,'resource_not_found'); }
-        $out=[]; foreach (['id','tenant_id','user_id','tier_id'] as $key) { $out[$key]=Util::id($r[$key]); }
-        return $out+['starts_at'=>Util::time($r['starts_at']),'ends_at'=>$r['ends_at']===null?null:Util::time($r['ends_at']),'status'=>'active','version'=>(int)$r['version']];
+        $plan=PersonPlans::effectivePlan($this->db,$this->tenant,$this->member['id']);
+        $row=$plan===null?null:$this->db->one('SELECT id,name,badge_label FROM person_plans WHERE tenant_id=? AND id=?',[Util::bin(AdminAuth::PLATFORM),$plan]);
+        $own=$plan!==null && $this->member['plan_id']===$plan;
+        return ['user_id'=>Util::id($this->member['id']),'plan_id'=>$row?Util::id($row['id']):null,'name'=>$row['name']??null,'badge_label'=>$row['badge_label']??null,
+            'source'=>$row===null?null:($own?'own':'client_default'),'features'=>PersonPlans::functions($this->db,$this->tenant,$this->member['id']),'generated_at'=>Util::now()];
     }
-    private function tiers(): array
+    /** Planes que el cliente puede asignar, con las funciones de persona que dan en este cliente. */
+    private function plans(): array
     {
-        return $this->page('SELECT id,tenant_id,name,badge_label,active,version,created_at FROM tier WHERE tenant_id=?',[$this->tenant],fn($rows)=>array_map(function($r) {
-            $modules=array_column($this->db->run('SELECT module_code FROM tier_module WHERE tenant_id=? AND tier_id=? ORDER BY module_code',[$this->tenant,$r['id']])->fetchAll(),'module_code');
-            return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'name'=>$r['name'],'badge_label'=>$r['badge_label'],'entitlements'=>$modules,'active'=>(bool)$r['active'],'version'=>(int)$r['version']];
-        },$rows));
+        return PersonPlans::available($this->db,$this->tenant)+['generated_at'=>Util::now()];
     }
     private function organization(): array
     {

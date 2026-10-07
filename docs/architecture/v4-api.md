@@ -13,7 +13,7 @@ Keeper es el motor y el panel completo. El portal cliente futuro, estilo LawyerD
 - Dos superficies de consumo: **dispositivo** (ingestión y control de su equipo) y **externa de lectura** (portal/terceros). El panel usa además un **plano administrativo** separado por autenticación y autorización, documentado en el mismo archivo.
 - Denegación por defecto: tenant, identidad, permiso/scope y objeto se verifican en todas las rutas. Menús, IDs difíciles de adivinar y dirección IP no son controles de autorización.
 - Más de 1.000 miembros/equipos por empresa: lotes, caché compartida, agregados, paginación en almacenamiento, trabajos reanudables y límites por identidad. Una empresa sale por una IP; no se identifica ni penaliza al tenant por NAT.
-- Roles, asignaciones de permisos, catálogos, tiers, marca, horarios y valores de política son datos editables. Parametrizar no significa aceptar SQL, shell o código de reglas arbitrario. Añadir una capacidad nueva de enforcement requiere implementación; cambiar sus valores/permisos no requiere release.
+- Roles, asignaciones de permisos, catálogos, planes de persona, marca, horarios y valores de política son datos editables. Parametrizar no significa aceptar SQL, shell o código de reglas arbitrario. Añadir una capacidad nueva de enforcement requiere implementación; cambiar sus valores/permisos no requiere release.
 
 ### 1.1 Backend: comparación y recomendación sin elección de stack
 
@@ -72,7 +72,7 @@ Cada integración pertenece a **exactamente un tenant**, con propietario, scopes
 - **API key** en `X-API-Key`: identificador/prefijo público + secreto aleatorio de 256 bits, hash persistido, valor mostrado solo al crear/rotar. Caducidad inicial máxima propuesta de 90 días, renovación explícita y solapamiento de claves máximo 24 horas. Nunca en URL.
 - **OAuth2 client_credentials**: `POST /v1/oauth/token`, `client_secret_basic`, cuerpo form-urlencoded; access token 15 minutos, `aud=keeper-external-v1`, `sub=integration_id`, `tenant_id`, `scope`, `exp`, `jti`; sin refresh token. Scopes solicitados deben ser subconjunto de los concedidos. Validar emisor/audiencia/firma/expiración o introspección si se elige token opaco; la representación del token es decisión de implementación.
 - Son **alternativas OR**, no dos secretos obligatorios simultáneos. Si llegan ambos, rechazar como petición ambigua. OAuth también comprueba integración y tenant activos; revocar integración invalida tokens derivados. Los scopes de API key son idénticos a los OAuth y se exigen por `x-required-scopes`; OpenAPI no puede expresar scopes OAuth dentro de un esquema apiKey.
-- No hay scopes write externos. Ninguna integración puede gestionar roles, bloquear equipos, enrolar, generar credenciales ni mutar tiers. Un scope read granular es un bundle explícito: por ejemplo `team:read` permite nombre, rol, badge y resumen de métricas de `TeamMember`, pero no episodios ni ficha administrativa completa.
+- No hay scopes write externos. Ninguna integración puede gestionar roles, bloquear equipos, enrolar, generar credenciales ni mutar planes. Un scope read granular es un bundle explícito: por ejemplo `team:read` permite nombre, rol, badge y resumen de métricas de `TeamMember`, pero no episodios ni ficha administrativa completa.
 
 | Scopes | Proyección permitida |
 |---|---|
@@ -81,7 +81,7 @@ Cada integración pertenece a **exactamente un tenant**, con propietario, scopes
 | `activity:read`, `productivity:read` | Episodios sin títulos; series agregadas de focus/productividad. |
 | `activity-titles:read` | Requiere también `activity:read` e `include_titles=true`. Si falta scope, 403; no silenciosamente ignorado. |
 | `presence:read`, `location:read` | Check-in sin GPS; GPS solo con ambos scopes e `include_location=true`. |
-| `tiers:read`, `notifications:read` | Catálogo/suscripción y feed saneado. |
+| `plans:read`, `notifications:read` | Planes de persona (catálogo y plan efectivo) y feed saneado. |
 
 El navegador del futuro portal no almacena API keys ni client secrets. Su backend/BFF autentica a sus personas, selecciona la integración autorizada y llama a Keeper servidor-servidor. `client_credentials` identifica una aplicación, no al usuario final. Si el portal requiere autoservicio individual con aislamiento impuesto por Keeper, debe añadirse Authorization Code + PKCE/delegación antes de habilitarlo; no simularlo pasando un `user_id` libre con una credencial empresarial. CORS no es autorización: allowlist exacta si se habilita, nunca comodín con cookies.
 
@@ -125,7 +125,7 @@ Autorización = permiso de acción ∩ alcance de rol ∩ tenant ∩ estado acti
 | ProductivityReport / Dashboard | Agregados por tenant/miembro/día, focus, cobertura y versión de cálculo. | `keeper_focus_daily`, `keeper_activity_day`, `keeper_window_episode`; lectura agregada rediseñada. |
 | CheckIn | Presencia con fuente door/agent/manual; GPS opcional con precisión, no geolocalización inventada. | Integración uhppoted/location mencionada en brief; **sin tabla K3 verificada aquí**. |
 | Role / Permission / AdminSession | Permisos + alcance, dos gates; cuenta administrativa separada de membresía. | `keeper_panel_roles`, `keeper_admin_accounts`, `keeper_admin_sessions`; ampliar modelo. |
-| Tier / Subscription | Catálogo editable, badge y entitlements; asignación temporal por miembro, sin solapamientos. Tier no concede permisos RBAC. | **Nuevos**; Essential/Pro/Business como semillas, no enum fijo ni precio inventado. |
+| PersonPlan | Plan de persona de la plataforma (funciones de nivel persona); cada persona usa su plan propio o el por defecto del cliente. No concede permisos RBAC. | Sustituye a Tier/Subscription, retirados el 2026-10-07 (migración 0049). |
 | Command / SecurityReport | Acción remota, expiración y resultado; desired/applied/unsupported diferenciados. | `keeper_device_locks`, `keeper_security_state`; cola de comandos nueva. |
 | Release / ReleaseDeployment | Manifest inmutable firmado de plataforma; visibilidad/anillo por tenant. | `keeper_client_releases`; integridad y rollout nuevos. |
 | AuditEntry / LogEntry | Auditoría append-only de decisiones; logs técnicos estructurados con allowlist. | `keeper_audit_log`, `keeper_client_log`. |
@@ -246,12 +246,6 @@ Tablas generadas desde los paths/operationId del YAML para no divergir. Rutas de
 | GET | `/permissions/{code}` | A | roles.ver | T | Leer permiso registrado | Permission |
 | PATCH | `/permissions/{code}` | A+C | permisos.gestionar | P | Editar metadata/delegabilidad de permiso | Permission, AuditEntry |
 | GET | `/reports/productivity` | A | reportes.ver | T | Productividad y focus agregado | ProductivityReport |
-| GET | `/tiers` | A | tiers.ver | T | Leer tiers de empresa | Tier |
-| POST | `/tiers` | A+C | tiers.gestionar | T | Crear tier parametrizable | Tier |
-| GET | `/tiers/{id}` | A | tiers.ver | T | Leer tier | Tier |
-| PATCH | `/tiers/{id}` | A+C | tiers.gestionar | T | Editar/desactivar tier | Tier, AuditEntry |
-| GET | `/users/{id}/subscription` | A | tiers.ver | T | Leer suscripción de miembro | Subscription |
-| PUT | `/users/{id}/subscription` | A+C | tiers.gestionar | T | Asignar/programar tier por miembro | Subscription, AuditEntry |
 | GET | `/releases` | A | releases.ver | T | Leer releases visibles al tenant | Release, ReleaseDeployment |
 | POST | `/releases` | A+C | releases.publicar | P | Registrar manifest firmado por pipeline | Release, AuditEntry |
 | POST | `/release-deployments` | A+C | releases.desplegar | T | Seleccionar anillo/rollout de empresa | ReleaseDeployment, AuditEntry |
@@ -270,13 +264,13 @@ Tablas generadas desde los paths/operationId del YAML para no divergir. Rutas de
 | Método | Ruta | Auth | Permiso / scope | Tenant | Descripción | Recursos |
 |---|---|---|---|---|---|---|
 | GET | `/ext/v1/dashboard` | K/O | dashboard:read | K | KPIs, gráficas y roster preview | Dashboard |
-| GET | `/ext/v1/my-team` | K/O | team:read | K | Lista y ranking con tier/rol/métricas | User, Tier, ProductivityReport |
+| GET | `/ext/v1/my-team` | K/O | team:read | K | Lista y ranking con plan/rol/métricas | User, PersonPlan, ProductivityReport |
 | GET | `/ext/v1/members/{id}` | K/O | members:read | K | Perfil mínimo y tendencia por miembro | User, ProductivityReport |
 | GET | `/ext/v1/members/{id}/devices` | K/O | members:read + devices:read | K | Equipos/specs del miembro sin secretos | Device |
 | GET | `/ext/v1/members/{id}/activity` | K/O | members:read + activity:read; adicional según flags | K | Actividad paginada sin títulos por defecto | Episode |
 | GET | `/ext/v1/members/{id}/check-ins` | K/O | members:read + presence:read; adicional según flags | K | Check-in sin GPS por defecto | CheckIn |
-| GET | `/ext/v1/members/{id}/subscription` | K/O | members:read + tiers:read | K | Suscripción y tier por miembro | Subscription |
-| GET | `/ext/v1/tiers` | K/O | tiers:read | K | Catálogo de tiers/badges | Tier |
+| GET | `/ext/v1/members/{id}/plan` | K/O | members:read + plans:read | K | Plan efectivo de la persona | PersonPlan |
+| GET | `/ext/v1/plans` | K/O | plans:read | K | Planes de persona disponibles en la empresa | PersonPlan |
 | GET | `/ext/v1/productivity` | K/O | productivity:read | K | Series de productividad/focus | ProductivityReport |
 | GET | `/ext/v1/organization` | K/O | organization:read | K | Firmas, sedes, áreas y cargos | OrgUnit |
 | GET | `/ext/v1/notifications` | K/O | notifications:read | K | Feed de eventos saneados | Notification |
@@ -291,9 +285,9 @@ Tablas generadas desde los paths/operationId del YAML para no divergir. Rutas de
 | POST | `/auth/reauth` | A+C | — | Principal | Reautenticar acción crítica por cinco minutos | AdminSession |
 | POST | `/oauth/token` | OAuth Basic | — | Principal | Emitir token client_credentials | Integration |
 
-Las escrituras de configuración con `If-Match` usan el ETag del GET del recurso; 428 si falta y 412 ante conflicto. PATCH de política/rol/tier/unidad reemplaza su definición editable completa tipada; PATCH de usuario/device/tenant acepta campos parciales. No hay borrado físico de usuarios/equipos con histórico: inactivar/dar de baja preserva trazabilidad. La suscripción inicialmente ausente devuelve 404 con ETag de estado vacío para autorizar su primera asignación condicional.
+Las escrituras de configuración con `If-Match` usan el ETag del GET del recurso; 428 si falta y 412 ante conflicto. PATCH de política/rol/unidad reemplaza su definición editable completa tipada; PATCH de usuario/device/tenant acepta campos parciales. No hay borrado físico de usuarios/equipos con histórico: inactivar/dar de baja preserva trazabilidad. 
 
-Las rutas de tiers, horarios y notificaciones quedan contratadas aunque su UI sea placeholder y su implementación se programe después del núcleo. No se inventan servicios de cases, hiring, AI reception, tareas de staffing, nómina, PTO o facturación comparativa estadounidense. Las promesas fuera del motor Keeper requieren requisitos y contratos propios; una pantalla placeholder no devuelve métricas simuladas como datos reales.
+Las rutas de horarios y notificaciones quedan contratadas aunque su UI sea placeholder y su implementación se programe después del núcleo. No se inventan servicios de cases, hiring, AI reception, tareas de staffing, nómina, PTO o facturación comparativa estadounidense. Las promesas fuera del motor Keeper requieren requisitos y contratos propios; una pantalla placeholder no devuelve métricas simuladas como datos reales.
 
 ## 7. Errores, filtros, páginas y límites
 
@@ -342,7 +336,7 @@ Límites antes de deserializar: sync/batch **128 KiB**, máximo 200 episodios; l
 | Activity & Logs | `/ext/v1/members/{id}/activity` | `members:read` + `activity:read` | Actividad de negocio, **no logs técnicos**. Títulos solo con scope adicional. |
 | Acceso y dispositivos | `/ext/v1/members/{id}/devices` | `members:read` + `devices:read` | Equipo/specs/estado reportado; sin botones de comando con credencial read-only. |
 | Check-in history / GPS | `/ext/v1/members/{id}/check-ins` | `members:read` + `presence:read`; `location:read` para GPS | Fuente/precisión visibles; no se inventa GPS de un control de puerta. |
-| Tier badge / suscripción | `/ext/v1/tiers`; `/ext/v1/members/{id}/subscription` | `tiers:read`; además `members:read` en detalle | Tier por persona, no plan global único del tenant. Gestión por API administrativa. |
+| Plan de persona | `/ext/v1/plans`; `/ext/v1/members/{id}/plan` | `plans:read`; además `members:read` en detalle | Plan propio o el por defecto del cliente. Gestión en el panel (planes.asignar). |
 | Filtros y feed | `/ext/v1/organization`; `/ext/v1/notifications` | Scopes correspondientes | Feed saneado; actualizar por webhook/invalidez o revalidación espaciada. |
 
 El BFF cachea por tenant+integración+scopes+filtros y reutiliza agregados; jamás genera una consulta por equipo para pintar el dashboard. Actualización inicial orientativa 60 s visible, detener al ocultar pestaña, respetar cuotas y `data_through`. Las respuestas no garantizan datos en tiempo real: sync 120 s + agregación. HR/PTO, staffing y billing no tienen datos contractuales en este diseño y no deben mostrarse como implementados.

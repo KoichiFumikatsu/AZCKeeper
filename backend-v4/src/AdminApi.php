@@ -52,7 +52,7 @@ final class AdminApi
     }
     // Recompilar el tenant entero costaba ~20 ms por equipo (medido: 10,6 s con 296 equipos) en CADA cambio de
     // admin, incluido crear una persona. Los cambios de una persona, su suscripcion o la asignacion de un equipo
-    // solo afectan a sus equipos; el resto (tenant, organizacion, politicas, tiers, horarios) sigue siendo total.
+    // solo afectan a sus equipos; el resto (tenant, organizacion, politicas, horarios) sigue siendo total.
     // Si al marcar ya habia trabajo pendiente de otra peticion (p. ej. una compilacion fallida) se hace total,
     // para no borrar ese pendiente tras compilar solo una parte.
     private bool $dirtied=false; private bool $recompileAll=false; private array $recompileDevices=[];
@@ -144,8 +144,6 @@ final class AdminApi
             'listRoles','getRole','createRole','patchRole'=>$this->roles($op,$id,$b),
             'listPermissions','getPermission','patchPermission'=>$this->permissions($op,$b),
             'listPolicies','getPolicy','createPolicy','patchPolicy'=>$this->policies($op,$id,$b),
-            'listTiers','getTier','createTier','patchTier'=>$this->tiers($op,$id,$b),
-            'getSubscription','setSubscription'=>$this->subscription($op,$id,$b),
             'listReleases','registerRelease','deployRelease'=>$this->releases($op,$b),
             'listExpectedDevices','createExpectedDevice','importExpectedDevices','cancelExpectedDevice','listEnrollmentRequests','approveEnrollmentRequest','rejectEnrollmentRequest',
             'getEnrollmentSettings','putEnrollmentSettings','listEnrollmentKeys','createEnrollmentKey','revokeEnrollmentKey','downloadInstaller'=>(new DeviceIntake($this->db))->admin($op,$id,$b,$this->access,$this->c,$this->r),
@@ -379,8 +377,7 @@ final class AdminApi
     private function userDto(array $r): array
     {
         $grant=AccessGrants::forUser($this->db,$this->tenant,$r['id']);
-        $sub=$this->currentSubscription($r['id']);
-        $out=['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'display_name'=>$r['display_name'],'email'=>$r['email'],'status'=>$r['status'],'access'=>AccessGrants::dto($grant),'panel_login_enabled'=>(bool)$r['panel_login_enabled'],'tier_id'=>$sub?Util::id($sub['tier_id']):null,'version'=>(int)$r['version']];
+        $out=['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'display_name'=>$r['display_name'],'email'=>$r['email'],'status'=>$r['status'],'access'=>AccessGrants::dto($grant),'panel_login_enabled'=>(bool)$r['panel_login_enabled'],'version'=>(int)$r['version']];
         foreach (['firm_id','site_id','area_id','position_id','schedule_id','company_id','holiday_calendar_id'] as $f) { $out[$f]=$r[$f]===null?null:Util::id($r[$f]); }
         // Cedula: la cargada en v4 ('document') o, si no hay, la importada de K3 ('k3:cc').
         $doc=$this->db->one("SELECT external_ref FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source IN ('document','k3:cc') ORDER BY source='document' DESC LIMIT 1",[$this->tenant,$r['id']]);
@@ -461,10 +458,6 @@ final class AdminApi
             $this->db->run("INSERT INTO users (tenant_id,id,$columns) VALUES (?,?,$marks)",[$this->tenant,$id,...array_values($values)]);
             AccessGrants::grantDefault($this->db,$this->tenant,$id);
             $this->assignment($id,$next);
-            // Tier por defecto del tenant: sin suscripción el compositor descarta toda regla
-            // (el módulo no está en el tier activo), así que el enforcement sería invisible.
-            $defaultTier=$this->db->one("SELECT id FROM tier WHERE tenant_id=? AND is_default=1 AND active=TRUE",[$this->tenant]);
-            if ($defaultTier) { $this->db->run("INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at,status) VALUES (?,?,?,?,UTC_TIMESTAMP(6),'active')",[$this->tenant,Util::bin(Util::uuid()),$id,$defaultTier['id']]); }
         } else {
             if ($values || $document===false) { $this->update('users',$id,$values); } else { $this->db->run('UPDATE users SET version=version+1 WHERE tenant_id=? AND id=?',[$this->tenant,$id]); }
             if (array_intersect(array_keys($values),['firm_id','site_id','area_id','position_id','schedule_id','company_id'])) { $this->assignment($id,$next); }
@@ -739,50 +732,6 @@ final class AdminApi
         }
         $this->audit('policy',$id,['name','enabled','rules','assignments','version']); $this->dirty();
         return $this->result($this->policyDto($this->row('policy_documents',$id)),$op==='createPolicy'?201:200);
-    }
-    private function tierDto(array $r): array
-    {
-        $modules=array_column($this->db->run('SELECT module_code FROM tier_module WHERE tenant_id=? AND tier_id=? ORDER BY module_code',[$this->tenant,$r['id']])->fetchAll(),'module_code');
-        return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'name'=>$r['name'],'badge_label'=>$r['badge_label'],'entitlements'=>$modules,'active'=>(bool)$r['active'],'version'=>(int)$r['version']];
-    }
-    private function tiers(string $op,?string $id,?object $b): array
-    {
-        $this->access->requireFull();
-        if ($op==='listTiers') { return $this->page('SELECT * FROM tier WHERE tenant_id=?',[$this->tenant],fn($x)=>$this->tierDto($x)); }
-        if ($id) { $old=$this->row('tier',$id); if ($op==='getTier') { return $this->result($this->tierDto($old)); } $this->match($old); }
-        $this->unique($b->entitlements);
-        foreach ($b->entitlements as $module) { if (!$this->db->one('SELECT code FROM modules WHERE code=? AND active=TRUE',[$module])) { throw new ApiError(422,'validation_failed'); } }
-        if ($id) { $this->update('tier',$id,['name'=>$b->name,'badge_label'=>$b->badge_label,'active'=>(int)$b->active]); $this->db->run('DELETE FROM tier_module WHERE tenant_id=? AND tier_id=?',[$this->tenant,$id]); }
-        else { $id=Util::bin(Util::uuid()); $this->db->run('INSERT INTO tier (tenant_id,id,name,badge_label,active) VALUES (?,?,?,?,?)',[$this->tenant,$id,$b->name,$b->badge_label,(int)$b->active]); }
-        foreach ($b->entitlements as $module) { $this->db->run('INSERT INTO tier_module (tenant_id,tier_id,module_code) VALUES (?,?,?)',[$this->tenant,$id,$module]); }
-        $this->audit('tier',$id,array_keys(get_object_vars($b))); $this->dirty(); return $this->result($this->tierDto($this->row('tier',$id)),$op==='createTier'?201:200);
-    }
-    private function currentSubscription(string $user,bool $includeFuture=false): ?array
-    {
-        return $this->db->one("SELECT * FROM subscriptions WHERE tenant_id=? AND user_id=? AND status IN ('active','scheduled')".($includeFuture?'':' AND starts_at<=UTC_TIMESTAMP(6)')." AND (ends_at IS NULL OR ends_at>UTC_TIMESTAMP(6)) ORDER BY starts_at DESC LIMIT 1".($includeFuture?' FOR UPDATE':''),[$this->tenant,$user]);
-    }
-    private function subscriptionDto(array $r): array
-    {
-        $status=$r['status']==='scheduled' && strtotime($r['starts_at'].' UTC')<=time()?'active':$r['status'];
-        return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'user_id'=>Util::id($r['user_id']),'tier_id'=>Util::id($r['tier_id']),'starts_at'=>Util::time($r['starts_at']),'ends_at'=>$r['ends_at']===null?null:Util::time($r['ends_at']),'status'=>$status,'version'=>(int)$r['version']];
-    }
-    private function subscription(string $op,string $user,?object $b): array
-    {
-        $this->access->user($user); $u=$this->row('users',$user); $current=$this->currentSubscription($user,true);
-        if ($op==='getSubscription') { if (!$current) { throw new ApiError(404,'resource_not_found'); } return $this->result($this->subscriptionDto($current)); }
-        $this->match($current??['version'=>0]);
-        $tier=$this->row('tier',Util::bin($b->tier_id)); if (!$tier['active'] || $u['status']!=='active') { throw new ApiError(409,'invalid_transition'); }
-        $start=Util::sqlTime($b->starts_at); $end=$b->ends_at===null?null:Util::sqlTime($b->ends_at);
-        if ($end!==null && $end<=$start) { throw new ApiError(422,'validation_failed'); }
-        if ($current) {
-            if ($start<=$current['starts_at']) { throw new ApiError(409,'invalid_transition'); }
-            if ($current['ends_at']===null || $current['ends_at']>$start) { $this->db->run('UPDATE subscriptions SET ends_at=?,version=version+1 WHERE tenant_id=? AND id=?',[$start,$this->tenant,$current['id']]); }
-        }
-        $id=Util::bin(Util::uuid());
-        $status=strtotime($b->starts_at)>time()?'scheduled':'active';
-        $this->db->run('INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at,ends_at,status,version) VALUES (?,?,?,?,?,?,?,?)',[$this->tenant,$id,$user,$tier['id'],$start,$end,$status,(int)($current['version']??0)+1]);
-        $this->audit('subscription',$id,['tier_id','starts_at','ends_at']); $this->dirty($this->userDevices($user));
-        return $this->result($this->subscriptionDto($this->row('subscriptions',$id)));
     }
     private function releaseDto(array $r): array
     {

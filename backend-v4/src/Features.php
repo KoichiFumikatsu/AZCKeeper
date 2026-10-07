@@ -37,13 +37,13 @@ final class Features
     /** Siempre incluido: no se vende aparte. */
     public const CORE_PERMISSIONS = ['empresas.ver', 'empresas.editar', 'equipos.ver', 'equipos.enrolar', 'equipos.asignar', 'equipos.editar', 'equipos.transferir',
         'horarios.ver', 'horarios.editar', 'organizacion.ver', 'organizacion.editar', 'usuarios.ver', 'roles.ver', 'reglas.ver', 'reglas.editar', 'reglas.aplicar',
-        'tiers.ver', 'operacion.ajustes_ver', 'operacion.ajustes_editar', 'operacion.logs', 'sesion', 'planes.asignar'];
+        'operacion.ajustes_ver', 'operacion.ajustes_editar', 'operacion.logs', 'sesion', 'planes.asignar'];
     /**
      * Solo de la plataforma: nunca se vende (lo protege x-platform-only o el rol de superadmin). Gestionar y aprobar
      * integraciones deciden cargos y jefes, y con ellos los roles de las reglas por cargo (0044): no van a un cliente.
      */
     public const PLATFORM_PERMISSIONS = ['empresas.gestionar', 'empresas.rbac_habilitar', 'releases.ver', 'releases.publicar', 'releases.desplegar',
-        'migracion.ver', 'migracion.gestionar', 'migracion.recuperar', 'operacion.salud', 'tiers.gestionar', 'integraciones.gestionar', 'integraciones.aprobar'];
+        'migracion.ver', 'migracion.gestionar', 'migracion.recuperar', 'operacion.salud', 'integraciones.gestionar', 'integraciones.aprobar'];
 
     /** @return list<string> */
     public static function codes(): array { return array_keys(self::CATALOG); }

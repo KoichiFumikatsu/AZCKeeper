@@ -27,7 +27,7 @@ final class OneImport
     private const AUDIT_FIELDS = [
         'org_unit' => ['kind', 'name', 'parent_id', 'country_code', 'city'],
         'schedule' => ['name', 'timezone', 'start_local', 'end_local', 'days'],
-        'user' => ['display_name', 'email', 'status', 'company_id', 'firm_id', 'site_id', 'area_id', 'position_id', 'schedule_id', 'document', 'reports_to_user_id', 'access', 'subscription'],
+        'user' => ['display_name', 'email', 'status', 'company_id', 'firm_id', 'site_id', 'area_id', 'position_id', 'schedule_id', 'document', 'reports_to_user_id', 'access'],
     ];
 
     private string $tenant = '';
@@ -304,7 +304,6 @@ final class OneImport
     // ---- Personas -------------------------------------------------------------------------------------------------
     private function people(array $items): void
     {
-        $tier = $this->db->one('SELECT id FROM tier WHERE tenant_id=? AND is_default=1 AND active=TRUE', [$this->tenant])['id'] ?? null;
         foreach ($items as $it) {
             $ext = self::ext($it['external_id'] ?? null); $name = self::clean($it['display_name'] ?? null); $status = $it['status'] ?? null;
             if ($ext === null || $name === '' || mb_strlen($name) > 160 || !in_array($status, ['active', 'inactive'], true)) { $this->count('personas', 'error', 'invalid_item'); continue; }
@@ -319,7 +318,7 @@ final class OneImport
             // Lo anotado dentro del SAVEPOINT (p. ej. un placeholder creado) se descarta si la persona se revierte.
             [$items0, $counts0] = [$this->items, $this->counts];
             $this->db->run('SAVEPOINT one_import_person');
-            try { $this->person($it, $ext, $name, $email, $status, $document, $tier); $this->db->run('RELEASE SAVEPOINT one_import_person'); }
+            try { $this->person($it, $ext, $name, $email, $status, $document); $this->db->run('RELEASE SAVEPOINT one_import_person'); }
             catch (\PDOException $e) {
                 if (($e->errorInfo[1] ?? 0) !== 1062) { throw $e; }
                 $this->db->run('ROLLBACK TO SAVEPOINT one_import_person');
@@ -329,7 +328,7 @@ final class OneImport
             }
         }
     }
-    private function person(array $it, string $ext, string $name, ?string $email, string $status, ?string $document, ?string $tier): void
+    private function person(array $it, string $ext, string $name, ?string $email, string $status, ?string $document): void
     {
         $retired = $status === 'inactive';
         $id = $this->previous('user', $ext); $how = 'previous_import';
@@ -348,7 +347,6 @@ final class OneImport
         $this->db->run('INSERT INTO users (tenant_id,id,display_name,email,status,firm_id,site_id,area_id,position_id,schedule_id,company_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)', [$this->tenant, $id, $name, $email, $status, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id'], $refs['company_id']]);
         $this->db->run('INSERT INTO user_assignments (tenant_id,id,user_id,firm_id,site_id,area_id,position_id,schedule_id,company_id,starts_at) VALUES (?,?,?,?,?,?,?,?,?,?)', [$this->tenant, Util::bin(Util::uuid()), $id, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id'], $refs['company_id'], $at]);
         AccessGrants::grantDefault($this->db, $this->tenant, $id);
-        if (!$retired && $tier !== null) { $this->db->run("INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at,status) VALUES (?,?,?,?,UTC_TIMESTAMP(6),'active')", [$this->tenant, Util::bin(Util::uuid()), $id, $tier]); }
         if ($document !== null) {
             if ($this->db->one("SELECT user_id FROM user_external_refs WHERE tenant_id=? AND source='document' AND external_ref=?", [$this->tenant, $document])) { $this->note('personas', 'document_in_use_dropped'); }
             else { $this->db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,'document',?)", [$this->tenant, $id, $document]); }
@@ -481,7 +479,7 @@ final class OneImport
                     $this->db->run('SAVEPOINT one_wipe_user');
                     try {
                         AccessGrants::removeForUser($this->db, $t, $id);
-                        foreach (['subscriptions', 'user_assignments', 'user_external_refs'] as $table) { $this->db->run("DELETE FROM $table WHERE tenant_id=? AND user_id=?", [$t, $id]); }
+                        foreach (['user_assignments', 'user_external_refs'] as $table) { $this->db->run("DELETE FROM $table WHERE tenant_id=? AND user_id=?", [$t, $id]); }
                         $this->db->run('DELETE FROM users WHERE tenant_id=? AND id=?', [$t, $id]);
                         $this->db->run('RELEASE SAVEPOINT one_wipe_user');
                         $this->count('personas', 'delete'); $result['user|' . bin2hex($id)] = 'deleted';

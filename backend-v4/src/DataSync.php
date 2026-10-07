@@ -579,16 +579,8 @@ final class DataSync
         $this->db->run('INSERT INTO users (tenant_id,id,display_name,email,status,firm_id,site_id,area_id,position_id,schedule_id,company_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)', [$this->tenant, $id, $name, $email, $status, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id'], $refs['company_id']]);
         $this->db->run('INSERT INTO user_assignments (tenant_id,id,user_id,firm_id,site_id,area_id,position_id,schedule_id,company_id,starts_at) VALUES (?,?,?,?,?,?,?,?,?,?)', [$this->tenant, Util::bin(Util::uuid()), $id, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id'], $refs['company_id'], $at]);
         AccessGrants::grantDefault($this->db, $this->tenant, $id);
-        if ($status === 'active') { $this->subscribe($id); }
         if ($document !== null) { $this->db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,'document',?)", [$this->tenant, $id, $document]); }
         return $id;
-    }
-    /** Plan por defecto (una retirada cargada desde la fuente no lo tiene hasta que la fuente la reactiva). */
-    private function subscribe(string $id): void
-    {
-        if ($this->db->one("SELECT id FROM subscriptions WHERE tenant_id=? AND user_id=? AND status IN ('active','scheduled') AND (ends_at IS NULL OR ends_at>UTC_TIMESTAMP(6)) LIMIT 1", [$this->tenant, $id])) { return; }
-        $tier = $this->db->one('SELECT id FROM tier WHERE tenant_id=? AND is_default=1 AND active=TRUE', [$this->tenant]);
-        if ($tier) { $this->db->run("INSERT INTO subscriptions (tenant_id,id,user_id,tier_id,starts_at,status) VALUES (?,?,?,?,UTC_TIMESTAMP(6),'active')", [$this->tenant, Util::bin(Util::uuid()), $id, $tier['id']]); }
     }
     private function updatePerson(string $id, string $external, string $name, ?string $email, string $status, array $refs, ?string $document): void
     {
@@ -618,7 +610,6 @@ final class DataSync
         }
         if (!$changes) { return; }
         $this->db->run("UPDATE users SET display_name=?,email=?,status='active',firm_id=?,site_id=?,area_id=?,position_id=?,schedule_id=?,company_id=?,monitoring_override=?,version=version+1 WHERE tenant_id=? AND id=?", [$name, $email, $refs['firm_id'], $refs['site_id'], $refs['area_id'], $refs['position_id'], $refs['schedule_id'], $refs['company_id'], $monitoring, $this->tenant, $id]);
-        if ($u['status'] !== 'active') { $this->subscribe($id); }
         if ($org) {
             $at = $this->now();
             $this->db->run('UPDATE user_assignments SET ends_at=? WHERE tenant_id=? AND user_id=? AND ends_at IS NULL', [$at, $this->tenant, $id]);

@@ -410,14 +410,16 @@ function syncBrakesTests(Database $db): void
 
     // 8) Retiradas en la fuente: entran como retiradas (vinculadas, sin plan, "Sin sede"/"Sin ..." si no resuelven), sin
     // quitarle el correo a nadie; cuentan como altas para el freno; solo la fuente las reactiva.
-    $db->run("INSERT INTO tier (tenant_id,id,name,badge_label,is_default) VALUES (?,?,'Por defecto','Por defecto',1)", [$tenant, Util::bin(Util::uuid())]);
+    // Plan por defecto del cliente (planes de persona; los tiers se retiraron en 0049): la sincronizacion no asigna plan propio.
+    $defaultPlan = $db->one("SELECT id FROM person_plans WHERE tenant_id=0x00000000000040008000000000000001 AND name='Completo'")['id'];
+    $db->run('UPDATE tenants SET default_plan_tenant_id=0x00000000000040008000000000000001,default_plan_id=? WHERE tenant_id=?', [$defaultPlan, $tenant]);
     $world['people'][] = $person(30, ['status' => 'inactive', 'site_external_id' => null, 'area_external_id' => 'brk-no-existe', 'email' => 'f1@azc.test']);
     $i30 = count($world['people']) - 1;
     $ret = $run('incremental');
     $r30 = $byExt('brk-30');
     check($ret['status'] === 'applied' && $r30 && $r30['status'] === 'inactive' && $r30['email'] === null && $byExt('brk-1')['email'] === 'f1@azc.test', 'retired person loaded as retired without taking an email ' . $ret['status'] . ' ' . $ret['counts']);
     check($name($r30['site_id']) === 'Sin sede' && (bool) $db->one('SELECT placeholder FROM org_units WHERE tenant_id=? AND id=?', [$tenant, $r30['site_id']])['placeholder'] && $name($r30['area_id']) === 'Sin área', 'retired person without site goes to the "Sin sede" placeholder');
-    check(!$db->one('SELECT id FROM subscriptions WHERE tenant_id=? AND user_id=?', [$tenant, $r30['id']]) && $db->one("SELECT reason FROM sync_items WHERE tenant_id=? AND run_id=? AND external_id='brk-30' AND action='create'", [$tenant, $ret['id']])['reason'] === 'inactive_in_source', 'retired person gets no plan and is logged as a retired creation');
+    check(\Keeper\PersonPlans::functions($db, $tenant, $r30['id']) === [] && $r30['plan_id'] === null && $db->one("SELECT reason FROM sync_items WHERE tenant_id=? AND run_id=? AND external_id='brk-30' AND action='create'", [$tenant, $ret['id']])['reason'] === 'inactive_in_source', 'retired person gets no plan and is logged as a retired creation');
     $run('incremental');
     check($byExt('brk-30')['status'] === 'inactive', 'later runs do not reactivate a retired person');
     foreach (range(31, 36) as $n) { $world['people'][] = $person($n, ['status' => 'inactive']); }
@@ -427,6 +429,6 @@ function syncBrakesTests(Database $db): void
     $world['people'][$i30] = $person(30);
     $back = $run('incremental');
     $r30 = $byExt('brk-30');
-    check($back['status'] === 'applied' && $r30['status'] === 'active' && $name($r30['site_id']) === 'Sede F' && (bool) $db->one("SELECT id FROM subscriptions WHERE tenant_id=? AND user_id=? AND status='active'", [$tenant, $r30['id']]), 'source reactivation restores site and plan');
+    check($back['status'] === 'applied' && $r30['status'] === 'active' && $name($r30['site_id']) === 'Sede F' && $r30['plan_id'] === null && \Keeper\PersonPlans::effectivePlan($db, $tenant, $r30['id']) === $defaultPlan, 'source reactivation restores site and the client default plan');
     echo 'PASS sync brakes (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

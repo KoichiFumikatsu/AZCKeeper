@@ -55,7 +55,7 @@ namespace {
         check($db->one("SELECT filename FROM schema_migrations WHERE filename='0010_external_global_credentials.sql'")!==null,'global credential migration applied after seeds');
         $u=secondTenant($db); $v=secondTenant($db);
         foreach (['oauth2'=>['oauth_clients','client_id','oauth_client_id_global'],'api_key'=>['api_keys','public_prefix','api_key_prefix_global']] as $type=>[$table,$field,$index]) {
-            $a=externalCredential($db,$u,$type,['tiers:read']); $b=externalCredential($db,$v,$type,['tiers:read']);
+            $a=externalCredential($db,$u,$type,['plans:read']); $b=externalCredential($db,$v,$type,['plans:read']);
             $columns=$db->run('SELECT COLUMN_NAME AS field_name,NON_UNIQUE AS allows_duplicates FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name=? AND index_name=?',[$table,$index])->fetchAll();
             check(count($columns)===1 && $columns[0]['field_name']===$field && $columns[0]['allows_duplicates']===0,$field.' has a single-column global UNIQUE');
             try {
@@ -63,15 +63,15 @@ namespace {
                 check(false,$field.' duplicate across tenants must fail');
             } catch (PDOException $e) { check(($e->errorInfo[1]??0)===1062,$field.' rejects cross-tenant duplicate'); }
             if ($type==='oauth2') { expect(externalToken($a),200,'first tenant unique OAuth'); expect(externalToken($b),200,'second tenant unique OAuth'); }
-            else { expect(externalRequest('/ext/v1/tiers',$a['headers']),200,'first tenant unique API key'); expect(externalRequest('/ext/v1/tiers',$b['headers']),200,'second tenant unique API key'); }
+            else { expect(externalRequest('/ext/v1/plans',$a['headers']),200,'first tenant unique API key'); expect(externalRequest('/ext/v1/plans',$b['headers']),200,'second tenant unique API key'); }
         }
 
         foreach (['oauth2','api_key'] as $type) {
             $oauth=$type==='oauth2';
-            $credential=externalCredential($db,secondTenant($db),$type,['tiers:read']);
+            $credential=externalCredential($db,secondTenant($db),$type,['plans:read']);
             $wrong=$credential;
             $wrong['headers']=$oauth?['Authorization'=>'Basic '.base64_encode($credential['public'].':'.str_repeat('x',43)),'Content-Type'=>'application/x-www-form-urlencoded']:['X-API-Key'=>$credential['public'].'.'.str_repeat('x',43)];
-            $send=static fn(array $c): array=>$oauth?externalToken($c):externalRequest('/ext/v1/tiers',$c['headers']);
+            $send=static fn(array $c): array=>$oauth?externalToken($c):externalRequest('/ext/v1/plans',$c['headers']);
             for ($i=0;$i<6;$i++) { expect($send($wrong),$i<5?401:429,$type.' isolated abuse counter'); }
             $files=externalBucketFiles($credential,$oauth);
             foreach ($files as $file) { check(!file_exists($file),$type.' invalid secret never creates legitimate quota'); }

@@ -33,7 +33,6 @@ function oneImportTests(Database $db): void
         'account' => $db->one('SELECT * FROM admin_accounts WHERE tenant_id=? AND user_id=?', [$tenant, $u['id']]),
         'assignments' => $db->run('SELECT * FROM user_assignments WHERE tenant_id=? AND user_id=? ORDER BY starts_at', [$tenant, $u['id']])->fetchAll(),
         'refs' => $db->run('SELECT * FROM user_external_refs WHERE tenant_id=? AND user_id=? ORDER BY source', [$tenant, $u['id']])->fetchAll(),
-        'subs' => $db->run('SELECT * FROM subscriptions WHERE tenant_id=? AND user_id=?', [$tenant, $u['id']])->fetchAll(),
         'site' => $db->one('SELECT * FROM org_units WHERE tenant_id=? AND id=?', [$tenant, $siteUno]),
         'company' => $db->one('SELECT * FROM org_units WHERE tenant_id=? AND id=?', [$tenant, $companyA]),
     ];

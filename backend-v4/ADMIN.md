@@ -12,7 +12,7 @@ Implementa 47 operaciones administrativas y las cuatro de sesión bajo `/v1`, co
 | Equipos | `GET /tenants/{id}/devices`; `GET/PATCH /devices/{id}`; `POST /devices/{id}/assignment`; `GET/POST /devices/{id}/commands`; `POST /enrollments` |
 | Políticas | `GET/POST /policies`; `GET/PATCH /policies/{id}` |
 | RBAC | `GET/POST /roles`; `GET/PATCH /roles/{id}`; `GET /permissions`; `GET/PATCH /permissions/{code}` |
-| Planes | `GET/POST /tiers`; `GET/PATCH /tiers/{id}`; `GET/PUT /users/{id}/subscription` |
+| Planes | `GET /person-plans/available`; `PUT /users/{id}/plan`; catálogo de planes solo plataforma (`/person-plans`) |
 | Reportes | `GET /reports/productivity` |
 | Releases | `GET/POST /releases`; `POST /release-deployments` |
 | Auditoría | `GET /audit` |
@@ -39,7 +39,7 @@ Cuotas predeterminadas separadas de ingesta: admin 120/min, burst 30; tenant 600
 
 `PolicyInput` administra documento, nueva versión inmutable, reglas y asignación en una transacción. Desactivar equivale a `enabled=false`; borrar reglas/asignaciones se expresa publicando otra revisión/target, conservando historia. Targets y horarios se validan dentro del tenant. No se admite bloquear el host configurado de gestión.
 
-Los cambios de políticas, horarios, organización, usuarios, tiers y suscripciones registran trabajo en `admin_policy_recompiles`. Antes del commit se valida la composición; los conflictos retornan 409 y revierten la edición. Después del commit se llama `PolicyCompiler::recompileForTenant`: abarca equipos activos del tenant y solo publica versiones si cambia el hash de composición. Incluye equipos de targets anteriores al reasignar una política.
+Los cambios de políticas, horarios, organización, usuarios y planes de persona registran trabajo en `admin_policy_recompiles`. Antes del commit se valida la composición; los conflictos retornan 409 y revierten la edición. Después del commit se llama `PolicyCompiler::recompileForTenant`: abarca equipos activos del tenant y solo publica versiones si cambia el hash de composición. Incluye equipos de targets anteriores al reasignar una política.
 
 La cola se elimina comparando su revisión, para no perder una edición concurrente. Si falla la compilación tras el commit, retorna 503 y conserva el trabajo: una petición admin posterior vuelve a intentarlo. Para recuperación sin tráfico HTTP:
 
@@ -47,7 +47,6 @@ La cola se elimina comparando su revisión, para no perder una edición concurre
 php backend-v4/config/compile-pending.php
 ```
 
-Para cambios temporales de vigencia de suscripciones se debe programar el compilador existente `config/compile.php --all`; la tarea de sistema no se instala desde esta implementación. Una suscripción futura se guarda como `scheduled`; el compilador evalúa sus fechas y las suscripciones activas/programadas. La primera asignación requiere `If-Match: "0"`; GET sin suscripción vigente devuelve 404. Las siguientes usan la versión devuelta. No se permiten solapamientos.
 
 Los comandos se encolan con secuencia monotónica y expiración futura máxima de 24 horas; no ejecutan nada. Wipe exige reauth y hostname escrito. Los motivos no se exponen en respuestas. Baja de usuario invalida credenciales, revoca sus equipos/tickets pendientes y cancela comandos pendientes. Reasignar equipo conserva historia y revoca claves/sesiones previas; requiere nuevo ticket para recuperar acceso.
 

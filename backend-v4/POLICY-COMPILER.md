@@ -22,7 +22,7 @@ Se resuelve primero `device_assignments` vigente y después `user_assignments` v
 
 Los únicos módulos del catálogo semilla son `devices`, `activity`, `productivity`, `presence`, `policies`, `integrations`. Ni `Rule` ni `policy_rules` tienen `module_code`, y el contrato efectivo no tiene un campo `modules`. El mapeo explícito `PolicyComposer::RULE_MODULES` vincula los siete controles (`web`, `download`, `installation`, `schedule`, `os`, `usb`, `encryption`) con el módulo real **`policies`**. No se inventan entitlements por nombre de tier ni reglas de módulos inexistentes. Ampliar ese mapeo requiere una decisión de esquema/contrato cuando existan nuevos controles.
 
-Un control entra solo si existe `tier_module` para la suscripción del miembro y el override de su firma no lo deshabilita. Un override positivo **no habilita un módulo ausente del tier**, conforme al requisito de este compilador; esto acota la afirmación histórica de `migrations/README.md` de que el override prevalece sobre tier. Entitlements no conceden RBAC.
+Un control entra solo si su función está en el plan efectivo de la persona (`PersonPlans::functions`: plan propio activo o, si no, el por defecto del cliente, intersecado con las funciones del cliente) y el override de su firma no lo deshabilita. Un override positivo **no habilita una función ausente del plan**. Los planes no conceden RBAC. Tiers y suscripciones se retiraron en la migración 0049.
 
 ## Horarios
 
@@ -68,7 +68,7 @@ Invocar **después del commit** de una edición; se rechazan llamadas dentro de 
 | Cambio confirmado | Invocación |
 |---|---|
 | Política o asignación global; versión del compilador | `recompileAll()` |
-| Política/asignación local, tier, `tier_module`, override de firma, suscripción, horario/días, organización o asignación de usuario | `recompileForTenant(tenantUuid)` |
+| Política/asignación local, plan de persona o del cliente, funciones del cliente, override de firma, horario/días, organización o asignación de usuario | `recompileForTenant(tenantUuid)` |
 | Alta o asignación de dispositivo | `recompile(deviceUuid, tenantUuid)` |
 
 Recompilar el tenant completo es la selección conservadora de afectados y cubre también quienes **pierden** una asignación o entitlement. Los hashes evitan publicar cambios en los demás. En cambios entre tenants, invocar ambos tenants. No se instala cron ni triggers SQL ni compilación dentro del polling. Los flujos administrativos que aún no existen deben llamar a estas funciones; para inicios/finales futuros de asignaciones o suscripciones, invocarlas al alcanzar la frontera temporal.

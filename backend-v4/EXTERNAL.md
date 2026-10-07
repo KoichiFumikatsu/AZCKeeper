@@ -2,8 +2,8 @@
 
 Contrato: `../docs/architecture/openapi-v4.yaml`. Las once operaciones de lectura
 son `GET /ext/v1/dashboard`, `/my-team`, `/members/{id}`, `/members/{id}/devices`,
-`/members/{id}/activity`, `/members/{id}/check-ins`, `/members/{id}/subscription`,
-`/tiers`, `/productivity`, `/organization` y `/notifications`, todas bajo `/ext/v1`.
+`/members/{id}/activity`, `/members/{id}/check-ins`, `/members/{id}/plan`,
+`/plans`, `/productivity`, `/organization` y `/notifications`, todas bajo `/ext/v1`.
 El router no acepta `/v1/ext/v1` ni métodos de escritura externos.
 
 ## Credenciales y autorización
