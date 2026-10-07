@@ -701,7 +701,7 @@ async function assignments() {
 // ---- Cuentas del panel ------------------------------------------------------------------------------------------
 const moduleNames = { usuarios: 'Personas', equipos: 'Equipos', reglas: 'Reglas', actividad: 'Actividad', presencia: 'Presencia', reportes: 'Reportes',
   organizacion: 'Organización', horarios: 'Horarios', festivos: 'Festivos', cumplimiento: 'Doble empleo y apps sospechosas', cobertura: 'Cobertura de instalación',
-  hardening: 'Seguridad de cuentas de Windows', roles: 'Roles y permisos', tiers: 'Planes', empresas: 'Empresa', notificaciones: 'Notificaciones',
+  hardening: 'Seguridad de cuentas de Windows', roles: 'Roles y permisos', empresas: 'Empresa', notificaciones: 'Notificaciones',
   integraciones: 'Integraciones', auditoria: 'Auditoría', operacion: 'Operación del panel', releases: 'Versiones del agente', migration: 'Migración desde K3', permisos: 'Catálogo de permisos' };
 // Editor de un acceso: rol (qué puede hacer) + alcance (qué datos ve), con la frase legible al pie (§4 y §5).
 // El alcance siempre se muestra y se envía tal cual: cambiar el rol no lo toca, y ampliarlo exige elegirlo.
@@ -1885,7 +1885,7 @@ async function personContext() {
     const list = plan ? avail.features.filter(f => plan.features.includes(f.code)).map(f => f.name) : [];
     return `Recibe: ${list.length ? list.join(', ') : 'ninguna función de persona'}.`;
   };
-  // Plan efectivo (no Tier): el propio si está activo; si no, el por defecto del cliente.
+  // Plan efectivo: el propio si está activo; si no, el por defecto del cliente.
   ctx.effectivePlan = u => {
     if (!avail) return null;
     const own = avail.data.find(p => p.id === u.plan_id);

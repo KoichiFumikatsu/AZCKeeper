@@ -3,7 +3,6 @@
   <a href="/admin/" data-nav="home">Inicio</a>
   <a href="/admin/tenants.php" data-nav="tenants" hidden>Tenants</a>
   <a href="/roles.php" data-nav="roles" hidden>Roles</a>
-  <a href="/admin/tiers.php" data-nav="tiers" hidden>Tiers</a>
   <a href="/admin/releases.php" data-nav="releases" hidden>Releases</a>
   <a href="/admin/auditoria.php" data-nav="audit" hidden>Auditoría</a>
   <a href="/admin/logs.php" data-nav="client-logs" hidden>Logs del cliente</a>

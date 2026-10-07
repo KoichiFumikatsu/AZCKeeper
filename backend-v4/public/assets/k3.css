@@ -68,8 +68,6 @@ body.public main.access{margin:0 auto;max-width:1100px;padding:48px 24px}
 .import-issues{max-height:220px;overflow:auto;font-size:12px;color:var(--error);padding-left:18px}
 .day-row{display:grid;grid-template-columns:180px 160px 1fr;align-items:center;gap:6px 14px;padding:6px 0;border-bottom:1px solid var(--line)}.day-hours{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.day-hours label{margin:0;font-size:11px}@media(max-width:700px){.day-row{grid-template-columns:1fr 1fr}.day-hours{grid-column:1/-1;grid-template-columns:1fr 1fr}}
 .tablekit{display:flex;gap:10px;margin:8px 0}.tablekit input{max-width:320px}.tablekit-pager{display:flex;align-items:center;gap:12px;margin:10px 0;font-size:12px;color:var(--muted)}.tablekit-pager button{min-height:34px;padding:4px 12px;font-size:12px}th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--accent)}th[aria-sort=ascending]:after{content:" ▲";font-size:9px}th[aria-sort=descending]:after{content:" ▼";font-size:9px}
-.tier-modules{list-style:none;padding:0;margin:12px 0}.tier-modules li{padding:3px 0;font-size:13px}.tier-modules li.muted{color:var(--muted);text-decoration:line-through}
-.tier-modules{list-style:none;padding:0;margin:12px 0}.tier-modules li{padding:3px 0;font-size:13px}.tier-modules li.muted{color:var(--muted);text-decoration:line-through}
 
 .tree,.tree ul{list-style:none;margin:0;padding-left:22px}.tree{padding-left:0}.tree li{margin:6px 0;position:relative}.tree ul li::before{content:"";position:absolute;left:-14px;top:.7em;width:10px;border-top:1px solid var(--muted)}.tree ul{border-left:1px solid var(--muted);margin-left:6px}
 /* Organización: pestañas por tipo y acciones secundarias de fila (Más). */

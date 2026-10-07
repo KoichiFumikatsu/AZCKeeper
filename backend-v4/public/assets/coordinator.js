@@ -373,7 +373,7 @@ export async function coordinator(ctx) {
     else { results.append(el('p', 'Aún no hay resultados. Elige el período (las dos fechas se incluyen) y, si quieres, filtra por empresa, sede, área o persona. Luego pulsa «Consultar».', 'empty-state report-empty')); sync(); }
   } else if (page === 'member') {
     // Pestaña «Actividad» de la ficha única de la persona (k3.js, revisión UX G1): la ficha ya muestra datos, plan y
-    // equipos; aquí solo productividad, presencia y reglas efectivas. Sin Tier: el plan vigente está en «Acceso y plan».
+    // equipos; aquí solo productividad, presencia y reglas efectivas. El plan vigente está en «Acceso y plan».
     const id = ctx.user?.id || new URLSearchParams(location.search).get('id'); if (!isUuid(id)) throw new Error('Selecciona una persona desde Personas.');
     const u = ctx.user || await get(`/users/${id}`);
     const rangeBar = el('div', undefined, 'toolbar'); const rangeLabel = el('label', 'Período'); rangeLabel.htmlFor = 'member-range'; const rangeSelect = el('select'); rangeSelect.id = 'member-range'; for (const n of [7, 30]) { const o = el('option', `${n} días`); o.value = n; rangeSelect.append(o); } rangeBar.append(rangeLabel, rangeSelect); host.append(rangeBar);
