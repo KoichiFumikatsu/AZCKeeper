@@ -157,3 +157,4 @@ tr.group-row th{background:#d6d6d6;color:var(--ink);white-space:normal;padding:4
 /* M11 · Ajustes: grupos separados y revisión de cambios antes de guardar. */
 .settings-group{margin:0 0 20px}.settings-group>.help{margin:0 0 10px}.settings-review{margin:0 0 16px}
 input[aria-invalid=true],select[aria-invalid=true]{border-color:var(--error);box-shadow:0 0 0 1px var(--error)}
+dialog>form>h2{margin-bottom:14px}

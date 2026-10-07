@@ -2405,7 +2405,8 @@ function weekList(s) {
 // Tabla de la semana (editor de horarios): se vuelve a pintar con cada cambio del formulario.
 function weekTable(parent, s) {
   const week = scheduleWeek(s);
-  const t = el('table', undefined, 'week-table'); t.append(el('caption', 'Semana efectiva'));
+  // Tabla fija de 7 días: sin buscador, orden ni paginación de tablekit.
+  const t = el('table', undefined, 'week-table'); t.dataset.kit = 'done'; t.append(el('caption', 'Semana efectiva'));
   const head = el('thead'); const hr = el('tr'); ['Día', 'Jornada', 'Almuerzo', 'Tiempo esperado'].forEach(h => { const th = el('th', h); th.scope = 'col'; hr.append(th); }); head.append(hr);
   const body = el('tbody');
   for (const d of week) {
