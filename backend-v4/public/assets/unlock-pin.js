@@ -24,7 +24,7 @@ export async function mountUnlockPin(container, tenant) {
     change.textContent = settings.configured ? 'Cambiar PIN' : 'Configurar PIN';
   };
   actions.append(view, change);
-  container.append(state, el('p', 'Funciona sin conexión después de sincronizar el equipo. Tras 5 intentos incorrectos hay que esperar 15 minutos. Al cambiarlo, los equipos sin conexión conservan el PIN anterior hasta su próxima sincronización.'), actions, message);
+  container.append(state, el('p', 'Requiere Keeper 4.0.17 o posterior. Funciona sin conexión después de sincronizar el equipo. Tras 5 intentos incorrectos hay que esperar 15 minutos. Al cambiarlo, los equipos sin conexión conservan el PIN anterior hasta su próxima sincronización.'), actions, message);
   try { showState(await api('GET', path)); }
   catch (error) { state.textContent = errorMessage(error); view.disabled = change.disabled = true; return; }
 
