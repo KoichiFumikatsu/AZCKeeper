@@ -13200,9 +13200,9 @@ components:
       properties:
         pin:
           type: string
-          minLength: 6
+          minLength: 8
           maxLength: 32
-          pattern: ^[0-9]{6,32}$
+          pattern: ^[0-9]{8,32}$
     UnlockPinVerifier:
       type: object
       additionalProperties: false
