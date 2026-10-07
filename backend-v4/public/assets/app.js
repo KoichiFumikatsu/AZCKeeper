@@ -708,15 +708,21 @@ function renameSection(d, log) {
 // Soporte del agente (client-v4 CommandExecutor): lock/unlock/restart/shutdown/wipe desde 4.0.0; refresh_policy no la
 // ejecuta ninguna versión (respondería unsupported_command), así que se muestra deshabilitada con el motivo.
 // Bloquear no admite mensaje ni PIN desde el panel: CommandParameters solo tiene computer_name/restart_now/admin_name.
+// Reiniciar y Apagar admiten aviso previo (notice_seconds 60/300/600) desde el agente 4.0.17; «Inmediato» no manda
+// parámetros, así que sigue funcionando con cualquier agente.
+const NOTICE_AGENT = '4.0.17';
+const noticeChoices = [[60, '1 minuto'], [300, '5 minutos'], [600, '10 minutos']];
 const remoteActions = [
   { type: 'lock', label: 'Bloquear equipo', permission: 'equipos.bloquear', feature: 'comandos', agent: '4.0.0', reason: 'Bloqueo desde el panel', verb: 'Bloquear',
     effect: 'Aparece una pantalla «Equipo bloqueado por IT» sobre todas las pantallas y la persona no puede usar el equipo hasta que lo desbloquees desde aquí. Sus programas siguen abiertos. Si nadie tiene la sesión abierta, el bloqueo aparece al iniciar sesión.' },
   { type: 'unlock', label: 'Desbloquear', permission: 'equipos.desbloquear', feature: 'comandos', agent: '4.0.0', reason: 'Desbloqueo desde el panel', verb: 'Desbloquear',
     effect: 'Se quita la pantalla de bloqueo y la persona puede volver a usar el equipo.' },
   { type: 'restart', label: 'Reiniciar', permission: 'equipos.reiniciar', feature: 'comandos', agent: '4.0.0', reason: 'Reinicio desde el panel', verb: 'Reiniciar',
-    effect: 'Windows se reinicia de inmediato, sin aviso ni cuenta regresiva. La persona perderá lo que no haya guardado.' },
+    effect: 'Windows se reinicia de inmediato, sin aviso ni cuenta regresiva. La persona perderá lo que no haya guardado.',
+    noticeEffect: m => `La persona verá en su pantalla «El equipo se reiniciará en ${m} por orden de IT. Guarda tu trabajo.» con una cuenta regresiva, sin opción de posponer ni cancelar. Al terminar, Windows se reinicia. La cuenta empieza cuando el equipo recibe la orden.` },
   { type: 'shutdown', label: 'Apagar', permission: 'equipos.apagar', feature: 'comandos', agent: '4.0.0', reason: 'Apagado desde el panel', verb: 'Apagar',
-    effect: 'El equipo se apaga de inmediato, sin aviso. La persona perderá lo que no haya guardado y alguien tendrá que encenderlo a mano: no se puede encender desde el panel.' },
+    effect: 'El equipo se apaga de inmediato, sin aviso. La persona perderá lo que no haya guardado y alguien tendrá que encenderlo a mano: no se puede encender desde el panel.',
+    noticeEffect: m => `La persona verá en su pantalla «El equipo se apagará en ${m} por orden de IT. Guarda tu trabajo.» con una cuenta regresiva, sin opción de posponer ni cancelar. Al terminar, el equipo se apaga y alguien tendrá que encenderlo a mano: no se puede encender desde el panel. La cuenta empieza cuando el equipo recibe la orden.` },
   { type: 'refresh_policy', label: 'Aplicar reglas ahora', permission: 'reglas.aplicar', feature: null, agent: null, reason: 'Aplicar reglas desde el panel', verb: 'Aplicar reglas en',
     unsupported: 'El agente del equipo aún no ejecuta esta orden. Los cambios de reglas llegan solos en su próxima sincronización.',
     effect: 'El equipo vuelve a leer sus reglas sin esperar.' },
@@ -728,7 +734,8 @@ const commandTypes = { lock: 'Bloquear', unlock: 'Desbloquear', restart: 'Reinic
 const commandStates = { pending: ['Pendiente', 'info'], delivered: ['Entregado', 'info'], running: ['En curso', 'warn'], succeeded: ['Ejecutado', 'good'], failed: ['Falló', 'bad'], expired: ['Vencido', 'warn'], cancelled: ['Cancelado', ''] };
 const commandCodes = { completed: 'Completado', pending_restart: 'Se aplica al reiniciar', expired: 'Venció antes de ejecutarse', interrupted: 'Se interrumpió (el equipo se apagó o reinició)',
   unsupported_command: 'El agente no ejecuta esta orden', device_actions_dry_run: 'El agente está en modo de prueba: no ejecuta acciones', invalid_command_destination: 'Rechazada por el agente (destino no válido)',
-  command_inbox_full: 'El agente tiene demasiadas órdenes pendientes', invalid_computer_name: 'Nombre no válido', lock_store_unavailable: 'El agente no pudo guardar el bloqueo' };
+  command_inbox_full: 'El agente tiene demasiadas órdenes pendientes', invalid_computer_name: 'Nombre no válido', lock_store_unavailable: 'El agente no pudo guardar el bloqueo',
+  notice_deadline_missed: 'No se ejecutó: el equipo estaba apagado o suspendido cuando terminó el aviso', invalid_notice: 'Tiempo de aviso no válido' };
 const versionBelow = (version, min) => {
   const a = String(version || '0').split('.').map(n => parseInt(n, 10) || 0); const b = min.split('.').map(Number);
   for (let i = 0; i < 3; i++) { if ((a[i] || 0) !== b[i]) return (a[i] || 0) < b[i]; }
@@ -744,8 +751,9 @@ function remoteAvailability(action, access, d) {
   if (versionBelow(d.agent_version, action.agent)) return { reason: `El agente de este equipo (${d.agent_version || 'sin versión'}) no ejecuta esta orden: actualízalo a ${action.agent} o posterior.` };
   return {};
 }
-function commandError(error, type) {
+function commandError(error, type, notice = 0) {
   if (error.code === 'invalid_transition') return new Error('El equipo no está activo: no se le pueden enviar órdenes.');
+  if (error.code === 'agent_too_old' && notice > 0) return new Error(`El agente de este equipo es anterior a ${NOTICE_AGENT} y no puede mostrar el aviso. Actualízalo o envía la orden con «Inmediato».`);
   if (error.code === 'agent_too_old') return new Error('El agente de este equipo es muy antiguo para esta orden: actualízalo primero.');
   if (error.status === 422 && type === 'wipe') return new Error('El nombre escrito no coincide con el del equipo. No se envió el borrado.');
   if (error.status === 422) return new Error('La orden no es válida (revisa el motivo: máximo 500 caracteres).');
@@ -795,7 +803,30 @@ function openRemoteAction(d, action, { onSent }) {
   const dialog = node('dialog', undefined, 'remote-dialog'); const form = node('form'); form.noValidate = true;
   form.append(node('h2', `${action.verb} ${d.hostname}`));
   const body = node('div', undefined, 'dialog-body'); form.append(body);
-  body.append(node('p', action.effect));
+  const effect = node('p', action.effect); body.append(effect);
+  // Reiniciar/Apagar: «Inmediato» (por defecto, como siempre) o «Con aviso» de 1, 5 o 10 minutos a la persona.
+  let noticeSeconds = () => 0;
+  if (action.noticeEffect) {
+    const tooOld = versionBelow(d.agent_version, NOTICE_AGENT);
+    const box = node('fieldset', undefined, 'remote-notice'); box.append(node('legend', 'Cuándo'));
+    const choice = (value, text) => { const l = node('label', undefined, 'check'); const r = node('input'); r.type = 'radio'; r.name = 'notice_mode'; r.value = value; l.append(r, text); box.append(l); return r; };
+    const immediate = choice('now', 'Inmediato'); immediate.checked = true;
+    const withNotice = choice('notice', 'Con aviso a la persona');
+    const delayLabel = node('label', 'Tiempo de aviso'); const delay = node('select'); delay.name = 'notice_seconds';
+    noticeChoices.forEach(([value, text]) => { const o = node('option', text); o.value = String(value); delay.append(o); });
+    delay.value = '300'; delayLabel.append(delay); delayLabel.hidden = true; box.append(delayLabel);
+    if (tooOld) {
+      withNotice.disabled = true;
+      box.append(node('p', `El agente de este equipo (${d.agent_version || 'sin versión'}) no muestra el aviso: actualízalo a ${NOTICE_AGENT} o posterior. Mientras tanto solo se puede enviar inmediato.`, 'help remote-notice-old'));
+    }
+    const refresh = () => {
+      delayLabel.hidden = !withNotice.checked;
+      effect.textContent = withNotice.checked ? action.noticeEffect(delay.selectedOptions[0].textContent) : action.effect;
+    };
+    [immediate, withNotice, delay].forEach(x => x.addEventListener('change', refresh));
+    noticeSeconds = () => withNotice.checked ? Number(delay.value) : 0;
+    body.append(box);
+  }
   if (wipe) body.append(node('p', 'Esta acción es irreversible: lo borrado no se puede recuperar.', 'error-text'));
   const reasonLabel = node('label', 'Motivo (queda en la auditoría)'); const reason = node('input'); reason.name = 'reason'; reason.maxLength = 500; reason.value = action.reason; reason.autocomplete = 'off'; reasonLabel.append(reason); body.append(reasonLabel);
   let confirmInput = null;
@@ -820,15 +851,16 @@ function openRemoteAction(d, action, { onSent }) {
     if (!text) { show(new Error('Escribe un motivo: queda en la auditoría.')); reason.focus(); return; }
     ok.disabled = true; cancel.disabled = true;
     // Clave de idempotencia nueva por intento: un 403 reauth_required no encoló nada.
+    const notice = noticeSeconds();
     const send = () => api('POST', `/devices/${d.id}/commands`, {
-      body: { type: action.type, reason: text, expires_at: commandExpiry(), ...(wipe ? { confirmation: confirmInput.value } : {}) },
+      body: { type: action.type, reason: text, expires_at: commandExpiry(), ...(wipe ? { confirmation: confirmInput.value } : {}), ...(notice > 0 ? { parameters: { notice_seconds: notice } } : {}) },
       idempotencyKey: crypto.randomUUID(),
     });
     try {
       const result = wipe ? await withReauth(send, `Para borrar ${d.hostname} a distancia, confirma la contraseña con la que entras al panel.`) : await send();
       if (result === canceled) { show(new Error('No se envió el borrado: falta confirmar tu contraseña.')); return; }
       dialog.close(); onSent();
-    } catch (e) { show(commandError(e, action.type)); }
+    } catch (e) { show(commandError(e, action.type, notice)); }
     finally { if (dialog.open) { cancel.disabled = false; ok.disabled = false; sync(); } }
   });
   dialog.showModal();
