@@ -33,6 +33,7 @@ internal static class Program
         var sessionLog = new RollingFileLog(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "AZCKeeper", "v4", "logs"), "session");
         using var screen = new LockScreen(dispatcher, message => sessionLog.Write("ERROR", "LockScreen", message));
+        using var notice = new PowerNoticeWindow(dispatcher);
         Application.ApplicationExit += (_, _) => stopping.Cancel();
         var task = Task.Run(async () =>
         {
@@ -45,7 +46,7 @@ internal static class Program
             await using var modules = new ModuleHost([calls, activity, new WindowTracker(foreground, activity), new PresenceTracker(presenceFile), screen],
                 new ModuleContext(sink, TimeProvider.System, _ => { }, stopping.Token));
             await modules.InitAsync();
-            try { await new SessionClient(args[0], agentPid, modules, sink, screen).RunAsync(stopping.Token); }
+            try { await new SessionClient(args[0], agentPid, modules, sink, screen, notice).RunAsync(stopping.Token); }
             catch (Exception ex) when (ex is IOException or OperationCanceledException or UnauthorizedAccessException) { }
         });
         _ = task.ContinueWith(_ => dispatcher.BeginInvoke(Application.Exit), TaskScheduler.Default);

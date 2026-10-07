@@ -6,7 +6,8 @@ using Keeper.Shared.Contracts;
 
 namespace Keeper.Session.Ipc;
 
-public sealed class SessionClient(string pipeName, int agentPid, ModuleHost host, SessionBuffer buffer, LockScreen screen)
+public sealed class SessionClient(string pipeName, int agentPid, ModuleHost host, SessionBuffer buffer, LockScreen screen,
+    PowerNoticeWindow? notice = null)
 {
     public async Task RunAsync(CancellationToken ct)
     {
@@ -28,6 +29,7 @@ public sealed class SessionClient(string pipeName, int agentPid, ModuleHost host
                 version = request.PolicyVersion;
             }
             await screen.SetStateAsync(request.Locked, request.PinAllowed);
+            notice?.Set(request.Shutdown ? null : request.PowerNotice);
             await host.TickAsync(ct);
             if (request.Shutdown) await host.ShutdownAsync();
             await SessionProtocol.WriteAsync(pipe, buffer.Response(request.CorrelationId, screen.TakePin()), ct);

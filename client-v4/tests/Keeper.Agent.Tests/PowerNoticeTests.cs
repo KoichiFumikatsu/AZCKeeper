@@ -1,0 +1,249 @@
+extern alias session;
+using PowerNoticeText = session::Keeper.Session.Modules.UI.PowerNoticeText;
+using Keeper.Agent.Hosting;
+using Keeper.Agent.Modules.Devices;
+using Keeper.Agent.Modules.Security;
+using Keeper.Shared.Contracts;
+using Keeper.Shared.Protocol;
+
+namespace Keeper.Agent.Tests;
+
+// Reiniciar/apagar con aviso previo (agente 4.0.17): la orden espera sin bloquear el tick, avisa a las sesiones y se
+// ejecuta y reporta al vencer el plazo.
+public sealed class PowerNoticeTests
+{
+    private sealed class RecordingActions : IDeviceActions
+    {
+        public List<DeviceAction> Executed { get; } = [];
+        public Task ExecuteAsync(DeviceAction action, CancellationToken ct) { Executed.Add(action); return Task.CompletedTask; }
+    }
+
+    private sealed class Rig : IAsyncDisposable
+    {
+        public TestDirectory Directory { get; } = new();
+        public TestClock Clock { get; } = new();
+        public RecordingActions Actions { get; } = new();
+        public ModuleContext Context { get; }
+        public DeviceLock Lock { get; private set; } = null!;
+        public CommandExecutor Executor { get; private set; } = null!;
+        public MemoryEvents Events => (MemoryEvents)Context.Outbox;
+        public Rig() => Context = Samples.Context(Clock);
+        public async Task<Rig> StartAsync()
+        {
+            Lock = new DeviceLock(Directory.File("lock"));
+            await Lock.InitAsync(Context);
+            return await RestartAgentAsync();
+        }
+        // Simula un reinicio del agente: una instancia nueva sobre la misma bandeja en disco.
+        public async Task<Rig> RestartAgentAsync()
+        {
+            if (Executor is not null) await Executor.ShutdownAsync();
+            Executor = new CommandExecutor(Directory.File("inbox"), Samples.Device, Lock, Actions);
+            await Executor.InitAsync(Context);
+            return this;
+        }
+        public async ValueTask DisposeAsync()
+        {
+            await Executor.ShutdownAsync();
+            await Lock.ShutdownAsync();
+            Directory.Dispose();
+        }
+    }
+
+    private static Command Order(TestClock clock, CommandType type, long? notice) => CommandRegressionTests.Command(clock) with
+    {
+        Type = type, Parameters = notice is null ? null : new CommandParameters { NoticeSeconds = notice }
+    };
+
+    [Theory]
+    [InlineData(CommandType.Restart, 60, DeviceAction.Restart, PowerNoticeAction.Restart)]
+    [InlineData(CommandType.Shutdown, 300, DeviceAction.Shutdown, PowerNoticeAction.Shutdown)]
+    [InlineData(CommandType.Restart, 600, DeviceAction.Restart, PowerNoticeAction.Restart)]
+    public async Task EsperaElPlazoSinBloquearYSoloEntoncesEjecutaYReporta(CommandType type, long notice, DeviceAction action, PowerNoticeAction shown)
+    {
+        await using var rig = await new Rig().StartAsync();
+        var start = rig.Clock.GetUtcNow();
+        await rig.Executor.AcceptAsync([Order(rig.Clock, type, notice)], Samples.Tenant, default);
+        await rig.Executor.TickAsync(default);
+        Assert.Empty(rig.Actions.Executed);
+        Assert.Empty(rig.Events.CommandResults);
+        Assert.Equal(new PowerNotice(shown, start.AddSeconds(notice)), rig.Executor.PendingNotice);
+
+        // Otras ordenes siguen ejecutandose durante la cuenta regresiva.
+        await rig.Executor.AcceptAsync([Order(rig.Clock, CommandType.Lock, null)], Samples.Tenant, default);
+        rig.Clock.Advance(TimeSpan.FromSeconds(notice - 1));
+        await rig.Executor.TickAsync(default);
+        Assert.True(rig.Lock.Locked);
+        Assert.Empty(rig.Actions.Executed);
+        Assert.Single(rig.Events.CommandResults);
+
+        rig.Clock.Advance(TimeSpan.FromSeconds(1));
+        await rig.Executor.TickAsync(default);
+        Assert.Equal([action], rig.Actions.Executed);
+        Assert.Equal(2, rig.Events.CommandResults.Count);
+        Assert.Equal(CommandResultStatus.Succeeded, rig.Events.CommandResults[^1].Result.Status);
+        Assert.Null(rig.Executor.PendingNotice);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0L)]
+    public async Task SinAvisoEsInmediatoComoAntes(long? notice)
+    {
+        await using var rig = await new Rig().StartAsync();
+        await rig.Executor.AcceptAsync([Order(rig.Clock, CommandType.Shutdown, notice)], Samples.Tenant, default);
+        await rig.Executor.TickAsync(default);
+        Assert.Equal([DeviceAction.Shutdown], rig.Actions.Executed);
+        Assert.Equal(CommandResultStatus.Succeeded, Assert.Single(rig.Events.CommandResults).Result.Status);
+        Assert.Null(rig.Executor.PendingNotice);
+    }
+
+    [Fact]
+    public async Task SiElAgenteSeReiniciaRetomaLaCuentaConElMismoPlazo()
+    {
+        await using var rig = await new Rig().StartAsync();
+        var deadline = rig.Clock.GetUtcNow().AddSeconds(300);
+        await rig.Executor.AcceptAsync([Order(rig.Clock, CommandType.Restart, 300)], Samples.Tenant, default);
+        await rig.Executor.TickAsync(default);
+        rig.Clock.Advance(TimeSpan.FromSeconds(120));
+        await rig.RestartAgentAsync();
+        Assert.Equal(new PowerNotice(PowerNoticeAction.Restart, deadline), rig.Executor.PendingNotice);
+        await rig.Executor.TickAsync(default);
+        Assert.Empty(rig.Actions.Executed);
+
+        rig.Clock.Advance(TimeSpan.FromSeconds(180));
+        await rig.Executor.TickAsync(default);
+        Assert.Equal([DeviceAction.Restart], rig.Actions.Executed);
+        Assert.Equal(CommandResultStatus.Succeeded, Assert.Single(rig.Events.CommandResults).Result.Status);
+    }
+
+    [Fact]
+    public async Task SiVuelveConElPlazoRecienVencidoEjecutaYa()
+    {
+        await using var rig = await new Rig().StartAsync();
+        await rig.Executor.AcceptAsync([Order(rig.Clock, CommandType.Shutdown, 60)], Samples.Tenant, default);
+        await rig.Executor.TickAsync(default);
+        rig.Clock.Advance(TimeSpan.FromSeconds(60) + CommandExecutor.NoticeGrace);
+        await rig.RestartAgentAsync();
+        await rig.Executor.TickAsync(default);
+        Assert.Equal([DeviceAction.Shutdown], rig.Actions.Executed);
+    }
+
+    [Fact]
+    public async Task SiElEquipoEstuvoApagadoAlVencerNoLoApagaPorSorpresa()
+    {
+        await using var rig = await new Rig().StartAsync();
+        await rig.Executor.AcceptAsync([Order(rig.Clock, CommandType.Shutdown, 600)], Samples.Tenant, default);
+        await rig.Executor.TickAsync(default);
+        rig.Clock.Advance(TimeSpan.FromHours(10));
+        await rig.RestartAgentAsync();
+        await rig.Executor.TickAsync(default);
+        Assert.Empty(rig.Actions.Executed);
+        var result = Assert.Single(rig.Events.CommandResults).Result;
+        Assert.Equal(CommandResultStatus.Failed, result.Status);
+        Assert.Equal("notice_deadline_missed", result.Code);
+        Assert.Null(rig.Executor.PendingNotice);
+    }
+
+    [Fact]
+    public async Task UnaOrdenQueVenceDuranteElAvisoIgualSeEjecuta()
+    {
+        await using var rig = await new Rig().StartAsync();
+        var order = Order(rig.Clock, CommandType.Restart, 300) with { ExpiresAt = rig.Clock.GetUtcNow().AddSeconds(30) };
+        await rig.Executor.AcceptAsync([order], Samples.Tenant, default);
+        await rig.Executor.TickAsync(default);
+        rig.Clock.Advance(TimeSpan.FromSeconds(300));
+        await rig.Executor.TickAsync(default);
+        Assert.Equal([DeviceAction.Restart], rig.Actions.Executed);
+    }
+
+    [Theory]
+    [InlineData(120L)]
+    [InlineData(-60L)]
+    [InlineData(86400L)]
+    public async Task AvisoFueraDeLasOpcionesSeRechaza(long notice)
+    {
+        await using var rig = await new Rig().StartAsync();
+        await rig.Executor.AcceptAsync([Order(rig.Clock, CommandType.Restart, notice)], Samples.Tenant, default);
+        await rig.Executor.TickAsync(default);
+        Assert.Empty(rig.Actions.Executed);
+        var result = Assert.Single(rig.Events.CommandResults).Result;
+        Assert.Equal(CommandResultStatus.Failed, result.Status);
+        Assert.Equal("invalid_notice", result.Code);
+    }
+
+    [Fact]
+    public async Task ElSupervisorEnviaElAvisoATodasLasSesiones()
+    {
+        var clock = new TestClock();
+        using var directory = new TestDirectory();
+        var context = Samples.Context(clock);
+        var deviceLock = new DeviceLock(directory.File("lock"));
+        await deviceLock.InitAsync(context);
+        var platform = new FakePlatform();
+        PowerNotice? current = null;
+        var supervisor = new SessionSupervisor(platform, deviceLock, () => null,
+            new SessionTaskManagerPolicies(() => [], _ => new ScreenLockTests.FakeRegistry()), () => current);
+        await using var host = new ModuleHost([supervisor], context);
+        await host.InitAsync();
+        await host.TickAsync(default);
+        Assert.All(platform.Connections.Values, c => Assert.Null(c.Requests[^1].PowerNotice));
+
+        current = new PowerNotice(PowerNoticeAction.Shutdown, clock.GetUtcNow().AddMinutes(5));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await host.TickAsync(default);
+        Assert.Equal(2, platform.Connections.Count);
+        Assert.All(platform.Connections.Values, c => Assert.Equal(current, c.Requests[^1].PowerNotice));
+
+        current = null;
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await host.TickAsync(default);
+        Assert.All(platform.Connections.Values, c => Assert.Null(c.Requests[^1].PowerNotice));
+        await deviceLock.ShutdownAsync();
+    }
+
+    [Fact]
+    public void ElAvisoViajaPorElCanalDeSesion()
+    {
+        var notice = new PowerNotice(PowerNoticeAction.Restart, DateTimeOffset.FromUnixTimeSeconds(1700000300));
+        var json = System.Text.Json.JsonSerializer.Serialize(new SessionRequest(1, Guid.NewGuid(), null, null, false, false, [], PowerNotice: notice), ProtocolJson.Options);
+        Assert.Contains("\"power_notice\":{\"action\":\"restart\"", json);
+        Assert.Equal(notice, System.Text.Json.JsonSerializer.Deserialize<SessionRequest>(json, ProtocolJson.Options)!.PowerNotice);
+        Assert.DoesNotContain("power_notice", System.Text.Json.JsonSerializer.Serialize(new SessionRequest(1, Guid.NewGuid(), null, null, false, false, []), ProtocolJson.Options));
+    }
+
+    [Theory]
+    [InlineData(PowerNoticeAction.Restart, 600, "El equipo se reiniciará en 10 minutos por orden de IT. Guarda tu trabajo.", "10:00")]
+    [InlineData(PowerNoticeAction.Restart, 299.2, "El equipo se reiniciará en 5 minutos por orden de IT. Guarda tu trabajo.", "05:00")]
+    [InlineData(PowerNoticeAction.Shutdown, 60, "El equipo se apagará en 1 minuto por orden de IT. Guarda tu trabajo.", "01:00")]
+    [InlineData(PowerNoticeAction.Shutdown, 7, "El equipo se apagará en 1 minuto por orden de IT. Guarda tu trabajo.", "00:07")]
+    [InlineData(PowerNoticeAction.Restart, -3, "El equipo se reiniciará ahora por orden de IT.", "00:00")]
+    public void TextosDelAviso(PowerNoticeAction action, double seconds, string message, string countdown)
+    {
+        Assert.Equal(message, PowerNoticeText.Message(action, TimeSpan.FromSeconds(seconds)));
+        Assert.Equal(countdown, PowerNoticeText.Countdown(TimeSpan.FromSeconds(seconds)));
+    }
+
+    private sealed class FakePlatform : ISessionSupervisorPlatform
+    {
+        public Dictionary<int, FakeConnection> Connections { get; } = [];
+        public IReadOnlyList<InteractiveSession> Enumerate() => [new(1, "a"), new(2, "b")];
+        public ISupervisedSession Connect(InteractiveSession session, CancellationToken ct) => Connections[session.Id] = new FakeConnection();
+        public void CloseExistingTaskManagers(IReadOnlyList<InteractiveSession> sessions) { }
+    }
+
+    private sealed class FakeConnection : ISupervisedSession
+    {
+        public bool HasExited => false;
+        public Task Connecting => Task.CompletedTask;
+        public List<SessionRequest> Requests { get; } = [];
+        public void Verify() { }
+        public Task<SessionResponse> ExchangeAsync(SessionRequest request, CancellationToken ct)
+        {
+            Requests.Add(request);
+            return Task.FromResult(new SessionResponse(1, request.CorrelationId, [], []));
+        }
+        public Task SendAsync(SessionRequest request, CancellationToken ct) => Task.CompletedTask;
+        public void Dispose() { }
+    }
+}

@@ -10,11 +10,11 @@ namespace Keeper.Agent.Hosting;
 
 [SupportedOSPlatform("windows")]
 public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, DeviceLock deviceLock,
-    Func<PolicyCoordinator?> policy, SessionTaskManagerPolicies taskManagers) : ModuleBase
+    Func<PolicyCoordinator?> policy, SessionTaskManagerPolicies taskManagers, Func<PowerNotice?>? powerNotice = null) : ModuleBase
 {
     public SessionSupervisor(WindowsSessionLauncher launcher, string sessionExe, DeviceLock deviceLock,
-        Func<PolicyCoordinator?> policy) : this(new WindowsSessionSupervisorPlatform(launcher, sessionExe), deviceLock,
-            policy, SessionTaskManagerPolicies.Windows()) { }
+        Func<PolicyCoordinator?> policy, Func<PowerNotice?>? powerNotice = null) : this(new WindowsSessionSupervisorPlatform(launcher, sessionExe), deviceLock,
+            policy, SessionTaskManagerPolicies.Windows(), powerNotice) { }
     public override string Name => "SessionSupervisor";
     private readonly Dictionary<int, Peer> _peers = [];
     private readonly Dictionary<int, DateTimeOffset> _retry = [];
@@ -107,7 +107,8 @@ public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, Devic
         var current = coordinator?.Current;
         var version = coordinator?.CurrentVersion;
         var projection = current is null || peer.Version == version ? null : current with { Rules = [], ManagementHosts = [], Composition = [] };
-        var request = new SessionRequest(1, Guid.NewGuid(), version, projection, deviceLock.Locked, deviceLock.PinAllowed, peer.Acknowledged, shutdown);
+        var request = new SessionRequest(1, Guid.NewGuid(), version, projection, deviceLock.Locked, deviceLock.PinAllowed, peer.Acknowledged, shutdown,
+            shutdown ? null : powerNotice?.Invoke());
         var response = await peer.Connection.ExchangeAsync(request, timeout.Token);
         SessionProtocol.Validate(response, request.CorrelationId);
         var ack = new List<Guid>();

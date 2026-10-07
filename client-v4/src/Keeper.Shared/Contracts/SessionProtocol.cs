@@ -5,7 +5,15 @@ using Keeper.Shared.Protocol;
 namespace Keeper.Shared.Contracts;
 
 public sealed record SessionRequest(int ProtocolVersion, Guid CorrelationId, long? PolicyVersion,
-    EffectivePolicy? Policy, bool Locked, bool PinAllowed, IReadOnlyList<Guid> Acknowledged, bool Shutdown = false);
+    EffectivePolicy? Policy, bool Locked, bool PinAllowed, IReadOnlyList<Guid> Acknowledged, bool Shutdown = false,
+    PowerNotice? PowerNotice = null);
+
+/// <summary>
+/// Aviso previo a un reinicio o apagado ordenado por IT (agentes 4.0.17+). El agente lo repite en cada intercambio
+/// mientras dure la cuenta regresiva; la sesion muestra la ventana mientras lo reciba y la cierra cuando deja de llegar.
+/// </summary>
+public sealed record PowerNotice(PowerNoticeAction Action, DateTimeOffset Deadline);
+public enum PowerNoticeAction { Restart, Shutdown }
 public sealed record SessionResponse(int ProtocolVersion, Guid CorrelationId, IReadOnlyList<Episode> Episodes,
     IReadOnlyList<LogEntry> Logs, string? Pin = null, IReadOnlyList<ActivitySnapshot>? Activity = null)
 {

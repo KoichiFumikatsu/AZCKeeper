@@ -100,7 +100,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
                 TimeSpan.FromHours(restorePointHours), TimeSpan.FromHours(6)),
             new TamperGuard(trust.BinaryHashes), new AgentDiagnostics(() => hostReference?.Snapshot() ?? []) };
         if (OperatingSystem.IsWindows()) moduleList.Add(new SessionSupervisor(new WindowsSessionLauncher(trust.BinaryHashes),
-            Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), deviceLock, () => policy));
+            Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), deviceLock, () => policy, () => commands.PendingNotice));
         await using var modules = new ModuleHost(moduleList, context);
         hostReference = modules;
         await modules.InitAsync();

@@ -10,7 +10,7 @@ const pascal = s => s.split(/[_-]/).map(x => x[0].toUpperCase() + x.slice(1)).jo
 function type(s, hint) {
   if (s.anyOf) return type(s.anyOf.find(x => x.type !== 'null'), hint) + '?';
   if (s.$ref) { const n = s.$ref.split('/').at(-1); add(n, schemas[n]); return n; }
-  if (s.enum) { enums.set(hint, s.enum); return hint; }
+  if (s.enum && s.type !== 'integer') { enums.set(hint, s.enum); return hint; }
   if (s.type === 'object') { add(hint, s); return hint; }
   if (s.type === 'array') return `IReadOnlyList<${type(s.items, hint + 'Item')}>`;
   if (s.type === 'integer' || typeof s.const === 'number') return 'long';

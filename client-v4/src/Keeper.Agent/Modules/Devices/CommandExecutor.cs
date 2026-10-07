@@ -108,17 +108,29 @@ public sealed class WindowsDeviceActions(bool enabled) : IDeviceActions
     private static extern bool WTSLogoffSession(IntPtr server, int sessionId, bool wait);
 }
 
-public sealed record InboxEntry(Command Command, CommandResult? Result, bool Started, bool Published = false);
+// DueAt: reinicio/apagado con aviso (4.0.17). Se fija al empezar la cuenta regresiva y se guarda en disco, asi que
+// sobrevive a un reinicio del agente.
+public sealed record InboxEntry(Command Command, CommandResult? Result, bool Started, bool Published = false, DateTimeOffset? DueAt = null);
 public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock deviceLock, IDeviceActions actions,
     IComputerNamer? namer = null, IHardeningLauncher? hardening = null, ISessionLogoff? logoff = null) : ModuleBase
 {
     public override string Name => "CommandExecutor";
+    // Reinicio/apagado con aviso: la orden espera en la bandeja (sin bloquear el tick) hasta DueAt y solo entonces se
+    // ejecuta y se reporta. Si el agente se reinicia a mitad de la cuenta, la retoma con el mismo plazo. Si al volver ya
+    // paso el plazo por mas de NoticeGrace (el equipo estuvo apagado o suspendido, o el agente detenido), NO se ejecuta:
+    // se reporta notice_deadline_missed para no apagar por sorpresa a quien acaba de encender el equipo.
+    public static readonly TimeSpan NoticeGrace = TimeSpan.FromMinutes(2);
+    private static readonly long[] NoticeChoices = [0, 60, 300, 600];
     private readonly SemaphoreSlim _gate = new(1, 1);
     private List<InboxEntry> _entries = [];
+    private volatile PowerNotice? _notice;
+    /// <summary>Aviso vigente para las sesiones (el de plazo mas cercano), o null si no hay cuenta regresiva.</summary>
+    public PowerNotice? PendingNotice => _notice;
     public override async Task InitAsync(ModuleContext ctx)
     {
         await base.InitAsync(ctx);
         if (File.Exists(path)) _entries = JsonSerializer.Deserialize<List<InboxEntry>>(await File.ReadAllBytesAsync(path, ctx.StoppingToken), ProtocolJson.Options) ?? [];
+        RefreshNotice();
     }
     public async Task AcceptAsync(IReadOnlyList<Command> commands, Guid tenant, CancellationToken ct)
     {
@@ -159,8 +171,10 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
         await _gate.WaitAsync(ct);
         try
         {
-            if (!_entries.Any(e => e.Result is null || !e.Published || e.Command.ExpiresAt <= Context.Clock.GetUtcNow())) return;
-            foreach (var original in _entries.Where(e => e.Result is null).ToArray())
+            var now = Context.Clock.GetUtcNow();
+            bool Waiting(InboxEntry e) => e.Result is null && e.DueAt > now;
+            if (!_entries.Any(e => (e.Result is null && !Waiting(e)) || (e.Result is not null && (!e.Published || e.Command.ExpiresAt <= now)))) return;
+            foreach (var original in _entries.Where(e => e.Result is null && !Waiting(e)).ToArray())
             {
                 var index = _entries.IndexOf(original);
                 var command = original.Command;
@@ -168,7 +182,24 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
                 var status = CommandResultStatus.Succeeded;
                 try
                 {
-                    if (command.ExpiresAt <= Context.Clock.GetUtcNow()) throw new InvalidOperationException("expired");
+                    if (original.DueAt is { } due)
+                    {
+                        // Ya avisada: el vencimiento de la orden no la anula (la persona ya vio la cuenta regresiva).
+                        if (now - due > NoticeGrace) throw new CommandRejectedException("notice_deadline_missed");
+                    }
+                    else
+                    {
+                        if (command.ExpiresAt <= now) throw new InvalidOperationException("expired");
+                        var notice = NoticeSeconds(command);
+                        if (notice > 0 && !original.Started)
+                        {
+                            var deadline = now.AddSeconds(notice);
+                            _entries[index] = original with { DueAt = deadline };
+                            await SaveAsync(ct);
+                            Context.Log($"orden {command.Type} con aviso de {notice} s: se ejecuta a las {deadline:O}");
+                            continue;
+                        }
+                    }
                     if (original.Started) throw new InvalidOperationException("interrupted");
                     _entries[index] = original with { Started = true };
                     await SaveAsync(ct);
@@ -200,8 +231,20 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
             PurgeCompleted();
             await SaveAsync(ct);
         }
-        finally { _gate.Release(); }
+        finally { RefreshNotice(); _gate.Release(); }
     }
+    // Solo reinicio/apagado admiten aviso, y solo 1, 5 o 10 minutos (el servidor ya valida; se revalida aqui).
+    private static long NoticeSeconds(Command command)
+    {
+        if (command.Type is not (CommandType.Restart or CommandType.Shutdown)) return 0;
+        var seconds = command.Parameters?.NoticeSeconds ?? 0;
+        return NoticeChoices.Contains(seconds) ? seconds : throw new CommandRejectedException("invalid_notice");
+    }
+    private void RefreshNotice() => _notice = _entries
+        .Where(e => e.Result is null && e.DueAt is not null)
+        .OrderBy(e => e.DueAt)
+        .Select(e => new PowerNotice(e.Command.Type == CommandType.Restart ? PowerNoticeAction.Restart : PowerNoticeAction.Shutdown, e.DueAt!.Value))
+        .FirstOrDefault();
     private async Task<(CommandResultStatus, string)> HardeningAsync(Command command, bool undo, CancellationToken ct)
     {
         if (hardening is null) throw new CommandRejectedException("device_actions_dry_run");
