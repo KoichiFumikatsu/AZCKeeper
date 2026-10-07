@@ -521,7 +521,7 @@ async function historySection(d, log) {
     const result = await get(query('/audit/client-logs', { device_id: d.id, limit: 50 }));
     if (!result.data.length) section.append(node('p', 'No hay registros del agente en el período de retención.', 'empty-state'));
     else {
-      const columns = [['Fecha', r => dateTime(r.at)], ['Nivel', 'level'], ['Componente', 'component'], ['Código', 'code'], ['Error', r => r.error_code || '—']];
+      const columns = [['Fecha', r => dateTime(r.at)], ['Nivel', 'level'], ['Componente', 'component'], ['Código', r => r.component === 'DeviceLock' && r.code === 'local_unlock' ? 'Desbloqueo con PIN local' : r.code], ['Error', r => r.error_code || '—']];
       appendRows(table(section, 'Últimos 50 registros', columns).body, result.data, columns);
     }
   } catch (error) {

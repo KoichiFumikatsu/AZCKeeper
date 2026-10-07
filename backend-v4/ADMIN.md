@@ -62,6 +62,52 @@ Integraciones, webhooks, notificaciones, transferencia entre empresas, dashboard
 
 ## Verificación
 
+### PIN de desbloqueo local (2026-10-07)
+
+En **Ajustes → PIN de desbloqueo local**, un administrador con `equipos.desbloquear` y alcance de todo el
+cliente puede configurar o consultar un PIN numérico de 6 a 32 dígitos. Cada acción del panel pide su contraseña;
+la API exige reautenticación de menos de 5 minutos, sesión, CSRF y contexto del cliente concordante con la ruta.
+
+| Operación | Ruta bajo `/v1` | Respuesta |
+|---|---|---|
+| GET | `/admin/tenants/{id}/unlock-pin` | Configurado, revisión y fecha; sin PIN ni huella |
+| PUT | `/admin/tenants/{id}/unlock-pin` | Recibe `{ "pin": "…" }`; sustituye el PIN y aumenta la revisión |
+| POST | `/admin/tenants/{id}/unlock-pin/reveal` | Revela el PIN y registra la consulta en auditoría |
+
+La migración `0052_unlock_pin.sql` crea una fila por cliente. El valor recuperable usa AES-256-GCM con clave
+derivada de `KEEPER_RESPONSE_KEY` y AAD vinculada al cliente. La huella usa PBKDF2-HMAC-SHA256, 210000
+iteraciones, salt aleatorio de 32 bytes y resultado de 32 bytes. Ninguna auditoría guarda el valor del PIN.
+
+El sync de agentes **4.0.17 o posteriores** incluye `unlock_pin` (revisión, salt y hash en base64). No se añade
+el campo a versiones anteriores, que rechazan campos desconocidos. La revisión 0 significa sin PIN configurado.
+El equipo guarda únicamente esa huella bajo DPAPI del servicio, dentro del directorio protegido del agente.
+Cambiar el PIN se refleja en el siguiente sync; un equipo desconectado conserva el anterior hasta sincronizar.
+
+El contador se comparte entre sesiones del equipo. Cinco fallos activan 15 minutos de espera; contador y plazo
+persisten al reiniciar el agente. Una orden remota repetida de bloqueo no reinicia el contador. Un desbloqueo
+remoto seguido de un nuevo bloqueo sí empieza otro ciclo. La rotación del PIN no elimina la espera en curso.
+
+Un desbloqueo local guarda atómicamente el estado desbloqueado y su evento pendiente. El evento
+`DeviceLock/local_unlock` pasa a la cola durable, queda protegido frente al descarte por falta de espacio y se
+reintenta con el mismo UUID. El panel lo muestra en Logs y en la ficha del equipo; la ingesta añade una entrada
+`device.local_unlock_reported` de auditoría al recibirlo, incluso si llegó después del plazo de retención de logs.
+La fecha del log corresponde al desbloqueo; la fecha de auditoría corresponde a la recepción. Los reintentos no duplican entradas.
+
+Pruebas específicas (bases aisladas; sin instalar el agente ni bloquear esta máquina):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File backend-v4/tests/mysql-smoke.ps1 -DebugResponses -UnlockPinOnly
+dotnet test client-v4/tests/Keeper.Agent.Tests/Keeper.Agent.Tests.csproj -c Release -m:1 -nodeReuse:false --filter FullyQualifiedName~UnlockPinTests
+node backend-v4/tests/unlock-pin-panel.cjs
+```
+
+La prueba del panel requiere Playwright con Chromium; `KEEPER_PLAYWRIGHT_MODULE` puede apuntar a una instalación
+existente de `playwright-core`. Usa la interfaz real con una API simulada. La suite PHP comprueba la API real
+con MySQL. Antes de habilitarlo en la flota: desplegar backend y migración, empaquetar el agente 4.0.17 y probar
+en el piloto un bloqueo, desconexión, cinco fallos, reinicio del servicio, espera, desbloqueo y posterior reporte.
+
+### Suite general
+
 `tests/admin.php` se integra en el smoke completo sobre MySQL aislado. Comprueba contratos de salida además del modo `KEEPER_DEBUG`, dos tenants, distintos roles, gates, autoescalada directa/indirecta, expiración, CSRF/origen, IDOR, scopes, cursores, versiones de edición, compilación y rollback de conflictos, comandos auditados/idempotentes, revocación y releases firmadas. Incluye datos agregados reales y verifica que no se duplican métricas ni se cruzan tenants.
 
 También simula un fallo posterior al commit del cambio de horario: devuelve 503, conserva la solicitud de compilación y la procesa al recuperarse el compilador.

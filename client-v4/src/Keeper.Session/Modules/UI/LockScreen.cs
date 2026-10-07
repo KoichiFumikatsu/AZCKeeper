@@ -14,6 +14,7 @@ public sealed class LockScreen : ModuleBase, IDisposable, ILockWindows
     private string? _pin;
     private bool _visible;
     private bool _pinAllowed;
+    private PinStatus? _pinStatus;
 
     public LockScreen(Control dispatcher, Action<string> log)
     {
@@ -24,12 +25,12 @@ public sealed class LockScreen : ModuleBase, IDisposable, ILockWindows
 
     public string? TakePin() => Interlocked.Exchange(ref _pin, null);
 
-    public Task SetStateAsync(bool locked, bool pinAllowed)
+    public Task SetStateAsync(bool locked, bool pinAllowed, PinStatus? pinStatus = null)
     {
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _dispatcher.BeginInvoke(() =>
         {
-            try { _protection.SetState(locked, pinAllowed); done.SetResult(); }
+            try { _pinStatus = pinStatus; _protection.SetState(locked, pinAllowed); UpdatePinStatus(); done.SetResult(); }
             catch (Exception ex) { done.SetException(ex); }
         });
         return done.Task;
@@ -68,10 +69,16 @@ public sealed class LockScreen : ModuleBase, IDisposable, ILockWindows
                 panel.Controls.Add(new Label { Text = "Equipo bloqueado por IT", ForeColor = Color.White, AutoSize = true, Font = new Font("Segoe UI", 24) });
                 if (_pinAllowed)
                 {
-                    var pin = new TextBox { UseSystemPasswordChar = true, MaxLength = 32, Width = 240 };
-                    var button = new Button { Text = "Validar PIN", AutoSize = true };
-                    button.Click += (_, _) => { Interlocked.Exchange(ref _pin, pin.Text); pin.Clear(); };
-                    panel.Controls.Add(pin); panel.Controls.Add(button);
+                    var pin = new TextBox { Name = "pin", UseSystemPasswordChar = true, MaxLength = 32, Width = 240, AccessibleName = "PIN de desbloqueo" };
+                    var button = new Button { Name = "submitPin", Text = "Desbloquear", AutoSize = true };
+                    var status = new Label { Name = "pinStatus", ForeColor = Color.White, AutoSize = true };
+                    pin.KeyPress += (_, e) => { if (!char.IsControl(e.KeyChar) && !char.IsAsciiDigit(e.KeyChar)) e.Handled = true; };
+                    button.Click += (_, _) =>
+                    {
+                        if (pin.Text.Length < 6 || pin.Text.Any(c => !char.IsAsciiDigit(c))) { status.Text = "Escribe un PIN de 6 a 32 dígitos."; return; }
+                        Interlocked.Exchange(ref _pin, pin.Text); pin.Clear(); status.Text = "Validando…";
+                    };
+                    panel.Controls.Add(pin); panel.Controls.Add(button); panel.Controls.Add(status);
                     form.AcceptButton = button;
                 }
                 form.Controls.Add(panel);
@@ -99,6 +106,7 @@ public sealed class LockScreen : ModuleBase, IDisposable, ILockWindows
     private void MaintainWindows()
     {
         if (!_visible) return;
+        UpdatePinStatus();
         if (!_displays.SequenceEqual(Screen.AllScreens.Select(s => (s.DeviceName, s.Bounds))) || _forms.Any(f => f.IsDisposed))
             _protection.TryProtect("lock_windows_rebuild_failed", RebuildWindows);
         foreach (var form in _forms.Where(f => !f.IsDisposed))
@@ -107,6 +115,19 @@ public sealed class LockScreen : ModuleBase, IDisposable, ILockWindows
             SetWindowPos(form.Handle, new IntPtr(-1), 0, 0, 0, 0, 0x53);
         }
         RecoverFocus();
+    }
+
+    private void UpdatePinStatus()
+    {
+        var remaining = _pinStatus?.RetryAt is { } retry ? Math.Max(0, (int)Math.Ceiling((retry - DateTimeOffset.UtcNow).TotalSeconds)) : 0;
+        foreach (var form in _forms.Where(f => !f.IsDisposed))
+        {
+            foreach (var input in form.Controls.Find("pin", true).Concat(form.Controls.Find("submitPin", true))) input.Enabled = remaining == 0;
+            foreach (var label in form.Controls.Find("pinStatus", true)) label.Text = remaining > 0
+                ? $"Demasiados intentos. Inténtalo en {remaining / 60:00}:{remaining % 60:00}."
+                : _pinStatus is { Attempts: > 0 and < 5 } ? $"PIN incorrecto. Quedan {5 - _pinStatus.Attempts} intentos."
+                : "Puedes desbloquear con el PIN del cliente, incluso sin conexión.";
+        }
     }
 
     private void RecoverFocus()

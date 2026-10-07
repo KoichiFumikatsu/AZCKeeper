@@ -28,7 +28,7 @@ public sealed class SessionClient(string pipeName, int agentPid, ModuleHost host
                 await host.ApplyPolicyAsync(request.Policy);
                 version = request.PolicyVersion;
             }
-            await screen.SetStateAsync(request.Locked, request.PinAllowed);
+            await screen.SetStateAsync(request.Locked, request.PinAllowed, request.PinStatus);
             notice?.Set(request.Shutdown ? null : request.PowerNotice);
             await host.TickAsync(ct);
             if (request.Shutdown) await host.ShutdownAsync();

@@ -2,11 +2,14 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Keeper.Agent.Storage;
 using Keeper.Shared.Contracts;
+using Keeper.Shared.Protocol;
 
 namespace Keeper.Agent.Modules.Security;
 
 public sealed record PinVerifier(byte[] Salt, byte[] Hash)
 {
+    public Guid TenantId { get; init; }
+    public long Revision { get; init; }
     public static PinVerifier Create(string pin)
     {
         if (pin.Length is < 6 or > 32 || pin.Any(c => !char.IsAsciiDigit(c))) throw new ArgumentException("invalid_pin");
@@ -27,16 +30,18 @@ public sealed record PinVerifier(byte[] Salt, byte[] Hash)
         finally { CryptographicOperations.ZeroMemory(bytes); }
     }
     public static async Task SaveProtectedAsync(string path, string pin, CancellationToken ct)
+        => await SaveProtectedAsync(path, Create(pin), ct);
+    public static async Task SaveProtectedAsync(string path, PinVerifier verifier, CancellationToken ct)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(Create(pin));
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(verifier);
         try { await AtomicFile.WriteAsync(path, ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser), ct); }
         finally { CryptographicOperations.ZeroMemory(bytes); }
     }
 }
 
-public sealed record LockState(bool Locked, int Attempts, DateTimeOffset RetryAt);
-public sealed class DeviceLock(string statePath, PinVerifier? verifier = null) : ModuleBase
+public sealed record LockState(bool Locked, int Attempts, DateTimeOffset RetryAt, IReadOnlyList<LogEntry>? PendingUnlocks = null);
+public sealed class DeviceLock(string statePath, PinVerifier? verifier = null, string? verifierPath = null) : ModuleBase
 {
     public override string Name => "DeviceLock";
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -44,6 +49,39 @@ public sealed class DeviceLock(string statePath, PinVerifier? verifier = null) :
     private bool _ready;
     public bool Locked => _state.Locked;
     public bool PinAllowed => verifier is not null;
+    public PinStatus PinStatus => new(_state.Attempts, _state.RetryAt > Context.Clock.GetUtcNow() ? _state.RetryAt : null);
+
+    public async Task ApplyVerifierAsync(UnlockPinVerifier settings, Guid tenant, CancellationToken ct)
+    {
+        if (tenant == Guid.Empty || settings.Revision < 0) throw new InvalidDataException("invalid_pin_verifier");
+        PinVerifier? next = null;
+        if (settings.Revision == 0)
+        {
+            if (settings.Salt is not null || settings.Hash is not null) throw new InvalidDataException("invalid_pin_verifier");
+        }
+        else
+        {
+            byte[] salt, hash;
+            try { salt = Convert.FromBase64String(settings.Salt ?? ""); hash = Convert.FromBase64String(settings.Hash ?? ""); }
+            catch (FormatException) { throw new InvalidDataException("invalid_pin_verifier"); }
+            if (salt.Length != 32 || hash.Length != 32) throw new InvalidDataException("invalid_pin_verifier");
+            next = new(salt, hash) { TenantId = tenant, Revision = settings.Revision };
+        }
+        await _gate.WaitAsync(ct);
+        try
+        {
+            if (next is null && verifier is null) return;
+            if (next is not null && verifier is not null && next.TenantId == verifier.TenantId && next.Revision == verifier.Revision
+                && next.Salt.SequenceEqual(verifier.Salt) && next.Hash.SequenceEqual(verifier.Hash)) return;
+            if (verifierPath is not null)
+            {
+                if (next is null) File.Delete(verifierPath);
+                else await PinVerifier.SaveProtectedAsync(verifierPath, next, ct);
+            }
+            verifier = next;
+        }
+        finally { _gate.Release(); }
+    }
     public override async Task InitAsync(ModuleContext ctx)
     {
         await base.InitAsync(ctx);
@@ -59,7 +97,7 @@ public sealed class DeviceLock(string statePath, PinVerifier? verifier = null) :
     {
         if (!_ready) throw new InvalidOperationException("lock_store_unavailable");
         await _gate.WaitAsync(ct);
-        try { await SaveAsync(_state.Locked == locked ? _state : new(locked, 0, DateTimeOffset.MinValue), ct); }
+        try { await SaveAsync(_state.Locked == locked ? _state : _state with { Locked = locked, Attempts = 0, RetryAt = DateTimeOffset.MinValue }, ct); }
         finally { _gate.Release(); }
     }
     public async Task<bool> ValidatePinAsync(string pin, CancellationToken ct)
@@ -68,15 +106,28 @@ public sealed class DeviceLock(string statePath, PinVerifier? verifier = null) :
         try
         {
             var now = Context.Clock.GetUtcNow();
-            if (!_ready || !Locked || verifier is null || now < _state.RetryAt || pin.Length is < 6 or > 32 || pin.Any(c => !char.IsAsciiDigit(c))) return false;
-            if (verifier.Verify(pin))
+            if (!_ready || !Locked || verifier is null || now < _state.RetryAt) return false;
+            var attempts = _state.RetryAt != DateTimeOffset.MinValue ? 0 : _state.Attempts;
+            if (pin.Length is >= 6 and <= 32 && pin.All(char.IsAsciiDigit) && verifier.Verify(pin))
             {
-                await SaveAsync(new(false, 0, DateTimeOffset.MinValue), ct);
+                var entry = new LogEntry { EventId = Guid.NewGuid(), At = now, Level = LogEntryLevel.Info,
+                    Component = Name, Code = "local_unlock" };
+                await SaveAsync(new(false, 0, DateTimeOffset.MinValue, [.. _state.PendingUnlocks ?? [], entry]), ct);
                 return true;
             }
-            var attempts = Math.Min(_state.Attempts + 1, 12);
-            await SaveAsync(_state with { Attempts = attempts, RetryAt = now.AddSeconds(Math.Min(900, Math.Pow(2, attempts))) }, ct);
+            attempts = Math.Min(attempts + 1, 5);
+            await SaveAsync(_state with { Attempts = attempts, RetryAt = attempts == 5 ? now.AddMinutes(15) : DateTimeOffset.MinValue }, ct);
             return false;
+        }
+        finally { _gate.Release(); }
+    }
+    public override async Task TickAsync(CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            foreach (var entry in _state.PendingUnlocks ?? []) await Context.Outbox.EnqueueAsync(entry, ct);
+            if (_state.PendingUnlocks is { Count: > 0 }) await SaveAsync(_state with { PendingUnlocks = [] }, ct);
         }
         finally { _gate.Release(); }
     }

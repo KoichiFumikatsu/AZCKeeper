@@ -22,16 +22,18 @@ public sealed class SecurityModuleTests
         var verifier = PinVerifier.Create("625184");
         var deviceLock = new DeviceLock(directory.File("lock"), verifier);
         await deviceLock.InitAsync(context); await deviceLock.SetLockedAsync(true, default);
-        Assert.False(await deviceLock.ValidatePinAsync("111111", default));
+        for (var i = 0; i < 5; i++) Assert.False(await deviceLock.ValidatePinAsync("111111", default));
         var restarted = new DeviceLock(directory.File("lock"), verifier);
         await restarted.InitAsync(context);
         Assert.True(restarted.Locked);
         Assert.False(await restarted.ValidatePinAsync("625184", default));
-        clock.Advance(TimeSpan.FromSeconds(3));
+        clock.Advance(TimeSpan.FromMinutes(15));
         Assert.True(await restarted.ValidatePinAsync("625184", default));
         Assert.False(restarted.Locked);
         Assert.DoesNotContain("625184", await File.ReadAllTextAsync(directory.File("lock")));
         Assert.Empty(((MemoryEvents)context.Outbox).Logs);
+        await restarted.TickAsync(default);
+        Assert.Equal("local_unlock", Assert.Single(((MemoryEvents)context.Outbox).Logs).Code);
         await deviceLock.ShutdownAsync(); await restarted.ShutdownAsync();
     }
 
@@ -115,7 +117,7 @@ public sealed class SecurityModuleTests
         var deviceLock = new DeviceLock(directory.File("lock"), PinVerifier.Create("625184"));
         await deviceLock.InitAsync(context);
         await deviceLock.SetLockedAsync(true, default);
-        Assert.False(await deviceLock.ValidatePinAsync("111111", default));
+        for (var i = 0; i < 5; i++) Assert.False(await deviceLock.ValidatePinAsync("111111", default));
         await deviceLock.SetLockedAsync(true, default);
         Assert.False(await deviceLock.ValidatePinAsync("625184", default));
         await deviceLock.SetLockedAsync(false, default);

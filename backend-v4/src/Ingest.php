@@ -118,6 +118,9 @@ final class Ingest
         if (isset($f->command_id)) { $this->ownCommand($f->command_id); }
         $this->write('INSERT INTO client_logs (tenant_id,device_id,event_id,at,level,code,component,control_id,command_id,attempt,error_code,body_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', [...$this->args($e->event_id), Util::sqlTime($e->at), $e->level, $e->code, $e->component, $f->control_id ?? null, isset($f->command_id) ? Util::bin($f->command_id) : null, $f->attempt ?? null, $f->error_code ?? null, Util::hash($e)]);
         if ($e->component === 'LocalAccountHardening') { $this->hardeningFromJournal($e->code, Util::sqlTime($e->at)); }
+        if ($e->component === 'DeviceLock' && $e->code === 'local_unlock') {
+            (new Audit($this->db))->record($this->c, $this->r, 'device.local_unlock_reported', 'device', $this->c['device_id'], ['lock_state']);
+        }
         return self::ack($e->event_id);
     }
     // El agente publica el journal del Modo B como log (hardening_<estado>_step_<n>_mode_<modo>) y nunca llamo a

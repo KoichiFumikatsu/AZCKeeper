@@ -20,6 +20,179 @@ tags:
 - name: auth
 - name: external
 paths:
+  /admin/tenants/{id}/unlock-pin:
+    get:
+      tags:
+      - admin
+      operationId: getTenantUnlockPin
+      summary: Consultar estado del PIN local
+      security:
+      - adminSession: []
+      x-tenant-boundary: Tenant de ruta y sesión concordantes; alcance de todo el cliente
+        obligatorio.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Estado sin PIN ni huella.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnlockPinSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      x-permission: equipos.desbloquear
+      description: PIN del cliente. Ver o cambiar exige reautenticación reciente. Solo
+        alcance de todo el cliente. Nunca se registra el valor en auditoría.
+    put:
+      tags:
+      - admin
+      operationId: setTenantUnlockPin
+      summary: Cambiar PIN local del cliente
+      description: PIN del cliente. Ver o cambiar exige reautenticación reciente. Solo
+        alcance de todo el cliente. Nunca se registra el valor en auditoría.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant de ruta y sesión concordantes; alcance de todo el cliente
+        obligatorio.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Estado guardado, sin PIN ni huella.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnlockPinSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      x-permission: equipos.desbloquear
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnlockPinValue'
+      x-max-body-bytes: 8192
+  /admin/tenants/{id}/unlock-pin/reveal:
+    post:
+      tags:
+      - admin
+      operationId: revealTenantUnlockPin
+      summary: Revelar PIN local del cliente
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant de ruta y sesión concordantes; alcance de todo el cliente
+        obligatorio.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: PIN revelado tras reautenticación y auditoría.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnlockPinValue'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      x-permission: equipos.desbloquear
+      description: PIN del cliente. Ver o cambiar exige reautenticación reciente. Solo
+        alcance de todo el cliente. Nunca se registra el valor en auditoría.
   /client/hardening:
     get:
       tags:
@@ -13001,6 +13174,54 @@ paths:
       x-max-body-bytes: 8192
 components:
   schemas:
+    UnlockPinSettings:
+      type: object
+      additionalProperties: false
+      required:
+      - configured
+      - revision
+      - updated_at
+      properties:
+        configured:
+          type: boolean
+        revision:
+          type: integer
+          minimum: 0
+        updated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+    UnlockPinValue:
+      type: object
+      additionalProperties: false
+      required:
+      - pin
+      properties:
+        pin:
+          type: string
+          minLength: 6
+          maxLength: 32
+          pattern: ^[0-9]{6,32}$
+    UnlockPinVerifier:
+      type: object
+      additionalProperties: false
+      required:
+      - revision
+      description: PBKDF2-HMAC-SHA256, 210000 iteraciones, salt y hash de 32 bytes en
+        base64. revision 0 sin salt/hash indica que no hay PIN. Nunca contiene el PIN.
+      properties:
+        revision:
+          type: integer
+          minimum: 0
+        salt:
+          type: string
+          minLength: 44
+          maxLength: 44
+        hash:
+          type: string
+          minLength: 44
+          maxLength: 44
     AppClassificationOverview:
       type: object
       additionalProperties: false
@@ -19170,6 +19391,8 @@ components:
       - activity_ack
       - command_acks
       properties:
+        unlock_pin:
+          $ref: '#/components/schemas/UnlockPinVerifier'
         protocol_version:
           const: 1
         server_time:

@@ -9,6 +9,7 @@ require __DIR__ . '/external.php';
 require __DIR__ . '/external-auth.php';
 require __DIR__ . '/activity-migration.php';
 require __DIR__ . '/hardening.php';
+require __DIR__ . '/unlock-pin.php';
 require __DIR__ . '/intake.php';
 require __DIR__ . '/panel-accounts.php';
 require __DIR__ . '/schedules.php';
@@ -145,6 +146,7 @@ try {
     check(hash_file('sha256', dirname(__DIR__, 2) . '/docs/architecture/openapi-v4.yaml') === $contract['source_sha256'], 'OpenAPI extract current');
     $db = new Database();
     if (getenv('KEEPER_TEST_ACTIVITY_ONLY')==='1') { activityMigrationTests($db); echo "A1 SMOKE PASS: $checks assertions\n"; exit(0); }
+    if (getenv('KEEPER_TEST_UNLOCK_PIN_ONLY')==='1') { unlockPinTests($db); echo "UNLOCK PIN SMOKE PASS: $checks assertions\n"; exit(0); }
     $user = $db->one('SELECT * FROM users WHERE tenant_id<>0x00000000000040008000000000000001 AND status=\'active\' LIMIT 1');
     check($user !== null, 'demo member seed');
     $key = keypair(); $token = enroll($db, $user, $key); policy($db, $token);
@@ -369,6 +371,7 @@ try {
     externalAuthTests($db);
     activityMigrationTests($db);
     hardeningTests($db);
+    unlockPinTests($db);
     intakeTests($db);
     panelAccountsTests($db);
     scheduleDayHoursTests($db);

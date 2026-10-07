@@ -1,4 +1,4 @@
-param([int]$MySqlPort = 13384, [int]$HttpPort = 18084, [switch]$DebugResponses, [switch]$ActivityOnly, [string]$MariaDbDirectory = '')
+param([int]$MySqlPort = 13384, [int]$HttpPort = 18084, [switch]$DebugResponses, [switch]$ActivityOnly, [string]$MariaDbDirectory = '', [switch]$UnlockPinOnly)
 $ErrorActionPreference = 'Stop'
 $backend = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $tempRoot = Join-Path $backend ('.validation/mysql-' + [guid]::NewGuid().ToString('N'))
@@ -10,6 +10,8 @@ foreach ($name in $envNames) { $savedEnv[$name] = [Environment]::GetEnvironmentV
 $savedEnv['KEEPER_DEBUG'] = [Environment]::GetEnvironmentVariable('KEEPER_DEBUG')
 $envNames += 'KEEPER_DEBUG'
 $envNames += 'KEEPER_TEST_ACTIVITY_ONLY'
+$envNames += 'KEEPER_TEST_UNLOCK_PIN_ONLY'
+$savedEnv['KEEPER_TEST_UNLOCK_PIN_ONLY'] = [Environment]::GetEnvironmentVariable('KEEPER_TEST_UNLOCK_PIN_ONLY')
 $savedEnv['KEEPER_TEST_ACTIVITY_ONLY'] = [Environment]::GetEnvironmentVariable('KEEPER_TEST_ACTIVITY_ONLY')
 $envNames += @('PHP_INI_SCAN_DIR','KEEPER_ESCROW_KEY_FILE')
 $savedEnv['PHP_INI_SCAN_DIR'] = [Environment]::GetEnvironmentVariable('PHP_INI_SCAN_DIR')
@@ -74,6 +76,7 @@ try {
     $env:KEEPER_TEST_ALLOW_FIXTURES = '1'
     $env:KEEPER_DEBUG = if ($DebugResponses) { '1' } else { '0' }
     $env:KEEPER_TEST_ACTIVITY_ONLY = if ($ActivityOnly) { '1' } else { '0' }
+    $env:KEEPER_TEST_UNLOCK_PIN_ONLY = if ($UnlockPinOnly) { '1' } else { '0' }
     & $php (Join-Path $PSScriptRoot 'prepare.php')
     if ($LASTEXITCODE -ne 0) { throw 'Test database preparation failed' }
     & $php (Join-Path $backend 'migrations/run.php')

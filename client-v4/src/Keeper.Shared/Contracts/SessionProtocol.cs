@@ -6,7 +6,9 @@ namespace Keeper.Shared.Contracts;
 
 public sealed record SessionRequest(int ProtocolVersion, Guid CorrelationId, long? PolicyVersion,
     EffectivePolicy? Policy, bool Locked, bool PinAllowed, IReadOnlyList<Guid> Acknowledged, bool Shutdown = false,
-    PowerNotice? PowerNotice = null);
+    PowerNotice? PowerNotice = null, PinStatus? PinStatus = null);
+
+public sealed record PinStatus(int Attempts, DateTimeOffset? RetryAt);
 
 /// <summary>
 /// Aviso previo a un reinicio o apagado ordenado por IT (agentes 4.0.17+). El agente lo repite en cada intercambio

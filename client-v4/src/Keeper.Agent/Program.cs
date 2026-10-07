@@ -77,7 +77,8 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
                 }
                 .RunAsync(new DeviceTokenStore(tokenPath, apiRoot.AbsoluteUri + signer.KeyId), deviceIdPath, stoppingToken);
         }
-        var deviceLock = new DeviceLock(Path.Combine(dataDirectory, "device-lock.json"), PinVerifier.LoadProtected(Path.Combine(dataDirectory, "pin-verifier.dpapi")));
+        var pinPath = Path.Combine(dataDirectory, "pin-verifier.dpapi");
+        var deviceLock = new DeviceLock(Path.Combine(dataDirectory, "device-lock.json"), PinVerifier.LoadProtected(pinPath), pinPath);
         var commands = new CommandExecutor(Path.Combine(dataDirectory, "commands.json"), deviceId, deviceLock,
             new WindowsDeviceActions(!registry.IsDryRun),
             OperatingSystem.IsWindows() ? new WindowsComputerNamer(!registry.IsDryRun) : null,
@@ -129,6 +130,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
                     : null,
                 OnResponse = async (response, tenant, ct) =>
                 {
+                    if (response.UnlockPin is not null) await deviceLock.ApplyVerifierAsync(response.UnlockPin, tenant, ct);
                     await commands.AcceptAsync(response.Commands, tenant, ct);
                     updater.Offer(response.Release);
                 }

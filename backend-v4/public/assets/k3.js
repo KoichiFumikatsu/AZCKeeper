@@ -7,6 +7,7 @@ import { wireDialog, confirmBox, noticeBox, feedback } from './dialogs.js';
 import { coordinator } from './coordinator.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings, withReauth, canceled } from './hardening-settings.js';
 import { onboardingPage, returnBand, AUDIT_LABELS as ONBOARDING_AUDIT } from './onboarding.js';
+import { canConfigureUnlockPin, mountUnlockPin } from './unlock-pin.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
 // de la API; lo que la cuenta no puede ver se explica en vez de mostrarse vacío.
@@ -3379,6 +3380,9 @@ async function plansPage() {
 // Todas las acciones auditables (operaciones del contrato y eventos automaticos), en palabras. auditAction() tiene
 // un respaldo que traduce verbo + objeto, para que una accion nueva nunca salga en ingles tecnico.
 const AUDIT_ACTIONS = {
+  'unlock_pin.changed': 'Cambió el PIN de desbloqueo local',
+  'unlock_pin.revealed': 'Consultó el PIN de desbloqueo local',
+  'device.local_unlock_reported': 'Reportó un desbloqueo local con PIN',
   'admin.login': 'Inició sesión en el panel', 'admin.logout': 'Cerró sesión', 'admin.reauthenticated': 'Confirmó su contraseña', 'admin.password_changed': 'Cambió su contraseña',
   adminLogin: 'Inició sesión en el panel', adminLogout: 'Cerró sesión', adminReauth: 'Confirmó su contraseña', changeAdminPassword: 'Cambió su contraseña',
   'device.enrolled': 'Equipo registrado', 'device.created': 'Equipo creado', 'device.login': 'El equipo se conectó', 'device.session_renewed': 'El equipo renovó su sesión',
@@ -3466,12 +3470,13 @@ async function auditPage() {
 
 // ---- Logs de los equipos --------------------------------------------------------------------------------------------
 const LOG_CODES = {
+  local_unlock: 'Equipo desbloqueado con el PIN local',
   capture_gap: 'El equipo estuvo suspendido o sin medir unos segundos (normal al dormir o bloquear)', applied: 'Regla aplicada en el equipo', degraded: 'Algún control no está funcionando del todo',
   package_verified: 'Versión nueva descargada y verificada', update_applying: 'Instalando versión nueva', first_login: 'Primer inicio de sesión del día',
   restore_point_created: 'Punto de restauración creado', failed: 'Falló', unsupported_rule: 'El equipo no soporta una regla', conflicting_rules: 'Reglas en conflicto',
 };
 const LOG_COMPONENTS = { ActivityTracker: 'Medición de actividad', WebEnforcer: 'Bloqueo web', UsbEnforcer: 'USB', InstallEnforcer: 'Instalaciones', DownloadEnforcer: 'Descargas',
-  UpdateManager: 'Actualizaciones', LocalAccountHardening: 'Cuentas de Windows', RestorePoint: 'Puntos de restauración', AgentDiagnostics: 'Diagnóstico', Presence: 'Presencia' };
+  DeviceLock: 'Bloqueo de equipo', UpdateManager: 'Actualizaciones', LocalAccountHardening: 'Cuentas de Windows', RestorePoint: 'Puntos de restauración', AgentDiagnostics: 'Diagnóstico', Presence: 'Presencia' };
 async function logsPage() {
   const devices = (await optional(allPages(`/tenants/${tenant}/devices`))) || [];
   const day = o => new Date(Date.now() + o * 864e5).toISOString().slice(0, 10);
@@ -3649,6 +3654,7 @@ async function settingsPage() {
   // Empresas (marca) y Planes son de la plataforma. Si el acceso no se pudo leer se muestran y decide la API.
   const platform = !!readSession()?.is_platform_admin;
   const access = await loadAccess();
+  if (canConfigureUnlockPin(access)) await mountUnlockPin(surface('PIN de desbloqueo local'), tenant);
   const shortcuts = [['Horarios', '/horarios.php', 'schedules'], ['Festivos', '/festivos.php', 'holidays'], ['Clasificación de apps', '/clasificacion.php', 'classification'],
     ['Fuentes de datos (AZC One)', '/fuentes.php', 'sources']].filter(([, , key]) => !access || allowed(access, key));
   if (platform) { shortcuts.unshift(['Marca, logo y colores', '/empresas.php']); shortcuts.push(['Planes y paquetes', '/planes.php']); }

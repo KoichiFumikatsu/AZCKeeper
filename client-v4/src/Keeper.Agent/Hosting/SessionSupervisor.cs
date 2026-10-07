@@ -108,7 +108,7 @@ public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, Devic
         var version = coordinator?.CurrentVersion;
         var projection = current is null || peer.Version == version ? null : current with { Rules = [], ManagementHosts = [], Composition = [] };
         var request = new SessionRequest(1, Guid.NewGuid(), version, projection, deviceLock.Locked, deviceLock.PinAllowed, peer.Acknowledged, shutdown,
-            shutdown ? null : powerNotice?.Invoke());
+            shutdown ? null : powerNotice?.Invoke(), deviceLock.PinStatus);
         var response = await peer.Connection.ExchangeAsync(request, timeout.Token);
         SessionProtocol.Validate(response, request.CorrelationId);
         var ack = new List<Guid>();

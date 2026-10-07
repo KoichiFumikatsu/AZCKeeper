@@ -131,6 +131,9 @@ final class Application
                 if (isset($b->activity)) { $response['activity_ack'] = $i->partial($b->activity, fn () => $i->activity($b->activity), 'snapshot_id'); }
                 foreach ($b->command_results ?? [] as $entry) { $response['command_acks'][] = $i->partial($entry->result, fn () => $i->command($entry->command_id, $entry->result)); }
                 $response['commands'] = $resources->commands()['data'];
+                if (version_compare($c['agent_version'], '4.0.17', '>=')) {
+                    $response['unlock_pin'] = (new UnlockPin($db, $c, $r))->clientSettings();
+                }
                 // Una release no verificable (p. ej. release-keys.json desalineado) se RETIENE, no tumba el sync:
                 // si lanzara aqui, toda la flota del tenant perderia politica, comandos e ingesta hasta corregirla.
                 // GET /client/releases/{id} sigue respondiendo 503 para diagnostico.
