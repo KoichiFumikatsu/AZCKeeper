@@ -63,8 +63,7 @@ try {
         AND CAST(TRIM(BOTH '\\'' FROM partition_description) AS DATE) >= GREATEST('2028-01-01', UTC_DATE() + INTERVAL 3 MONTH)") > 0,
         'episodes has future monthly coverage and fallback');
     verify(countRows($pdo, "SELECT COUNT(*) FROM information_schema.events WHERE event_schema = DATABASE()
-        AND event_name = 'maintain_episode_partitions' AND status = 'ENABLED'
-        AND interval_value = '1' AND interval_field = 'DAY'") === 1, 'daily partition maintenance event enabled');
+        AND event_name = 'maintain_episode_partitions' AND status <> 'ENABLED'") === 1, 'partition drop event disabled (retention is per client, 0051)');
     verify(countRows($pdo, 'SELECT COUNT(*) FROM role_templates') === 9, 'nine seed roles (Corporativo added in 0043)');
     verify(countRows($pdo, 'SELECT COUNT(*) FROM roles') === 9, 'platform role plus eight demo roles');
     verify(countRows($pdo, 'SELECT COUNT(*) FROM role_templates WHERE platform_only = FALSE AND offered = TRUE') === 5, 'five templates offered to new clients');
