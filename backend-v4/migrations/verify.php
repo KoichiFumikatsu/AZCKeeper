@@ -82,6 +82,10 @@ try {
         && countRows($pdo, "SELECT COUNT(*) FROM scopes WHERE code = 'plans:read'") === 1, 'tier permissions and scope replaced by plans:read');
     verify(countRows($pdo, "SELECT COUNT(*) FROM assignment_intervals WHERE kind = 'subscriptions'") === 0, 'no subscription intervals left');
     verify(countRows($pdo, "SELECT COUNT(*) FROM role_permissions WHERE tenant_id <> 0x00000000000040008000000000000001 AND permission_code = 'roles.gestionar'") === 0, 'meta-permission not delegated by seed');
+    // 0050: retención aplicada, apagada en todos los clientes; tabla de revisiones e índice de logs por fecha.
+    verify(countRows($pdo, 'SELECT COUNT(*) FROM retention_settings WHERE enforce <> 0') === 0
+        && countRows($pdo, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'retention_runs'") === 1
+        && countRows($pdo, "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'client_logs' AND index_name = 'client_logs_tenant_at'") === 2, 'retention enforcement installed and OFF');
 
     $pdo->beginTransaction();
     $tenant = '0x00000000000040008000000000000002';

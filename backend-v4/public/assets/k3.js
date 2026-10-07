@@ -5,7 +5,7 @@ import { applyNavAccess, loadAccess, allowed, canSeeOnboarding } from './nav-acc
 import { scopeSummary, sameAccess, scopeConditions, scopeChips, SCOPE_RULE, TEAM_LABEL } from './access-scope.js';
 import { wireDialog, confirmBox, noticeBox, feedback } from './dialogs.js';
 import { coordinator } from './coordinator.js';
-import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings } from './hardening-settings.js';
+import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings, withReauth, canceled } from './hardening-settings.js';
 import { onboardingPage, returnBand, AUDIT_LABELS as ONBOARDING_AUDIT } from './onboarding.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
@@ -3433,7 +3433,7 @@ const AUDIT_FIELDS = {
   pattern: 'texto a reconocer', app_pattern: 'texto a vigilar', description: 'descripción', day: 'fecha', society_ids: 'sociedades', counts_for_presence: 'cuenta para presencia', source_ref: 'referencia',
   base_url: 'dirección', company: 'empresa en la fuente', token: 'clave', mode: 'modo', interval_minutes: 'frecuencia', domains: 'dominios', approve: 'decisión', rows: 'filas', parent_id: 'depende de',
   note: 'nota', starts_at: 'desde', ends_at: 'hasta', all_day: 'día completo', install_coverage_heartbeat_days: 'días sin conexión', raw_days: 'retención del detalle', aggregate_months: 'retención de resúmenes',
-  log_days: 'retención de registros', archived: 'archivada', country_code: 'país', company_id: 'empresa del grupo', holiday_calendar_id: 'calendario de festivos', calendar_id: 'calendario', is_default: 'por defecto', user_ids: 'personas', tenant_ids: 'empresas', position_ids: 'cargos', condition_kind: 'condición', confirm_sensitive: 'confirmación', assignable_by_rule: 'asignable por regla',
+  log_days: 'retención de registros', retention_enforce: 'aplicar la retención', archived: 'archivada', country_code: 'país', company_id: 'empresa del grupo', holiday_calendar_id: 'calendario de festivos', calendar_id: 'calendario', is_default: 'por defecto', user_ids: 'personas', tenant_ids: 'empresas', position_ids: 'cargos', condition_kind: 'condición', confirm_sensitive: 'confirmación', assignable_by_rule: 'asignable por regla',
   shared_password: 'contraseña compartida', admin_name: 'usuario administrador', action: 'acción', reason: 'motivo', ring: 'anillo', percentage: 'porcentaje', version: 'versión',
 };
 const auditFields = list => (list || []).map(f => AUDIT_FIELDS[f] || String(f).replace(/^branding\./, 'marca: ').replace(/_/g, ' ')).filter((v, i, a) => a.indexOf(v) === i).join(', ');
@@ -3523,6 +3523,24 @@ async function healthPage() {
 }
 
 // ---- Ajustes del panel ----------------------------------------------------------------------------------------------
+// Última revisión nocturna de retención (config/retention-cron.php), en palabras: qué se borraría o qué se borró.
+const plural = (n, one, many) => `${new Intl.NumberFormat('es-CO').format(n)} ${n === 1 ? one : many}`;
+function retentionFound(run) {
+  const parts = [];
+  if (run.raw_rows) parts.push(`${plural(run.raw_days, 'día', 'días')} de actividad (${plural(run.raw_rows, 'registro', 'registros')})`);
+  if (run.aggregate_rows) parts.push(`${plural(run.aggregate_days, 'día', 'días')} de resúmenes (${plural(run.aggregate_rows, 'registro', 'registros')})`);
+  if (run.log_rows) parts.push(plural(run.log_rows, 'registro técnico', 'registros técnicos'));
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} y ${parts.at(-1)}` : parts[0] || '';
+}
+function retentionRunText(run) {
+  if (!run) return 'Última revisión: todavía ninguna. Se revisa cada noche.';
+  const at = when(run.started_at); const found = retentionFound(run);
+  const pending = run.complete ? '' : ' Quedó una parte pendiente; sigue la próxima noche.';
+  const one = /^1 /.test(found) && !/, | y /.test(found);
+  if (run.failed) return `Última revisión (${at}): no se pudo terminar; se intenta de nuevo la próxima noche.`;
+  if (run.mode === 'dry_run') return found ? `Última revisión (${at}): ${one ? 'se borraría' : 'se borrarían'} ${found}. No se borró nada porque la retención no está aplicada.` : `Última revisión (${at}): no hay nada más viejo que estos plazos.`;
+  return found ? `Última revisión (${at}): ${one ? 'se borró' : 'se borraron'} ${found}.${pending}` : `Última revisión (${at}): no había nada que borrar.${pending}`;
+}
 async function settingsPage() {
   const cfg = await api('GET', '/tenants/panel-settings');
   const s = surface('Ajustes de la empresa');
@@ -3542,24 +3560,36 @@ async function settingsPage() {
   const agg = num(keep, 'aggregate_months', 'Meses que se guardan los resúmenes', 'meses', cfg.aggregate_months, 1, 120, 'Productividad, presencia y reportes por día.');
   const logs = num(keep, 'log_days', 'Días que se guardan los registros técnicos', 'días', cfg.log_days, 1, 365, 'Lo que se ve en Logs de los equipos.');
   const retention = ['raw_days', 'aggregate_months', 'log_days'];
+  // Retención aplicada (decisión del dueño 2026-10-07): apagada por defecto. Apagada, cada noche solo se cuenta lo que se
+  // borraría; encendida, se borra de verdad. Encenderla pide confirmación y la contraseña del panel (403 reauth_required).
+  const hasEnforce = typeof cfg.retention_enforce === 'boolean';
+  let enforceBefore = cfg.retention_enforce === true;
+  const enforce = el('input'); enforce.type = 'checkbox'; enforce.name = 'retention_enforce'; enforce.checked = enforceBefore;
+  const lastRun = el('p', retentionRunText(cfg.retention_last_run), 'help retention-last-run'); lastRun.setAttribute('aria-live', 'polite');
+  if (hasEnforce) {
+    const box = el('label', undefined, 'check'); box.append(enforce, ' Aplicar la retención: borra de verdad los datos más viejos que estos plazos');
+    keep.parentNode.append(box, el('p', 'Apagada, no se borra nada: cada noche solo se revisa cuánto se borraría. Encendida, cada noche se borra lo que quede fuera de los plazos (nunca lo de los días en que todavía pueden llegar datos atrasados de los equipos) y no se puede recuperar.', 'help'), lastRun);
+  }
+  const enforceChanged = () => hasEnforce && enforce.checked !== enforceBefore;
   // Lo que cambia respecto a lo guardado, siempre visible antes de guardar.
   const review = el('div', undefined, 'change-review settings-review'); review.setAttribute('aria-live', 'polite'); form.append(review);
   const changes = () => fields.filter(f => f.input.value !== '' && Number(f.input.value) !== Number(f.before));
   const drawReview = () => {
-    const list = changes(); review.replaceChildren(); review.hidden = !list.length;
-    if (!list.length) return;
+    const list = changes(); review.replaceChildren(); review.hidden = !list.length && !enforceChanged();
+    if (review.hidden) return;
     review.append(el('strong', 'Cambios sin guardar'));
     const ul = el('ul');
     list.forEach(f => { const down = retention.includes(f.key) && Number(f.input.value) < Number(f.before); ul.append(el('li', `${f.label}: ${f.before} → ${f.input.value} ${f.unit}${down ? ' (reduce lo que se conserva)' : ''}`, down ? 'review-remove' : 'review-add')); });
+    if (enforceChanged()) ul.append(enforce.checked ? el('li', 'Aplicar la retención: no → sí (cada noche borra de verdad lo que quede fuera de los plazos)', 'review-remove') : el('li', 'Aplicar la retención: sí → no (deja de borrar; solo revisa)', 'review-add'));
     review.append(ul);
   };
-  form.addEventListener('input', drawReview); drawReview();
+  form.addEventListener('input', drawReview); form.addEventListener('change', drawReview); drawReview();
   const save = el('button', 'Guardar ajustes', 'primary'); save.type = 'submit'; form.append(save);
   // Éxito como estado y error como alerta: un fallo no se lee como mensaje informativo (revisión UX AJU-2).
   const msg = el('p', '', 'help'); msg.setAttribute('role', 'status');
   const bad = el('p', '', 'error-text'); bad.setAttribute('role', 'alert'); bad.hidden = true; bad.id = 'settings-error'; form.append(msg, bad);
   // El error queda asociado al campo que lo causó (aria-invalid + aria-describedby) y ese campo recibe el foco.
-  const clearInvalid = () => fields.forEach(f => { f.input.removeAttribute('aria-invalid'); f.input.removeAttribute('aria-describedby'); });
+  const clearInvalid = () => [...fields.map(f => f.input), enforce].forEach(i => { i.removeAttribute('aria-invalid'); i.removeAttribute('aria-describedby'); });
   const failOn = (text, input) => {
     bad.textContent = text; bad.hidden = false; msg.textContent = '';
     if (input) { input.setAttribute('aria-invalid', 'true'); input.setAttribute('aria-describedby', bad.id); input.focus(); }
@@ -3569,14 +3599,29 @@ async function settingsPage() {
     const wrong = fields.find(f => f.input.value === '' || !Number.isInteger(Number(f.input.value)) || Number(f.input.value) < f.min || Number(f.input.value) > f.max);
     if (wrong) { failOn(`${wrong.label}: escribe un número entero entre ${wrong.min} y ${wrong.max}.`, wrong.input); return; }
     const reduced = changes().filter(f => retention.includes(f.key) && Number(f.input.value) < Number(f.before));
-    if (reduced.length && !await confirmBox({ title: 'Reducir la conservación de datos', message: 'Vas a reducir cuánto tiempo se conservan estos datos:',
-      details: [...reduced.map(f => `${f.label}: antes ${f.before} ${f.unit}, después ${f.input.value} ${f.unit}.`),
-        'Desde que guardes, lo que quede fuera del nuevo plazo deja de verse en el panel y queda sujeto al borrado por retención. No cuentes con recuperarlo al volver a ampliar el plazo.'],
+    const reducedLines = reduced.map(f => `${f.label}: antes ${f.before} ${f.unit}, después ${f.input.value} ${f.unit}.`);
+    const enabling = hasEnforce && enforce.checked && !enforceBefore;
+    // Mismo diálogo de confirmación (dialogs.js) para reducir plazos y para aplicar la retención; aplicarla lo incluye.
+    if (enabling) {
+      const run = cfg.retention_last_run; const found = run && !run.failed && run.mode === 'dry_run' ? retentionFound(run) : '';
+      if (!await confirmBox({ title: 'Aplicar la retención', message: 'Desde esta noche se borrará de verdad lo que quede fuera de estos plazos:',
+        details: [`Detalle de actividad (ventanas, apps): lo de hace más de ${raw.value} días.`, `Resúmenes: lo de hace más de ${agg.value} meses.`, `Registros técnicos: lo de hace más de ${logs.value} días.`,
+          ...reducedLines, found ? `La última revisión (${when(run.started_at)}, con los plazos de entonces) encontró para borrar ${found}.` : null,
+          'Lo borrado no se puede recuperar: ni apagando la retención ni ampliando los plazos.'],
+        okText: 'Aplicar y guardar', danger: true })) return;
+    } else if (reduced.length && !await confirmBox({ title: 'Reducir la conservación de datos', message: 'Vas a reducir cuánto tiempo se conservan estos datos:',
+      details: [...reducedLines, !hasEnforce ? 'Desde que guardes, lo que quede fuera del nuevo plazo deja de verse en el panel y queda sujeto al borrado por retención. No cuentes con recuperarlo al volver a ampliar el plazo.'
+        : enforce.checked ? 'Desde que guardes, lo que quede fuera del nuevo plazo deja de verse en el panel y se borra de verdad en la revisión de esta noche. No se puede recuperar al volver a ampliar el plazo.'
+          : 'Desde que guardes, lo que quede fuera del nuevo plazo deja de verse en el panel. Como la retención no está aplicada, todavía no se borra: si vuelves a ampliar el plazo, vuelve a verse.'],
       okText: 'Reducir y guardar', danger: true })) return;
     save.disabled = true;
     try {
-      await api('PUT', '/tenants/panel-settings', { body: { install_coverage_heartbeat_days: Number(heartbeat.value), raw_days: Number(raw.value), aggregate_months: Number(agg.value), log_days: Number(logs.value) } });
-      fields.forEach(f => { f.before = Number(f.input.value); }); drawReview();
+      const body = { install_coverage_heartbeat_days: Number(heartbeat.value), raw_days: Number(raw.value), aggregate_months: Number(agg.value), log_days: Number(logs.value), ...(hasEnforce ? { retention_enforce: enforce.checked } : {}) };
+      const saved = await withReauth(() => api('PUT', '/tenants/panel-settings', { body }), 'Para aplicar la retención (borrar de verdad los datos viejos), confirma la contraseña con la que entras al panel.');
+      if (saved === canceled) { failOn('No se guardó: para aplicar la retención hay que confirmar tu contraseña.', enforce); return; }
+      fields.forEach(f => { f.before = Number(f.input.value); });
+      if (hasEnforce) { enforceBefore = enforce.checked; if (saved && 'retention_last_run' in saved) { cfg.retention_last_run = saved.retention_last_run; lastRun.textContent = retentionRunText(saved.retention_last_run); } }
+      drawReview();
       msg.textContent = 'Ajustes guardados.'; done();
     }
     catch (e) {

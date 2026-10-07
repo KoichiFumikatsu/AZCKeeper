@@ -41,9 +41,14 @@ final class OperationsApi
                 'last_sync'=>($t=$last('devices','last_seen_at'))?Util::time($t):null,'last_ingest'=>($t=$last('episode_ingest_keys','received_at'))?Util::time($t):null]);
         }
         if ($op==='putPanelSettings') {
+            // Aplicar la retencion (borrar de verdad) exige contrasena confirmada hace menos de 5 minutos; apagarla no.
+            $enforce=isset($b->retention_enforce)?(bool)$b->retention_enforce:null;
+            if ($enforce===true && !(bool)($this->db->one('SELECT enforce FROM retention_settings WHERE tenant_id=? FOR UPDATE',[$this->tenant])['enforce']??false)
+                && ($this->c['reauthenticated_at']===null || strtotime($this->c['reauthenticated_at'].' UTC')<time()-300)) { throw new ApiError(403,'reauth_required'); }
             $this->db->run('INSERT INTO panel_settings (tenant_id,install_coverage_heartbeat_days) VALUES (?,?) ON DUPLICATE KEY UPDATE install_coverage_heartbeat_days=VALUES(install_coverage_heartbeat_days)',[$this->tenant,$b->install_coverage_heartbeat_days]);
             // Retencion: cuanto se guarda el detalle, los resumenes y los registros tecnicos (el detalle nunca menos que la ventana de llegada tardia).
             $set=[]; foreach (['raw_days','aggregate_months','log_days'] as $f) { if (isset($b->$f)) { $set[$f]=(int)$b->$f; } }
+            if ($enforce!==null) { $set['enforce']=(int)$enforce; }
             if ($set) {
                 $late=(int)($this->db->one('SELECT late_arrival_days FROM retention_settings WHERE tenant_id=?',[$this->tenant])['late_arrival_days']??30);
                 if (isset($set['raw_days']) && $set['raw_days']<$late) { throw new ApiError(422,'validation_failed',[],'raw_days_below_late_arrival'); }
@@ -51,9 +56,10 @@ final class OperationsApi
             }
             $this->audit('panel_settings',$this->tenant,$b);
         }
-        $r=$this->db->one('SELECT raw_days,aggregate_months,log_days FROM retention_settings WHERE tenant_id=?',[$this->tenant]);
+        $r=$this->db->one('SELECT raw_days,aggregate_months,log_days,enforce FROM retention_settings WHERE tenant_id=?',[$this->tenant]);
         return AdminApi::response(['install_coverage_heartbeat_days'=>(int)($this->db->one('SELECT install_coverage_heartbeat_days FROM panel_settings WHERE tenant_id=?',[$this->tenant])['install_coverage_heartbeat_days']??7)]
-            +($r?['raw_days'=>(int)$r['raw_days'],'aggregate_months'=>(int)$r['aggregate_months'],'log_days'=>(int)$r['log_days']]:[]));
+            +($r?['raw_days'=>(int)$r['raw_days'],'aggregate_months'=>(int)$r['aggregate_months'],'log_days'=>(int)$r['log_days'],
+                'retention_enforce'=>(bool)$r['enforce'],'retention_last_run'=>RetentionWorker::lastRun($this->db,$this->tenant)]:[]));
     }
     private function audit(string $type,string $id,object $b): void { (new Audit($this->db))->record($this->c,$this->r,$this->r->operation['operationId'],$type,$id,array_keys(get_object_vars($b))); }
     private function catalog(string $op,?string $id,?object $b): array

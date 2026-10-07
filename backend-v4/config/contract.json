@@ -1,5 +1,5 @@
 {
-  "source_sha256": "1d75d61b1156d4acb96aa79093e777393a04311df74f5fb05b330a6c495524f0",
+  "source_sha256": "c73db4886550f0b676c3fa48fa2e95d1c206e0c0c2bf8acdd02c43746f6e42ab",
   "paths": {
     "/client/hardening": {
       "get": {
@@ -7355,7 +7355,7 @@
         ],
         "operationId": "putPanelSettings",
         "summary": "putPanelSettings",
-        "description": "Ajuste tipado por tenant: días sin conexión para marcar cobertura obsoleta. No acepta claves arbitrarias ni secretos. Requiere alcance tenant y operacion.ajustes_editar.",
+        "description": "Ajuste tipado por tenant: días sin conexión para marcar cobertura obsoleta, plazos de retención y retention_enforce. No acepta claves arbitrarias ni secretos. Requiere alcance tenant y operacion.ajustes_editar. Activar retention_enforce exige reautenticación de menos de 5 minutos (403 reauth_required).",
         "security": [
           {
             "adminSession": [],
@@ -26964,6 +26964,22 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 90
+        },
+        "retention_enforce": {
+          "type": "boolean",
+          "description": "Aplicar la retención. false (por defecto) = la revisión nocturna solo cuenta lo que se borraría; true = borra de verdad lo que quede fuera de los plazos. Pasar a true exige reautenticación reciente (403 reauth_required); pasar a false no."
+        },
+        "retention_last_run": {
+          "readOnly": true,
+          "description": "Última revisión nocturna de retención (solo lectura; se ignora al guardar). null si nunca corrió.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/components/schemas/RetentionRun"
+            }
+          ]
         }
       }
     },
@@ -28235,6 +28251,78 @@
         }
       },
       "description": "Composicion actual resuelta, sin persistir una nueva version de equipo."
+    },
+    "RetentionRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "readOnly": true,
+      "required": [
+        "started_at",
+        "finished_at",
+        "mode",
+        "complete",
+        "failed",
+        "raw_rows",
+        "raw_days",
+        "aggregate_rows",
+        "aggregate_days",
+        "log_rows"
+      ],
+      "properties": {
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finished_at": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "format": "date-time"
+            }
+          ]
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "dry_run",
+            "applied"
+          ],
+          "description": "dry_run = solo contó (retención no aplicada); applied = borró."
+        },
+        "complete": {
+          "type": "boolean",
+          "description": "false si se agotó el tiempo o falló; lo pendiente sigue la noche siguiente."
+        },
+        "failed": {
+          "type": "boolean"
+        },
+        "raw_rows": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Filas de detalle de actividad (episodios y totales diarios del agente)."
+        },
+        "raw_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "aggregate_rows": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Filas de resúmenes diarios."
+        },
+        "aggregate_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "log_rows": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Registros técnicos de los equipos."
+        }
+      }
     },
     "Role": {
       "type": "object",
