@@ -865,10 +865,12 @@ async function accounts() {
   };
   const ids = [...new Set(list.data.filter(a => a.kind === 'company').map(a => a.tenant_id))];
   const data = new Map(await Promise.all(ids.map(async id => [id, await companyData(id)])));
+  // «Grupo Grupo AZC» no: si el nombre del grupo ya empieza por «Grupo», va tal cual.
+  const groupText = a => `${/^grupo(\s|$)/i.test((a.group_name || '').trim()) ? a.group_name.trim() : `Grupo ${a.group_name}`}: también ${a.group_access.map(g => g.tenant_name).join(', ') || 'ninguna otra empresa aún'}`;
   const accessText = a => {
     if (a.kind === 'platform') return 'Todo, en todas las empresas';
     const own = a.access ? scopeSummary(a.access.role_name, a.access.scope, data.get(a.tenant_id)?.n || new Map()) : 'Sin acceso: no verá nada';
-    return a.group_id ? `${own} · Grupo ${a.group_name}: también ${a.group_access.map(g => g.tenant_name).join(', ') || 'ninguna otra empresa aún'}` : own;
+    return a.group_id ? `${own} · ${groupText(a)}` : own;
   };
   // Revisión UX M8: el acceso en chips (rol, cada condición del alcance y el grupo). La frase completa queda para
   // lectores de pantalla y búsqueda; los chips son su versión visual, pieza por pieza.
@@ -883,7 +885,7 @@ async function accounts() {
       chip(a.access.role_name || 'Sin rol', 'chip-role');
       scopeChips(a.access.scope, data.get(a.tenant_id)?.n || new Map()).forEach(c => chip(c.label, c.kind === 'all' ? 'chip-all' : c.kind === 'none' ? 'chip-warn' : ''));
     }
-    if (a.group_id) chip(`Grupo ${a.group_name}: también ${a.group_access.map(g => g.tenant_name).join(', ') || 'ninguna otra empresa aún'}`, 'chip-group');
+    if (a.group_id) chip(groupText(a), 'chip-group');
     return d;
   };
   // Revisión UX ACC-2: activa, sin acceso al panel, debe cambiar la contraseña y desactivada son estados distintos.
