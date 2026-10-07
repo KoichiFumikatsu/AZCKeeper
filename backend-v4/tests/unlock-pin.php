@@ -5,7 +5,7 @@ use Keeper\{Database, Util};
 function unlockPinTests(Database $db): void
 {
     $before = $GLOBALS['checks'];
-    check(base64_encode(hash_pbkdf2('sha256','0625184',str_repeat('s',32),210000,32,true))==='AtPsP9xC4jfTG3OfjdXOAY3/h0LL00/BvRebLDPHAnE=','PHP and C# PIN vector');
+    check(base64_encode(hash_pbkdf2('sha256','00625184',str_repeat('s',32),210000,32,true))==='6ceVITP22R/qoWisi6DvLYN1zhj96RIpV8RoRYfbUxc=','PHP and C# PIN vector');
     $a = secondTenant($db); $b = secondTenant($db);
     $tenant = $a['tenant_id']; $tid = Util::id($tenant); $bid = Util::id($b['tenant_id']);
     $admin = adminFixture($db, $a, ['equipos.desbloquear','operacion.logs']);
@@ -13,7 +13,7 @@ function unlockPinTests(Database $db): void
     $reader = adminFixture($db, adminMember($db, $a), ['equipos.ver']);
     $scoped = adminFixture($db, adminMember($db, $a), ['equipos.desbloquear'], false, 'self');
     $path = '/admin/tenants/' . $tid . '/unlock-pin';
-    $pin = '0625184'; $next = '0735192';
+    $pin = '00625184'; $next = '00735192';
     $key = keypair(); $token = enroll($db, $a, $key); policy($db, $token);
     $otherKey = keypair(); $otherToken = enroll($db, $b, $otherKey); policy($db, $otherToken);
     $sync = static function (array $identity, array $session, int $seq) {
@@ -29,7 +29,7 @@ function unlockPinTests(Database $db): void
         check(in_array(adminRequest($denied, 'POST', $path.'/reveal')[0], [403,404], true), 'PIN reveal scope enforced');
     }
     expect(adminRequest($admin, 'POST', '/auth/reauth', ['password'=>$admin['password']]), 200, 'reauth PIN');
-    foreach (['12345', str_repeat('1',33), '12345a', "123456\n"] as $invalid) {
+    foreach (['12345', '123456', '1234567', str_repeat('1',33), '1234567a', "12345678\n"] as $invalid) {
         expect(adminRequest($admin, 'PUT', $path, ['pin'=>$invalid]), 422, 'invalid PIN rejected');
     }
     $settings = expect(adminRequest($admin, 'PUT', $path, ['pin'=>$pin]), 200, 'set PIN');
@@ -66,6 +66,22 @@ function unlockPinTests(Database $db): void
     $late=expect(request('POST','/client/logs',['entries'=>[$old]],$key,$token['access_token'],Util::uuid()),200,'long offline report');
     check($late['acks'][0]['status']==='accepted','long offline report accepted');
     check((int)$db->one("SELECT COUNT(*) n FROM audit_log WHERE tenant_id=? AND action='device.local_unlock_reported'",[$tenant])['n']===2,'late report reaches audit despite log retention');
+    $future=$event; $future['event_id']=Util::uuid(); $future['at']=gmdate('Y-m-d\TH:i:s\Z',time()+365*86400);
+    $receivedAfter=gmdate('Y-m-d H:i:s');
+    $upload=expect(request('POST','/client/logs',['entries'=>[$future]],$key,$token['access_token'],Util::uuid()),200,'future unlock report');
+    check($upload['acks'][0]['status']==='accepted' && !$upload['acks'][0]['retryable'],'future unlock acknowledged without quarantine');
+    $stored=$db->one('SELECT at FROM client_logs WHERE tenant_id=? AND event_id=?',[$tenant,Util::bin($future['event_id'])]);
+    check($stored['at'] >= $receivedAfter && $stored['at'] < Util::sqlTime($future['at']),'future device time replaced by server reception time');
+    $received=$db->one("SELECT MAX(at) at,COUNT(*) n FROM audit_log WHERE tenant_id=? AND action='device.local_unlock_reported'",[$tenant]);
+    check((int)$received['n']===3 && $received['at'] >= $receivedAfter && $received['at'] < Util::sqlTime($future['at']),'audit records server reception time');
+    $replay=expect(request('POST','/client/logs',['entries'=>[$future]],$key,$token['access_token'],Util::uuid()),200,'future unlock replay');
+    check($replay['acks'][0]['status']==='duplicate','future unlock replay deduplicated');
+    check((int)$db->one("SELECT COUNT(*) n FROM audit_log WHERE tenant_id=? AND action='device.local_unlock_reported'",[$tenant])['n']===3,'future replay does not duplicate audit');
+    foreach ([['DeviceLock','other_event'],['OtherComponent','local_unlock']] as [$component,$code]) {
+        $unrelated=$future; $unrelated['event_id']=Util::uuid(); $unrelated['component']=$component; $unrelated['code']=$code;
+        $rejected=expect(request('POST','/client/logs',['entries'=>[$unrelated]],$key,$token['access_token'],Util::uuid()),200,'unrelated future log');
+        check($rejected['acks'][0]['status']==='rejected' && $rejected['acks'][0]['code']==='invalid_range','future exception limited to local unlock');
+    }
     expect(adminRequest($other,'POST','/auth/reauth',['password'=>$other['password']]),200,'other reauth');
     expect(adminRequest($other,'PUT','/admin/tenants/'.$bid.'/unlock-pin',['pin'=>$pin]),200,'other PIN');
     $db->run('UPDATE tenant_unlock_pin SET pin_enc=? WHERE tenant_id=?',[$row['pin_enc'],$b['tenant_id']]);

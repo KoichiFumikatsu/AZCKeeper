@@ -75,7 +75,7 @@ public sealed class LockScreen : ModuleBase, IDisposable, ILockWindows
                     pin.KeyPress += (_, e) => { if (!char.IsControl(e.KeyChar) && !char.IsAsciiDigit(e.KeyChar)) e.Handled = true; };
                     button.Click += (_, _) =>
                     {
-                        if (pin.Text.Length < 6 || pin.Text.Any(c => !char.IsAsciiDigit(c))) { status.Text = "Escribe un PIN de 6 a 32 dígitos."; return; }
+                        if (pin.Text.Length < 8 || pin.Text.Any(c => !char.IsAsciiDigit(c))) { status.Text = "Escribe un PIN de 8 a 32 dígitos."; return; }
                         Interlocked.Exchange(ref _pin, pin.Text); pin.Clear(); status.Text = "Validando…";
                     };
                     panel.Controls.Add(pin); panel.Controls.Add(button); panel.Controls.Add(status);

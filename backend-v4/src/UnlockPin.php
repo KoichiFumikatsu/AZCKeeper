@@ -26,7 +26,7 @@ final class UnlockPin
             || strtotime($this->c['reauthenticated_at'] . ' UTC') < time() - 300)) { throw new ApiError(403, 'reauth_required'); }
         if ($op === 'setTenantUnlockPin') {
             $pin = $this->r->body->pin;
-            if (!preg_match('/^[0-9]{6,32}$/D', $pin)) { throw new ApiError(422, 'validation_failed'); }
+            if (!preg_match('/^[0-9]{8,32}$/D', $pin)) { throw new ApiError(422, 'validation_failed'); }
             $iv = random_bytes(12);
             $cipher = openssl_encrypt($pin, 'aes-256-gcm', $this->key(), OPENSSL_RAW_DATA, $iv, $tag, $this->aad(), 16);
             if ($cipher === false) { throw new \RuntimeException('Unlock PIN encryption failed'); }

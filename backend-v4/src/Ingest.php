@@ -110,14 +110,18 @@ final class Ingest
     public function log(object $e): array
     {
         if ($ack = $this->duplicate('client_logs', $e)) { return $ack; }
-        $this->range($e->at);
+        // Un desbloqueo local con PIN se acepta aunque el reloj del equipo esté adelantado (para que llegue al panel),
+        // pero nunca se guarda con hora futura: se usa la hora del servidor.
+        $at = $e->at;
+        if ($e->component === 'DeviceLock' && $e->code === 'local_unlock') { if (strtotime($at) > time() + 300) { $at = gmdate('Y-m-d\TH:i:s\Z'); } }
+        else { $this->range($at); }
         $f = $e->fields ?? (object) [];
         foreach ([$e->code, $e->component, $f->control_id ?? null, $f->error_code ?? null] as $code) {
             if ($code !== null && (!preg_match('/^[a-zA-Z][a-zA-Z0-9_.:-]{0,99}$/D', $code) || preg_match('/(?:password|secret|token|bearer|authorization|(?:^|[_.:-])pin(?:$|[_.:-]))/i', $code))) { throw new ApiError(422, 'validation_failed'); }
         }
         if (isset($f->command_id)) { $this->ownCommand($f->command_id); }
-        $this->write('INSERT INTO client_logs (tenant_id,device_id,event_id,at,level,code,component,control_id,command_id,attempt,error_code,body_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', [...$this->args($e->event_id), Util::sqlTime($e->at), $e->level, $e->code, $e->component, $f->control_id ?? null, isset($f->command_id) ? Util::bin($f->command_id) : null, $f->attempt ?? null, $f->error_code ?? null, Util::hash($e)]);
-        if ($e->component === 'LocalAccountHardening') { $this->hardeningFromJournal($e->code, Util::sqlTime($e->at)); }
+        $this->write('INSERT INTO client_logs (tenant_id,device_id,event_id,at,level,code,component,control_id,command_id,attempt,error_code,body_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', [...$this->args($e->event_id), Util::sqlTime($at), $e->level, $e->code, $e->component, $f->control_id ?? null, isset($f->command_id) ? Util::bin($f->command_id) : null, $f->attempt ?? null, $f->error_code ?? null, Util::hash($e)]);
+        if ($e->component === 'LocalAccountHardening') { $this->hardeningFromJournal($e->code, Util::sqlTime($at)); }
         if ($e->component === 'DeviceLock' && $e->code === 'local_unlock') {
             (new Audit($this->db))->record($this->c, $this->r, 'device.local_unlock_reported', 'device', $this->c['device_id'], ['lock_state']);
         }

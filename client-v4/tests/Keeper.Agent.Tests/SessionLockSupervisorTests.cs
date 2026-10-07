@@ -17,7 +17,7 @@ public sealed class SessionLockSupervisorTests
         var clock = new TestClock();
         var log = new List<string>();
         var context = Samples.Context(clock) with { Log = log.Add };
-        var deviceLock = new DeviceLock(directory.File("lock"), PinVerifier.Create("625184"));
+        var deviceLock = new DeviceLock(directory.File("lock"), PinVerifier.Create("00625184"));
         await deviceLock.InitAsync(context);
         var platform = new FakePlatform { FailKill = failKill };
         var registry = new ScreenLockTests.FakeRegistry();
@@ -46,7 +46,7 @@ public sealed class SessionLockSupervisorTests
         Assert.True(platform.Connection.Requests[^1].Locked);
         Assert.True(platform.Connection.Requests[^1].PinAllowed);
         if (failKill) Assert.Contains(log, s => s.Contains("Win32Exception"));
-        platform.Connection.Pin = "625184";
+        platform.Connection.Pin = "00625184";
         await host.TickAsync(default);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (deviceLock.Locked) await Task.Delay(10, timeout.Token);

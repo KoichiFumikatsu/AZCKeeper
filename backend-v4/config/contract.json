@@ -1,5 +1,5 @@
 {
-  "source_sha256": "72f739aa4cef551683e785345f969623078526fe1c1d2187457191fd93f70ed9",
+  "source_sha256": "71b4736bf9259d5307156c66b69e388c3d5c62431b87ed1b326f594975d759eb",
   "paths": {
     "/admin/tenants/{id}/unlock-pin": {
       "get": {
@@ -30510,9 +30510,9 @@
       "properties": {
         "pin": {
           "type": "string",
-          "minLength": 6,
+          "minLength": 8,
           "maxLength": 32,
-          "pattern": "^[0-9]{6,32}$"
+          "pattern": "^[0-9]{8,32}$"
         }
       }
     },

@@ -130,7 +130,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
                     : null,
                 OnResponse = async (response, tenant, ct) =>
                 {
-                    if (response.UnlockPin is not null) await deviceLock.ApplyVerifierAsync(response.UnlockPin, tenant, ct);
+                    if (response.UnlockPin is not null) await deviceLock.TryApplyVerifierAsync(response.UnlockPin, tenant, ct);
                     await commands.AcceptAsync(response.Commands, tenant, ct);
                     updater.Offer(response.Release);
                 }

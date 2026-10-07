@@ -65,7 +65,7 @@ Integraciones, webhooks, notificaciones, transferencia entre empresas, dashboard
 ### PIN de desbloqueo local (2026-10-07)
 
 En **Ajustes → PIN de desbloqueo local**, un administrador con `equipos.desbloquear` y alcance de todo el
-cliente puede configurar o consultar un PIN numérico de 6 a 32 dígitos. Cada acción del panel pide su contraseña;
+cliente puede configurar o consultar un PIN numérico de 8 a 32 dígitos. Cada acción del panel pide su contraseña;
 la API exige reautenticación de menos de 5 minutos, sesión, CSRF y contexto del cliente concordante con la ruta.
 
 | Operación | Ruta bajo `/v1` | Respuesta |
@@ -83,15 +83,28 @@ el campo a versiones anteriores, que rechazan campos desconocidos. La revisión 
 El equipo guarda únicamente esa huella bajo DPAPI del servicio, dentro del directorio protegido del agente.
 Cambiar el PIN se refleja en el siguiente sync; un equipo desconectado conserva el anterior hasta sincronizar.
 
-El contador se comparte entre sesiones del equipo. Cinco fallos activan 15 minutos de espera; contador y plazo
-persisten al reiniciar el agente. Una orden remota repetida de bloqueo no reinicia el contador. Un desbloqueo
+El contador se comparte entre sesiones del equipo. Cinco fallos activan 15 minutos de espera medidos con un reloj
+monotónico. Se persiste el tiempo restante: cambiar la hora de Windows no reduce la espera y el tiempo con
+el agente detenido no se descuenta. Al cargar un estado de una versión anterior con cinco fallos, se exige
+la espera completa sin confiar en la fecha guardada. Una orden remota repetida de bloqueo no reinicia el contador. Un desbloqueo
 remoto seguido de un nuevo bloqueo sí empieza otro ciclo. La rotación del PIN no elimina la espera en curso.
 
 Un desbloqueo local guarda atómicamente el estado desbloqueado y su evento pendiente. El evento
 `DeviceLock/local_unlock` pasa a la cola durable, queda protegido frente al descarte por falta de espacio y se
 reintenta con el mismo UUID. El panel lo muestra en Logs y en la ficha del equipo; la ingesta añade una entrada
 `device.local_unlock_reported` de auditoría al recibirlo, incluso si llegó después del plazo de retención de logs.
-La fecha del log corresponde al desbloqueo; la fecha de auditoría corresponde a la recepción. Los reintentos no duplican entradas.
+La fecha del log conserva la hora declarada por el equipo, incluso si está adelantada; la fecha de auditoría
+corresponde a la recepción según el servidor. Solo `DeviceLock/local_unlock` admite fechas futuras, para que
+un reloj incorrecto no provoque rechazo ni cuarentena del reporte. Los reintentos no duplican entradas.
+
+Si se sospecha una filtración, rotar el PIN de todo el cliente desde **Ajustes → PIN de desbloqueo local →
+Cambiar PIN**, confirmar la contraseña del panel y guardar un PIN nuevo de 8 a 32 dígitos que no reutilice
+el anterior. Un administrador local o SYSTEM puede extraer el verificador e intentar adivinarlo sin conexión;
+el mínimo de 8 dígitos no elimina ese riesgo y el PIN es común a todos los equipos del cliente.
+Verificar la siguiente sincronización de todos los equipos; los desconectados conservan el PIN anterior
+hasta reconectarse. Mantener aislados los equipos comprometidos y recuperar su integridad antes de permitir
+que reciban el nuevo PIN. La rotación aumenta la revisión y renueva el salt y el verificador, sin borrar
+una espera en curso. Los PIN antiguos de menos de 8 dígitos deben sustituirse para usarlos con este agente.
 
 Pruebas específicas (bases aisladas; sin instalar el agente ni bloquear esta máquina):
 

@@ -12,7 +12,7 @@ public sealed record PinVerifier(byte[] Salt, byte[] Hash)
     public long Revision { get; init; }
     public static PinVerifier Create(string pin)
     {
-        if (pin.Length is < 6 or > 32 || pin.Any(c => !char.IsAsciiDigit(c))) throw new ArgumentException("invalid_pin");
+        if (pin.Length is < 8 or > 32 || pin.Any(c => !char.IsAsciiDigit(c))) throw new ArgumentException("invalid_pin");
         var salt = RandomNumberGenerator.GetBytes(32);
         return new(salt, Rfc2898DeriveBytes.Pbkdf2(pin, salt, 210000, HashAlgorithmName.SHA256, 32));
     }
@@ -40,16 +40,26 @@ public sealed record PinVerifier(byte[] Salt, byte[] Hash)
     }
 }
 
-public sealed record LockState(bool Locked, int Attempts, DateTimeOffset RetryAt, IReadOnlyList<LogEntry>? PendingUnlocks = null);
+public sealed record LockState(bool Locked, int Attempts, DateTimeOffset RetryAt, IReadOnlyList<LogEntry>? PendingUnlocks = null,
+    TimeSpan? CooldownRemaining = null);
 public sealed class DeviceLock(string statePath, PinVerifier? verifier = null, string? verifierPath = null) : ModuleBase
 {
     public override string Name => "DeviceLock";
     private readonly SemaphoreSlim _gate = new(1, 1);
     private LockState _state = new(false, 0, DateTimeOffset.MinValue);
     private bool _ready;
+    private long _cooldownTimestamp;
     public bool Locked => _state.Locked;
     public bool PinAllowed => verifier is not null;
-    public PinStatus PinStatus => new(_state.Attempts, _state.RetryAt > Context.Clock.GetUtcNow() ? _state.RetryAt : null);
+    private TimeSpan Remaining => (_state.CooldownRemaining ?? TimeSpan.Zero) - Context.Clock.GetElapsedTime(_cooldownTimestamp);
+    public PinStatus PinStatus => new(_state.Attempts, Remaining > TimeSpan.Zero ? Context.Clock.GetUtcNow() + Remaining : null);
+
+    public async Task TryApplyVerifierAsync(UnlockPinVerifier settings, Guid tenant, CancellationToken ct)
+    {
+        try { await ApplyVerifierAsync(settings, tenant, ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) { Context.Log($"unlock_pin_apply_failed: {ex.GetType().Name}"); }
+    }
 
     public async Task ApplyVerifierAsync(UnlockPinVerifier settings, Guid tenant, CancellationToken ct)
     {
@@ -91,13 +101,20 @@ public sealed class DeviceLock(string statePath, PinVerifier? verifier = null, s
             _state = JsonSerializer.Deserialize<LockState>(await File.ReadAllBytesAsync(statePath, ctx.StoppingToken))
                 ?? throw new InvalidDataException("invalid_lock_state");
         }
+        // El estado anterior sin contador debe cumplir la espera completa, sin confiar en su fecha.
+        _state = _state with { CooldownRemaining = _state.CooldownRemaining ?? (_state.Attempts >= 5 ? TimeSpan.FromMinutes(15) : TimeSpan.Zero) };
+        _cooldownTimestamp = ctx.Clock.GetTimestamp();
         _ready = true;
     }
     public async Task SetLockedAsync(bool locked, CancellationToken ct)
     {
         if (!_ready) throw new InvalidOperationException("lock_store_unavailable");
         await _gate.WaitAsync(ct);
-        try { await SaveAsync(_state.Locked == locked ? _state : _state with { Locked = locked, Attempts = 0, RetryAt = DateTimeOffset.MinValue }, ct); }
+        try
+        {
+            await CheckpointCooldownAsync(ct);
+            await SaveAsync(_state.Locked == locked ? _state : _state with { Locked = locked, Attempts = 0, RetryAt = DateTimeOffset.MinValue, CooldownRemaining = TimeSpan.Zero }, ct);
+        }
         finally { _gate.Release(); }
     }
     public async Task<bool> ValidatePinAsync(string pin, CancellationToken ct)
@@ -105,10 +122,12 @@ public sealed class DeviceLock(string statePath, PinVerifier? verifier = null, s
         await _gate.WaitAsync(ct);
         try
         {
+            if (!_ready || !Locked || verifier is null) return false;
+            await CheckpointCooldownAsync(ct);
+            if (Remaining > TimeSpan.Zero) return false;
             var now = Context.Clock.GetUtcNow();
-            if (!_ready || !Locked || verifier is null || now < _state.RetryAt) return false;
-            var attempts = _state.RetryAt != DateTimeOffset.MinValue ? 0 : _state.Attempts;
-            if (pin.Length is >= 6 and <= 32 && pin.All(char.IsAsciiDigit) && verifier.Verify(pin))
+            var attempts = _state.Attempts;
+            if (pin.Length is >= 8 and <= 32 && pin.All(char.IsAsciiDigit) && verifier.Verify(pin))
             {
                 var entry = new LogEntry { EventId = Guid.NewGuid(), At = now, Level = LogEntryLevel.Info,
                     Component = Name, Code = "local_unlock" };
@@ -116,7 +135,8 @@ public sealed class DeviceLock(string statePath, PinVerifier? verifier = null, s
                 return true;
             }
             attempts = Math.Min(attempts + 1, 5);
-            await SaveAsync(_state with { Attempts = attempts, RetryAt = attempts == 5 ? now.AddMinutes(15) : DateTimeOffset.MinValue }, ct);
+            await SaveAsync(_state with { Attempts = attempts, RetryAt = DateTimeOffset.MinValue,
+                CooldownRemaining = attempts == 5 ? TimeSpan.FromMinutes(15) : TimeSpan.Zero }, ct);
             return false;
         }
         finally { _gate.Release(); }
@@ -126,15 +146,24 @@ public sealed class DeviceLock(string statePath, PinVerifier? verifier = null, s
         await _gate.WaitAsync(ct);
         try
         {
+            await CheckpointCooldownAsync(ct);
             foreach (var entry in _state.PendingUnlocks ?? []) await Context.Outbox.EnqueueAsync(entry, ct);
             if (_state.PendingUnlocks is { Count: > 0 }) await SaveAsync(_state with { PendingUnlocks = [] }, ct);
         }
         finally { _gate.Release(); }
     }
+    private async Task CheckpointCooldownAsync(CancellationToken ct)
+    {
+        if (_state.CooldownRemaining is not { } saved || saved <= TimeSpan.Zero) return;
+        var remaining = Remaining;
+        await SaveAsync(_state with { CooldownRemaining = remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero,
+            Attempts = remaining > TimeSpan.Zero ? _state.Attempts : 0, RetryAt = DateTimeOffset.MinValue }, ct);
+    }
     private async Task SaveAsync(LockState state, CancellationToken ct)
     {
         await AtomicFile.WriteAsync(statePath, JsonSerializer.SerializeToUtf8Bytes(state), ct);
         _state = state;
+        _cooldownTimestamp = Context.Clock.GetTimestamp();
     }
     public override ModuleSnapshot Snapshot() => base.Snapshot() with { State = Locked ? "locked" : "unlocked", ErrorCode = Locked ? "Bloqueado" : "Desbloqueado" };
     public override Task ShutdownAsync() { _gate.Dispose(); return Task.CompletedTask; }

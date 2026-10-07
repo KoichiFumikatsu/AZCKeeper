@@ -33,7 +33,7 @@ public sealed class HardeningCommandTests
     {
         using var directory = new TestDirectory();
         var context = Samples.Context(new TestClock());
-        var deviceLock = new DeviceLock(directory.File("lock"), PinVerifier.Create("625184"));
+        var deviceLock = new DeviceLock(directory.File("lock"), PinVerifier.Create("00625184"));
         await deviceLock.InitAsync(context);
         var executor = new CommandExecutor(directory.File("inbox"), Samples.Device, deviceLock, new NoActions(), null, launcher, logoff);
         await executor.InitAsync(context);

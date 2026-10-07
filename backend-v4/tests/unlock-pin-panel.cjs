@@ -41,7 +41,13 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.getByRole('button',{name:'Ver PIN',exact:true}).isDisabled(),true);
     assert.equal(await page.evaluate(()=>window.canConfigure({platform:false,features:['comandos'],permissions:[{code:'equipos.desbloquear',scopes:['self']}]})),false);
     await page.getByRole('button',{name:'Configurar PIN',exact:true}).click();
-    await page.getByLabel('Nuevo PIN (6 a 32 dígitos)').fill('0625184'); await page.getByLabel('Repite el PIN').fill('0625184');
+    for (const invalid of ['123456', '1234567', '1234567a']) {
+      await page.getByLabel('Nuevo PIN (8 a 32 dígitos)').fill(invalid); await page.getByLabel('Repite el PIN').fill(invalid);
+      await page.getByRole('button',{name:'Guardar PIN',exact:true}).click();
+      await page.getByText('Escribe el mismo PIN de 8 a 32 dígitos en ambos campos.',{exact:true}).waitFor();
+      assert.equal(calls.filter(c=>c.method==='PUT' || c.path.endsWith('/auth/reauth')).length,0);
+    }
+    await page.getByLabel('Nuevo PIN (8 a 32 dígitos)').fill('00625184'); await page.getByLabel('Repite el PIN').fill('00625184');
     await page.getByRole('button',{name:'Guardar PIN',exact:true}).click();
     await page.getByRole('dialog',{name:'Confirma tu contraseña'}).getByRole('button',{name:'Cancelar',exact:true}).click();
     assert.equal(calls.filter(c=>c.method==='PUT').length,0);
@@ -51,7 +57,7 @@ const server = http.createServer(async (req, res) => {
     assert.equal(calls.filter(c=>c.method==='PUT').length,0);
     await page.getByLabel('Tu contraseña',{exact:true}).fill('fixture-password'); await page.getByRole('button',{name:'Confirmar',exact:true}).click();
     await page.getByText('PIN guardado. Se enviará a los equipos en su próxima sincronización.',{exact:true}).waitFor();
-    assert.equal(pin,'0625184'); assert.equal(revision,1);
+    assert.equal(pin,'00625184'); assert.equal(revision,1);
     await page.waitForFunction(()=>document.querySelectorAll('dialog').length===0);
     for(let i=0;i<2;i++) {
       await page.getByRole('button',{name:'Ver PIN',exact:true}).click();

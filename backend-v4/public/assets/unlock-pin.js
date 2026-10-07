@@ -49,7 +49,7 @@ export async function mountUnlockPin(container, tenant) {
     const dialog = el('dialog'); const form = el('form'); const body = el('div'); body.className = 'dialog-body';
     const pin = el('input'); pin.type = 'password'; pin.inputMode = 'numeric'; pin.autocomplete = 'new-password'; pin.maxLength = 32;
     const repeat = pin.cloneNode();
-    const label = el('label', 'Nuevo PIN (6 a 32 dígitos)'); label.append(pin);
+    const label = el('label', 'Nuevo PIN (8 a 32 dígitos)'); label.append(pin);
     const repeatLabel = el('label', 'Repite el PIN'); repeatLabel.append(repeat);
     const error = el('p'); error.className = 'error-text'; error.setAttribute('role', 'alert'); error.hidden = true;
     const save = el('button', 'Guardar PIN'); save.type = 'submit'; save.className = 'primary';
@@ -59,8 +59,8 @@ export async function mountUnlockPin(container, tenant) {
     dialog.addEventListener('close', () => { pin.value = repeat.value = ''; dialog.remove(); });
     form.addEventListener('submit', async event => {
       event.preventDefault(); error.hidden = true;
-      if (!/^[0-9]{6,32}$/.test(pin.value) || pin.value !== repeat.value) {
-        error.textContent = 'Escribe el mismo PIN de 6 a 32 dígitos en ambos campos.'; error.hidden = false; return;
+      if (!/^[0-9]{8,32}$/.test(pin.value) || pin.value !== repeat.value) {
+        error.textContent = 'Escribe el mismo PIN de 8 a 32 dígitos en ambos campos.'; error.hidden = false; return;
       }
       save.disabled = true;
       try {

@@ -30,7 +30,7 @@ public sealed class RenameComputerTests
         using var directory = new TestDirectory();
         var clock = new TestClock();
         var context = Samples.Context(clock);
-        var deviceLock = new DeviceLock(directory.File("lock"), PinVerifier.Create("625184"));
+        var deviceLock = new DeviceLock(directory.File("lock"), PinVerifier.Create("00625184"));
         await deviceLock.InitAsync(context);
         var namer = new RecordingNamer();
         var actions = new CountingActions();

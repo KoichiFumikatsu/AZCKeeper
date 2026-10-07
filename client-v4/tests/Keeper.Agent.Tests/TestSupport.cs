@@ -27,6 +27,7 @@ internal sealed class TestClock : TimeProvider
     public override DateTimeOffset GetUtcNow() => _now;
     public override long GetTimestamp() => _timestamp;
     public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+    public void ShiftWallClock(TimeSpan duration) => _now += duration;
     public void Advance(TimeSpan duration) { _now += duration; _timestamp += duration.Ticks; }
 }
 
