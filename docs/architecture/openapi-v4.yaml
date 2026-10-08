@@ -193,6 +193,127 @@ paths:
       x-permission: equipos.desbloquear
       description: PIN del cliente. Ver o cambiar exige reautenticación reciente. Solo
         alcance de todo el cliente. Nunca se registra el valor en auditoría.
+  /admin/tenants/{id}/windows-security:
+    get:
+      tags:
+      - admin
+      operationId: getTenantWindowsSecurity
+      summary: Consultar ajustes de Windows del cliente
+      security:
+      - adminSession: []
+      x-tenant-boundary: Tenant de ruta y sesión concordantes; alcance de todo el cliente
+        obligatorio.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Ajustes vigentes; sin fila, disable_smart_app_control=false.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WindowsSecuritySettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      x-permission: equipos.desbloquear
+      description: Ajustes de Windows que el agente 4.0.19 o posterior aplica en cada equipo del cliente. Hoy solo
+        disable_smart_app_control (apagado por defecto); con true cada equipo pone VerifiedAndReputablePolicyState=0 y
+        Smart App Control queda apagado al reiniciar. Apagarlo es irreversible en Windows; false solo evita apagarlo en
+        equipos nuevos. Cambiar exige reautenticación reciente (403 reauth_required). Solo alcance de todo el cliente.
+    put:
+      tags:
+      - admin
+      operationId: setTenantWindowsSecurity
+      summary: Cambiar ajustes de Windows del cliente
+      description: Ajustes de Windows que el agente 4.0.19 o posterior aplica en cada equipo del cliente. Hoy solo
+        disable_smart_app_control (apagado por defecto); con true cada equipo pone VerifiedAndReputablePolicyState=0 y
+        Smart App Control queda apagado al reiniciar. Apagarlo es irreversible en Windows; false solo evita apagarlo en
+        equipos nuevos. Cambiar exige reautenticación reciente (403 reauth_required). Solo alcance de todo el cliente.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant de ruta y sesión concordantes; alcance de todo el cliente
+        obligatorio.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Ajustes guardados y auditados (windows_security.changed).
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WindowsSecuritySettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      x-permission: equipos.desbloquear
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WindowsSecurityInput'
+      x-max-body-bytes: 8192
   /client/hardening:
     get:
       tags:
@@ -13175,6 +13296,46 @@ paths:
       x-max-body-bytes: 8192
 components:
   schemas:
+    WindowsSecuritySettings:
+      type: object
+      additionalProperties: false
+      required:
+      - disable_smart_app_control
+      - updated_at
+      - updated_by
+      properties:
+        disable_smart_app_control:
+          type: boolean
+          description: true = cada equipo apaga Smart App Control (irreversible en Windows) y aplica al reiniciar.
+        updated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        updated_by:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+    WindowsSecurityInput:
+      type: object
+      additionalProperties: false
+      required:
+      - disable_smart_app_control
+      properties:
+        disable_smart_app_control:
+          type: boolean
+    WindowsSecurityDirective:
+      type: object
+      additionalProperties: false
+      required:
+      - disable_smart_app_control
+      description: Ajustes de Windows del cliente para el agente. Con disable_smart_app_control=true el agente pone
+        VerifiedAndReputablePolicyState=0 si Smart App Control está activo o en evaluación; con false no toca nada
+        (nunca lo reactiva).
+      properties:
+        disable_smart_app_control:
+          type: boolean
     UnlockPinSettings:
       type: object
       additionalProperties: false
@@ -17480,6 +17641,16 @@ components:
             format: int64
             minimum: 1
           - type: 'null'
+        smart_app_control:
+          description: Smart App Control según el último inventario del agente (4.0.19+); null si no lo ha reportado.
+          anyOf:
+          - type: string
+            enum:
+            - 'off'
+            - 'on'
+            - evaluation
+            - unknown
+          - type: 'null'
         version:
           type: integer
           minimum: 1
@@ -18292,6 +18463,15 @@ components:
           enum:
           - x64
           - arm64
+        smart_app_control:
+          type: string
+          enum:
+          - 'off'
+          - 'on'
+          - evaluation
+          - unknown
+          description: Estado de Smart App Control (VerifiedAndReputablePolicyState en
+            HKLM/SYSTEM/CurrentControlSet/Control/CI/Policy, 0/1/2); unknown si no se pudo leer. Agente 4.0.19 o posterior.
       description: >-
         Inventario declarado por el agente. Se envia en el primer sync de cada arranque y cuando cambia; el
         servidor actualiza el equipo sin tocar su version de edicion.
@@ -19394,6 +19574,8 @@ components:
       properties:
         unlock_pin:
           $ref: '#/components/schemas/UnlockPinVerifier'
+        windows_security:
+          $ref: '#/components/schemas/WindowsSecurityDirective'
         protocol_version:
           const: 1
         server_time:

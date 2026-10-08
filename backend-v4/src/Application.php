@@ -134,6 +134,10 @@ final class Application
                 if (version_compare($c['agent_version'], '4.0.17', '>=')) {
                     $response['unlock_pin'] = (new UnlockPin($db, $c, $r))->clientSettings();
                 }
+                // Desde 4.0.19 (los anteriores rechazan campos desconocidos): el agente apaga Smart App Control si el cliente lo pidio.
+                if (version_compare($c['agent_version'], '4.0.19', '>=')) {
+                    $response['windows_security'] = (new WindowsSecurity($db, $c, $r))->clientSettings();
+                }
                 // Una release no verificable (p. ej. release-keys.json desalineado) se RETIENE, no tumba el sync:
                 // si lanzara aqui, toda la flota del tenant perderia politica, comandos e ingesta hasta corregirla.
                 // GET /client/releases/{id} sigue respondiendo 503 para diagnostico.
@@ -152,8 +156,8 @@ final class Application
                 if (isset($b->inventory)) {
                     $inv = $b->inventory;
                     // hostname: tras un renombre + reinicio el agente reutiliza su token y no pasa por /client/login.
-                    $db->run('UPDATE devices SET os_edition=?,os_build=?,cpu=?,ram_bytes=?,disk_bytes=?,hostname=COALESCE(?,hostname),specs=JSON_SET(COALESCE(specs,JSON_OBJECT()),\'$.architecture\',?,\'$.serial_number\',?) WHERE tenant_id=? AND id=?',
-                        [$inv->os_edition, $inv->os_build ?? null, $inv->cpu, $inv->ram_bytes, $inv->disk_bytes ?? null, $inv->hostname ?? null, $inv->architecture, $inv->serial_number ?? null, $c['tenant_id'], $c['device_id']]);
+                    $db->run('UPDATE devices SET os_edition=?,os_build=?,cpu=?,ram_bytes=?,disk_bytes=?,hostname=COALESCE(?,hostname),specs=JSON_SET(COALESCE(specs,JSON_OBJECT()),\'$.architecture\',?,\'$.serial_number\',?,\'$.smart_app_control\',?) WHERE tenant_id=? AND id=?',
+                        [$inv->os_edition, $inv->os_build ?? null, $inv->cpu, $inv->ram_bytes, $inv->disk_bytes ?? null, $inv->hostname ?? null, $inv->architecture, $inv->serial_number ?? null, $inv->smart_app_control ?? null, $c['tenant_id'], $c['device_id']]);
                 }
                 // policy_version del request = la que el agente tiene APLICADA. Se guarda solo si existe en el servidor
                 // (1..version compilada) y sin tocar devices.version, que es el ETag de edicion del panel.

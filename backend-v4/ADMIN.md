@@ -119,6 +119,33 @@ existente de `playwright-core`. Usa la interfaz real con una API simulada. La su
 con MySQL. Antes de habilitarlo en la flota: desplegar backend y migración, empaquetar el agente 4.0.17 y probar
 en el piloto un bloqueo, desconexión, cinco fallos, reinicio del servicio, espera, desbloqueo y posterior reporte.
 
+### Smart App Control por cliente (2026-10-08, agente 4.0.19)
+
+Smart App Control (SAC) de Windows 11 bloquea programas sin firma; en ACT-0000 impidió arrancar
+`Keeper.Bootstrapper.exe` (Win32 4551) y el equipo quedó sin actualizar. En **Ajustes → Smart App Control**, con
+`equipos.desbloquear` y alcance de todo el cliente, la casilla «Desactivar Smart App Control en los equipos de este
+cliente» (apagada por defecto) hace que cada agente 4.0.19+ ponga `VerifiedAndReputablePolicyState=0` en
+`HKLM\SYSTEM\CurrentControlSet\Control\CI\Policy` si vale 1 (activo) o 2 (evaluación); aplica al reiniciar y el agente
+no fuerza el reinicio. **Apagar SAC es irreversible en Windows**: desmarcar la casilla solo evita que se apague en
+equipos nuevos; el agente nunca lo reactiva.
+
+| Operación | Ruta bajo `/v1` | Respuesta |
+|---|---|---|
+| GET | `/admin/tenants/{id}/windows-security` | `disable_smart_app_control`, `updated_at`, `updated_by` (sin fila: `false`/`null`) |
+| PUT | `/admin/tenants/{id}/windows-security` | Recibe `{ "disable_smart_app_control": bool }`; exige reauth < 5 min; audita `windows_security.changed` |
+
+Migración `0053_windows_security.sql`. El sync de agentes 4.0.19+ incluye `windows_security`; el inventario trae
+`smart_app_control` (`off`/`on`/`evaluation`/`unknown`), se guarda en `devices.specs` y la ficha del equipo lo
+muestra. Logs nuevos: `SmartAppControl/smart_app_control_disabled`, `SmartAppControl/smart_app_control_disable_failed`
+(error_code = tipo de excepción), `UpdateManager/update_launch_failed` (error_code `win32_<código>` o tipo) y
+`UpdateManager/update_apply_stalled` (más de 30 min en «applying» sin que el servicio se detuviera; se reintenta).
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File backend-v4/tests/mysql-smoke.ps1 -DebugResponses -WindowsSecurityOnly
+dotnet test client-v4/tests/Keeper.Agent.Tests/Keeper.Agent.Tests.csproj -c Release -m:1 -nodeReuse:false --filter "FullyQualifiedName~SmartAppControl|FullyQualifiedName~UpdateLaunch"
+node backend-v4/tests/windows-security-panel.cjs
+```
+
 ### Suite general
 
 `tests/admin.php` se integra en el smoke completo sobre MySQL aislado. Comprueba contratos de salida además del modo `KEEPER_DEBUG`, dos tenants, distintos roles, gates, autoescalada directa/indirecta, expiración, CSRF/origen, IDOR, scopes, cursores, versiones de edición, compilación y rollback de conflictos, comandos auditados/idempotentes, revocación y releases firmadas. Incluye datos agregados reales y verifica que no se duplican métricas ni se cruzan tenants.

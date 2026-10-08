@@ -10,6 +10,7 @@ require __DIR__ . '/external-auth.php';
 require __DIR__ . '/activity-migration.php';
 require __DIR__ . '/hardening.php';
 require __DIR__ . '/unlock-pin.php';
+require __DIR__ . '/windows-security.php';
 require __DIR__ . '/intake.php';
 require __DIR__ . '/panel-accounts.php';
 require __DIR__ . '/schedules.php';
@@ -147,6 +148,7 @@ try {
     $db = new Database();
     if (getenv('KEEPER_TEST_ACTIVITY_ONLY')==='1') { activityMigrationTests($db); echo "A1 SMOKE PASS: $checks assertions\n"; exit(0); }
     if (getenv('KEEPER_TEST_UNLOCK_PIN_ONLY')==='1') { unlockPinTests($db); echo "UNLOCK PIN SMOKE PASS: $checks assertions\n"; exit(0); }
+    if (getenv('KEEPER_TEST_WINDOWS_SECURITY_ONLY')==='1') { windowsSecurityTests($db); echo "WINDOWS SECURITY SMOKE PASS: $checks assertions\n"; exit(0); }
     $user = $db->one('SELECT * FROM users WHERE tenant_id<>0x00000000000040008000000000000001 AND status=\'active\' LIMIT 1');
     check($user !== null, 'demo member seed');
     $key = keypair(); $token = enroll($db, $user, $key); policy($db, $token);
@@ -414,6 +416,8 @@ try {
     batchUsersTests($db);
     onboardingTests($db);
     retentionTests($db);
+    // Al final y con el cupo de prelogin repuesto: sus 4 logins de fixture lo agotaban para panelAccountsTests.
+    windowsSecurityTests($db);
     echo "SMOKE PASS: $checks assertions\n";
 } catch (Throwable $e) {
     fwrite(STDERR, $e instanceof PDOException ? 'Database fixture failure SQLSTATE=' . $e->getCode() . ' driver=' . ($e->errorInfo[1]??0) . "\n" : $e->getMessage() . "\n");

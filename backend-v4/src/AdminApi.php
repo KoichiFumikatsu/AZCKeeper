@@ -130,6 +130,7 @@ final class AdminApi
         $id=$this->r->resourceId!==null && !str_starts_with($op,'getPermission') && $op!=='patchPermission'?Util::bin($this->r->resourceId):null;
         return match($op) {
             'getTenantUnlockPin','setTenantUnlockPin','revealTenantUnlockPin'=>(new UnlockPin($this->db,$this->c,$this->r))->admin($this->access),
+            'getTenantWindowsSecurity','setTenantWindowsSecurity'=>(new WindowsSecurity($this->db,$this->c,$this->r))->admin($this->access),
             'getTenantHardening','setTenantHardening','revealTenantHardening','getDeviceHardening','createHardeningCommand'=>(new Hardening($this->db,$this->c,$this->r))->admin($this->access),
             'listHolidays','createHoliday','getHoliday','putHoliday','deleteHoliday','listHolidayCalendars','createHolidayCalendar','getHolidayCalendar','putHolidayCalendar','assignHolidayCalendar','listHolidaySocieties','createHolidaySociety','getHolidaySociety','putHolidaySociety','deleteHolidaySociety',
             'listSuspiciousApps','createSuspiciousApp','getSuspiciousApp','putSuspiciousApp','deleteSuspiciousApp','listDualJobAlerts','listSuspiciousDetections','listComplianceSignals',
@@ -588,6 +589,8 @@ final class AdminApi
     {
         $out=[]; foreach (['id','tenant_id','user_id'] as $k) { $out[$k]=Util::id($r[$k]); }
         foreach (['hostname','asset_code','status','agent_version','os_edition','cpu','encryption_state'] as $k) { $out[$k]=$r[$k]; }
+        // Smart App Control declarado por el agente (4.0.19+) en su inventario; null si nunca lo reporto.
+        $specs=$r['specs']===null?null:json_decode($r['specs'],true); $out['smart_app_control']=is_array($specs)&&in_array($specs['smart_app_control']??null,['off','on','evaluation','unknown'],true)?$specs['smart_app_control']:null;
         $out+=['last_seen_at'=>$r['last_seen_at']===null?null:Util::time($r['last_seen_at']),'ram_bytes'=>(int)$r['ram_bytes'],'capabilities'=>json_decode($r['capabilities']),'policy_version'=>$r['policy_version']===null?null:(int)$r['policy_version'],'version'=>(int)$r['version']]; return $out;
     }
     private function revokeDevice(string $id): void

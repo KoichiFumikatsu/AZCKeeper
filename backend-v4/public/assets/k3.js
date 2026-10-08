@@ -3399,6 +3399,7 @@ const AUDIT_ACTIONS = {
   'unlock_pin.changed': 'Cambió el PIN de desbloqueo local',
   'unlock_pin.revealed': 'Consultó el PIN de desbloqueo local',
   'device.local_unlock_reported': 'Reportó un desbloqueo local con PIN',
+  setTenantWindowsSecurity: 'Cambió Smart App Control de los equipos', 'windows_security.changed': 'Cambió Smart App Control de los equipos',
   'admin.login': 'Inició sesión en el panel', 'admin.logout': 'Cerró sesión', 'admin.reauthenticated': 'Confirmó su contraseña', 'admin.password_changed': 'Cambió su contraseña',
   adminLogin: 'Inició sesión en el panel', adminLogout: 'Cerró sesión', adminReauth: 'Confirmó su contraseña', changeAdminPassword: 'Cambió su contraseña',
   'device.enrolled': 'Equipo registrado', 'device.created': 'Equipo creado', 'device.login': 'El equipo se conectó', 'device.session_renewed': 'El equipo renovó su sesión',
