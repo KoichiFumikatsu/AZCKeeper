@@ -591,6 +591,8 @@ final class AdminApi
         foreach (['hostname','asset_code','status','agent_version','os_edition','cpu','encryption_state'] as $k) { $out[$k]=$r[$k]; }
         // Smart App Control declarado por el agente (4.0.19+) en su inventario; null si nunca lo reporto.
         $specs=$r['specs']===null?null:json_decode($r['specs'],true); $out['smart_app_control']=is_array($specs)&&in_array($specs['smart_app_control']??null,['off','on','evaluation','unknown'],true)?$specs['smart_app_control']:null;
+        // K3 residual segun el inventario del agente: {running,autostart,installed} con bool o null (desconocido); null si nunca lo reporto.
+        $k3=is_array($specs)&&is_array($specs['legacy_k3']??null)?$specs['legacy_k3']:null; $out['legacy_k3']=$k3===null?null:['running'=>is_bool($k3['running']??null)?$k3['running']:null,'autostart'=>is_bool($k3['autostart']??null)?$k3['autostart']:null,'installed'=>is_bool($k3['installed']??null)?$k3['installed']:null];
         $out+=['last_seen_at'=>$r['last_seen_at']===null?null:Util::time($r['last_seen_at']),'ram_bytes'=>(int)$r['ram_bytes'],'capabilities'=>json_decode($r['capabilities']),'policy_version'=>$r['policy_version']===null?null:(int)$r['policy_version'],'version'=>(int)$r['version']]; return $out;
     }
     private function revokeDevice(string $id): void

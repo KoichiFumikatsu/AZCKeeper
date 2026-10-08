@@ -3491,12 +3491,13 @@ const LOG_CODES = {
   local_unlock: 'Equipo desbloqueado con el PIN local',
   smart_app_control_disabled: 'Smart App Control desactivado (aplica al reiniciar)', smart_app_control_disable_failed: 'No se pudo desactivar Smart App Control',
   update_launch_failed: 'Windows no dejó arrancar el instalador de la actualización', update_apply_stalled: 'La actualización no terminó; se reintentará',
+  legacy_k3_running: 'Keeper 3 (K3) está abierto en el equipo', legacy_k3_autostart: 'Keeper 3 (K3) arranca al iniciar sesión', legacy_k3_gone: 'Keeper 3 (K3) ya no corre ni arranca',
   capture_gap: 'El equipo estuvo suspendido o sin medir unos segundos (normal al dormir o bloquear)', applied: 'Regla aplicada en el equipo', degraded: 'Algún control no está funcionando del todo',
   package_verified: 'Versión nueva descargada y verificada', update_applying: 'Instalando versión nueva', first_login: 'Primer inicio de sesión del día',
   restore_point_created: 'Punto de restauración creado', failed: 'Falló', unsupported_rule: 'El equipo no soporta una regla', conflicting_rules: 'Reglas en conflicto',
 };
 const LOG_COMPONENTS = { ActivityTracker: 'Medición de actividad', WebEnforcer: 'Bloqueo web', UsbEnforcer: 'USB', InstallEnforcer: 'Instalaciones', DownloadEnforcer: 'Descargas',
-  DeviceLock: 'Bloqueo de equipo', UpdateManager: 'Actualizaciones', LocalAccountHardening: 'Cuentas de Windows', RestorePoint: 'Puntos de restauración', AgentDiagnostics: 'Diagnóstico', Presence: 'Presencia', SmartAppControl: 'Smart App Control' };
+  DeviceLock: 'Bloqueo de equipo', UpdateManager: 'Actualizaciones', LocalAccountHardening: 'Cuentas de Windows', RestorePoint: 'Puntos de restauración', AgentDiagnostics: 'Diagnóstico', Presence: 'Presencia', SmartAppControl: 'Smart App Control', LegacyK3: 'Keeper 3 (K3)' };
 async function logsPage() {
   const devices = (await optional(allPages(`/tenants/${tenant}/devices`))) || [];
   const day = o => new Date(Date.now() + o * 864e5).toISOString().slice(0, 10);

@@ -156,8 +156,10 @@ final class Application
                 if (isset($b->inventory)) {
                     $inv = $b->inventory;
                     // hostname: tras un renombre + reinicio el agente reutiliza su token y no pasa por /client/login.
-                    $db->run('UPDATE devices SET os_edition=?,os_build=?,cpu=?,ram_bytes=?,disk_bytes=?,hostname=COALESCE(?,hostname),specs=JSON_SET(COALESCE(specs,JSON_OBJECT()),\'$.architecture\',?,\'$.serial_number\',?,\'$.smart_app_control\',?) WHERE tenant_id=? AND id=?',
-                        [$inv->os_edition, $inv->os_build ?? null, $inv->cpu, $inv->ram_bytes, $inv->disk_bytes ?? null, $inv->hostname ?? null, $inv->architecture, $inv->serial_number ?? null, $inv->smart_app_control ?? null, $c['tenant_id'], $c['device_id']]);
+                    // legacy_k3 (K3 residual, ya validado por el contrato): objeto JSON {running,autostart,installed}; sin el campo queda null.
+                    $legacyK3 = isset($inv->legacy_k3) ? json_encode(['running' => $inv->legacy_k3->running, 'autostart' => $inv->legacy_k3->autostart, 'installed' => $inv->legacy_k3->installed]) : null;
+                    $db->run('UPDATE devices SET os_edition=?,os_build=?,cpu=?,ram_bytes=?,disk_bytes=?,hostname=COALESCE(?,hostname),specs=JSON_SET(COALESCE(specs,JSON_OBJECT()),\'$.architecture\',?,\'$.serial_number\',?,\'$.smart_app_control\',?,\'$.legacy_k3\',JSON_EXTRACT(?,\'$\')) WHERE tenant_id=? AND id=?',
+                        [$inv->os_edition, $inv->os_build ?? null, $inv->cpu, $inv->ram_bytes, $inv->disk_bytes ?? null, $inv->hostname ?? null, $inv->architecture, $inv->serial_number ?? null, $inv->smart_app_control ?? null, $legacyK3, $c['tenant_id'], $c['device_id']]);
                 }
                 // policy_version del request = la que el agente tiene APLICADA. Se guarda solo si existe en el servidor
                 // (1..version compilada) y sin tocar devices.version, que es el ETag de edicion del panel.

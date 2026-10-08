@@ -113,7 +113,7 @@ function personLink(id) {
   const a = node('a', name); a.href = `/miembro.php?id=${encodeURIComponent(id)}`; return a;
 }
 const resources = {
-  devices: { title: 'Equipos', path: () => `/tenants/${tenant}/devices`, prepare: loadUserNames, columns: [['Equipo', r => { const a = node('a', r.hostname); a.href = `/equipo.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Estado', r => label(r.status)], ['Persona', r => personLink(r.user_id)], ['Sistema operativo', 'os_edition'], ['Agente', 'agent_version'], ['Última conexión', r => dateTime(r.last_seen_at)]], empty: 'Aún no hay equipos enrolados en tu alcance.' },
+  devices: { title: 'Equipos', path: () => `/tenants/${tenant}/devices`, prepare: loadUserNames, columns: [['Equipo', r => { const a = node('a', r.hostname); a.href = `/equipo.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Estado', r => label(r.status)], ['Persona', r => personLink(r.user_id)], ['Sistema operativo', 'os_edition'], ['Agente', 'agent_version'], ['Última conexión', r => dateTime(r.last_seen_at)], ['K3 abierto', r => r.legacy_k3?.running === true ? badge('Sí', 'bad') : r.legacy_k3?.running === false ? 'No' : null]], empty: 'Aún no hay equipos enrolados en tu alcance.' },
   users: { title: 'Usuarios', path: () => '/users', columns: [['Nombre', r => { const a = node('a', r.display_name); a.href = `/miembro.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Correo', 'email'], ['Estado', r => label(r.status)], ['Cuenta del panel', r => r.panel_login_enabled ? 'Habilitada' : 'Sin cuenta'], ['Acceso al panel', r => r.access?.role_name || 'Sin acceso al panel']], empty: 'Aún no hay usuarios en tu alcance.' },
   policies: { title: 'Reglas', path: () => '/policies', columns: [['Política', 'name'], ['Destino', r => label(r.target_type)], ['ID del destino', 'target_id'], ['Estado', r => r.enabled ? 'Habilitada' : 'Inactiva'], ['Reglas', r => r.rules.length], ['Versión', 'version']], empty: 'Aún no hay políticas configuradas en esta empresa.' },
   tenants: { title: 'Tenants', path: () => '/tenants', columns: [['Empresa', 'name'], ['ID', 'id'], ['Estado', r => label(r.status)], ['Zona horaria', 'timezone'], ['Autogestión de roles', r => r.rbac_self_management ? 'Habilitada' : 'Inactiva']], empty: 'No hay tenants accesibles.' },
@@ -336,11 +336,21 @@ function details(parent, fields) {
   parent.append(list);
 }
 // Smart App Control según el inventario del agente (4.0.19+); sin dato = Desconocido.
+// Keeper 3 que sigue en el equipo tras pasar a v4 (inventario legacy_k3). v4 solo lo detecta: no lo cierra ni lo desinstala.
+function legacyK3State(k3) {
+  if (!k3) return { text: 'Desconocido', tone: '', note: 'El agente aún no lo ha reportado.' };
+  if (k3.running === true) return { text: 'Abierto', tone: 'bad', note: 'K3 sigue corriendo en este equipo además de Keeper v4.' };
+  if (k3.running === false && k3.autostart === true) return { text: 'Cerrado pero arranca al iniciar sesión', tone: 'warn', note: 'Su autoarranque sigue en Windows.' };
+  if (k3.running === false && k3.autostart === false && k3.installed === true) return { text: 'Instalado, no arranca', tone: 'info', note: '' };
+  if (k3.running === false && k3.autostart === false && k3.installed === false) return { text: 'No está', tone: 'good', note: '' };
+  return { text: 'Desconocido', tone: '', note: 'El agente no pudo leer todos los datos.' };
+}
 const sacStates = { off: 'Apagado', on: 'Activo', evaluation: 'En evaluación', unknown: 'Desconocido' };
 // Códigos del registro del agente con texto propio en la ficha (los demás se muestran tal cual).
 const agentLogCodes = {
   smart_app_control_disabled: 'Smart App Control desactivado (aplica al reiniciar)', smart_app_control_disable_failed: 'No se pudo desactivar Smart App Control',
   update_launch_failed: 'Windows no dejó arrancar el instalador de la actualización', update_apply_stalled: 'La actualización no terminó; se reintentará',
+  legacy_k3_running: 'Keeper 3 (K3) está abierto en el equipo', legacy_k3_autostart: 'Keeper 3 (K3) arranca al iniciar sesión', legacy_k3_gone: 'Keeper 3 (K3) ya no corre ni arranca',
 };
 const controlStates = { applied: 'Aplicado', failed: 'Fallido', unsupported: 'No soportado', unknown: 'Desconocido' };
 const controlTones = { applied: 'good', failed: 'bad', unsupported: 'warn', unknown: '' };
@@ -455,7 +465,9 @@ function deviceSummary(d, owner, org, hardening, log) {
   const connection = connectionState(d);
   const lastSeen = d.last_seen_at ? `${dateTime(d.last_seen_at)} · ${ago(d.last_seen_at)}` : 'Sin registro';
   const cells = facts(section, [['Persona asignada', person], ['Sede', site], ['Versión del agente', d.agent_version || 'Sin versión'],
-    ['Última conexión', lastSeen], ['Conexión', null, 'connection'], ['Endurecimiento', null, 'hardening'], ['Bloqueo', null, 'lock']], 'details device-facts');
+    ['Última conexión', lastSeen], ['Conexión', null, 'connection'], ['Endurecimiento', null, 'hardening'], ['Bloqueo', null, 'lock'],
+    ['Keeper 3 (K3)', null, 'legacyK3']], 'details device-facts');
+  stateCell(cells.legacyK3, legacyK3State(d.legacy_k3));
   const more = node('details', undefined, 'device-more'); more.append(node('summary', 'Datos técnicos del equipo'));
   details(more, [['Estado del equipo', label(d.status)], ['Sistema operativo', d.os_edition], ['CPU', d.cpu], ['RAM', d.ram_bytes ? `${number.format(d.ram_bytes / 1073741824)} GB` : null],
     ['Cifrado de disco', d.encryption_state], ['Versión de política aplicada', d.policy_version],

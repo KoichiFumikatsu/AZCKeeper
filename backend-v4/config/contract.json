@@ -1,5 +1,5 @@
 {
-  "source_sha256": "51cc1db44a41c846d6454a173de336d474455be7ac6703a4963a9b8b9c66e995",
+  "source_sha256": "b2fa58355143601d614d69406ad6feb6e7fa16b3af7f8d3dbbf62d006d3ec68a",
   "paths": {
     "/admin/tenants/{id}/unlock-pin": {
       "get": {
@@ -23027,6 +23027,17 @@
             }
           ]
         },
+        "legacy_k3": {
+          "description": "Keeper 3 (K3) en el equipo según el último inventario del agente con detector de K3; null si no lo ha reportado.",
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/LegacyK3Status"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "version": {
           "type": "integer",
           "minimum": 1
@@ -23188,6 +23199,9 @@
             "unknown"
           ],
           "description": "Estado de Smart App Control (VerifiedAndReputablePolicyState en HKLM/SYSTEM/CurrentControlSet/Control/CI/Policy, 0/1/2); unknown si no se pudo leer. Agente 4.0.19 o posterior."
+        },
+        "legacy_k3": {
+          "$ref": "#/components/schemas/LegacyK3Status"
         }
       },
       "description": "Inventario declarado por el agente. Se envia en el primer sync de cada arranque y cuando cambia; el servidor actualiza el equipo sin tocar su version de edicion."
@@ -25706,6 +25720,51 @@
             {
               "type": "integer",
               "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "LegacyK3Status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "running",
+        "autostart",
+        "installed"
+      ],
+      "description": "Keeper 3 (cliente K3, AZCKeeper_Client.exe) que sigue en el equipo tras pasar a v4. Lo detecta el agente al arrancar y cada 15 min; si cambia, vuelve a mandar el inventario. Solo detecta: v4 nunca cierra ni desinstala K3. null = no se pudo leer ese dato.",
+      "properties": {
+        "running": {
+          "description": "Algún proceso AZCKeeper_Client corriendo, en cualquier sesión.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "autostart": {
+          "description": "Valor AZCKeeper_Cliente en HKEY_USERS/<SID>/Software/Microsoft/Windows/CurrentVersion/Run de algún perfil cargado.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "installed": {
+          "description": "Existe AZCKeeper_Client.exe en AppData/Local o AppData/Roaming/AZCKeeper/app de algún perfil de C:/Users.",
+          "anyOf": [
+            {
+              "type": "boolean"
             },
             {
               "type": "null"

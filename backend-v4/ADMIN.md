@@ -146,6 +146,24 @@ dotnet test client-v4/tests/Keeper.Agent.Tests/Keeper.Agent.Tests.csproj -c Rele
 node backend-v4/tests/windows-security-panel.cjs
 ```
 
+### K3 residual en equipos v4 (2026-10-08)
+
+Tras la release puente K3 → v4, el agente (módulo `LegacyK3`, siguiente versión tras 4.0.20) revisa al arrancar y cada
+15 min si Keeper 3 sigue en el equipo: `running` (algún proceso `AZCKeeper_Client` en cualquier sesión), `autostart`
+(valor `AZCKeeper_Cliente` en `HKEY_USERS\<SID>\Software\Microsoft\Windows\CurrentVersion\Run` de algún perfil cargado;
+sin `.DEFAULT` ni `*_Classes`) e `installed` (`AZCKeeper_Client.exe` en `AppData\Local|Roaming\AZCKeeper\app` de algún
+perfil de `C:\Users`, sin seguir uniones). Un dato que no se pudo leer viaja `null`. **v4 solo detecta: nunca cierra
+ni desinstala K3.** El inventario lleva `legacy_k3 {running, autostart, installed}`; como se manda una vez por arranque,
+cuando el estado cambia el módulo llama `Inventory.UpdateLegacyK3Async`, que vuelve a encolar el inventario completo
+(el outbox se queda solo con el último sin enviar). El servidor lo guarda en `devices.specs.legacy_k3` y el DTO del
+equipo lo expone (`null` si nunca lo reportó). Ficha: línea «Keeper 3 (K3)» (No está / Abierto / Cerrado pero arranca
+al iniciar sesión / Instalado, no arranca / Desconocido); lista de equipos: columna «K3 abierto». Logs:
+`LegacyK3/legacy_k3_running` (warn, al pasar a corriendo), `legacy_k3_autostart` (info) y `legacy_k3_gone` (info, deja
+de correr y no queda autoarranque), una vez por cambio.
+
+**Orden de despliegue:** primero el backend (el contrato de servidores anteriores rechaza `legacy_k3` con 422 y el
+sync del agente nuevo fallaría), después el agente.
+
 ### Suite general
 
 `tests/admin.php` se integra en el smoke completo sobre MySQL aislado. Comprueba contratos de salida además del modo `KEEPER_DEBUG`, dos tenants, distintos roles, gates, autoescalada directa/indirecta, expiración, CSRF/origen, IDOR, scopes, cursores, versiones de edición, compilación y rollback de conflictos, comandos auditados/idempotentes, revocación y releases firmadas. Incluye datos agregados reales y verifica que no se duplican métricas ni se cruzan tenants.

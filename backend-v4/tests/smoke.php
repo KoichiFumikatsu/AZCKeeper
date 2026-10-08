@@ -11,6 +11,7 @@ require __DIR__ . '/activity-migration.php';
 require __DIR__ . '/hardening.php';
 require __DIR__ . '/unlock-pin.php';
 require __DIR__ . '/windows-security.php';
+require __DIR__ . '/legacy-k3.php';
 require __DIR__ . '/intake.php';
 require __DIR__ . '/panel-accounts.php';
 require __DIR__ . '/schedules.php';
@@ -418,6 +419,7 @@ try {
     retentionTests($db);
     // Al final y con el cupo de prelogin repuesto: sus 4 logins de fixture lo agotaban para panelAccountsTests.
     windowsSecurityTests($db);
+    legacyK3Tests($db);
     echo "SMOKE PASS: $checks assertions\n";
 } catch (Throwable $e) {
     fwrite(STDERR, $e instanceof PDOException ? 'Database fixture failure SQLSTATE=' . $e->getCode() . ' driver=' . ($e->errorInfo[1]??0) . "\n" : $e->getMessage() . "\n");
