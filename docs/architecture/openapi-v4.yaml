@@ -15525,6 +15525,7 @@ components:
             - serial_already_enrolled
             - duplicate_serial
             - document_not_found
+            - document_ambiguous
             - person_excluded
           - type: 'null'
         user_id:

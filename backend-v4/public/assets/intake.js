@@ -14,11 +14,12 @@ const rowErrors = {
   missing_identifier: 'Falta la placa o la serie (al menos una).', too_long: 'Algún valor es demasiado largo (persona 254, placa 40, serie 120).',
 };
 const statusNames = { pending: 'Pendiente', approved: 'Aprobada (esperando al equipo)', rejected: 'Rechazada', enrolled: 'Enrolado', cancelled: 'Cancelado' };
-const matchNames = { none: 'Sin coincidencia', serial: 'Serie de un equipo esperado', document: 'Cédula escrita en el equipo', manual: 'Asignada por IT' };
+const matchNames = { none: 'Sin coincidencia', serial: 'Serie de un equipo esperado', document: 'Cédula declarada por el equipo', manual: 'Asignada por IT' };
 const alertNames = {
   serial_already_enrolled: 'Esta serie ya pertenece a un equipo enrolado: puede ser una reinstalación o una suplantación.',
   duplicate_serial: 'Otro equipo ya tomó el equipo esperado con esta serie.',
-  document_not_found: 'La cédula escrita no corresponde a ninguna persona.',
+  document_not_found: 'La cédula declarada no corresponde a ninguna persona activa.',
+  document_ambiguous: 'La cédula declarada corresponde a más de una persona: elige a quién asignar el equipo.',
   person_excluded: 'La persona no se monitorea (directivo o dueño): apruébalo solo si es una excepción.',
 };
 const message = error => (error?.problem?.detail && rowErrors[error.problem.detail]) || errorMessage(error);
@@ -176,7 +177,7 @@ function protectionNotice(parent, state) {
 
 // Frase que respeta las reglas de aprobación del cliente (enrollment_settings): no promete «pendiente» si se aprueba solo.
 export function approvalNote(rules) {
-  const auto = [rules?.auto_approve_serial_match && 'los equipos cuya serie coincide con un equipo esperado', rules?.self_identify_auto_confirm && 'los que se identifican con la cédula de una persona'].filter(Boolean);
+  const auto = [rules?.auto_approve_serial_match && 'los equipos cuya serie coincide con un equipo esperado', rules?.self_identify_auto_confirm && 'los que declaran la cédula de una persona'].filter(Boolean);
   return auto.length
     ? `El registro seguirá las reglas de aprobación de este cliente: ${auto.join(' y ')} se aprueban solos; el resto queda en Solicitudes de alta hasta que lo apruebes.`
     : 'El registro seguirá las reglas de aprobación de este cliente: ningún equipo se aprueba solo, cada uno queda en Solicitudes de alta hasta que lo apruebes.';
@@ -333,7 +334,7 @@ async function requests(content, tenant, { count = () => {} } = {}) {
       tr.append(el('td', r.serial_number || 'Sin serie'));
       const match = el('td', matchNames[r.match_kind] || r.match_kind);
       if (r.alert) { match.append(el('br'), el('small', alertNames[r.alert] || r.alert, 'metric-error')); }
-      if (r.claimed_document) { match.append(el('br'), el('small', `Cédula escrita: ${r.claimed_document}`)); }
+      if (r.claimed_document) { match.append(el('br'), el('small', `Cédula declarada: ${r.claimed_document}`)); }
       tr.append(match);
       tr.append(el('td', r.user_name || (r.suggested_user_name ? `Sugerida: ${r.suggested_user_name}` : '—')));
       tr.append(el('td', when(r.last_seen_at)));
@@ -485,9 +486,7 @@ async function keysAndSettings(content, tenant, rerender, hooks = {}) {
   };
   const auto = check('auto_approve_serial_match', 'Aprobar solo cuando la serie coincide con un equipo esperado', 'Recomendado. Si lo desactivas, cada coincidencia queda como sugerencia y la apruebas tú.');
   const self = check('self_identify', 'Pedir la cédula a la persona al instalar', 'El equipo pregunta la cédula del primer usuario que inicia sesión y la usa como sugerencia.');
-  const confirmSelf = check('self_identify_auto_confirm', 'Aprobar sola la cédula escrita en el equipo', 'No recomendado: quien conozca la cédula de otra persona podría reclamar un equipo a su nombre.');
-  const sync = () => { confirmSelf.disabled = !self.checked; if (!self.checked) confirmSelf.checked = false; };
-  self.addEventListener('change', sync); sync();
+  const confirmSelf = check('self_identify_auto_confirm', 'Aprobar sola la cédula declarada por el equipo', 'La escrita por la persona o la que trae el instalador (migración desde Keeper 3). Funciona aunque no se pida la cédula. Riesgo: quien tenga la clave de alta y la cédula de otra persona podría reclamar un equipo a su nombre.');
   const save = el('button', 'Guardar reglas', 'primary'); save.type = 'submit'; form.append(save); s.append(form);
   const fb = feedback(s);
   form.addEventListener('submit', async event => {

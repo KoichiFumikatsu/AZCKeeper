@@ -22,10 +22,13 @@ llenarlo.
    si la tiene, `serie` del fabricante.
 2. El paquete lleva `enrollment_key` de la empresa (no un ticket por equipo). Se instala igual en todos.
 3. El agente llama `POST /client/enrollment-requests` con la clave, su clave pública, su serie (SMBIOS), hostname y,
-   si la empresa lo activa, la cédula que escribió el usuario.
+   una cédula declarada: la que escribió el usuario (si la empresa activa «pedir la cédula») o la que trae
+   `installation.json` (`claimed_document`, la escribe la release puente de K3 con la CC de su login).
 4. El backend:
    - serie de un esperado pendiente y la empresa auto-aprueba ⇒ **aprobada** (persona y placa del esperado);
-   - cédula de una persona (autoidentificación) y la empresa confirma sola ⇒ **aprobada**; si no, **pendiente con sugerencia**;
+   - cédula declarada de UNA persona activa y la empresa confirma sola (`self_identify_auto_confirm`, independiente de
+     `self_identify`, que solo decide si se pregunta) ⇒ **aprobada**; si no, **pendiente con sugerencia**; cédula sin
+     persona activa (`document_not_found`) o de varias (`document_ambiguous`) ⇒ **pendiente** con la cédula visible;
    - nada coincide ⇒ **pendiente** para IT.
 5. Mientras está pendiente, el agente reintenta cada pocos minutos (misma solicitud, idempotente por clave pública).
 6. Aprobada ⇒ el backend emite un **ticket** de enrolamiento normal para esa persona y esa clave pública; el agente

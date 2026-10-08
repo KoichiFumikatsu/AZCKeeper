@@ -1,5 +1,5 @@
 {
-  "source_sha256": "7dd49c8f3c97bd011e87d448010ab00232ac90793b1fa8a585c57cd19bea02ac",
+  "source_sha256": "51cc1db44a41c846d6454a173de336d474455be7ac6703a4963a9b8b9c66e995",
   "paths": {
     "/admin/tenants/{id}/unlock-pin": {
       "get": {
@@ -23972,6 +23972,7 @@
                 "serial_already_enrolled",
                 "duplicate_serial",
                 "document_not_found",
+                "document_ambiguous",
                 "person_excluded"
               ]
             },

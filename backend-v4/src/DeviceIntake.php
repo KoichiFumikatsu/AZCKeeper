@@ -115,12 +115,14 @@ final class DeviceIntake
         } elseif ($row['serial_number'] !== null && ($known = $this->knownSerial($tenant, $row['serial_number']))) {
             // Misma serie que un equipo ya enrolado: reinstalacion o suplantacion. Nunca se aprueba solo.
             $set = ['match_kind' => 'none', 'alert' => 'serial_already_enrolled', 'suggested_user_id' => $known['user_id'], 'expected_device_id' => null, 'asset_code' => null];
-        } elseif ($row['claimed_document'] !== null && $settings['self_identify']) {
+        } elseif ($row['claimed_document'] !== null) {
+            // Cedula declarada: la escribio la persona (self_identify) o la mando el instalador (migracion desde K3,
+            // installation.json). Se cruza aunque self_identify este apagado: ese ajuste solo decide si se PREGUNTA.
             $users = $this->documentUsers($tenant, $row['claimed_document']);
             if (count($users) === 1) {
                 $set = ['match_kind' => 'document', 'alert' => null, 'suggested_user_id' => $users[0], 'expected_device_id' => null, 'asset_code' => null];
                 if ($settings['self_identify_auto_confirm']) { $set += ['status' => 'approved', 'user_id' => $users[0]]; }
-            } else { $set['alert'] = 'document_not_found'; }
+            } else { $set['alert'] = $users ? 'document_ambiguous' : 'document_not_found'; }
         }
         // Directivos y dueños no se monitorean (decision 15): un equipo a su nombre nunca se aprueba solo.
         if ($set['suggested_user_id'] !== null && ($person = $this->db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$tenant, $set['suggested_user_id']])) && RoleRules::monitoring($this->db, $person) === 'excluded') {
@@ -255,7 +257,7 @@ final class DeviceIntake
                 return AdminApi::response($this->settingsDto($this->settings($tenant)));
             case 'putEnrollmentSettings':
                 $this->db->run('INSERT INTO enrollment_settings (tenant_id,auto_approve_serial_match,self_identify,self_identify_auto_confirm) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE auto_approve_serial_match=VALUES(auto_approve_serial_match),self_identify=VALUES(self_identify),self_identify_auto_confirm=VALUES(self_identify_auto_confirm),version=version+1',
-                    [$tenant, (int) $b->auto_approve_serial_match, (int) $b->self_identify, (int) ($b->self_identify && $b->self_identify_auto_confirm)]);
+                    [$tenant, (int) $b->auto_approve_serial_match, (int) $b->self_identify, (int) $b->self_identify_auto_confirm]);
                 $audit('enrollment_settings', $tenant, array_keys(get_object_vars($b)));
                 return AdminApi::response($this->settingsDto($this->settings($tenant)));
             case 'listEnrollmentKeys':

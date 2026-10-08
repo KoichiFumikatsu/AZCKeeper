@@ -113,7 +113,7 @@ function intakeTests(Database $db): void
     // Autoidentificacion por cedula: apagada no sugiere; sugerencia; confirmacion automatica.
     $pairG = keypair();
     $off = expect(intakeAsk($key['key'], $pairG, null, 'DESKTOP-SELF', '1020304050'), 200, 'self identify off');
-    check($off['status'] === 'pending' && $off['ask_document'] === false, 'document ignored and not asked when disabled');
+    check($off['status'] === 'pending' && $off['ask_document'] === false, 'declared document not auto-approved and not asked when disabled');
     check(expect(adminRequest($admin, 'PUT', '/enrollments/settings', ['auto_approve_serial_match' => true, 'self_identify' => true, 'self_identify_auto_confirm' => false]), 200, 'enable self identify')['self_identify'], 'settings saved');
     check(expect(intakeAsk($key['key'], keypair(), null, 'DESKTOP-ASK'), 200, 'ask for document')['ask_document'] === true, 'agent asked for document when enabled and missing');
     expect(intakeAsk($key['key'], $pairG, null, 'DESKTOP-SELF', '1020304050'), 200, 'self identify suggestion');
@@ -125,7 +125,38 @@ function intakeTests(Database $db): void
 
     // Auto-aprobacion por serie apagada: queda como sugerencia.
     expect(adminRequest($admin, 'PUT', '/enrollments/settings', ['auto_approve_serial_match' => false, 'self_identify' => false, 'self_identify_auto_confirm' => true]), 200, 'disable auto approve');
-    check(!expect(adminRequest($admin, 'GET', '/enrollments/settings'), 200, 'read settings')['self_identify_auto_confirm'], 'auto confirm requires self identify');
+    $read = expect(adminRequest($admin, 'GET', '/enrollments/settings'), 200, 'read settings');
+    check($read['self_identify_auto_confirm'] === true && $read['self_identify'] === false, 'auto confirm stored without self identify');
+
+    // Migracion desde K3: el instalador declara la CC (installation.json -> claimed_document) con self_identify apagado.
+    // Una persona activa => aprobada y asignada sola; a un equipo sin cedula no se le pregunta nada.
+    $k3 = adminMember($db, $u);
+    $db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,'k3:cc','7700112233')", [$tenant, $k3['id']]);
+    $pairK = keypair();
+    $k = expect(intakeAsk($key['key'], $pairK, null, 'DESKTOP-K3', '7700112233', '4.0.20'), 200, 'k3 bridge declared document');
+    check($k['status'] === 'approved' && is_string($k['enrollment_ticket']) && $k['ask_document'] === false, 'k3 declared document auto-approved without self identify');
+    $kToken = intakeLogin($k['enrollment_ticket'], $pairK, 'DESKTOP-K3', '4.0.20');
+    check($db->one('SELECT user_id FROM devices WHERE tenant_id=? AND id=?', [$tenant, Util::bin($kToken['device_id'])])['user_id'] === $k3['id'], 'k3 device assigned to the declared person');
+    $kRow = $db->one('SELECT match_kind,user_id,status FROM enrollment_requests WHERE tenant_id=? AND id=?', [$tenant, Util::bin($k['request_id'])]);
+    check($kRow['match_kind'] === 'document' && $kRow['status'] === 'enrolled' && $kRow['user_id'] === $k3['id'], 'k3 request recorded as document match');
+    $none = expect(intakeAsk($key['key'], keypair(), null, 'DESKTOP-NODOC'), 200, 'generic package without document');
+    check($none['status'] === 'pending' && $none['ask_document'] === false, 'device without document not asked when self identify off');
+    // Sin coincidencia, persona inactiva o cedula repetida => pendiente para IT con la cedula visible.
+    $inactive = adminMember($db, $u);
+    $db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,'k3:cc','7700445566')", [$tenant, $inactive['id']]);
+    $db->run("UPDATE users SET status='inactive' WHERE tenant_id=? AND id=?", [$tenant, $inactive['id']]);
+    $twinA = adminMember($db, $u); $twinB = adminMember($db, $u);
+    $db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,'document','7700778899'),(?,?,'k3:cc','7700778899')", [$tenant, $twinA['id'], $tenant, $twinB['id']]);
+    $cases = ['DESKTOP-K3-NONE' => ['7700000001', 'document_not_found'], 'DESKTOP-K3-INACTIVE' => ['7700445566', 'document_not_found'], 'DESKTOP-K3-TWINS' => ['7700778899', 'document_ambiguous']];
+    foreach ($cases as $host => [$doc, $alert]) {
+        $res = expect(intakeAsk($key['key'], keypair(), null, $host, $doc, '4.0.20'), 200, "k3 $host");
+        check($res['status'] === 'pending' && $res['enrollment_ticket'] === null, "$host stays pending");
+    }
+    $queue = expect(adminRequest($admin, 'GET', '/enrollments/requests?status=pending'), 200, 'queue with k3 leftovers');
+    $byHost = array_column($queue['data'], null, 'hostname');
+    foreach ($cases as $host => [$doc, $alert]) {
+        check(isset($byHost[$host]) && $byHost[$host]['claimed_document'] === $doc && $byHost[$host]['alert'] === $alert && $byHost[$host]['user_id'] === null, "$host visible to IT with document and $alert");
+    }
     expect(adminRequest($admin, 'POST', '/enrollments/expected-devices', ['person' => '1020304050', 'asset_code' => 'ACT_0040', 'serial_number' => 'SN-MANUAL']), 201, 'expected for manual confirm');
     $pairH = keypair();
     check(expect(intakeAsk($key['key'], $pairH, 'SN-MANUAL', 'DESKTOP-MANUAL'), 200, 'serial without auto approve')['status'] === 'pending', 'serial match waits for IT when disabled');
