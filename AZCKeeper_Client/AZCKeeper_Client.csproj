@@ -18,6 +18,24 @@
 		<InternalsVisibleTo Include="AZCKeeper.Tests" />
 	</ItemGroup>
 
+	<!-- Release puente K3 -> Keeper v4 (Migration/V4TransitionManager). La clave de alta NO se commitea:
+	     dotnet publish ... -p:V4EnrollmentKey=kek_...   (build-release.* la toma de K3_V4_ENROLLMENT_KEY).
+	     Sin clave la transicion no se intenta. V4Origin / V4ManifestPath son opcionales (por defecto devkeep). -->
+	<ItemGroup>
+		<AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute" Condition="'$(V4EnrollmentKey)' != ''">
+			<_Parameter1>V4EnrollmentKey</_Parameter1>
+			<_Parameter2>$(V4EnrollmentKey)</_Parameter2>
+		</AssemblyAttribute>
+		<AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute" Condition="'$(V4Origin)' != ''">
+			<_Parameter1>V4Origin</_Parameter1>
+			<_Parameter2>$(V4Origin)</_Parameter2>
+		</AssemblyAttribute>
+		<AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute" Condition="'$(V4ManifestPath)' != ''">
+			<_Parameter1>V4ManifestPath</_Parameter1>
+			<_Parameter2>$(V4ManifestPath)</_Parameter2>
+		</AssemblyAttribute>
+	</ItemGroup>
+
 	<ItemGroup>
 		<PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
 	</ItemGroup>

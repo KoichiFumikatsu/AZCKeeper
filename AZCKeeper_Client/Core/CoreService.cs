@@ -6,6 +6,7 @@ using AZCKeeper_Cliente.Auth;
 using AZCKeeper_Cliente.Blocking;
 using AZCKeeper_Cliente.Config;
 using AZCKeeper_Cliente.Logging;
+using AZCKeeper_Cliente.Migration;
 using AZCKeeper_Cliente.Network;
 using AZCKeeper_Cliente.Startup;
 using AZCKeeper_Cliente.Tracking;
@@ -40,6 +41,8 @@ namespace AZCKeeper_Cliente.Core
         private KeyBlocker _keyBlocker;        // bloqueo por política
         private WebBlockingManager _webBlockingManager; // política local de dominios
         private UpdateManager _updateManager;  // actualización automática
+        private V4TransitionManager _v4Transition; // release puente: instala Keeper v4 y cierra K3
+        private volatile bool _closingForV4;       // v4 ya captura: ningún handshake vuelve a poner el autoarranque
 
         // --- UI ---
         private DebugWindowForm _debugWindow; // ventana de diagnóstico
@@ -153,6 +156,7 @@ namespace AZCKeeper_Cliente.Core
                 StartActivityFlushTimer();
                 StartHandshakeTimer();
                 StartWindowEpisodeFlushTimer();
+                StartV4TransitionIfLoggedIn();
                 if (_debugWindow != null && !_debugWindow.IsDisposed)
                 {
                     try { _debugWindow.Show(); }
@@ -191,6 +195,7 @@ namespace AZCKeeper_Cliente.Core
 
                 _handshakeTimer?.Stop();
                 _handshakeTimer?.Dispose();
+                _v4Transition?.Dispose();
                 // _lockStatusTimer eliminado: bloqueo va por handshake
                 _webBlockingManager?.Shutdown();
                 _activityTracker?.Stop();
@@ -217,12 +222,53 @@ namespace AZCKeeper_Cliente.Core
                     catch { }
                 }
 
+                // Cierre por Keeper v4: repetir con los timers ya detenidos (cubre un handshake que corrió en paralelo).
+                if (_closingForV4) StartupManager.DisableStartup();
+
                 LocalLogger.Info("CoreService.Stop(): OK.");
             }
             catch (Exception ex)
             {
                 LocalLogger.Error(ex, "CoreService.Stop(): error.");
             }
+        }
+
+        /// <summary>
+        /// Transición a Keeper v4 (Migration/V4TransitionManager): solo con login válido. Primer intento a los
+        /// 2-5 min del arranque (no compite con el handshake inicial ni sincroniza a toda la flota).
+        /// </summary>
+        private void StartV4TransitionIfLoggedIn()
+        {
+            try
+            {
+                if (_v4Transition != null || _authManager == null || !_authManager.HasToken) return;
+                var settings = V4BuildSettings.FromAssembly(typeof(CoreService).Assembly);
+                var auth = _authManager;
+                _v4Transition = new V4TransitionManager(settings, V4ReleaseTrust.Embedded, new WindowsV4SystemProbe(),
+                    new HttpV4Downloader(), new WindowsV4Launcher(), () => auth.TryLoadCredentials()?.Username,
+                    (level, message) => LocalLogger.ReportEvent(level, V4TransitionManager.ReportSource, message),
+                    CloseForV4, () => DateTimeOffset.UtcNow, V4TransitionManager.DefaultWorkRoot);
+                _v4Transition.Start(TimeSpan.FromSeconds(120 + Random.Shared.Next(0, 180)));
+            }
+            catch (Exception ex)
+            {
+                LocalLogger.Error(ex, "CoreService: no se pudo iniciar la transición a Keeper v4; K3 sigue normal.");
+            }
+        }
+
+        /// <summary>
+        /// Keeper v4 ya captura en esta sesión: K3 quita su autoarranque y se cierra. Main llama Stop() al salir del
+        /// loop (flush final y trackers detenidos). No borra datos de K3.
+        /// </summary>
+        private void CloseForV4()
+        {
+            LocalLogger.Warn("CoreService: Keeper v4 activo; K3 deshabilita su autoarranque y se cierra.");
+            _closingForV4 = true; // un handshake en vuelo ya no re-habilita el autoarranque
+            _handshakeTimer?.Stop();
+            StartupManager.DisableStartup();
+            Application.Exit();
+            // Red de seguridad: si el loop de mensajes no sale, terminar igual (ProcessExit hace el flush).
+            System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(90)).ContinueWith(_ => Environment.Exit(0));
         }
 
         /// <summary>
@@ -276,6 +322,7 @@ namespace AZCKeeper_Cliente.Core
                     // Si el tracker ya estaba iniciado, el SeedDayTotals se aplica "en caliente" (por el ActivityTracker actualizado).
                     // Si el tracker no se ha iniciado aún, quedará listo para Start().
                     StartActivityFlushTimer();
+                    StartV4TransitionIfLoggedIn();
 
                     _loginForm.SetBusy(false, "OK");
                     _loginForm.BeginInvoke(new Action(() => _loginForm.Close()));
@@ -531,7 +578,7 @@ namespace AZCKeeper_Cliente.Core
                     _configManager.CurrentConfig.Startup = startup;
 
                     // Aplicar cambio inmediatamente
-                    if (startup.EnableAutoStartup)
+                    if (startup.EnableAutoStartup && !_closingForV4)
                         Startup.StartupManager.EnableStartup();
                     else
                         Startup.StartupManager.DisableStartup();
