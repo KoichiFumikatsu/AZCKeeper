@@ -41,13 +41,18 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.getByRole('button',{name:'Ver PIN',exact:true}).isDisabled(),true);
     assert.equal(await page.evaluate(()=>window.canConfigure({platform:false,features:['comandos'],permissions:[{code:'equipos.desbloquear',scopes:['self']}]})),false);
     await page.getByRole('button',{name:'Configurar PIN',exact:true}).click();
-    for (const invalid of ['123456', '1234567', '1234567a']) {
-      await page.getByLabel('Nuevo PIN (8 a 32 dígitos)').fill(invalid); await page.getByLabel('Repite el PIN').fill(invalid);
+    for (const [invalid, again, expected] of [
+      ['123456', '123456', 'El PIN debe tener de 8 a 32 dígitos; tiene 6.'],
+      ['1234567', '1234567', 'El PIN debe tener de 8 a 32 dígitos; tiene 7.'],
+      ['1234567a', '1234567a', 'El PIN solo puede tener números.'],
+      ['12345678', '1234567', 'Los dos campos no coinciden (el primero tiene 8 caracteres y el segundo 7). Bórralos y escríbelos de nuevo.'],
+    ]) {
+      await page.getByLabel('Nuevo PIN (8 a 32 dígitos)').fill(invalid); await page.getByLabel('Repite el PIN').fill(again);
       await page.getByRole('button',{name:'Guardar PIN',exact:true}).click();
-      await page.getByText('Escribe el mismo PIN de 8 a 32 dígitos en ambos campos.',{exact:true}).waitFor();
+      await page.getByText(expected,{exact:true}).waitFor();
       assert.equal(calls.filter(c=>c.method==='PUT' || c.path.endsWith('/auth/reauth')).length,0);
     }
-    await page.getByLabel('Nuevo PIN (8 a 32 dígitos)').fill('00625184'); await page.getByLabel('Repite el PIN').fill('00625184');
+    await page.getByLabel('Nuevo PIN (8 a 32 dígitos)').fill('0062 5184'); await page.getByLabel('Repite el PIN').fill('00625184');
     await page.getByRole('button',{name:'Guardar PIN',exact:true}).click();
     await page.getByRole('dialog',{name:'Confirma tu contraseña'}).getByRole('button',{name:'Cancelar',exact:true}).click();
     assert.equal(calls.filter(c=>c.method==='PUT').length,0);

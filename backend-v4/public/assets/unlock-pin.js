@@ -59,9 +59,14 @@ export async function mountUnlockPin(container, tenant) {
     dialog.addEventListener('close', () => { pin.value = repeat.value = ''; dialog.remove(); });
     form.addEventListener('submit', async event => {
       event.preventDefault(); error.hidden = true;
-      if (!/^[0-9]{8,32}$/.test(pin.value) || pin.value !== repeat.value) {
-        error.textContent = 'Escribe el mismo PIN de 8 a 32 dígitos en ambos campos.'; error.hidden = false; return;
-      }
+      // Espacios fuera; el mensaje dice cuál regla falla y cuántos caracteres tiene cada campo (sin mostrar el PIN),
+      // porque un gestor de contraseñas puede haber rellenado un campo sin que se note.
+      pin.value = pin.value.replace(/\s+/g, ''); repeat.value = repeat.value.replace(/\s+/g, '');
+      const problem = !/^[0-9]*$/.test(pin.value) ? 'El PIN solo puede tener números.'
+        : !/^[0-9]{8,32}$/.test(pin.value) ? `El PIN debe tener de 8 a 32 dígitos; tiene ${pin.value.length}.`
+        : pin.value !== repeat.value ? `Los dos campos no coinciden (el primero tiene ${pin.value.length} caracteres y el segundo ${repeat.value.length}). Bórralos y escríbelos de nuevo.`
+        : '';
+      if (problem) { error.textContent = problem; error.hidden = false; return; }
       save.disabled = true;
       try {
         if (!await askReauth(reauthText) || !dialog.open) return;
