@@ -10,7 +10,7 @@ class SessionRepo {
     $hash = Http::sha256Hex($token);
     $st = $pdo->prepare("
       SELECT s.id, s.user_id, s.device_id, s.expires_at, s.revoked_at,
-             u.display_name
+             u.display_name, u.cc AS user_cc
       FROM keeper_sessions s
       LEFT JOIN keeper_users u ON u.id = s.user_id
       WHERE s.token_hash = :h

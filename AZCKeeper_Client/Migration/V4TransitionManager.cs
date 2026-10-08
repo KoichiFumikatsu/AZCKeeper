@@ -15,7 +15,8 @@ namespace AZCKeeper_Cliente.Migration
     ///    si no se puede, v4_transition_skipped y no reintenta en este arranque;
     /// 2) si KeeperAgent ya corre, salta a la espera de cierre;
     /// 3) baja el manifiesto firmado y el ZIP de devkeep y los verifica con la clave EMBEBIDA (v4_transition_failed si no);
-    /// 4) escribe installation.json (api_base, enrollment_key, claimed_document = CC numerica de K3) y lanza el bootstrapper
+    /// 4) escribe installation.json (api_base, enrollment_key, claimed_document = CC numerica de K3: credenciales guardadas o,
+    ///    si no hay, la userCc del handshake) y lanza el bootstrapper
     ///    con runas UNA vez; borra installation.json y la carpeta temporal siempre; UAC cancelado -> v4_transition_cancelled;
     /// 5) cuando KeeperAgent corre y Keeper.Session captura en esta sesion (5 min seguidos): v4_transition_done, quita el
     ///    autoarranque de K3 y lo cierra. No borra datos de K3.
@@ -38,6 +39,7 @@ namespace AZCKeeper_Cliente.Migration
         private readonly IV4Downloader _downloader;
         private readonly IV4Launcher _launcher;
         private readonly Func<string> _loadUsername;
+        private readonly Func<string> _loadServerCc;
         private readonly Action<LocalLogger.LogLevel, string> _report;
         private readonly Action _closeK3;
         private readonly Func<DateTimeOffset> _clock;
@@ -55,11 +57,11 @@ namespace AZCKeeper_Cliente.Migration
         internal DateTimeOffset Due => _due;
 
         public V4TransitionManager(V4BuildSettings settings, V4ReleaseTrust trust, IV4SystemProbe probe, IV4Downloader downloader,
-            IV4Launcher launcher, Func<string> loadUsername, Action<LocalLogger.LogLevel, string> report, Action closeK3,
-            Func<DateTimeOffset> clock, string workRoot)
+            IV4Launcher launcher, Func<string> loadUsername, Func<string> loadServerCc, Action<LocalLogger.LogLevel, string> report,
+            Action closeK3, Func<DateTimeOffset> clock, string workRoot)
         {
             _settings = settings; _trust = trust; _probe = probe; _downloader = downloader; _launcher = launcher;
-            _loadUsername = loadUsername; _report = report; _closeK3 = closeK3; _clock = clock; _workRoot = workRoot;
+            _loadUsername = loadUsername; _loadServerCc = loadServerCc; _report = report; _closeK3 = closeK3; _clock = clock; _workRoot = workRoot;
         }
 
         public static string DefaultWorkRoot => Path.Combine(Path.GetTempPath(), "AZCKeeper-v4-transition");
@@ -139,10 +141,11 @@ namespace AZCKeeper_Cliente.Migration
                     bootstrapper = V4Installation.Extract(zip, package);
                 }
 
-                var document = V4Installation.ClaimedDocumentFromUsername(SafeUsername());
+                var (document, source) = V4Installation.ResolveClaimedDocument(SafeRead(_loadUsername), SafeRead(_loadServerCc));
                 File.WriteAllText(config, V4Installation.BuildConfigJson(_settings.ApiBase, _settings.EnrollmentKey, document));
                 _report(LocalLogger.LogLevel.Info,
-                    $"v4_transition: instalando Keeper v4 {release.Version} (sequence {release.Sequence}); cedula_declarada={(document != null ? "si" : "no")}");
+                    $"v4_transition: instalando Keeper v4 {release.Version} (sequence {release.Sequence}); " +
+                    (document != null ? $"cedula_declarada=si origen={source}" : "cedula_declarada=no"));
 
                 int? code;
                 try { code = _launcher.RunElevated(bootstrapper, $"--system-install --config \"{config}\"", Path.GetDirectoryName(bootstrapper), BootstrapperTimeout); }
@@ -231,9 +234,9 @@ namespace AZCKeeper_Cliente.Migration
             _due = now + RetryInterval;
         }
 
-        private string SafeUsername()
+        private static string SafeRead(Func<string> load)
         {
-            try { return _loadUsername(); }
+            try { return load?.Invoke(); }
             catch (Exception ex) { LocalLogger.Warn($"V4TransitionManager: no se pudo leer la CC de K3 ({ex.GetType().Name})."); return null; }
         }
 

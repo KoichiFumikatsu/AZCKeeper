@@ -8,7 +8,7 @@ echo   Update Package (Framework-Dependent)
 echo ========================================
 
 :: VERSION: pasar como argumento (build-release.bat 3.0.2.9) o usar el default de abajo.
-:: Release puente K3 -> Keeper v4: set K3_V4_ENROLLMENT_KEY=kek_... antes de compilar (clave de Alta de equipos > Claves).
+:: Release puente K3 -> Keeper v4 (3.0.3.4): set K3_V4_ENROLLMENT_KEY=kek_... antes de compilar (clave de Alta de equipos > Claves).
 ::   Sin ella la transicion a v4 queda desactivada en el binario. Nunca commitear la clave.
 set VERSION=%~1
 if "%VERSION%"=="" set VERSION=3.0.2.0

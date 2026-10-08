@@ -43,6 +43,7 @@ namespace AZCKeeper_Cliente.Core
         private UpdateManager _updateManager;  // actualización automática
         private V4TransitionManager _v4Transition; // release puente: instala Keeper v4 y cierra K3
         private volatile bool _closingForV4;       // v4 ya captura: ningún handshake vuelve a poner el autoarranque
+        private volatile string _serverUserCc;     // userCc del último handshake OK; solo en memoria (dato personal, nunca a disco ni log)
 
         // --- UI ---
         private DebugWindowForm _debugWindow; // ventana de diagnóstico
@@ -245,7 +246,7 @@ namespace AZCKeeper_Cliente.Core
                 var settings = V4BuildSettings.FromAssembly(typeof(CoreService).Assembly);
                 var auth = _authManager;
                 _v4Transition = new V4TransitionManager(settings, V4ReleaseTrust.Embedded, new WindowsV4SystemProbe(),
-                    new HttpV4Downloader(), new WindowsV4Launcher(), () => auth.TryLoadCredentials()?.Username,
+                    new HttpV4Downloader(), new WindowsV4Launcher(), () => auth.TryLoadCredentials()?.Username, () => _serverUserCc,
                     (level, message) => LocalLogger.ReportEvent(level, V4TransitionManager.ReportSource, message),
                     CloseForV4, () => DateTimeOffset.UtcNow, V4TransitionManager.DefaultWorkRoot);
                 _v4Transition.Start(TimeSpan.FromSeconds(120 + Random.Shared.Next(0, 180)));
@@ -530,6 +531,7 @@ namespace AZCKeeper_Cliente.Core
                 {
                     LocalLogger.Warn("CoreService.PerformHandshake(): 401/403. Intentando auto-re-login...");
                     _lastHandshakeStatus = "HTTP " + (hs.StatusCode?.ToString() ?? "401/403");
+                    _serverUserCc = null; // token inválido: la CC ya no corresponde a una sesión confirmada
                     _authManager.ClearToken(deleteFromDisk: true);
 
                     if (TrySilentReLogin())
@@ -563,6 +565,9 @@ namespace AZCKeeper_Cliente.Core
                 {
                     TimeSync.UpdateFromServer(hs.Response.ServerTimeUtc);
                 }
+
+                // CC del usuario autenticado (servidor K3 actualizado): la transición a v4 la usa si no hay credenciales guardadas.
+                _serverUserCc = hs.Response.UserCc;
 
                 var effective = hs.Response.EffectiveConfig;
 

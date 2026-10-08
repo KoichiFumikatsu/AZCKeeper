@@ -5,7 +5,7 @@
 # Requisitos: dotnet-sdk-8.0, zip.
 # Uso: ./build-release.sh [version]
 #   Ej: ./build-release.sh 3.0.2.0
-# Release puente K3 -> Keeper v4: K3_V4_ENROLLMENT_KEY=kek_... ./build-release.sh 3.0.3.3
+# Release puente K3 -> Keeper v4: K3_V4_ENROLLMENT_KEY=kek_... ./build-release.sh 3.0.3.4
 #   (clave de Alta de equipos > Claves). Sin ella la transicion queda desactivada. Nunca commitear la clave.
 # ════════════════════════════════════════════
 set -euo pipefail

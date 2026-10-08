@@ -259,7 +259,7 @@ namespace AZCKeeper_Cliente.Network
                 result.StatusCode = (int)response.StatusCode;
 
                 string responseBody = await SafeReadBodyAsync(response).ConfigureAwait(false);
-                result.BodyPreview = Preview(responseBody);
+                result.BodyPreview = Preview(RedactUserCc(responseBody)); // la CC nunca llega al log local
 
                 if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
                     response.StatusCode == System.Net.HttpStatusCode.Forbidden)
@@ -870,6 +870,12 @@ namespace AZCKeeper_Cliente.Network
             }
         }
 
+        /// <summary>Quita el valor de "userCc" (dato personal) de una respuesta de handshake antes de previsualizarla.</summary>
+        internal static string RedactUserCc(string body) =>
+            string.IsNullOrEmpty(body) ? body
+                : System.Text.RegularExpressions.Regex.Replace(body, @"(""userCc""\s*:\s*)""[^""]*""", "$1\"***\"",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
         /// <summary>
         /// Genera un preview corto de body para logs.
         /// </summary>
@@ -1115,6 +1121,11 @@ namespace AZCKeeper_Cliente.Network
             public bool Ok { get; set; }
             public string ServerTimeUtc { get; set; }
             public string DisplayName { get; set; }
+            /// <summary>
+            /// CC del usuario del token (servidor K3 con release puente 3.0.3.4); null si no la tiene o el servidor es viejo.
+            /// Dato personal: solo se guarda en memoria para declarar la cedula en el alta de Keeper v4.
+            /// </summary>
+            public string UserCc { get; set; }
             public PolicyApplied PolicyApplied { get; set; }
             public EffectiveConfig EffectiveConfig { get; set; }
             /// <summary>

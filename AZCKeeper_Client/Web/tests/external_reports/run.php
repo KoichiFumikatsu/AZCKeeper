@@ -306,6 +306,35 @@ $st = $pdo->prepare("UPDATE keeper_user_assignments SET firm_id = :fid, area_id 
 $st->execute([':fid' => 1, ':aid' => 10, ':cid' => 20, ':sid' => 1, ':id' => (int)$pdo->query("SELECT id FROM keeper_user_assignments WHERE keeper_user_id = 101")->fetchColumn()]);
 check('el UPDATE del sincronizador legacy no toca una asignación de One (0 filas)', $st->rowCount() === 0 && (int)$pdo->query("SELECT area_id FROM keeper_user_assignments WHERE keeper_user_id = 101")->fetchColumn() === 12, (string)$st->rowCount());
 
+// ─── Handshake del cliente K3: userCc (release puente 3.0.3.4) ─────────────
+// La CC sale del JOIN de la sesión: solo la del usuario del token, solo dígitos, null en otro caso. Los clientes viejos la ignoran.
+echo "\nHandshake del cliente K3 (userCc)\n";
+$pdo->exec("INSERT INTO keeper_policy_assignments (scope, version, priority, is_active, policy_json) VALUES ('global', 1, 100, 1, '{}')");
+$pdo->exec("UPDATE keeper_users SET cc = '1020304050' WHERE id = 101");
+$pdo->exec("UPDATE keeper_users SET cc = NULL WHERE id = 102");
+$pdo->exec("UPDATE keeper_users SET cc = 'CE-12345' WHERE id = 104");
+$tokens = [];
+foreach ([101, 102, 104] as $uid) {
+    $tokens[$uid] = bin2hex(random_bytes(32));
+    $pdo->prepare("INSERT INTO keeper_sessions (user_id, device_id, token_hash, issued_at) VALUES (?, NULL, ?, NOW())")->execute([$uid, hash('sha256', $tokens[$uid])]);
+}
+function handshake(?string $token, int $uid): array
+{
+    global $base;
+    $h = "Content-Type: application/json\r\n" . ($token !== null ? "Authorization: Bearer {$token}\r\n" : '');
+    $body = json_encode(['deviceId' => sprintf('11111111-1111-4111-8111-%012d', $uid), 'version' => '3.0.3.4', 'deviceName' => "PC-HS-{$uid}"]);
+    $ctx = stream_context_create(['http' => ['method' => 'POST', 'header' => $h, 'content' => $body, 'ignore_errors' => true, 'timeout' => 10]]);
+    $raw = (string)@file_get_contents($base . '/client/handshake', false, $ctx);
+    preg_match('#HTTP/\S+ (\d{3})#', $http_response_header[0] ?? 'HTTP/1.1 000', $m);
+    return [(int)$m[1], json_decode($raw, true) ?? ['raw' => $raw]];
+}
+[$c, $b] = handshake($tokens[101], 101);          check('handshake con token: devuelve la CC del propio usuario como string', $c === 200 && ($b['userCc'] ?? null) === '1020304050' && isset($b['effectiveConfig']), "código {$c}");
+check('handshake: el resto de la respuesta no cambia (displayName, policyApplied)', ($b['displayName'] ?? '') === 'Colaborador sintético 1' && ($b['policyApplied']['scope'] ?? '') === 'global', json_encode($b['policyApplied'] ?? null));
+[$c, $b] = handshake($tokens[102], 102);          check('usuario sin CC → userCc null (campo presente)', $c === 200 && array_key_exists('userCc', $b) && $b['userCc'] === null, "código {$c}");
+[$c, $b] = handshake($tokens[104], 104);          check('CC no numérica en keeper_users → userCc null', $c === 200 && array_key_exists('userCc', $b) && $b['userCc'] === null, "código {$c}");
+[$c, $b] = handshake(null, 101);                  check('sin token → 401 y sin CC', $c === 401 && !isset($b['userCc']), "código {$c}");
+[$c, $b] = handshake(str_repeat('a', 64), 101);   check('token desconocido → 401 y sin CC', $c === 401 && !isset($b['userCc']), "código {$c}");
+
 // ─── 4. Cierre ────────────────────────────────────────────────────────────
 proc_terminate($proc);
 @unlink($envFile);

@@ -341,6 +341,86 @@ namespace AZCKeeper.Tests
             Assert.Contains(h.Reports, r => r.Contains("cedula_declarada=no"));
         }
 
+        // ------------------------------------------------------------------ CC: credenciales o servidor (3.0.3.4)
+
+        [Theory]
+        [InlineData("1020304050", "9988776655", "1020304050", "credenciales")]
+        [InlineData("1020304050", null, "1020304050", "credenciales")]
+        [InlineData(null, "9988776655", "9988776655", "servidor")]
+        [InlineData("juan.perez", "9988776655", "9988776655", "servidor")]
+        [InlineData(null, " 9988776655 ", "9988776655", "servidor")]
+        [InlineData(null, null, null, null)]
+        [InlineData(null, "CE-12345", null, null)]
+        [InlineData(null, "1234", null, null)]
+        [InlineData("juan.perez", "abc", null, null)]
+        public void ClaimedDocumentPrefersCredentialsThenServer(string credentials, string server, string expected, string source)
+        {
+            var (document, origin) = V4Installation.ResolveClaimedDocument(credentials, server);
+            Assert.Equal(expected, document);
+            Assert.Equal(source, origin);
+        }
+
+        [Fact]
+        public async Task WithCredentialsUsesThemEvenIfServerSendsAnotherCc()
+        {
+            var h = Harness(username: "1020304050", serverCc: "9988776655");
+            await h.Run();
+            using var config = JsonDocument.Parse(h.ConfigContent);
+            Assert.Equal("1020304050", config.RootElement.GetProperty("claimed_document").GetString());
+            Assert.Contains(h.Reports, r => r.EndsWith("cedula_declarada=si origen=credenciales"));
+        }
+
+        [Fact]
+        public async Task WithoutCredentialsUsesTheHandshakeCc()
+        {
+            var h = Harness(username: null, serverCc: "9988776655");
+            await h.Run();
+            using var config = JsonDocument.Parse(h.ConfigContent);
+            Assert.Equal("9988776655", config.RootElement.GetProperty("claimed_document").GetString());
+            Assert.Contains(h.Reports, r => r.EndsWith("cedula_declarada=si origen=servidor"));
+            Assert.DoesNotContain(h.Reports, r => r.Contains("9988776655"));
+            Assert.False(File.Exists(h.ConfigSeen));
+        }
+
+        [Fact]
+        public async Task WithoutCredentialsNorServerCcDeclaresNothing()
+        {
+            var h = Harness(username: null, serverCc: null);
+            await h.Run();
+            using var config = JsonDocument.Parse(h.ConfigContent);
+            Assert.False(config.RootElement.TryGetProperty("claimed_document", out _));
+            Assert.Contains(h.Reports, r => r.EndsWith("cedula_declarada=no"));
+        }
+
+        [Fact]
+        public async Task NonNumericServerCcIsNotDeclared()
+        {
+            var h = Harness(username: null, serverCc: "CE-12345");
+            await h.Run();
+            using var config = JsonDocument.Parse(h.ConfigContent);
+            Assert.False(config.RootElement.TryGetProperty("claimed_document", out _));
+            Assert.Contains(h.Reports, r => r.EndsWith("cedula_declarada=no"));
+        }
+
+        [Fact]
+        public async Task FailingCredentialStoreFallsBackToServerCc()
+        {
+            var h = Harness(serverCc: "9988776655", throwingCredentials: true);
+            await h.Run();
+            using var config = JsonDocument.Parse(h.ConfigContent);
+            Assert.Equal("9988776655", config.RootElement.GetProperty("claimed_document").GetString());
+            Assert.Contains(h.Reports, r => r.EndsWith("cedula_declarada=si origen=servidor"));
+        }
+
+        [Theory]
+        [InlineData("{\"ok\":true,\"displayName\":\"Ana\",\"userCc\":\"1020304050\",\"x\":1}", "{\"ok\":true,\"displayName\":\"Ana\",\"userCc\":\"***\",\"x\":1}")]
+        [InlineData("{\"userCc\" : \"1020304050\"}", "{\"userCc\" : \"***\"}")]
+        [InlineData("{\"userCc\":null}", "{\"userCc\":null}")]
+        [InlineData("<html>error</html>", "<html>error</html>")]
+        [InlineData("", "")]
+        public void HandshakePreviewNeverCarriesTheCc(string body, string expected) =>
+            Assert.Equal(expected, AZCKeeper_Cliente.Network.ApiClient.RedactUserCc(body));
+
         // ------------------------------------------------------------------ ayudas
 
         private sealed class TestHarness
@@ -356,7 +436,8 @@ namespace AZCKeeper.Tests
             public Task Run() => Manager.TickAsync(CancellationToken.None);
         }
 
-        private TestHarness Harness(V4BuildSettings settings = null, bool corruptZip = false, string username = "1020304050")
+        private TestHarness Harness(V4BuildSettings settings = null, bool corruptZip = false, string username = "1020304050", string serverCc = null,
+            bool throwingCredentials = false)
         {
             var zip = Package();
             var manifest = Manifest(zip);
@@ -377,7 +458,8 @@ namespace AZCKeeper.Tests
                 h.ConfigContent = File.ReadAllText(h.ConfigSeen);
                 return h.LaunchBehavior();
             });
-            h.Manager = new V4TransitionManager(settings ?? Settings, Trust, h.Probe, downloader, launcher, () => username,
+            h.Manager = new V4TransitionManager(settings ?? Settings, Trust, h.Probe, downloader, launcher,
+                () => throwingCredentials ? throw new System.Security.Cryptography.CryptographicException("dpapi") : username, () => serverCc,
                 (level, message) => h.Reports.Add(message), () => h.Closed++, () => h.Now, _work);
             h.Manager.Start(TimeSpan.Zero);
             h.Manager.Dispose(); // los tests llaman TickAsync a mano; el timer real no interviene

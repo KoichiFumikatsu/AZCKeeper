@@ -128,10 +128,15 @@ class ClientHandshake {
     // 6. Display name — viene del JOIN en SessionRepo::validateBearer(), sin query extra
     $displayName = $sess['display_name'] ?: null;
 
+    // 7. CC del propio usuario del token (mismo JOIN): la release puente 3.0.3.4 la declara al dar de alta Keeper v4
+    // cuando el equipo no tiene credenciales guardadas. Solo dígitos; cualquier otro valor viaja como null.
+    $userCc = isset($sess['user_cc']) && ctype_digit((string)$sess['user_cc']) ? (string)$sess['user_cc'] : null;
+
     Http::json(200, [
       'ok'            => true,
       'serverTimeUtc' => Http::nowUtcIso(),
       'displayName'   => $displayName,
+      'userCc'        => $userCc,
       'policyApplied' => [
         'scope'    => $appliedScope,
         'policyId' => $appliedId,

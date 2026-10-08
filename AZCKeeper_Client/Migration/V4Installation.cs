@@ -58,6 +58,22 @@ namespace AZCKeeper_Cliente.Migration
             return value != null && value.Length >= 5 && value.Length <= 20 && value.All(char.IsAsciiDigit) ? value : null;
         }
 
+        public const string SourceCredentials = "credenciales";
+        public const string SourceServer = "servidor";
+
+        /// <summary>
+        /// CC a declarar en el alta v4: primero la de las credenciales guardadas (DPAPI); si no hay una valida, la que el
+        /// servidor K3 devolvio en el handshake (userCc, solo en memoria). Ambas pasan por ClaimedDocumentFromUsername.
+        /// Source = "credenciales" | "servidor" | null (sin CC).
+        /// </summary>
+        public static (string Document, string Source) ResolveClaimedDocument(string credentialsUsername, string serverCc)
+        {
+            var fromCredentials = ClaimedDocumentFromUsername(credentialsUsername);
+            if (fromCredentials != null) return (fromCredentials, SourceCredentials);
+            var fromServer = ClaimedDocumentFromUsername(serverCc);
+            return fromServer != null ? (fromServer, SourceServer) : (null, null);
+        }
+
         /// <summary>installation.json del paquete generico: api_base + enrollment_key (+ claimed_document si hay CC).</summary>
         public static string BuildConfigJson(Uri apiBase, string enrollmentKey, string claimedDocument)
         {
