@@ -705,8 +705,9 @@ function renameSection(d, log) {
   return section;
 }
 // Acciones remotas (POST /devices/{id}/commands). El 202 solo encola: el agente la recibe en su próxima sincronización.
-// Soporte del agente (client-v4 CommandExecutor): lock/unlock/restart/shutdown/wipe desde 4.0.0; refresh_policy no la
-// ejecuta ninguna versión (respondería unsupported_command), así que se muestra deshabilitada con el motivo.
+// Soporte del agente (client-v4 CommandExecutor): lock/unlock/restart/shutdown/wipe desde 4.0.0. refresh_policy no se
+// ofrece: cada sincronización ya trae la versión de las reglas y el agente las aplica en ese mismo ciclo, que es el mismo
+// en que recibiría la orden, así que no adelantaría nada.
 // Bloquear no admite mensaje ni PIN desde el panel: CommandParameters solo tiene computer_name/restart_now/admin_name.
 // Reiniciar y Apagar admiten aviso previo (notice_seconds 60/300/600) desde el agente 4.0.17; «Inmediato» no manda
 // parámetros, así que sigue funcionando con cualquier agente.
@@ -723,9 +724,6 @@ const remoteActions = [
   { type: 'shutdown', label: 'Apagar', permission: 'equipos.apagar', feature: 'comandos', agent: '4.0.0', reason: 'Apagado desde el panel', verb: 'Apagar',
     effect: 'El equipo se apaga de inmediato, sin aviso. La persona perderá lo que no haya guardado y alguien tendrá que encenderlo a mano: no se puede encender desde el panel.',
     noticeEffect: m => `La persona verá en su pantalla «El equipo se apagará en ${m} por orden de IT. Guarda tu trabajo.» con una cuenta regresiva, sin opción de posponer ni cancelar. Al terminar, el equipo se apaga y alguien tendrá que encenderlo a mano: no se puede encender desde el panel. La cuenta empieza cuando el equipo recibe la orden.` },
-  { type: 'refresh_policy', label: 'Aplicar reglas ahora', permission: 'reglas.aplicar', feature: null, agent: null, reason: 'Aplicar reglas desde el panel', verb: 'Aplicar reglas en',
-    unsupported: 'El agente del equipo aún no ejecuta esta orden. Los cambios de reglas llegan solos en su próxima sincronización.',
-    effect: 'El equipo vuelve a leer sus reglas sin esperar.' },
 ];
 const wipeAction = { type: 'wipe', label: 'Borrado remoto', permission: 'equipos.borrar', feature: 'borrado', agent: '4.0.0', reason: 'Borrado remoto por robo o pérdida', verb: 'Borrar',
   effect: 'Se borran los archivos de todas las personas del equipo (Documentos, Escritorio, Descargas, correo y configuración de sus cuentas de Windows) y se sobrescribe el espacio libre para que no se puedan recuperar. Se conservan Windows, Keeper y la cuenta de IT. Solo funciona si el equipo se enciende y se conecta: no protege un disco que ya sacaron del equipo.' };
@@ -747,7 +745,6 @@ function remoteAvailability(action, access, d) {
   if (access && !access.platform && action.feature && !(access.features || []).includes(action.feature)) return null;
   if (access?.platform && action.feature && !(access.features || []).includes(action.feature)) return { reason: `El cliente no tiene contratada la función «${featureNames[action.feature]}».` };
   if (d.status !== 'active') return { reason: 'El equipo no está activo: no recibe órdenes.' };
-  if (!action.agent) return { reason: action.unsupported };
   if (versionBelow(d.agent_version, action.agent)) return { reason: `El agente de este equipo (${d.agent_version || 'sin versión'}) no ejecuta esta orden: actualízalo a ${action.agent} o posterior.` };
   return {};
 }

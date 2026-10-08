@@ -362,6 +362,10 @@ final class AdminApi
                 if (isset($item->version) && (int)$current['version']!==$item->version) { throw new ApiError(412,'version_conflict'); }
                 $this->batch=true;
                 foreach ($steps as [$access,$op,$run]) { $this->access=$access; $this->auditOp=$op; $run($id); }
+                // Reglas de sus equipos aqui, dentro de su savepoint: un choque deja solo a esta persona como estaba
+                // (antes lo detectaba validatePending al final y deshacia el lote entero).
+                try { (new PolicyCompiler($this->db))->validateDevices(Util::id($this->tenant),$this->userDevices($id)); }
+                catch (PolicyConflict) { throw new ApiError(409,'invalid_transition',[],'policy_conflict'); }
             }
             catch (ApiError $e) { $error=$e; }
             catch (\PDOException $e) { if (!in_array($e->errorInfo[1]??0,self::CONFLICT_ERRORS,true)) { throw $e; } $error=new ApiError(409,'invalid_transition'); }

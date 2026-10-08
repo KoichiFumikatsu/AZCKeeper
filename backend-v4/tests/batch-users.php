@@ -83,5 +83,25 @@ function batchUsersTests(Database $db): void
     // Retirar en lote revoca sus equipos, como el PATCH individual.
     $off = expect($batch($platform, ['users' => [$item('jur808')], 'changes' => ['status' => 'inactive']]), 200, 'batch retire');
     check($off['applied'] === 1 && !$db->one("SELECT id FROM devices WHERE tenant_id=? AND user_id=? AND status='active'", [$t, $o['jur808']['id']]), 'retiring in batch revokes devices');
+    // Choque de reglas: un área sin equipos puede tener reglas opuestas al mismo nivel; mover ahí a quien tiene equipo
+    // falla solo para esa persona (policy_conflict) y las demás del lote se aplican.
+    $empty = Util::bin(Util::uuid());
+    $db->run("INSERT INTO org_units (tenant_id,id,kind,name) VALUES (?,?,'area','Área con reglas opuestas')", [$t, $empty]);
+    foreach (['deny' => 100, 'allow' => 101] as $effect => $order) {
+        compilerAssign($db, $t, compilerPublish($db, $t, [compilerRule($effect, ['lote-choque.example'], 10, 'web')]), 'area', $empty, $order);
+    }
+    $noDevice = Util::bin(Util::uuid());
+    $db->run('INSERT INTO users (tenant_id,id,display_name,firm_id,site_id,area_id,position_id,schedule_id,company_id) VALUES (?,?,?,?,?,?,?,?,?)',
+        [$t, $noDevice, 'sin equipo', $o['base']['firm_id'], $o['teq'], $o['agentes'], $o['base']['position_id'], $o['base']['schedule_id'], $o['azc']]);
+    $db->run("INSERT INTO user_assignments (tenant_id,id,user_id,firm_id,site_id,area_id,position_id,schedule_id,company_id,starts_at) VALUES (?,?,?,?,?,?,?,?,?,'2026-09-01')",
+        [$t, Util::bin(Util::uuid()), $noDevice, $o['base']['firm_id'], $o['teq'], $o['agentes'], $o['base']['position_id'], $o['base']['schedule_id'], $o['azc']]);
+    $nd = ['id' => Util::id($noDevice), 'version' => (int) $db->one('SELECT version FROM users WHERE tenant_id=? AND id=?', [$t, $noDevice])['version']];
+    $into = ['users' => [$item('agTorre'), $nd], 'changes' => ['area_id' => Util::id($empty)]];
+    $pre = expect($batch($platform, $into + ['dry_run' => true]), 200, 'conflict batch dry run');
+    check($pre['applied'] === 1 && $byId([0, $pre])[$id('agTorre')]['detail'] === 'policy_conflict', 'dry run reports the policy conflict per person');
+    $mixed = expect($batch($platform, $into), 200, 'conflict batch');
+    check($mixed['applied'] === 1 && $byId([0, $mixed])[$id('agTorre')]['error_code'] === 'invalid_transition' && $byId([0, $mixed])[$id('agTorre')]['detail'] === 'policy_conflict', 'policy conflict fails only that person');
+    check($row('agTorre')['area_id'] !== $empty && $db->one('SELECT area_id FROM users WHERE tenant_id=? AND id=?', [$t, $noDevice])['area_id'] === $empty, 'the person without devices moved; the conflicting one stayed');
+
     echo 'PASS batch users (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

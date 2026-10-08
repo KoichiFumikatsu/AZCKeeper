@@ -1,5 +1,5 @@
 {
-  "source_sha256": "71b4736bf9259d5307156c66b69e388c3d5c62431b87ed1b326f594975d759eb",
+  "source_sha256": "595b8401a8963922f4b3850737fe6894e667ac78b6734de4bfb88b99f2d0919f",
   "paths": {
     "/admin/tenants/{id}/unlock-pin": {
       "get": {
@@ -8926,7 +8926,7 @@
         ],
         "operationId": "batchUpdateUsers",
         "summary": "Editar personas en lote",
-        "description": "Aplica los mismos cambios a varias personas (máximo 500). Solo se cambian los campos enviados. Cada persona pasa por el mismo camino que PATCH /users/{id} (changes), PUT /users/{id}/plan (plan) y PUT /users/{id}/access (access): mismas validaciones, alcance (fuera de él: resource_not_found, como un 404), bloqueo por dominio de su fuente (managed_by_source), delegación segura, reglas por cargo y auditoría (una entrada por persona y operación, con el mismo request_id). Cada persona va en su propio savepoint: si algo falla, esa persona queda como estaba y su resultado trae error_code y detail; las demás siguen. version (opcional) es la que vio quien edita: si cambió, version_conflict. dry_run=true valida todo y lo deshace (vista previa). El permiso exigido es usuarios.editar si hay changes; si solo hay access, roles.gestionar; si solo hay plan, planes.asignar. plan exige además planes.asignar y access roles.gestionar (con la compuerta de autogestión de roles): sin ellos, 403 para todo el lote.",
+        "description": "Aplica los mismos cambios a varias personas (máximo 500). Solo se cambian los campos enviados. Cada persona pasa por el mismo camino que PATCH /users/{id} (changes), PUT /users/{id}/plan (plan) y PUT /users/{id}/access (access): mismas validaciones, alcance (fuera de él: resource_not_found, como un 404), bloqueo por dominio de su fuente (managed_by_source), choque de reglas en sus equipos (invalid_transition con detail policy_conflict), delegación segura, reglas por cargo y auditoría (una entrada por persona y operación, con el mismo request_id). Cada persona va en su propio savepoint: si algo falla, esa persona queda como estaba y su resultado trae error_code y detail; las demás siguen. version (opcional) es la que vio quien edita: si cambió, version_conflict. dry_run=true valida todo y lo deshace (vista previa). El permiso exigido es usuarios.editar si hay changes; si solo hay access, roles.gestionar; si solo hay plan, planes.asignar. plan exige además planes.asignar y access roles.gestionar (con la compuerta de autogestión de roles): sin ellos, 403 para todo el lote.",
         "security": [
           {
             "adminSession": [],
@@ -30895,7 +30895,7 @@
                     "type": "null"
                   }
                 ],
-                "description": "detail del Problem (managed_by_source, scope_denied, delegation_exceeds_own_access, hierarchy_cycle...)."
+                "description": "detail del Problem (managed_by_source, scope_denied, delegation_exceeds_own_access, hierarchy_cycle, policy_conflict...)."
               },
               "message": {
                 "anyOf": [

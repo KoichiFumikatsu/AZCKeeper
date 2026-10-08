@@ -1778,7 +1778,7 @@ async function people() {
       }
       return { scope_denied: 'el cambio las dejaría fuera de tu alcance', delegation_exceeds_own_access: 'tienen (o recibirían) un acceso mayor que el tuyo',
         hierarchy_cycle: 'el jefe elegido les reporta (directa o indirectamente) o es la misma persona', unknown_manager: 'el jefe elegido ya no existe',
-        unknown_plan: 'ese plan está inactivo', role_inactive: 'ese rol está inactivo', role_not_found: 'ese rol ya no existe', group_scope_invalid: 'ese alcance no es válido' }[d]
+        unknown_plan: 'ese plan está inactivo', policy_conflict: 'en el destino hay reglas que chocan entre sí (una bloquea y otra permite lo mismo) y se aplicarían a sus equipos; corrígelas en Reglas', role_inactive: 'ese rol está inactivo', role_not_found: 'ese rol ya no existe', group_scope_invalid: 'ese alcance no es válido' }[d]
         || { resource_not_found: 'están fuera de tu alcance o ya no existen', version_conflict: 'alguien las modificó después de cargar la lista (recarga la página)',
           validation_failed: 'algún dato no es válido para ellas (p. ej. el área no corresponde a su sede)', invalid_transition: 'el cambio choca con otros datos',
           permission_denied: 'tu cuenta no tiene permiso para ese cambio' }[c] || `error ${c}`;

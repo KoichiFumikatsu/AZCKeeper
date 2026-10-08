@@ -6120,6 +6120,7 @@ paths:
         Aplica los mismos cambios a varias personas (máximo 500). Solo se cambian los campos enviados. Cada persona pasa por el
         mismo camino que PATCH /users/{id} (changes), PUT /users/{id}/plan (plan) y PUT /users/{id}/access (access): mismas
         validaciones, alcance (fuera de él: resource_not_found, como un 404), bloqueo por dominio de su fuente (managed_by_source),
+        choque de reglas en sus equipos (invalid_transition con detail policy_conflict),
         delegación segura, reglas por cargo y auditoría (una entrada por persona y operación, con el mismo request_id). Cada
         persona va en su propio savepoint: si algo falla, esa persona queda como estaba y su resultado trae error_code y
         detail; las demás siguen. version (opcional) es la que vio quien edita: si cambió, version_conflict. dry_run=true
@@ -16882,7 +16883,7 @@ components:
               id: {type: string, format: uuid}
               ok: {type: boolean}
               error_code: {anyOf: [{type: string, maxLength: 80}, {type: 'null'}], description: 'code del Problem que daría la operación individual (invalid_transition, permission_denied, resource_not_found, version_conflict, validation_failed...).'}
-              detail: {anyOf: [{type: string, maxLength: 200}, {type: 'null'}], description: 'detail del Problem (managed_by_source, scope_denied, delegation_exceeds_own_access, hierarchy_cycle...).'}
+              detail: {anyOf: [{type: string, maxLength: 200}, {type: 'null'}], description: 'detail del Problem (managed_by_source, scope_denied, delegation_exceeds_own_access, hierarchy_cycle, policy_conflict...).'}
               message: {anyOf: [{type: string, maxLength: 500}, {type: 'null'}], description: 'Problem.errors[0].message cuando existe (p. ej. qué rol daría una regla por cargo).'}
     OrgUnit:
       type: object
