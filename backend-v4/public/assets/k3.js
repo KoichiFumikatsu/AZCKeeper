@@ -325,8 +325,22 @@ function orgParentPicker(parent, { org, kind, value = '', excludeId = null, help
 }
 // Diálogo «Nueva sede/área/cargo/empresa del grupo» con el tipo fijo: lo usan Organización y el alta y la ficha de
 // personas («+ Nueva área» sin salir del formulario). onCreated recibe la unidad que devolvió la API.
-function openOrgCreate({ kind, org, country: suggested = '', city: suggestedCity = '', onCreated }) {
+// Si el tipo lo administra una fuente externa (p. ej. AZC One), crearlo aquí lo rechaza la API (managed_by_source):
+// se avisa antes de llenar el formulario. Sin permiso para ver las fuentes se abre el formulario y decide la API.
+const UNIT_DOMAINS = { firm: 'firmas', company: 'empresas', site: 'sedes', area: 'areas', position: 'cargos' };
+async function unitOwner(kind) {
+  const [domains, sources] = await Promise.all([optional(api('GET', '/data-domains')), optional(api('GET', '/data-sources'))]);
+  const d = domains?.data?.find(x => x.domain === UNIT_DOMAINS[kind]);
+  return d?.source_id ? (sources?.data?.find(x => x.id === d.source_id)?.name || 'una fuente externa') : null;
+}
+async function openOrgCreate({ kind, org, country: suggested = '', city: suggestedCity = '', onCreated }) {
   const tab = ORG_TABS.find(t => t.kind === kind);
+  let owner = null;
+  try { owner = await unitOwner(kind); } catch { owner = null; }
+  if (owner) {
+    await noticeBox({ title: tab.title, message: `Este cliente recibe sus ${tab.plural} desde ${owner}: se crean allá y llegan aquí en la próxima sincronización.` });
+    return;
+  }
   const { dialog, body, ok, show } = dialogShell(tab.title); ok.textContent = tab.submit;
   const name = labeled(body, 'Nombre', el('input')); name.maxLength = 120;
   let country = null, city = null;
