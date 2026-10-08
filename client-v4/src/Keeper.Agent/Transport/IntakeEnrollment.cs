@@ -22,6 +22,9 @@ public sealed class IntakeEnrollment(HttpClient http, HttpMessageSigner signer, 
     public static readonly TimeSpan AskAgain = TimeSpan.FromMinutes(30);
     private string? _claimedDocument;
     private DateTimeOffset _nextAsk;
+    // Cedula declarada por el instalador (installation.json -> KEEPER_CLAIMED_DOCUMENT). Se manda desde la primera
+    // solicitud, asi el backend puede asignar el equipo sin preguntar a la persona.
+    public string? ClaimedDocument { get => _claimedDocument; init => _claimedDocument = InstallerClaimedDocument.Parse(value); }
 
     public static Guid ReadDeviceId(string path)
     {

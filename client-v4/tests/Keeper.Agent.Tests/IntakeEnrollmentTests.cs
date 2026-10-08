@@ -110,6 +110,46 @@ public sealed class IntakeEnrollmentTests
     }
 
     [Fact]
+    public async Task InstallerDeclaredDocumentIsSentFromFirstRequestAndPersonIsNeverAsked()
+    {
+        using var dir = new TestDirectory();
+        var handler = new IntakeHandler(Guid.NewGuid(), ["ask", "approved"]);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://keeper.test/v1/") };
+        using var signer = new HttpMessageSigner(ECDsa.Create(ECCurve.NamedCurves.nistP256));
+        var asked = 0; var logs = new List<string>();
+        await new IntakeEnrollment(http, signer, "kek_company-secret-0123456789", TimeProvider.System, logs.Add, () => null, (_, _) => Task.CompletedTask)
+        {
+            ClaimedDocument = "1020304050",
+            AskDocument = _ => { asked++; return Task.FromResult<string?>("999999"); }
+        }.RunAsync(new MemoryTokens(), Path.Combine(dir.Root, "id.txt"), default);
+        Assert.Equal(0, asked);
+        var requests = handler.Requests.Where(r => r.Path.EndsWith("enrollment-requests", StringComparison.Ordinal)).ToList();
+        Assert.All(requests, r => Assert.Equal("1020304050", JsonDocument.Parse(r.Body).RootElement.GetProperty("claimed_document").GetString()));
+        Assert.DoesNotContain(logs, l => l.Contains("1020304050", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("1234")]
+    [InlineData("123456789012345678901")]
+    [InlineData("1.020.304.050")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void InvalidInstallerDocumentIsIgnored(string? raw)
+    {
+        Assert.Null(InstallerClaimedDocument.Parse(raw));
+        using var signer = new HttpMessageSigner(ECDsa.Create(ECCurve.NamedCurves.nistP256));
+        Assert.Null(new IntakeEnrollment(new HttpClient(), signer, "kek_company-secret-0123456789", TimeProvider.System, _ => { }, () => null)
+            { ClaimedDocument = raw }.ClaimedDocument);
+    }
+
+    [Fact]
+    public void ScrubKeepsEveryOtherServiceVariable()
+    {
+        string[] environment = ["KEEPER_DATA_DIR=D:/data", "KEEPER_ENROLLMENT_KEY=kek_x", "KEEPER_CLAIMED_DOCUMENT=1020304050", "KEEPER_API_BASE=https://k/v1/"];
+        Assert.Equal(["KEEPER_DATA_DIR=D:/data", "KEEPER_ENROLLMENT_KEY=kek_x", "KEEPER_API_BASE=https://k/v1/"], InstallerClaimedDocument.Without(environment));
+    }
+
+    [Fact]
     public async Task ClosedDocumentWindowIsNotReopenedBeforeThirtyMinutes()
     {
         using var dir = new TestDirectory();

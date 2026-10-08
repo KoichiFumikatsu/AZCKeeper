@@ -83,6 +83,10 @@ public sealed record InstallationConfig(string ApiBase, Guid TenantId = default,
     public string? EnrollmentTicket { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? EnrollmentKey { get; init; }
+    // Cedula declarada por el instalador (release puente de K3: la CC de su login). Solo con enrollment_key; el agente
+    // la manda en su solicitud de alta y la borra al quedar inscrito. Dato personal: nunca se registra en el log.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ClaimedDocument { get; init; }
     public HardeningConfig Hardening { get; init; } = new();
     public static JsonSerializerOptions Json { get; } = new()
     {
@@ -102,6 +106,8 @@ public sealed record InstallationConfig(string ApiBase, Guid TenantId = default,
             !uri.AbsolutePath.EndsWith("/v1/", StringComparison.Ordinal) ||
             uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0)
             throw new ArgumentException("api_base debe ser HTTPS, terminar en /v1/ y no contener credenciales, query ni fragmento.");
+        if (ClaimedDocument is not null && (!IsDocument(ClaimedDocument) || EnrollmentKey is null))
+            throw new ArgumentException("claimed_document debe ser solo digitos (5 a 20) y solo se usa con enrollment_key.");
         if (EnrollmentKey is not null)
         {
             if (EnrollmentKey.Length is < 20 or > 128 || EnrollmentKey.Any(c => char.IsControl(c) || char.IsWhiteSpace(c)))
@@ -114,6 +120,8 @@ public sealed record InstallationConfig(string ApiBase, Guid TenantId = default,
         if (!dryRun && uri.Host.EndsWith(".invalid", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Configure un backend real en installation.json antes de instalar; .invalid es solo para --dry-run.");
     }
+
+    public static bool IsDocument(string value) => value.Length is >= 5 and <= 20 && value.All(char.IsAsciiDigit);
 }
 
 public sealed record BootstrapOptions(bool DryRun, bool Uninstall, bool ElevatedChild, string PayloadDirectory, string ConfigPath)

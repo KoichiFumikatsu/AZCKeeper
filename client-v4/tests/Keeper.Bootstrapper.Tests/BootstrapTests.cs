@@ -40,6 +40,51 @@ public sealed class BootstrapTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ClaimedDocumentGoesToServiceEnvironmentAndNeverToTheLog(bool dryRun)
+    {
+        machine.Config = machine.Config with { TenantId = Guid.Empty, DeviceId = Guid.Empty, EnrollmentKey = "kek_company-secret-0123456789", ClaimedDocument = "1020304050" };
+        Assert.Equal(0, App.Run(Options with { DryRun = dryRun }, []));
+        Assert.DoesNotContain(output, line => line.Contains("1020304050", StringComparison.Ordinal));
+        Assert.Contains(output, line => line.Contains("KEEPER_CLAIMED_DOCUMENT=[REDACTED]", StringComparison.Ordinal));
+        if (dryRun) return;
+        Assert.Contains("KEEPER_CLAIMED_DOCUMENT=1020304050", machine.EnvironmentValues);
+    }
+
+    [Theory]
+    [InlineData("1234")]
+    [InlineData("123456789012345678901")]
+    [InlineData("10.203.040")]
+    [InlineData("１２３４５６")]
+    [InlineData("12345\n")]
+    public void InvalidClaimedDocumentIsRejectedBeforeChanges(string document)
+    {
+        machine.Config = machine.Config with { TenantId = Guid.Empty, DeviceId = Guid.Empty, EnrollmentKey = "kek_company-secret-0123456789", ClaimedDocument = document };
+        var error = Assert.Throws<ArgumentException>(() => App.Run(Options, []));
+        Assert.DoesNotContain(document, error.Message, StringComparison.Ordinal);
+        Assert.Empty(machine.Mutations);
+    }
+
+    [Fact]
+    public void ClaimedDocumentRequiresGenericEnrollmentKey()
+    {
+        machine.Config = machine.Config with { ClaimedDocument = "1020304050" };
+        Assert.Throws<ArgumentException>(() => App.Run(Options, []));
+        Assert.Empty(machine.Mutations);
+    }
+
+    [Fact]
+    public void ClaimedDocumentRoundTripsThroughInstallationJson()
+    {
+        const string json = """{"api_base":"https://devkeep.example.com/v1/","enrollment_key":"kek_company-secret-0123456789","claimed_document":"1020304050","enable_hklm":true}""";
+        var config = System.Text.Json.JsonSerializer.Deserialize<InstallationConfig>(json, InstallationConfig.Json)!;
+        config.Validate(false);
+        Assert.Equal("1020304050", config.ClaimedDocument);
+        Assert.DoesNotContain("claimed_document", System.Text.Json.JsonSerializer.Serialize(config with { ClaimedDocument = null }, InstallationConfig.Json), StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("short")]
     [InlineData("kek_with space 0123456789")]
     [InlineData("kek_0123456789012345678\n")]

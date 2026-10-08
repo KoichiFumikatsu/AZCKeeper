@@ -61,6 +61,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         var api = Environment.GetEnvironmentVariable("KEEPER_API_BASE");
         var apiRoot = api is null ? null : ApiBase(api);
         var enrollmentKey = Environment.GetEnvironmentVariable("KEEPER_ENROLLMENT_KEY");
+        var claimedDocument = Environment.GetEnvironmentVariable(InstallerClaimedDocument.Variable);
         if (deviceId == Guid.Empty && apiRoot is not null && !string.IsNullOrWhiteSpace(enrollmentKey))
         {
             // Hasta que IT apruebe (o cargue el equipo como esperado) el agente solo pide alta: sin device_id no hay
@@ -71,12 +72,15 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
             deviceId = await new IntakeEnrollment(intakeHttp, signer, enrollmentKey, TimeProvider.System, Log,
                     () => OperatingSystem.IsWindows() ? Smbios.ReadSystemSerial() : null)
                 {
+                    ClaimedDocument = claimedDocument,
                     AskDocument = OperatingSystem.IsWindows()
                         ? new WindowsDocumentPrompt(new WindowsSessionLauncher(trust.BinaryHashes), Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), Log).AskAsync
                         : null
                 }
                 .RunAsync(new DeviceTokenStore(tokenPath, apiRoot.AbsoluteUri + signer.KeyId), deviceIdPath, stoppingToken);
         }
+        // Inscrito (ahora o en un arranque anterior): la cedula declarada por el instalador ya no hace falta y no se guarda.
+        if (deviceId != Guid.Empty && claimedDocument is not null && OperatingSystem.IsWindows()) InstallerClaimedDocument.Scrub(Log);
         var pinPath = Path.Combine(dataDirectory, "pin-verifier.dpapi");
         var deviceLock = new DeviceLock(Path.Combine(dataDirectory, "device-lock.json"), PinVerifier.LoadProtected(pinPath), pinPath);
         var commands = new CommandExecutor(Path.Combine(dataDirectory, "commands.json"), deviceId, deviceLock,

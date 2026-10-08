@@ -9,6 +9,7 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
     IRescueInstaller? rescue = null)
 {
     public const string ServiceName = "KeeperAgent";
+    public const string ClaimedDocumentVariable = "KEEPER_CLAIMED_DOCUMENT";
     public const int ElevationCancelled = 1223;
     public const int ElevationRequired = 740;
     public static IReadOnlyList<string> BrowserKeys { get; } =
@@ -113,9 +114,11 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
             if (config.DeviceId != Guid.Empty) environment = [.. environment, $"KEEPER_DEVICE_ID={config.DeviceId}"];
             if (config.EnrollmentTicket is not null) environment = [.. environment, $"KEEPER_ENROLLMENT_TICKET={config.EnrollmentTicket}"];
             if (config.EnrollmentKey is not null) environment = [.. environment, $"KEEPER_ENROLLMENT_KEY={config.EnrollmentKey}"];
+            if (config.ClaimedDocument is not null) environment = [.. environment, $"{ClaimedDocumentVariable}={config.ClaimedDocument}"];
             var loggedEnvironment = environment.Select(value =>
                 value.StartsWith("KEEPER_ENROLLMENT_TICKET=", StringComparison.Ordinal) ? "KEEPER_ENROLLMENT_TICKET=[REDACTED]"
-                : value.StartsWith("KEEPER_ENROLLMENT_KEY=", StringComparison.Ordinal) ? "KEEPER_ENROLLMENT_KEY=[REDACTED]" : value);
+                : value.StartsWith("KEEPER_ENROLLMENT_KEY=", StringComparison.Ordinal) ? "KEEPER_ENROLLMENT_KEY=[REDACTED]"
+                : value.StartsWith(ClaimedDocumentVariable + "=", StringComparison.Ordinal) ? ClaimedDocumentVariable + "=[REDACTED]" : value);
             Step($"REG SET HKLM64\\{WindowsConstants.ServiceKey(ServiceName)} Environment REG_MULTI_SZ\n  {string.Join("\n  ", loggedEnvironment)}",
                 () => registry.SetEnvironment(ServiceName, environment));
             // Una reinstalación/actualización no debe heredar el "due" de backoff de la instancia
