@@ -20,8 +20,8 @@ public static class PowerNoticeText
     }
 }
 
-// Aviso previo a un reinicio o apagado ordenado por IT (agente 4.0.17+): ventana pequena, siempre encima, en la esquina
-// inferior derecha de la pantalla principal, sin boton de cerrar ni de posponer y sin robar el foco. La cuenta regresiva
+// Aviso previo a un reinicio o apagado ordenado por IT (agente 4.0.17+): siempre encima, grande y centrado en la pantalla
+// principal (4.0.18+), minimizable a la esquina inferior derecha, sin boton de cerrar ni de posponer y sin robar el foco. La cuenta regresiva
 // corre aqui contra el plazo absoluto que manda el agente; la ventana se cierra cuando el agente deja de enviarlo.
 public sealed class PowerNoticeWindow(Control dispatcher) : IDisposable
 {
@@ -51,21 +51,50 @@ public sealed class PowerNoticeWindow(Control dispatcher) : IDisposable
         if (dispatcher.InvokeRequired) dispatcher.Invoke(Close); else Close();
     }
 
+    // Grande y centrada al aparecer; "Minimizar" la pasa a la esquina inferior derecha y "Ampliar" la devuelve.
     private sealed class NoticeForm : Form
     {
-        private readonly Label _message = new() { AutoSize = false, Dock = DockStyle.Top, Height = 64, ForeColor = Color.White, Font = new Font("Segoe UI", 11) };
-        private readonly Label _countdown = new() { AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.White, Font = new Font("Segoe UI", 22, FontStyle.Bold) };
+        private static readonly Font TitleFont = new("Segoe UI", 18, FontStyle.Bold);
+        private static readonly Font LargeText = new("Segoe UI", 14), SmallText = new("Segoe UI", 10);
+        private static readonly Font LargeCount = new("Segoe UI", 48, FontStyle.Bold), SmallCount = new("Segoe UI", 20, FontStyle.Bold);
+        private static readonly Font LargeButton = new("Segoe UI", 11), SmallButton = new("Segoe UI", 9);
+        private readonly Label _title = new() { AutoSize = false, Dock = DockStyle.Top, Height = 44, ForeColor = Color.White, Font = TitleFont };
+        private readonly Label _message = new() { AutoSize = false, Dock = DockStyle.Top, ForeColor = Color.White };
+        private readonly Label _countdown = new() { AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.White };
+        private readonly Button _toggle = new() { Dock = DockStyle.Right, FlatStyle = FlatStyle.Flat, ForeColor = Color.White, BackColor = Color.FromArgb(0, 84, 133), Cursor = Cursors.Hand, TabStop = false };
         private readonly System.Windows.Forms.Timer _timer = new() { Interval = 500 };
         private PowerNotice? _notice;
+        private bool _compact;
 
         public NoticeForm()
         {
             FormBorderStyle = FormBorderStyle.None; TopMost = true; ShowInTaskbar = false; ControlBox = false;
             StartPosition = FormStartPosition.Manual; BackColor = Color.FromArgb(0, 58, 93); Text = "AZCKeeper";
-            Padding = new Padding(16, 12, 16, 12); Size = new Size(380, 130);
-            Controls.Add(_countdown); Controls.Add(_message);
+            _toggle.FlatAppearance.BorderColor = Color.White;
+            var bottom = new Panel { Dock = DockStyle.Bottom, Height = 40 };
+            bottom.Controls.Add(_toggle);
+            Controls.Add(_countdown); Controls.Add(bottom); Controls.Add(_message); Controls.Add(_title);
+            _toggle.Click += (_, _) => { _compact = !_compact; ApplyMode(); };
             _timer.Tick += (_, _) => Render();
             FormClosing += (_, e) => { if (e.CloseReason == CloseReason.UserClosing) e.Cancel = true; };
+            ApplyMode();
+        }
+
+        private void ApplyMode()
+        {
+            SuspendLayout();
+            _title.Visible = !_compact;
+            _message.Font = _compact ? SmallText : LargeText; _message.Height = _compact ? 48 : 70;
+            _countdown.Font = _compact ? SmallCount : LargeCount;
+            _toggle.Text = _compact ? "Ampliar" : "Minimizar"; _toggle.Width = _compact ? 96 : 130;
+            _toggle.Font = _compact ? SmallButton : LargeButton;
+            Padding = _compact ? new Padding(14, 10, 14, 10) : new Padding(28, 22, 28, 20);
+            Size = _compact ? new Size(380, 160) : new Size(640, 320);
+            var area = (Screen.PrimaryScreen ?? Screen.AllScreens[0]).WorkingArea;
+            Location = _compact
+                ? new Point(area.Right - Width - 16, area.Bottom - Height - 16)
+                : new Point(area.Left + (area.Width - Width) / 2, area.Top + (area.Height - Height) / 2);
+            ResumeLayout();
         }
 
         // Aparece sin quitarle el foco a lo que la persona esta escribiendo.
@@ -83,8 +112,6 @@ public sealed class PowerNoticeWindow(Control dispatcher) : IDisposable
         public void Display(PowerNotice notice)
         {
             _notice = notice;
-            var area = (Screen.PrimaryScreen ?? Screen.AllScreens[0]).WorkingArea;
-            Location = new Point(area.Right - Width - 16, area.Bottom - Height - 16);
             Render();
             if (!Visible) Show();
             _timer.Start();
@@ -94,6 +121,7 @@ public sealed class PowerNoticeWindow(Control dispatcher) : IDisposable
         {
             if (_notice is null) return;
             var remaining = _notice.Deadline - DateTimeOffset.UtcNow;
+            _title.Text = _notice.Action == PowerNoticeAction.Restart ? "Reinicio programado" : "Apagado programado";
             _message.Text = PowerNoticeText.Message(_notice.Action, remaining);
             _countdown.Text = PowerNoticeText.Countdown(remaining);
         }

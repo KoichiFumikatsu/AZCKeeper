@@ -1,0 +1,7 @@
+# Abre Git Bash en client-v4 con el registro de la release mas reciente ya escrito (editable; Enter para ejecutar).
+export MSYSTEM=${MSYSTEM:-MINGW64}
+. /etc/profile                                   # PATH de Git Bash (+ PATH de Windows: php, curl)
+[ -f ~/.bashrc ] && . ~/.bashrc
+cd /c/Users/FumiWork/Documents/AZCKeeper/client-v4 || return
+LATEST=$(ls -t artifacts/release-*.json | head -1)
+read -e -i "bash tools/register-release.sh $LATEST" -p "$PWD\$ " CMD && history -s "$CMD" && eval "$CMD"
