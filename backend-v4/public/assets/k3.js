@@ -8,6 +8,7 @@ import { coordinator } from './coordinator.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings, withReauth, canceled } from './hardening-settings.js';
 import { onboardingPage, returnBand, AUDIT_LABELS as ONBOARDING_AUDIT } from './onboarding.js';
 import { canConfigureUnlockPin, mountUnlockPin } from './unlock-pin.js';
+import { canConfigureWindowsSecurity, mountWindowsSecurity } from './windows-security.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
 // de la API; lo que la cuenta no puede ver se explica en vez de mostrarse vacío.
@@ -3488,12 +3489,14 @@ async function auditPage() {
 // ---- Logs de los equipos --------------------------------------------------------------------------------------------
 const LOG_CODES = {
   local_unlock: 'Equipo desbloqueado con el PIN local',
+  smart_app_control_disabled: 'Smart App Control desactivado (aplica al reiniciar)', smart_app_control_disable_failed: 'No se pudo desactivar Smart App Control',
+  update_launch_failed: 'Windows no dejó arrancar el instalador de la actualización', update_apply_stalled: 'La actualización no terminó; se reintentará',
   capture_gap: 'El equipo estuvo suspendido o sin medir unos segundos (normal al dormir o bloquear)', applied: 'Regla aplicada en el equipo', degraded: 'Algún control no está funcionando del todo',
   package_verified: 'Versión nueva descargada y verificada', update_applying: 'Instalando versión nueva', first_login: 'Primer inicio de sesión del día',
   restore_point_created: 'Punto de restauración creado', failed: 'Falló', unsupported_rule: 'El equipo no soporta una regla', conflicting_rules: 'Reglas en conflicto',
 };
 const LOG_COMPONENTS = { ActivityTracker: 'Medición de actividad', WebEnforcer: 'Bloqueo web', UsbEnforcer: 'USB', InstallEnforcer: 'Instalaciones', DownloadEnforcer: 'Descargas',
-  DeviceLock: 'Bloqueo de equipo', UpdateManager: 'Actualizaciones', LocalAccountHardening: 'Cuentas de Windows', RestorePoint: 'Puntos de restauración', AgentDiagnostics: 'Diagnóstico', Presence: 'Presencia' };
+  DeviceLock: 'Bloqueo de equipo', UpdateManager: 'Actualizaciones', LocalAccountHardening: 'Cuentas de Windows', RestorePoint: 'Puntos de restauración', AgentDiagnostics: 'Diagnóstico', Presence: 'Presencia', SmartAppControl: 'Smart App Control' };
 async function logsPage() {
   const devices = (await optional(allPages(`/tenants/${tenant}/devices`))) || [];
   const day = o => new Date(Date.now() + o * 864e5).toISOString().slice(0, 10);
@@ -3672,6 +3675,7 @@ async function settingsPage() {
   const platform = !!readSession()?.is_platform_admin;
   const access = await loadAccess();
   if (canConfigureUnlockPin(access)) await mountUnlockPin(surface('PIN de desbloqueo local'), tenant);
+  if (canConfigureWindowsSecurity(access)) await mountWindowsSecurity(surface('Smart App Control'), tenant);
   const shortcuts = [['Horarios', '/horarios.php', 'schedules'], ['Festivos', '/festivos.php', 'holidays'], ['Clasificación de apps', '/clasificacion.php', 'classification'],
     ['Fuentes de datos (AZC One)', '/fuentes.php', 'sources']].filter(([, , key]) => !access || allowed(access, key));
   if (platform) { shortcuts.unshift(['Marca, logo y colores', '/empresas.php']); shortcuts.push(['Planes y paquetes', '/planes.php']); }

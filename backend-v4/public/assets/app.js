@@ -335,6 +335,13 @@ function details(parent, fields) {
   fields.forEach(([key, value]) => { const row = node('div'); row.append(node('dt', key), node('dd', value === null || value === undefined ? 'Sin dato' : String(value))); list.append(row); });
   parent.append(list);
 }
+// Smart App Control según el inventario del agente (4.0.19+); sin dato = Desconocido.
+const sacStates = { off: 'Apagado', on: 'Activo', evaluation: 'En evaluación', unknown: 'Desconocido' };
+// Códigos del registro del agente con texto propio en la ficha (los demás se muestran tal cual).
+const agentLogCodes = {
+  smart_app_control_disabled: 'Smart App Control desactivado (aplica al reiniciar)', smart_app_control_disable_failed: 'No se pudo desactivar Smart App Control',
+  update_launch_failed: 'Windows no dejó arrancar el instalador de la actualización', update_apply_stalled: 'La actualización no terminó; se reintentará',
+};
 const controlStates = { applied: 'Aplicado', failed: 'Fallido', unsupported: 'No soportado', unknown: 'Desconocido' };
 const controlTones = { applied: 'good', failed: 'bad', unsupported: 'warn', unknown: '' };
 const badge = (text, tone) => node('span', text, `badge${tone ? ` ${tone}` : ''}`);
@@ -451,8 +458,11 @@ function deviceSummary(d, owner, org, hardening, log) {
     ['Última conexión', lastSeen], ['Conexión', null, 'connection'], ['Endurecimiento', null, 'hardening'], ['Bloqueo', null, 'lock']], 'details device-facts');
   const more = node('details', undefined, 'device-more'); more.append(node('summary', 'Datos técnicos del equipo'));
   details(more, [['Estado del equipo', label(d.status)], ['Sistema operativo', d.os_edition], ['CPU', d.cpu], ['RAM', d.ram_bytes ? `${number.format(d.ram_bytes / 1073741824)} GB` : null],
-    ['Cifrado de disco', d.encryption_state], ['Versión de política aplicada', d.policy_version]]);
+    ['Cifrado de disco', d.encryption_state], ['Versión de política aplicada', d.policy_version],
+    ['Smart App Control', sacStates[d.smart_app_control] || sacStates.unknown]]);
   section.append(more);
+  // Fuera del desplegable para que se vea sin abrirlo.
+  if (d.smart_app_control === 'on') section.append(node('p', 'Smart App Control: Activo. Puede bloquear actualizaciones de Keeper.', 'error-text'));
   const states = { connection, hardening: hardeningState(hardening), lock: lockState(log.rows) };
   const draw = () => {
     chips.replaceChildren(badge(states.connection.text, states.connection.tone), badge(`Endurecimiento: ${states.hardening.text.toLowerCase()}`, states.hardening.tone), badge(`Bloqueo: ${states.lock.text.toLowerCase()}`, states.lock.tone));
@@ -521,7 +531,7 @@ async function historySection(d, log) {
     const result = await get(query('/audit/client-logs', { device_id: d.id, limit: 50 }));
     if (!result.data.length) section.append(node('p', 'No hay registros del agente en el período de retención.', 'empty-state'));
     else {
-      const columns = [['Fecha', r => dateTime(r.at)], ['Nivel', 'level'], ['Componente', 'component'], ['Código', r => r.component === 'DeviceLock' && r.code === 'local_unlock' ? 'Desbloqueo con PIN local' : r.code], ['Error', r => r.error_code || '—']];
+      const columns = [['Fecha', r => dateTime(r.at)], ['Nivel', 'level'], ['Componente', 'component'], ['Código', r => r.component === 'DeviceLock' && r.code === 'local_unlock' ? 'Desbloqueo con PIN local' : agentLogCodes[r.code] || r.code], ['Error', r => r.error_code || '—']];
       appendRows(table(section, 'Últimos 50 registros', columns).body, result.data, columns);
     }
   } catch (error) {
