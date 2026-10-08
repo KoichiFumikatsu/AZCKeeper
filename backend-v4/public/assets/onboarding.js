@@ -89,11 +89,24 @@ export async function onboardingPage({ tenant, content, status }) {
   window.addEventListener('pageshow', e => { if (e.persisted) location.reload(); });
 
   let flash = null; let busy = false;
-  // Escritura de lo guardado: siempre con la versión leída; un 409 de versión recarga sin sobrescribir al otro administrador.
+  // Lo que un PATCH toca, tal como estaba guardado: sus pasos, el piloto o el responsable, y si sigue abierta.
+  const touched = (saved, body) => JSON.stringify([saved.status,
+    'pilot' in body ? [saved.pilot?.user_id ?? null, saved.pilot?.device_id ?? null] : null,
+    'responsible' in body ? [saved.responsible?.kind ?? null, saved.responsible?.user_id ?? null] : null,
+    (body.steps || []).map(x => { const d = saved.steps.find(y => y.step === x.step); return d ? [d.decision, d.note] : null; })]);
+  // Escritura de lo guardado: siempre con la versión leída. Si otro administrador guardó antes (409 de versión) y lo que
+  // este cambio toca sigue igual (p. ej. marcó otro paso), se repite una vez con la versión nueva; si tocó lo mismo, se
+  // recarga sin sobrescribirlo. El servidor sigue comprobando la versión en el reintento.
   const write = async (method, path, body, button) => {
     if (busy) return; busy = true; if (button) button.disabled = true;
     try {
-      await api(method, path, { body: { version: current.saved.version, ...body } });
+      try { await api(method, path, { body: { version: current.saved.version, ...body } }); }
+      catch (e) {
+        if (!(method === 'PATCH' && e?.status === 409 && e.code === 'version_conflict')) throw e;
+        const fresh = await api('GET', '/onboarding');
+        if (touched(fresh, body) !== touched(current.saved, body)) throw e;
+        await api(method, path, { body: { version: fresh.version, ...body } });
+      }
       flash = { tone: 'good', text: method === 'POST' && path.endsWith('/close') ? 'Puesta en marcha finalizada y guardada.' : method === 'POST' ? 'Puesta en marcha reabierta.' : 'Guardado.' };
     } catch (e) {
       const detail = e?.problem?.detail || '';
