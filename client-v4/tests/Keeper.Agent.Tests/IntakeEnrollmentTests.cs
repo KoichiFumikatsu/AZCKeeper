@@ -168,7 +168,8 @@ public sealed class IntakeEnrollmentTests
     [InlineData("1.020.304.050", "1020304050")]
     [InlineData("10 20 30 40 50", "1020304050")]
     [InlineData("1234", null)]
-    [InlineData("12345678901234567", null)]
+    [InlineData("12345678901234567", "12345678901234567")]
+    [InlineData("123456789012345678901", null)]
     [InlineData("10203A4050", null)]
     [InlineData(null, null)]
     public void DocumentNormalizationMatchesBackend(string? input, string? expected) =>

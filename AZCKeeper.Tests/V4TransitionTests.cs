@@ -247,7 +247,7 @@ namespace AZCKeeper.Tests
             var h = Harness();
             await h.Run();
             Assert.Equal(1, h.Launches);
-            Assert.Equal("--config \"" + h.ConfigSeen + "\"", h.ArgumentsSeen);
+            Assert.Equal("--system-install --config \"" + h.ConfigSeen + "\"", h.ArgumentsSeen);
             Assert.EndsWith(Path.Combine("pkg", "agent", "Keeper.Bootstrapper.exe"), h.ExecutableSeen);
             using (var config = JsonDocument.Parse(h.ConfigContent))
                 Assert.Equal("1020304050", config.RootElement.GetProperty("claimed_document").GetString());

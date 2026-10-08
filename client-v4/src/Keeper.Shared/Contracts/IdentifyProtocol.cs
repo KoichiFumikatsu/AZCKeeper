@@ -14,7 +14,7 @@ public static class IdentifyProtocol
     {
         if (value is null) return null;
         var digits = new string(value.Where(c => c is not ('.' or ' ' or '-')).ToArray());
-        return digits.Length is >= 5 and <= 15 && digits.All(char.IsAsciiDigit) ? digits : null;
+        return digits.Length is >= 5 and <= 20 && digits.All(char.IsAsciiDigit) ? digits : null;
     }
 
     public static string? Validate(IdentifyAnswer answer)

@@ -145,7 +145,7 @@ namespace AZCKeeper_Cliente.Migration
                     $"v4_transition: instalando Keeper v4 {release.Version} (sequence {release.Sequence}); cedula_declarada={(document != null ? "si" : "no")}");
 
                 int? code;
-                try { code = _launcher.RunElevated(bootstrapper, $"--config \"{config}\"", Path.GetDirectoryName(bootstrapper), BootstrapperTimeout); }
+                try { code = _launcher.RunElevated(bootstrapper, $"--system-install --config \"{config}\"", Path.GetDirectoryName(bootstrapper), BootstrapperTimeout); }
                 finally { DeleteFile(config); }
 
                 if (code == 0)

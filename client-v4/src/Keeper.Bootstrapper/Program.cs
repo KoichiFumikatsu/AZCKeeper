@@ -17,8 +17,10 @@ if (!OperatingSystem.IsWindows() || !Environment.Is64BitProcess)
     return 1;
 }
 var paths = new WindowsSystemPaths();
-// El auto-update y el endurecimiento desde el panel lanzan este proceso sin consola: sin archivo, su salida se perderia.
-RollingFileLog? file = args.Contains("--system-update", StringComparer.Ordinal) || args.Contains("--harden", StringComparer.Ordinal) ||
+// El auto-update, el endurecimiento desde el panel y la transicion desde K3 (--system-install) lanzan este proceso sin
+// consola: sin archivo, su salida se perderia.
+RollingFileLog? file = args.Contains("--system-update", StringComparer.Ordinal) || args.Contains("--system-install", StringComparer.Ordinal) ||
+    args.Contains("--harden", StringComparer.Ordinal) ||
     args.Contains("--unharden", StringComparer.Ordinal)
     ? new RollingFileLog(Path.Combine(paths.InstallDirectory, "v4", "logs"), "bootstrapper") : null;
 void Log(string message) { Console.WriteLine(message); file?.Write("INFO", "Bootstrapper", message); }

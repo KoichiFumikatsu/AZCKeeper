@@ -34,7 +34,7 @@ public static class IdentifyPrompt
             Text = "Tu empresa instaló AZCKeeper. Escribe tu número de cédula para asignarte este equipo.\nIT lo confirmará desde el panel.",
             AutoSize = true, MaximumSize = new Size(440, 0), Font = new Font("Segoe UI", 10), Margin = new Padding(0, 8, 0, 12)
         });
-        var input = new TextBox { MaxLength = 20, Width = 260, Font = new Font("Segoe UI", 12) };
+        var input = new TextBox { MaxLength = 30, Width = 260, Font = new Font("Segoe UI", 12) };
         var error = new Label { AutoSize = true, ForeColor = Color.FromArgb(160, 30, 30), Font = new Font("Segoe UI", 9), Text = "" };
         var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Margin = new Padding(0, 12, 0, 0) };
         var ok = new Button { Text = "Enviar", AutoSize = true };
