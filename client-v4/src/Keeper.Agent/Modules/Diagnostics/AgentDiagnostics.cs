@@ -29,7 +29,7 @@ public sealed class AgentDiagnostics(Func<IReadOnlyList<ModuleSnapshot>> snapsho
             State = m.State switch
             {
                 "applied" or "ready" or "locked" or "unlocked" or "no_interactive_session" or "current" => SecurityControlState.Applied,
-                "failed" or "degraded" or "dry_run" or "pending_restart" => SecurityControlState.Failed,
+                "failed" or "degraded" or "dry_run" or "pending_restart" or "failed_launch" or "apply_stalled" => SecurityControlState.Failed,
                 "unsupported" => SecurityControlState.Unsupported,
                 "unknown" or "audit" or "awaiting_package" or "verified_pending_install" => SecurityControlState.Unknown,
                 _ when m.State.StartsWith("failed_step_", StringComparison.Ordinal) || m.State == "recovery_required" => SecurityControlState.Failed,

@@ -203,7 +203,7 @@ public sealed class SecurityModuleTests
         await guard.TickAsync(default); Assert.Equal("failed", guard.Snapshot().State);
     }
 
-    private static Release SignedRelease(ECDsa key, byte[] package)
+    internal static Release SignedRelease(ECDsa key, byte[] package)
     {
         var release = new Release { Id = Guid.NewGuid(), Version = "4.0.1", Channel = "stable", Sequence = 2,
             MinAgentVersion = "4.0.0", Architecture = ReleaseArchitecture.X64, ArtifactUrl = "https://example.test/package.msi",

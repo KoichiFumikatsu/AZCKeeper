@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using Keeper.Shared.Contracts;
 using Keeper.Shared.Protocol;
+using Keeper.Agent.Modules.Security;
 
 namespace Keeper.Agent.Modules.Devices;
 
@@ -39,7 +40,8 @@ public static class InventoryFormat
     private static string Truncate(string value, int max) => value.Length <= max ? value : value[..max];
 }
 
-public sealed class Inventory(Func<DeviceInventory, CancellationToken, Task>? publish = null) : ModuleBase
+// smartAppControl: lector de VerifiedAndReputablePolicyState (null = el del registro real); inyectable para pruebas.
+public sealed class Inventory(Func<DeviceInventory, CancellationToken, Task>? publish = null, ISmartAppControlRegistry? smartAppControl = null) : ModuleBase
 {
     public override string Name => "Inventory";
     public DeviceSpecs? Specs { get; private set; }
@@ -53,12 +55,12 @@ public sealed class Inventory(Func<DeviceInventory, CancellationToken, Task>? pu
         Specs = new(Environment.MachineName, RuntimeInformation.OSDescription, RuntimeInformation.OSArchitecture.ToString(), Environment.ProcessorCount, memory.TotalPhysical);
         await base.InitAsync(ctx);
         // Una vez por arranque: CPU, RAM, disco y build no cambian sin reiniciar el equipo (y el agente).
-        Current = Collect(memory.TotalPhysical);
+        Current = Collect(memory.TotalPhysical, smartAppControl ?? new WindowsSmartAppControlRegistry());
         if (publish is not null) await publish(Current, ctx.StoppingToken);
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static DeviceInventory Collect(ulong memoryBytes)
+    private static DeviceInventory Collect(ulong memoryBytes, ISmartAppControlRegistry smartAppControl)
     {
         using var nt = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
         var version = new WindowsVersionInfo(nt?.GetValue("EditionID") as string, nt?.GetValue("CurrentBuild") as string,
@@ -73,7 +75,8 @@ public sealed class Inventory(Func<DeviceInventory, CancellationToken, Task>? pu
             Cpu = InventoryFormat.Cpu(cpu?.GetValue("ProcessorNameString") as string, Environment.ProcessorCount),
             RamBytes = checked((long)memoryBytes), DiskBytes = disk, SerialNumber = Smbios.ReadSystemSerial(),
             Hostname = Environment.MachineName.Length is > 0 and <= 120 ? Environment.MachineName : null,
-            Architecture = RuntimeInformation.OSArchitecture == Architecture.Arm64 ? DeviceInventoryArchitecture.Arm64 : DeviceInventoryArchitecture.X64
+            Architecture = RuntimeInformation.OSArchitecture == Architecture.Arm64 ? DeviceInventoryArchitecture.Arm64 : DeviceInventoryArchitecture.X64,
+            SmartAppControl = SmartAppControlState.Read(smartAppControl)
         };
     }
 

@@ -18,6 +18,8 @@ public sealed class AgentDiagnosticsTests
     [InlineData("pending_restart", SecurityControlState.Failed)]
     [InlineData("failed", SecurityControlState.Failed)]
     [InlineData("degraded", SecurityControlState.Failed)]
+    [InlineData("failed_launch", SecurityControlState.Failed)]   // UpdateManager: Windows no dejo arrancar el bootstrapper (4.0.19)
+    [InlineData("apply_stalled", SecurityControlState.Failed)]
     [InlineData("unsupported", SecurityControlState.Unsupported)]
     [InlineData("audit", SecurityControlState.Unknown)]
     [InlineData("awaiting_package", SecurityControlState.Unknown)]

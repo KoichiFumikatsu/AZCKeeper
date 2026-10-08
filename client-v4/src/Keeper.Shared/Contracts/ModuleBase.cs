@@ -13,14 +13,15 @@ public abstract class ModuleBase : IModule
     public virtual Task TickAsync(CancellationToken ct) { ct.ThrowIfCancellationRequested(); return Task.CompletedTask; }
     public virtual ModuleSnapshot Snapshot() => new(Name, Policy?.Version, Policy?.Version, State);
     public virtual Task ShutdownAsync() => Task.CompletedTask;
-    protected Task ReportAsync(string code, CancellationToken ct, LogEntryLevel level = LogEntryLevel.Info)
+    // errorCode viaja en fields.error_code (columna "Error" del registro del equipo en el panel).
+    protected Task ReportAsync(string code, CancellationToken ct, LogEntryLevel level = LogEntryLevel.Info, string? errorCode = null)
     {
         // Copia local (log de archivo del equipo); el LogEntry sigue viajando al servidor por el outbox.
-        Context.Log($"{Name} {level.ToString().ToLowerInvariant()}: {code}");
+        Context.Log($"{Name} {level.ToString().ToLowerInvariant()}: {code}{(errorCode is null ? "" : $" ({errorCode})")}");
         return Context.Outbox.EnqueueAsync(new LogEntry
         {
             EventId = Guid.NewGuid(), At = Context.Clock.GetUtcNow(), Level = level,
-            Component = Name, Code = code
+            Component = Name, Code = code, Fields = errorCode is null ? null : new LogEntryFields { ErrorCode = errorCode }
         }, ct);
     }
 }

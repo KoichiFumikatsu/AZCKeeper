@@ -72,6 +72,14 @@ public sealed class UpdateManager(string stagingDirectory, IReadOnlyDictionary<s
     private Release? _downloadingRelease;
     private DateTimeOffset _nextCleanup;
     private long? _reportedBlocked;
+    // Lanzamiento del bootstrapper: si Windows no lo deja arrancar (p. ej. Smart App Control, Win32 4551) o el servicio
+    // sigue vivo 30 min despues de lanzarlo, se reporta una vez y se reintenta; antes quedaba en "applying" para siempre.
+    private static readonly TimeSpan LaunchRetry = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan ApplyStall = TimeSpan.FromMinutes(30);
+    private DateTimeOffset _applyingSince;
+    private readonly HashSet<(Guid Release, string Code)> _reportedLaunch = [];
+    private Guid? _reportedApplying;
+    private Guid? _reportedStall;
 
     // El bootstrapper escribe {data}\update-blocked.json al revertir una version que no sincronizo: esa secuencia
     // no se reintenta (solo una posterior), o el agente restaurado reinstalaria la rota cada ~12 minutos.
@@ -128,12 +136,31 @@ public sealed class UpdateManager(string stagingDirectory, IReadOnlyDictionary<s
         if (release.Id == _verified)
         {
             if (installer is null) { State = "verified_pending_install"; _error = null; return; }
-            if (_applied) { State = "applying"; return; }
+            var now = Context.Clock.GetUtcNow();
+            if (_applied)
+            {
+                if (now - _applyingSince < ApplyStall) { State = "applying"; return; }
+                // El bootstrapper detiene este servicio al instalar: si seguimos vivos, no termino. Reintento en el
+                // siguiente tick programado (_next ya quedo en +5 min).
+                _applied = false;
+                State = "apply_stalled"; _error = "update_apply_stalled";
+                if (_reportedStall != release.Id) { _reportedStall = release.Id; await ReportAsync("update_apply_stalled", ct, LogEntryLevel.Warn); }
+                return;
+            }
             _applied = true;
-            await ReportAsync("update_applying", ct);
-            State = "applying";
+            _applyingSince = now;
+            if (_reportedApplying != release.Id) { _reportedApplying = release.Id; await ReportAsync("update_applying", ct); }
+            State = "applying"; _error = null;
             Context.Log($"{Name}: lanzando --system-update para {release.Version}; el servicio se detendra");
-            installer.Install(PackagePath(release));  // lanza el bootstrapper; puede detener este servicio
+            try { installer.Install(PackagePath(release)); }  // lanza el bootstrapper; puede detener este servicio
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var code = ex is System.ComponentModel.Win32Exception win32 ? $"win32_{win32.NativeErrorCode}" : ex.GetType().Name;
+                _applied = false;
+                _next = now + LaunchRetry;
+                State = "failed_launch"; _error = code;
+                if (_reportedLaunch.Add((release.Id, code))) await ReportAsync("update_launch_failed", ct, LogEntryLevel.Warn, code);
+            }
             return;
         }
         if (_failed.Contains(release.Id)) { State = "failed"; _error = "release_verification_failed"; return; }

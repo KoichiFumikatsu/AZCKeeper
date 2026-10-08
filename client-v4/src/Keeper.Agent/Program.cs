@@ -89,13 +89,16 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
             registry.IsDryRun ? null : new WindowsReleaseDownloader(updateHttp),
             !registry.IsDryRun && OperatingSystem.IsWindows() ? new WindowsReleaseInstaller() : null, AgentVersion,
             Path.Combine(dataDirectory, "update-blocked.json"));
+        // Smart App Control: se lee siempre (inventario); solo se escribe con HKLM habilitado (no en dry-run).
+        var sacRegistry = OperatingSystem.IsWindows() ? new WindowsSmartAppControlRegistry() : null;
+        var smartAppControl = new SmartAppControl(registry.IsDryRun ? null : sacRegistry);
         PolicyCoordinator? policy = null;
         ModuleHost? hostReference = null;
         var restorePointHours = int.TryParse(Environment.GetEnvironmentVariable("KEEPER_RESTORE_POINT_HOURS"), out var hours)
             ? Math.Clamp(hours, 6, 720) : 24;
         var moduleList = new List<IModule> { new WebEnforcer(registry), new UsbEnforcer(registry),
             new InstallEnforcer(registry, loadOptions: () => AppLockerOptions.FromEnvironment(Environment.GetEnvironmentVariable)),
-            new DownloadEnforcer(registry), deviceLock, commands, new Inventory(outbox.EnqueueInventoryAsync), updater,
+            new DownloadEnforcer(registry), deviceLock, commands, new Inventory(outbox.EnqueueInventoryAsync, sacRegistry), updater, smartAppControl,
             HardeningStatusModule.FromFile(Path.Combine(dataDirectory, "hardening", "state.json")),
             new RestorePointModule(new WindowsRestorePointService(!registry.IsDryRun), Path.Combine(dataDirectory, "restore-point.json"),
                 TimeSpan.FromHours(restorePointHours), TimeSpan.FromHours(6)),
@@ -133,6 +136,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
                     if (response.UnlockPin is not null) await deviceLock.TryApplyVerifierAsync(response.UnlockPin, tenant, ct);
                     await commands.AcceptAsync(response.Commands, tenant, ct);
                     updater.Offer(response.Release);
+                    await smartAppControl.TryApplyAsync(response.WindowsSecurity, ct);
                 }
             };
         }
