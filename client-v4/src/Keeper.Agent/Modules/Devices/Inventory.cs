@@ -46,6 +46,7 @@ public sealed class Inventory(Func<DeviceInventory, CancellationToken, Task>? pu
     public override string Name => "Inventory";
     public DeviceSpecs? Specs { get; private set; }
     public DeviceInventory? Current { get; private set; }
+    private LegacyK3Status? _legacyK3;
 
     public override async Task InitAsync(ModuleContext ctx)
     {
@@ -55,8 +56,18 @@ public sealed class Inventory(Func<DeviceInventory, CancellationToken, Task>? pu
         Specs = new(Environment.MachineName, RuntimeInformation.OSDescription, RuntimeInformation.OSArchitecture.ToString(), Environment.ProcessorCount, memory.TotalPhysical);
         await base.InitAsync(ctx);
         // Una vez por arranque: CPU, RAM, disco y build no cambian sin reiniciar el equipo (y el agente).
-        Current = Collect(memory.TotalPhysical, smartAppControl ?? new WindowsSmartAppControlRegistry());
+        Current = Collect(memory.TotalPhysical, smartAppControl ?? new WindowsSmartAppControlRegistry()) with { LegacyK3 = _legacyK3 };
         if (publish is not null) await publish(Current, ctx.StoppingToken);
+    }
+
+    // K3 residual (modulo LegacyK3): el inventario se publica una vez por arranque, asi que un cambio de K3 lo vuelve a
+    // publicar completo; el outbox sustituye el que siga sin enviar. Antes de InitAsync solo se guarda y entra al recopilar.
+    public async Task UpdateLegacyK3Async(LegacyK3Status status, CancellationToken ct)
+    {
+        _legacyK3 = status;
+        if (Current is null) return;
+        Current = Current with { LegacyK3 = status };
+        if (publish is not null) await publish(Current, ct);
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]

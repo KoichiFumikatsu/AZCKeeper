@@ -96,13 +96,16 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         // Smart App Control: se lee siempre (inventario); solo se escribe con HKLM habilitado (no en dry-run).
         var sacRegistry = OperatingSystem.IsWindows() ? new WindowsSmartAppControlRegistry() : null;
         var smartAppControl = new SmartAppControl(registry.IsDryRun ? null : sacRegistry);
+        // K3 residual: solo lectura (tambien en dry-run); va antes de Inventory para que el primer inventario ya lo lleve.
+        var inventory = new Inventory(outbox.EnqueueInventoryAsync, sacRegistry);
+        var legacyK3 = new LegacyK3(OperatingSystem.IsWindows() ? new WindowsLegacyK3Probe() : null, inventory.UpdateLegacyK3Async);
         PolicyCoordinator? policy = null;
         ModuleHost? hostReference = null;
         var restorePointHours = int.TryParse(Environment.GetEnvironmentVariable("KEEPER_RESTORE_POINT_HOURS"), out var hours)
             ? Math.Clamp(hours, 6, 720) : 24;
         var moduleList = new List<IModule> { new WebEnforcer(registry), new UsbEnforcer(registry),
             new InstallEnforcer(registry, loadOptions: () => AppLockerOptions.FromEnvironment(Environment.GetEnvironmentVariable)),
-            new DownloadEnforcer(registry), deviceLock, commands, new Inventory(outbox.EnqueueInventoryAsync, sacRegistry), updater, smartAppControl,
+            new DownloadEnforcer(registry), deviceLock, commands, legacyK3, inventory, updater, smartAppControl,
             HardeningStatusModule.FromFile(Path.Combine(dataDirectory, "hardening", "state.json")),
             new RestorePointModule(new WindowsRestorePointService(!registry.IsDryRun), Path.Combine(dataDirectory, "restore-point.json"),
                 TimeSpan.FromHours(restorePointHours), TimeSpan.FromHours(6)),
