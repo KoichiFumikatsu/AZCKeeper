@@ -56,6 +56,24 @@ public sealed class IpcTests
         Assert.DoesNotContain("access_token", json);
     }
 
+    [Theory]
+    [InlineData("ActivityTracker", "simulated_input", null, true)]
+    [InlineData("ActivityTracker", "simulated_input_end", "390s", true)]
+    [InlineData("ActivityTracker", "physical_input_unavailable", "win32_5", true)]
+    [InlineData("ActivityTracker", "capture_gap", null, true)]
+    [InlineData("Presence", "late_login", null, true)]
+    [InlineData("ActivityTracker", "simulated_input_end", "390 s", false)]
+    [InlineData("ActivityTracker", "capture_gap", "x", false)]
+    [InlineData("WebEnforcer", "applied", null, false)]
+    public void SesionSoloPuedeMandarAvisosDeSuLista(string component, string code, string? error, bool accepted)
+    {
+        var log = new LogEntry { EventId = Guid.NewGuid(), At = DateTimeOffset.UtcNow, Level = LogEntryLevel.Info, Component = component, Code = code,
+            Fields = error is null ? null : new LogEntryFields { ErrorCode = error } };
+        Assert.Equal(accepted, SessionProtocol.IsAccepted(log));
+        // Un aviso fuera de lista ya no invalida la respuesta entera (antes cortaba la captura de la sesion).
+        SessionProtocol.Validate(new SessionResponse(1, Guid.Empty, [], [log]) with { CorrelationId = Guid.Empty }, Guid.Empty);
+    }
+
     [Fact]
     public void ProductionAclAllowsOnlySystemAndAuthorizedSidAndRejectsNetwork()
     {

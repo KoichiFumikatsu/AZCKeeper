@@ -41,12 +41,28 @@ public static class SessionProtocol
                 throw new InvalidDataException("invalid_session_episode");
         }
         foreach (var log in response.Logs)
-            if (log is null || log.EventId == Guid.Empty || log.Component is not ("Presence" or "SessionBuffer" or "ActivityTracker") ||
-                log.Code is not ("first_login" or "late_login" or "capture_gap" or "buffer_full") || log.Fields is not null)
-                throw new InvalidDataException("invalid_session_log");
+            if (log is null || log.EventId == Guid.Empty) throw new InvalidDataException("invalid_session_log");
         foreach (var activity in response.Activity ?? [])
             Validate(activity);
     }
+
+    /// <summary>
+    /// Avisos que la sesion (proceso del usuario, menos confiable que el agente) puede mandar al servidor. Uno fuera de la
+    /// lista se DESCARTA y el agente avisa session_log_rejected; antes cortaba la conexion con la sesion, y como el aviso
+    /// seguia en su buffer volvia a cortarla en cada reconexion (4.0.22: simulated_input no estaba en la lista y la
+    /// sesion se perdia cada 5,5 min con DWService conectado). Solo error_code viaja en los campos, corto y sin espacios.
+    /// </summary>
+    public static bool IsAccepted(LogEntry log) =>
+        (log.Component, log.Code) switch
+        {
+            ("Presence", "first_login" or "late_login") => log.Fields is null,
+            ("SessionBuffer", "buffer_full") => log.Fields is null,
+            ("ActivityTracker", "capture_gap" or "simulated_input") => log.Fields is null,
+            ("ActivityTracker", "simulated_input_end" or "physical_input_unavailable") => log.Fields is null ||
+                log.Fields is { ControlId: null, CommandId: null, Attempt: null, ErrorCode: { Length: > 0 and <= 80 } code } &&
+                code.All(c => char.IsAsciiLetterOrDigit(c) || c == '_'),
+            _ => false,
+        };
 
     /// <summary>
     /// El desglose por franja no puede sumar mas que el total del que forma parte, y las

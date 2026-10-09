@@ -5,6 +5,7 @@ using System.Security.Principal;
 using Keeper.Agent.Modules.Security;
 using Keeper.Agent.Policy;
 using Keeper.Shared.Contracts;
+using Keeper.Shared.Protocol;
 
 namespace Keeper.Agent.Hosting;
 
@@ -113,12 +114,23 @@ public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, Devic
         SessionProtocol.Validate(response, request.CorrelationId);
         var ack = new List<Guid>();
         foreach (var episode in response.Episodes) { await Context.Outbox.EnqueueAsync(episode, ct); ack.Add(episode.EventId); }
-        foreach (var log in response.Logs) { await Context.Outbox.EnqueueAsync(log, ct); ack.Add(log.EventId); }
+        foreach (var log in response.Logs)
+        {
+            // Se confirma igual para que la sesion lo saque de su buffer; un aviso fuera de lista no debe cortar la captura.
+            if (SessionProtocol.IsAccepted(log)) await Context.Outbox.EnqueueAsync(log, ct);
+            else await ReportAsync("session_log_rejected", ct, LogEntryLevel.Warn, RejectedCode(log));
+            ack.Add(log.EventId);
+        }
         foreach (var activity in response.Activity ?? []) { await Context.Outbox.EnqueueAsync(activity, ct); ack.Add(activity.SnapshotId); }
         if (response.Pin is not null) await deviceLock.ValidatePinAsync(response.Pin, ct);
         peer.Acknowledged = ack;
         peer.Version = version;
         if (shutdown) await peer.Connection.SendAsync(request with { Policy = null, Acknowledged = ack }, timeout.Token);
+    }
+    private static string RejectedCode(LogEntry log)
+    {
+        var code = new string($"{log.Component}_{log.Code}".Select(c => char.IsAsciiLetterOrDigit(c) || c == '_' ? c : '_').ToArray());
+        return code.Length > 80 ? code[..80] : code;
     }
     private void Remove(int id)
     {
