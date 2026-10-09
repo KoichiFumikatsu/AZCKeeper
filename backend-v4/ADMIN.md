@@ -164,6 +164,26 @@ de correr y no queda autoarranque), una vez por cambio.
 **Orden de despliegue:** primero el backend (el contrato de servidores anteriores rechaza `legacy_k3` con 422 y el
 sync del agente nuevo fallaría), después el agente.
 
+### Entrada física vs. simulada — agente 4.0.22 (2026-10-09)
+
+GetLastInputInfo también se refresca con entrada inyectada (SendInput de un «mouse jiggler», visores remotos como
+DWService): en producción daba 15-22 h seguidas «en uso» de noche con la pantalla de bloqueo delante. Desde 4.0.22 el
+`ActivityTracker` de Keeper.Session solo cuenta como uso el teclado/ratón con dispositivo (Raw Input, `RIDEV_INPUTSINK`,
+ventana solo-mensajes en hilo propio; `hDevice == 0` = inyectado). Con entrada según Windows pero sin física, el tiempo
+es **inactivo** y además suma `simulated_seconds`. En sesión RDP (`SM_REMOTESESSION`) se usa GetLastInputInfo como antes
+y el tiempo activo suma `remote_seconds`. Si Raw Input no registra, mide como antes y sin esos campos.
+
+`ActivitySnapshot` lleva `simulated_seconds` y `remote_seconds` opcionales (ausentes = no medido). Migración
+`0054_simulated_input.sql`: columnas NULL en `activity_snapshots` y `day_summary`; `ProductivityWorker` las suma por
+persona y día (NULL si ningún equipo las reporta). Exponen `simulated_seconds`: `/users/{id}/activity` (por día y total),
+`/reports/people` (total) y `/reports/productivity` (serie). Panel: columna «Entrada simulada (h)» en las tablas diarias
+y aviso en la ficha de la persona y en Productividad si el período pasa de 30 min. Logs: `ActivityTracker/simulated_input`
+(warn, una vez por racha de 5 min o más), `simulated_input_end` (info, error_code = duración, p. ej. `1830s`) y
+`physical_input_unavailable` (warn, una vez por sesión, error_code `win32_<código>`).
+
+**Orden de despliegue:** primero migración y backend (el contrato anterior rechaza los campos nuevos con 422), después
+el agente: `build-installer.ps1 -Version 4.0.22`.
+
 ### Suite general
 
 `tests/admin.php` se integra en el smoke completo sobre MySQL aislado. Comprueba contratos de salida además del modo `KEEPER_DEBUG`, dos tenants, distintos roles, gates, autoescalada directa/indirecta, expiración, CSRF/origen, IDOR, scopes, cursores, versiones de edición, compilación y rollback de conflictos, comandos auditados/idempotentes, revocación y releases firmadas. Incluye datos agregados reales y verifica que no se duplican métricas ni se cruzan tenants.

@@ -892,7 +892,10 @@ async function reports() {
   details(panel, [['Período', `${data.from} → ${data.to} (fin excluido)`], ['Zona horaria', data.timezone], ['Registro vs. jornada', data.series.length ? `${number.format(data.coverage_percent)} % (tiempo registrado ÷ jornada esperada)` : 'Sin datos'], ['Calculado', dateTime(data.calculated_at)], ['Datos hasta', dateTime(data.data_through)]]);
   if (!data.series.length) { panel.append(node('p', 'No hay datos de productividad para este período en tu alcance.', 'empty-state')); return; }
   const percent = value => value === null ? 'Sin dato' : `${number.format(value)} %`;
-  const columns = [['Día', 'day'], ['En uso (h)', r => number.format(r.active_seconds / 3600)], ['Encendido sin uso (h)', r => number.format(r.idle_seconds / 3600)], ['Focus / 100', r => r.focus_score === null ? 'Sin dato' : number.format(r.focus_score)], ['Productividad', r => percent(r.productivity_percent)]];
+  const columns = [['Día', 'day'], ['En uso (h)', r => number.format(r.active_seconds / 3600)], ['Encendido sin uso (h)', r => number.format(r.idle_seconds / 3600)], ['Focus / 100', r => r.focus_score === null ? 'Sin dato' : number.format(r.focus_score)], ['Productividad', r => percent(r.productivity_percent)], ['Entrada simulada (h)', r => r.simulated_seconds == null ? 'Sin dato' : number.format(r.simulated_seconds / 3600)]];
+  // Agente 4.0.22+: uso que Windows registra sin teclado ni ratón físicos (jiggler, DWService); ya va en "sin uso".
+  const simulated = data.series.reduce((a, r) => a + (r.simulated_seconds || 0), 0);
+  if (simulated > 1800) panel.append(node('p', `Entrada simulada en el período: ${number.format(simulated / 3600)} h. Windows registró actividad sin teclado ni ratón físicos (un "mouse jiggler" o control remoto como DWService); ese tiempo se cuenta como encendido sin uso.`, 'notice'));
   appendRows(table(panel, 'Productividad por día', columns).body, data.series, columns);
 }
 

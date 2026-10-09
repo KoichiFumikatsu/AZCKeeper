@@ -88,13 +88,13 @@ final class ProductivityWorker
                 // Totales y desglose se toman de la MISMA fuente para que el reparto no pueda
                 // sumar mas que su total.
                 $this->db->run("INSERT INTO day_summary (tenant_id,day,user_id,user_assignment_id,active_seconds,idle_seconds,call_seconds,productive_seconds,expected_seconds,coverage_percent,productivity_percent,calculation_version,timezone,calculated_at,data_through,first_activity,last_activity,late_seconds,
-                      work_hours_active_seconds,work_hours_idle_seconds,lunch_active_seconds,lunch_idle_seconds,after_hours_active_seconds,after_hours_idle_seconds,sample_count,utc_offset_minutes,
+                      work_hours_active_seconds,work_hours_idle_seconds,lunch_active_seconds,lunch_idle_seconds,after_hours_active_seconds,after_hours_idle_seconds,sample_count,utc_offset_minutes,simulated_seconds,remote_seconds,
                       window_active_seconds,unproductive_seconds,unclassified_seconds,focus_block_seconds)
                     SELECT ?,?,u.user_id,u.id,COALESCE(s.active,e.active,0),COALESCE(s.idle,e.idle,0),COALESCE(s.calls,e.calls,0),COALESCE(e.productive,0),$expected,
                     IF($expected=0,0,LEAST(100,100*COALESCE(s.active+s.idle,e.active+e.idle,0)/NULLIF($expected,0))),100*e.productive/NULLIF(e.active,0),?,c.timezone,UTC_TIMESTAMP(6),?,
                     COALESCE(s.first_at,e.first_at),COALESCE(s.last_at,e.last_at),
                     IF($expected=0 OR COALESCE(s.first_at,e.first_at) IS NULL,NULL,GREATEST(0,TIMESTAMPDIFF(SECOND,c.work_start,COALESCE(s.first_at,e.first_at)))),
-                    s.work_active,s.work_idle,s.lunch_active,s.lunch_idle,s.after_active,s.after_idle,s.samples,s.utc_offset,
+                    s.work_active,s.work_idle,s.lunch_active,s.lunch_idle,s.after_active,s.after_idle,s.samples,s.utc_offset,s.simulated,s.remote,
                     e.active,e.unproductive,e.unclassified,COALESCE(fb.blocks,0)
                     FROM user_assignments u JOIN activity_calendar c ON c.schedule_id=u.schedule_id
                     LEFT JOIN (SELECT user_id,SUM(focus_seconds) blocks FROM activity_focus GROUP BY user_id) fb ON fb.user_id=u.user_id
@@ -103,6 +103,8 @@ final class ProductivityWorker
                       MIN(IF(active>0,first_at,NULL)) first_at,MAX(IF(active>0,last_at,NULL)) last_at FROM activity_segments GROUP BY user_id) e ON e.user_id=u.user_id
                     LEFT JOIN (SELECT user_id,SUM(active_seconds) active,SUM(idle_seconds) idle,SUM(call_seconds) calls,
                       MIN(first_activity_at) first_at,MAX(last_activity_at) last_at,SUM(sample_count) samples,MIN(utc_offset_minutes) utc_offset,
+                      -- Entrada simulada/remota (agente 4.0.22+): SUM ignora NULL; NULL si ningun dispositivo lo reporta.
+                      SUM(simulated_seconds) simulated,SUM(remote_seconds) remote,
                       -- Si algun dispositivo no reporta el desglose, el reparto del dia queda
                       -- DESCONOCIDO en vez de una suma parcial que aparentaria estar completa.
                       IF(COUNT(*)=COUNT(work_hours_active_seconds),SUM(work_hours_active_seconds),NULL) work_active,

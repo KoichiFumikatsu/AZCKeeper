@@ -15270,6 +15270,14 @@ components:
             distraction_seconds:
               type: integer
               minimum: 0
+            simulated_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+              description: >-
+                Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta
+                como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22).
     EnrollmentRequestInput:
       type: object
       additionalProperties: false
@@ -18267,6 +18275,22 @@ components:
           minimum: -840
           maximum: 840
           description: Desfase local del equipo, para interpretar `day` sin ambigüedad.
+        simulated_seconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          description: >-
+            Segundos del día en que Windows registró entrada (GetLastInputInfo) sin que llegara
+            teclado ni mouse físico (Raw Input sin dispositivo): jigglers, visores remotos como
+            DWService. Ya están contados en idle_seconds, no en active_seconds. Ausente = el
+            agente no lo mide (anterior a 4.0.22 o Raw Input no disponible), no cero.
+        remote_seconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          description: >-
+            Subconjunto de active_seconds medido en sesión RDP, donde la entrada del cliente
+            remoto llega sin dispositivo y solo GetLastInputInfo sirve. Ausente = desconocido.
       description: >-
         Contadores absolutos por device/día; upsert monotónico, no suma.
         El desglose horario (work_hours/lunch/after_hours) reproduce la categorización
@@ -18879,6 +18903,14 @@ components:
             minimum: 0
             maximum: 100
           - type: 'null'
+        simulated_seconds:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+          description: >-
+            Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta
+            como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22).
     ProductivityReport:
       type: object
       additionalProperties: false
@@ -20482,6 +20514,14 @@ components:
         longest_focus_streak_seconds:
           type: integer
           minimum: 0
+        simulated_seconds:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+          description: >-
+            Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta
+            como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22).
     ActivityReport:
       type: object
       additionalProperties: false
@@ -20577,6 +20617,14 @@ components:
             distraction_seconds:
               type: integer
               minimum: 0
+            simulated_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+              description: >-
+                Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta
+                como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22).
     PresenceRow:
       type: object
       additionalProperties: false

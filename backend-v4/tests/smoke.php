@@ -22,6 +22,7 @@ require __DIR__ . '/role-rules.php';
 require __DIR__ . '/doors.php';
 require __DIR__ . '/absences.php';
 require __DIR__ . '/day-split.php';
+require __DIR__ . '/simulated-input.php';
 require __DIR__ . '/app-classification.php';
 require __DIR__ . '/policy-exceptions.php';
 require __DIR__ . '/ops.php';
@@ -257,6 +258,16 @@ try {
     $sync['activity']['snapshot_id'] = Util::uuid(); $sync['activity']['sequence']++; $sync['activity']['active_seconds']++;
     $s = expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'activity advances monotonically');
     check($s['activity_ack']['status'] === 'accepted', 'existing day accepts newer snapshot');
+    $stored = fn () => $db->one('SELECT simulated_seconds,remote_seconds FROM activity_snapshots WHERE tenant_id=? AND device_id=? AND day=?', [$tenant, $device, $sync['activity']['day']]);
+    check($stored() === ['simulated_seconds' => null, 'remote_seconds' => null], 'snapshot without simulated/remote stores NULL (agent < 4.0.22)');
+    // 4.0.22: simulado va dentro del inactivo y remoto dentro del activo; un valor mayor se recorta, no rechaza el dia.
+    $sync['activity']['snapshot_id'] = Util::uuid(); $sync['activity']['sequence']++; $sync['activity']['simulated_seconds'] = 7; $sync['activity']['remote_seconds'] = 3;
+    check(expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'activity with simulated')['activity_ack']['status'] === 'accepted', 'snapshot with simulated/remote accepted');
+    check(array_map('intval', $stored()) === ['simulated_seconds' => 7, 'remote_seconds' => 3], 'simulated/remote stored');
+    $sync['activity']['snapshot_id'] = Util::uuid(); $sync['activity']['sequence']++; $sync['activity']['simulated_seconds'] = 500; $sync['activity']['remote_seconds'] = 500;
+    check(expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'activity with oversized simulated')['activity_ack']['status'] === 'accepted', 'oversized simulated/remote accepted');
+    check(array_map('intval', $stored()) === ['simulated_seconds' => 10, 'remote_seconds' => 51], 'simulated capped to idle, remote to active');
+    unset($sync['activity']['simulated_seconds'], $sync['activity']['remote_seconds']);
     // Sesion abierta todo el dia: el redondeo puede sumar 86401; un dia imposible (mas de 24 h + margen) se rechaza.
     $sync['activity']['snapshot_id'] = Util::uuid(); $sync['activity']['sequence']++; $sync['activity']['active_seconds'] = 60000; $sync['activity']['idle_seconds'] = 26401;
     check(expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'full day with rounding')['activity_ack']['status'] === 'accepted', 'full day plus rounding accepted');
@@ -385,6 +396,7 @@ try {
     doorEventTests($db);
     absenceTests($db);
     daySplitTests($db);
+    simulatedInputTests($db);
     appClassificationTests($db);
     policyExceptionTests();
     opsTests($db);

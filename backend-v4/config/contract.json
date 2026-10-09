@@ -1,5 +1,5 @@
 {
-  "source_sha256": "b2fa58355143601d614d69406ad6feb6e7fa16b3af7f8d3dbbf62d006d3ec68a",
+  "source_sha256": "7a28954730f7de7203493e534dc5cb7ed7686b67a2ab356f8ff7929e65a21463",
   "paths": {
     "/admin/tenants/{id}/unlock-pin": {
       "get": {
@@ -20519,6 +20519,18 @@
         "longest_focus_streak_seconds": {
           "type": "integer",
           "minimum": 0
+        },
+        "simulated_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22)."
         }
       }
     },
@@ -20657,6 +20669,18 @@
             "distraction_seconds": {
               "type": "integer",
               "minimum": 0
+            },
+            "simulated_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22)."
             }
           }
         }
@@ -20764,6 +20788,18 @@
           "minimum": -840,
           "maximum": 840,
           "description": "Desfase local del equipo, para interpretar `day` sin ambigüedad."
+        },
+        "simulated_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Segundos del día en que Windows registró entrada (GetLastInputInfo) sin que llegara teclado ni mouse físico (Raw Input sin dispositivo): jigglers, visores remotos como DWService. Ya están contados en idle_seconds, no en active_seconds. Ausente = el agente no lo mide (anterior a 4.0.22 o Raw Input no disponible), no cero."
+        },
+        "remote_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Subconjunto de active_seconds medido en sesión RDP, donde la entrada del cliente remoto llega sin dispositivo y solo GetLastInputInfo sirve. Ausente = desconocido."
         }
       },
       "description": "Contadores absolutos por device/día; upsert monotónico, no suma. El desglose horario (work_hours/lunch/after_hours) reproduce la categorización de `keeper_activity_day` de K3: sin él el panel solo puede mostrar un total y no puede distinguir actividad en horario, en almuerzo o fuera de jornada. Los campos del desglose son opcionales: ausentes significan DESCONOCIDO, no cero, para que un agente antiguo no falsee el reporte con ceros. `is_workday` no viaja aquí a propósito: el servidor lo deriva del horario y del calendario de festivos, que K3 no consultaba (usaba \"no es sábado ni domingo\")."
@@ -27703,6 +27739,18 @@
             "distraction_seconds": {
               "type": "integer",
               "minimum": 0
+            },
+            "simulated_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22)."
             }
           }
         }
@@ -28410,6 +28458,18 @@
               "type": "null"
             }
           ]
+        },
+        "simulated_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22)."
         }
       }
     },

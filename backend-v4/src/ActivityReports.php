@@ -67,7 +67,7 @@ final class ActivityReports
             // Materialize per-assignment calendar values before grouping: MariaDB enforces correlated GROUP BY differently.
             $this->db->run("CREATE TEMPORARY TABLE activity_report_data ENGINE=InnoDB AS SELECT c.day,a.user_id,u.display_name,
                 COALESCE(d.active_seconds,ed.active_seconds,0) active_seconds,COALESCE(d.idle_seconds,0) idle_seconds,
-                COALESCE(d.call_seconds,0) call_seconds,COALESCE(d.productive_seconds,0) productive_seconds,
+                COALESCE(d.call_seconds,0) call_seconds,COALESCE(d.productive_seconds,0) productive_seconds,d.simulated_seconds,
                 COALESCE(d.window_active_seconds,d.active_seconds,ed.active_seconds,0) window_active_seconds,COALESCE(d.unclassified_seconds,0) unclassified_seconds,
                 COALESCE(f.focus_seconds,0) focus_seconds,COALESCE(f.context_switches,0) context_switches,
                 COALESCE(f.deep_work_seconds,0) deep_work_seconds,COALESCE(f.distraction_seconds,0) distraction_seconds,
@@ -76,7 +76,7 @@ final class ActivityReports
                 f.first_activity_time,f.productivity_pct,f.constancy_pct,COALESCE(f.deep_work_sessions,0) deep_work_sessions,
                 COALESCE(f.longest_focus_streak_seconds,0) longest_focus_streak_seconds $base",$queryArgs);
             $rows=$this->db->run('SELECT day,user_id,display_name,SUM(active_seconds) active_seconds,SUM(idle_seconds) idle_seconds,
-                SUM(call_seconds) call_seconds,SUM(productive_seconds) productive_seconds,SUM(focus_seconds) focus_seconds,
+                SUM(call_seconds) call_seconds,SUM(productive_seconds) productive_seconds,SUM(simulated_seconds) simulated_seconds,SUM(focus_seconds) focus_seconds,
                 SUM(window_active_seconds) window_active_seconds,SUM(unclassified_seconds) unclassified_seconds,
                 SUM(context_switches) context_switches,SUM(deep_work_seconds) deep_work_seconds,SUM(distraction_seconds) distraction_seconds,
                 MAX(expected_seconds) expected_seconds,MIN(first_activity) first_activity,MAX(last_activity) last_activity,
@@ -94,15 +94,22 @@ final class ActivityReports
                     $key=$row['user_id'];
                     $people[$key]??=['user_id'=>Util::id($key),'display_name'=>$row['display_name'],'last'=>null,'sums'=>[]];
                     foreach (['active_seconds','idle_seconds','call_seconds','productive_seconds','focus_seconds','context_switches','deep_work_seconds','distraction_seconds','window_active_seconds','unclassified_seconds'] as $field) { $people[$key]['sums'][$field]=($people[$key]['sums'][$field]??0)+(int)$row[$field]; }
+                    $people[$key]['rows'][]=$row;
                     if ($row['last_activity']!==null && ($people[$key]['last']===null || $row['last_activity']>$people[$key]['last'])) { $people[$key]['last']=$row['last_activity']; }
                 }
                 usort($people,static fn($a,$b)=>strcmp($a['display_name'],$b['display_name']) ?: strcmp($a['user_id'],$b['user_id']));
-                return AdminApi::response(['from'=>$from,'to'=>$to,'data'=>array_map(fn($p)=>['user_id'=>$p['user_id'],'display_name'=>$p['display_name'],'last_activity'=>$p['last']===null?null:Util::time($p['last']),'totals'=>$this->metrics($p['sums'])],array_values($people))]);
+                return AdminApi::response(['from'=>$from,'to'=>$to,'data'=>array_map(fn($p)=>['user_id'=>$p['user_id'],'display_name'=>$p['display_name'],'last_activity'=>$p['last']===null?null:Util::time($p['last']),'totals'=>$this->metrics($p['sums'])+['simulated_seconds'=>self::simulated($p['rows'])]],array_values($people))]);
             }
             $sums=[];
             foreach (['active_seconds','idle_seconds','call_seconds','productive_seconds','focus_seconds','context_switches','deep_work_seconds','distraction_seconds','window_active_seconds','unclassified_seconds'] as $field) { $sums[$field]=array_sum(array_column($rows,$field)); }
-            return AdminApi::response(['user_id'=>Util::id($user),'from'=>$from,'to'=>$to,'data'=>$data,'totals'=>$this->metrics($sums)]);
+            return AdminApi::response(['user_id'=>Util::id($user),'from'=>$from,'to'=>$to,'data'=>$data,'totals'=>$this->metrics($sums)+['simulated_seconds'=>self::simulated($rows)]]);
         } finally { $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_report_data'); $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_calendar'); }
+    }
+    /** Entrada simulada (agente 4.0.22+) del periodo: null si ningun dia la midio, no cero. */
+    private static function simulated(array $rows): ?int
+    {
+        $values=array_filter(array_column($rows,'simulated_seconds'),static fn($v)=>$v!==null);
+        return $values?(int)array_sum($values):null;
     }
     private function metrics(array $r): array
     {
@@ -126,7 +133,8 @@ final class ActivityReports
         return $presence ? $out+['user_id'=>Util::id($r['user_id']),'display_name'=>$r['display_name'],'active_seconds'=>(int)$r['active_seconds']] : $out+$this->metrics($r)+[
             'expected_seconds'=>(int)$r['expected_seconds'],'first_activity_time'=>$r['first_activity_time'],
             'productivity_pct'=>$r['productivity_pct']===null?null:round((float)$r['productivity_pct'],2),'constancy_pct'=>$r['constancy_pct']===null?null:round((float)$r['constancy_pct'],2),
-            'deep_work_sessions'=>(int)$r['deep_work_sessions'],'longest_focus_streak_seconds'=>(int)$r['longest_focus_streak_seconds']];
+            'deep_work_sessions'=>(int)$r['deep_work_sessions'],'longest_focus_streak_seconds'=>(int)$r['longest_focus_streak_seconds'],
+            'simulated_seconds'=>$r['simulated_seconds']===null?null:(int)$r['simulated_seconds']];
     }
     private function apps(string $from,string $to): array
     {

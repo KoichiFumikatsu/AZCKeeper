@@ -192,7 +192,7 @@ final class Ingest
     /** Contadores del desglose que viajan junto a los totales; el orden fija el de las columnas. */
     private const BREAKDOWN = ['call_seconds', 'work_hours_active_seconds', 'work_hours_idle_seconds',
         'lunch_active_seconds', 'lunch_idle_seconds', 'after_hours_active_seconds', 'after_hours_idle_seconds',
-        'sample_count', 'utc_offset_minutes'];
+        'sample_count', 'utc_offset_minutes', 'simulated_seconds', 'remote_seconds'];
 
     public function activity(object $e): array
     {
@@ -206,6 +206,9 @@ final class Ingest
         // descuenta del tiempo inactivo, nunca del activo.
         if ($e->active_seconds > 86400) { $e->active_seconds = 86400; }
         if ($e->active_seconds + $e->idle_seconds > 86400) { $e->idle_seconds = 86400 - $e->active_seconds; }
+        // Simulado va dentro del inactivo y remoto dentro del activo: tras recortar se ajustan en vez de rechazar el dia.
+        if (isset($e->simulated_seconds) && $e->simulated_seconds > $e->idle_seconds) { $e->simulated_seconds = $e->idle_seconds; }
+        if (isset($e->remote_seconds) && $e->remote_seconds > $e->active_seconds) { $e->remote_seconds = $e->active_seconds; }
         // Un dato imposible se rechaza en el borde: las llamadas son un subconjunto del tiempo
         // activo y el desglose no puede sumar mas que su total. K3 no comprobaba ninguna de las
         // dos y por eso tiene dias con 184 horas de llamada.

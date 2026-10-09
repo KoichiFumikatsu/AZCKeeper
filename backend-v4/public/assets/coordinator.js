@@ -189,7 +189,11 @@ export async function coordinator(ctx) {
     return { controls, narrow, describe };
   }
   function selected(controls) { return Object.fromEntries(Object.entries(controls).filter(([, v]) => v.value).map(([k, v]) => [k, v.value])); }
-  const productColumns = [['Día', 'day'], ['En uso', r => hours(r.active_seconds)], ['Encendido sin uso', r => hours(r.idle_seconds)], ['Productividad', r => percent(r.productivity_percent)], ['Focus /100', r => numeric(r.focus_score) ? fmt.format(r.focus_score) : 'Sin dato']];
+  const productColumns = [['Día', 'day'], ['En uso', r => hours(r.active_seconds)], ['Encendido sin uso', r => hours(r.idle_seconds)], ['Productividad', r => percent(r.productivity_percent)], ['Focus /100', r => numeric(r.focus_score) ? fmt.format(r.focus_score) : 'Sin dato'], ['Entrada simulada (h)', r => numeric(r.simulated_seconds) ? fmt.format(r.simulated_seconds / 3600) : 'Sin dato']];
+  // Agente 4.0.22+: entrada que Windows registra sin teclado ni ratón físicos (jiggler, DWService); ya va en "sin uso".
+  function simulatedNotice(p, seconds) {
+    if (numeric(seconds) && seconds > 1800) p.append(el('p', `Entrada simulada en el período: ${hours(seconds)}. Windows registró actividad sin teclado ni ratón físicos (un "mouse jiggler" o control remoto como DWService); ese tiempo se cuenta como encendido sin uso, no como uso real.`, 'notice'));
+  }
   const appColumns = [['Aplicación', r => r.app || r.process_name], ['En uso', r => hours(r.active_seconds)], ['Abierta sin uso', r => hours(r.idle_seconds)], ['Veces al frente', 'sessions'], ['Personas', 'users_count'], ['Del tiempo total', r => percent(r.percent_total)]];
   const presenceColumns = [['Persona', r => memberLink(r)], ['Día', 'day'], ['Primera actividad', r => time(r.first_activity)], ['Última actividad', r => time(r.last_activity)], ['Activo', r => hours(r.active_seconds)], ['Retraso (min)', r => numeric(r.late_seconds) ? fmt.format(r.late_seconds / 60) : 'Sin dato'], ['Estado', r => label(r.status)]];
   async function apps(parent, range, filters = {}, exportable = false, fetch = report) {
@@ -206,6 +210,7 @@ export async function coordinator(ctx) {
       ['Promedio diario de distracción', percent(avg('distraction_percent')), `Suma de la distracción de cada día con dato ÷ días con dato (${daysWith('distraction_percent')}). La de cada día = uso en apps poco productivas ÷ uso total de ese día.`],
       ['Focus: promedio diario', numeric(avg('focus_score')) ? `${fmt.format(avg('focus_score'))} /100` : 'Sin dato', `Suma del focus de cada día con dato ÷ días con dato (${daysWith('focus_score')}). El de cada día = tiempo productivo en bloques de 25 min o más sin distraerse ÷ tiempo productivo. Responde: ¿el trabajo fue sostenido o a ratos?`],
       ['Registro vs. jornada', series.length ? percent(data.coverage_percent) : 'Sin datos', 'Tiempo con el equipo encendido y Keeper registrando ÷ horas de jornada esperadas (horario menos festivos y ausencias). Bajo = equipos apagados o sin reportar.']]);
+    simulatedNotice(p, series.reduce((a, r) => a + (numeric(r.simulated_seconds) ? r.simulated_seconds : 0), 0));
     const unclassified = avg('unclassified_percent');
     if (numeric(unclassified) && unclassified > 20) { const n = el('p', undefined, 'notice'); n.append(`El ${percent(unclassified)} del uso está en apps sin clasificar: productividad y distracción son poco confiables. `, link('Clasificar aplicaciones', '/clasificacion.php')); p.append(n); }
     // La API responde con el fin excluido; se muestra el último día incluido.
@@ -404,7 +409,7 @@ export async function coordinator(ctx) {
       const summary = tab('resumen', 'Resumen');
       if (devices.data) details(summary, [['Equipos activos', devices.data.filter(d => d.status === 'active').map(d => d.hostname).join(', ') || 'Sin equipo activo']]); else dependency(summary, devices, 'Equipos');
       if (schedules.data) { const s = schedules.data.find(s => s.id === u.schedule_id); details(summary, [['Horario', s ? `${s.name} · ${s.start_local}–${s.end_local} · ${s.timezone}` : 'Sin horario disponible'], ['Días', s ? s.days.map(d => ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'][d - 1]).join(', ') : 'Sin dato']]); } else dependency(summary, schedules, 'Horario');
-      if (act.data) { chart(summary, act.data.data); details(summary, [['Trabajo profundo', hours(act.data.totals.deep_work_seconds)], ['Distracción', hours(act.data.totals.distraction_seconds)], ['Cambios de contexto', act.data.totals.context_switches]]); }
+      if (act.data) { simulatedNotice(summary, act.data.totals.simulated_seconds); chart(summary, act.data.data); details(summary, [['Trabajo profundo', hours(act.data.totals.deep_work_seconds)], ['Distracción', hours(act.data.totals.distraction_seconds)], ['Cambios de contexto', act.data.totals.context_switches]]); }
       if (canActivity) {
         const activityPanel = tab('actividad', 'Actividad');
         if (act.data) { pagedTable(activityPanel, 'Actividad diaria', [...productColumns, ['Llamadas', r => hours(r.call_seconds)]], act.data.data); activityPanel.append(el('p', 'Las llamadas son parte del tiempo activo; no se suman de nuevo.', 'help')); } else error(activityPanel, act.error);
