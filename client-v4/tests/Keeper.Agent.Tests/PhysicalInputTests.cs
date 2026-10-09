@@ -160,7 +160,9 @@ public sealed class PhysicalInputTests
     [InlineData(RawInputClassifier.Mouse, 7L, 0, 1, 0, 0, RawInputKind.Physical)]      // boton sin movimiento
     [InlineData(RawInputClassifier.Mouse, 7L, 0, 0, 0, 0, RawInputKind.Ignored)]       // paquete vacio
     [InlineData(RawInputClassifier.Mouse, 0L, 1, 0, 0, 0, RawInputKind.Injected)]      // absoluto (SendInput con MOUSEEVENTF_ABSOLUTE)
-    [InlineData(2u, 7L, 0, 0, 0, 0, RawInputKind.Ignored)]                               // HID
+    [InlineData(RawInputClassifier.Hid, 7L, 0, 0, 0, 0, RawInputKind.Physical)]        // touchpad/tactil/lapiz con dispositivo
+    [InlineData(RawInputClassifier.Hid, 0L, 0, 0, 0, 0, RawInputKind.Ignored)]
+    [InlineData(5u, 7L, 0, 0, 0, 0, RawInputKind.Ignored)]                               // tipo desconocido
     public void ClasificaRawInputPorDispositivo(uint type, long device, int flags, int buttons, int x, int y, RawInputKind expected) =>
         Assert.Equal(expected, RawInputClassifier.Classify(type, (nint)device, (ushort)flags, (ushort)buttons, x, y));
 

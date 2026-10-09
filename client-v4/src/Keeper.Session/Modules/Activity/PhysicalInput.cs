@@ -15,11 +15,14 @@ public interface IPhysicalInputSource { PhysicalInputReading Read(); }
 public enum RawInputKind { Ignored, Physical, Injected }
 public static class RawInputClassifier
 {
-    public const uint Mouse = 0, Keyboard = 1;
+    public const uint Mouse = 0, Keyboard = 1, Hid = 2;
     // hDevice == 0: la genero SendInput (jiggler, DWService, cualquier inyector), no un dispositivo. Un paquete de raton
     // relativo sin movimiento ni botones no es uso (algunos drivers los emiten en reposo).
     public static RawInputKind Classify(uint type, nint device, ushort mouseFlags = 0, ushort buttonFlags = 0, int x = 0, int y = 0)
     {
+        // Touchpad de precision, pantalla tactil y lapiz: el cursor que generan puede llegar como raton SIN dispositivo
+        // (lo sintetiza Windows), asi que se registran tambien como HID digitalizador; el paquete HID trae su dispositivo.
+        if (type == Hid) return device == 0 ? RawInputKind.Ignored : RawInputKind.Physical;
         if (type is not (Mouse or Keyboard)) return RawInputKind.Ignored;
         if (type == Mouse && (mouseFlags & 1) == 0 && buttonFlags == 0 && x == 0 && y == 0) return RawInputKind.Ignored;
         return device == 0 ? RawInputKind.Injected : RawInputKind.Physical;
@@ -90,6 +93,14 @@ public sealed class WindowsPhysicalInputSource(Func<long>? ticks = null) : IPhys
             };
             if (!RegisterRawInputDevices(devices, (uint)devices.Length, (uint)Marshal.SizeOf<RawInputDevice>()))
                 throw new Win32Exception(Marshal.GetLastWin32Error());
+            // Digitalizadores aparte y sin exigir exito: un equipo sin touchpad/tactil/lapiz sigue midiendo raton y teclado.
+            var digitizers = new[]
+            {
+                new RawInputDevice { UsagePage = 0x0D, Usage = 0x05, Flags = 0x100, Target = window },
+                new RawInputDevice { UsagePage = 0x0D, Usage = 0x04, Flags = 0x100, Target = window },
+                new RawInputDevice { UsagePage = 0x0D, Usage = 0x02, Flags = 0x100, Target = window },
+            };
+            RegisterRawInputDevices(digitizers, (uint)digitizers.Length, (uint)Marshal.SizeOf<RawInputDevice>());
             started.SetResult();
             while (GetMessage(out var message, 0, 0, 0) > 0)
             {
@@ -111,7 +122,12 @@ public sealed class WindowsPhysicalInputSource(Func<long>? ticks = null) : IPhys
         var headerSize = (uint)Marshal.SizeOf<RawInputHeader>();
         // Cabecera (24 B en x64) + RAWMOUSE (24 B) o RAWKEYBOARD (16 B): 64 B alcanzan para ambos. Solo lo usa este hilo.
         var size = (uint)_buffer.Length;
-        if (GetRawInputData(handle, 0x10000003, _buffer, ref size, headerSize) == uint.MaxValue) return;
+        if (GetRawInputData(handle, 0x10000003, _buffer, ref size, headerSize) == uint.MaxValue)
+        {
+            // Un paquete HID (digitalizador) no cabe en 64 B; para clasificarlo basta la cabecera.
+            size = (uint)_buffer.Length;
+            if (GetRawInputData(handle, 0x10000005, _buffer, ref size, headerSize) == uint.MaxValue) return;
+        }
         var header = MemoryMarshal.Read<RawInputHeader>(_buffer);
         var data = _buffer.AsSpan((int)headerSize);
         var kind = header.Type == RawInputClassifier.Mouse
