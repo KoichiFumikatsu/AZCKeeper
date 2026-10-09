@@ -37,19 +37,33 @@ public sealed record ActivityTotals(double Active, double Idle);
 /// (~2.880 al dia) y no medía nada del usuario.</item>
 /// </list>
 /// </summary>
+/// <para><c>Simulated</c> (4.0.22): segundos con entrada segun GetLastInputInfo pero sin teclado/raton fisico (jiggler,
+/// DWService); van en <c>Idle</c>. <c>Remote</c>: activos en sesion RDP. Ambos null = el dia no se midio con Raw Input.</para>
 public sealed record DayActivity(double Active, double Idle, double Call,
-    DateTimeOffset? First, DateTimeOffset? Last, long Samples);
+    DateTimeOffset? First, DateTimeOffset? Last, long Samples, double? Simulated = null, double? Remote = null);
 
 // Estado persistido del dia: sin esto cada reinicio de la sesion (reinicio del equipo, cierre de sesion, update del
 // agente) volvia los contadores y la secuencia a cero, y el servidor (upsert monotonico por dia) rechazaba todas las
 // fotos siguientes de ese dia. Regresion vista 2026-09-30: una sola foto aceptada en toda la historia del equipo.
 public sealed record ActivityState(long Sequence, List<ActivityStateDay> Days, List<ActivityStateTotal> Totals);
-public sealed record ActivityStateDay(DateOnly Day, double Active, double Idle, double Call, DateTimeOffset? First, DateTimeOffset? Last, long Samples);
+// Simulated/Remote opcionales: un estado escrito por 4.0.21 o anterior se restaura con ambos en null.
+public sealed record ActivityStateDay(DateOnly Day, double Active, double Idle, double Call, DateTimeOffset? First, DateTimeOffset? Last, long Samples,
+    double? Simulated = null, double? Remote = null);
 public sealed record ActivityStateTotal(DateOnly Day, TimeCategory Category, double Active, double Idle);
 
+/// <summary>
+/// Desde 4.0.22 solo la entrada FISICA cuenta como uso (<c>physical</c>, Raw Input). GetLastInputInfo tambien se refresca
+/// con entrada inyectada: en produccion (2026-10-09) un jiggler o DWService daban 15-22 h seguidas "en uso" de noche con la
+/// pantalla de bloqueo delante. Ese tiempo ahora es inactivo y se suma aparte como simulado. Sin fuente fisica, o si Raw
+/// Input no se pudo registrar, se mide como antes.
+/// </summary>
 public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall = null,
-    double idleThresholdSeconds = 600, double callMaxIdleSeconds = 300, string? statePath = null) : ModuleBase
+    double idleThresholdSeconds = 600, double callMaxIdleSeconds = 300, string? statePath = null, IPhysicalInputSource? physical = null) : ModuleBase
 {
+    public static readonly TimeSpan SimulatedStreakReport = TimeSpan.FromMinutes(5);
+    private bool _unavailableReported;
+    private double _simulatedStreak;
+    private bool _simulatedReported;
     public override string Name => "ActivityTracker";
     public static readonly TimeSpan SaveEvery = TimeSpan.FromSeconds(30);
     private DateTimeOffset _last;
@@ -82,7 +96,7 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
             if (state is null) return;
             var cutoff = Schedule.Day(Context.Clock.GetUtcNow()).AddDays(-7);
             _sequence = Math.Max(_sequence, state.Sequence);
-            foreach (var d in state.Days.Where(d => d.Day >= cutoff)) Days[d.Day] = new(d.Active, d.Idle, d.Call, d.First, d.Last, d.Samples);
+            foreach (var d in state.Days.Where(d => d.Day >= cutoff)) Days[d.Day] = new(d.Active, d.Idle, d.Call, d.First, d.Last, d.Samples, d.Simulated, d.Remote);
             foreach (var t in state.Totals.Where(t => t.Day >= cutoff)) Totals[(t.Day, t.Category)] = new(t.Active, t.Idle);
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or NotSupportedException) { }
@@ -94,7 +108,7 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
         try
         {
             var state = new ActivityState(_sequence,
-                Days.Select(d => new ActivityStateDay(d.Key, d.Value.Active, d.Value.Idle, d.Value.Call, d.Value.First, d.Value.Last, d.Value.Samples)).ToList(),
+                Days.Select(d => new ActivityStateDay(d.Key, d.Value.Active, d.Value.Idle, d.Value.Call, d.Value.First, d.Value.Last, d.Value.Samples, d.Value.Simulated, d.Value.Remote)).ToList(),
                 Totals.Select(t => new ActivityStateTotal(t.Key.Day, t.Key.Category, t.Value.Active, t.Value.Idle)).ToList());
             Directory.CreateDirectory(Path.GetDirectoryName(statePath)!);
             var temp = statePath + ".tmp";
@@ -124,7 +138,25 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
         }
         var idle = input.GetIdleTime().TotalSeconds;
         var inCallNow = inCall?.Invoke() == true;
-        IsActive = idle < idleThresholdSeconds || inCallNow && idle < callMaxIdleSeconds;
+        var reading = physical?.Read();
+        if (reading?.Status == PhysicalInputStatus.Unavailable && !_unavailableReported)
+        {
+            _unavailableReported = true;
+            await ReportAsync("physical_input_unavailable", ct, LogEntryLevel.Warn, reading.Error);
+        }
+        // Medido = Raw Input funciona (o RDP, donde GetLastInputInfo es la unica senal valida): el dia lleva simulado/remoto.
+        var measured = reading?.Status is PhysicalInputStatus.Physical or PhysicalInputStatus.Remote;
+        var remote = reading?.Status == PhysicalInputStatus.Remote;
+        var anyInput = idle < idleThresholdSeconds || inCallNow && idle < callMaxIdleSeconds;
+        if (reading?.Status == PhysicalInputStatus.Physical)
+        {
+            // Misma regla (umbral y llamadas) sobre la entrada fisica; sin fisica desde el arranque = inactivo.
+            var real = Math.Max(idle, reading.Idle?.TotalSeconds ?? double.PositiveInfinity);
+            IsActive = real < idleThresholdSeconds || inCallNow && real < callMaxIdleSeconds;
+        }
+        else IsActive = anyInput;
+        var simulated = measured && anyInput && !IsActive;
+        await TrackSimulatedStreakAsync(simulated, elapsed, ct);
         var intervals = new List<ActivityInterval>();
         // Split at seconds so midnight and schedule boundaries cannot charge the wrong day/category.
         while (start < now)
@@ -145,6 +177,8 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
                 Idle = day.Idle + (IsActive ? 0 : seconds),
                 // Las llamadas son un subconjunto del tiempo activo, nunca un contador aparte.
                 Call = day.Call + (IsActive && inCallNow ? seconds : 0),
+                Simulated = measured ? (day.Simulated ?? 0) + (simulated ? seconds : 0) : day.Simulated,
+                Remote = measured ? (day.Remote ?? 0) + (remote && IsActive ? seconds : 0) : day.Remote,
                 First = IsActive ? day.First ?? start : day.First,
                 Last = IsActive ? end : day.Last,
             };
@@ -172,6 +206,24 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
             if (snapshot is not null) await Context.Outbox.EnqueueAsync(snapshot, ct);
         }
         if (now - _saved >= SaveEvery) { Save(); _saved = now; }
+    }
+
+    // Racha de entrada simulada: warn una vez al llegar a 5 min, info al terminar con la duracion (en error_code, el unico
+    // campo libre del registro). Una racha mas corta no se reporta: un toque remoto puntual no es un jiggler.
+    private async Task TrackSimulatedStreakAsync(bool simulated, double elapsed, CancellationToken ct)
+    {
+        if (simulated)
+        {
+            _simulatedStreak += elapsed;
+            if (!_simulatedReported && _simulatedStreak >= SimulatedStreakReport.TotalSeconds)
+            {
+                _simulatedReported = true;
+                await ReportAsync("simulated_input", ct, LogEntryLevel.Warn);
+            }
+            return;
+        }
+        if (_simulatedReported) await ReportAsync("simulated_input_end", ct, LogEntryLevel.Info, $"{(long)Math.Round(_simulatedStreak)}s");
+        _simulatedStreak = 0; _simulatedReported = false;
     }
 
     /// <summary>
@@ -204,6 +256,8 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
             LastActivityAt = totals.Last,
             SampleCount = totals.Samples,
             UtcOffsetMinutes = (long)offset.TotalMinutes,
+            SimulatedSeconds = totals.Simulated is { } simulated ? (long)Math.Round(simulated) : null,
+            RemoteSeconds = totals.Remote is { } remote ? (long)Math.Round(remote) : null,
         };
     }
 }

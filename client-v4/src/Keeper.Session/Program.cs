@@ -41,7 +41,10 @@ internal static class Program
             var foreground = new WindowsForegroundSource();
             var calls = new CallDetector(foreground);
             var activityState = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AZCKeeper", "v4", "activity-state.json");
-            var activity = new ActivityTracker(new WindowsInputIdleSource(), () => calls.IsInCall, statePath: activityState);
+            // Raw Input: solo teclado/raton fisico cuenta como uso (4.0.22). Si no registra, el tracker mide como antes.
+            using var physical = new WindowsPhysicalInputSource();
+            physical.Start();
+            var activity = new ActivityTracker(new WindowsInputIdleSource(), () => calls.IsInCall, statePath: activityState, physical: physical);
             var presenceFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AZCKeeper", "v4", "presence-day.txt");
             await using var modules = new ModuleHost([calls, activity, new WindowTracker(foreground, activity), new PresenceTracker(presenceFile), screen],
                 new ModuleContext(sink, TimeProvider.System, _ => { }, stopping.Token));
