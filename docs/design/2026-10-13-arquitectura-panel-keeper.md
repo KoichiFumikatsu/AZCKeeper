@@ -37,3 +37,8 @@ Todo lo anterior más todos los poderes de plataforma que ya existen (empresas, 
 - Lectura de ventanas por persona (episodios con app, título, hora, duración; agregados por app/título) — no hay endpoint en el panel; títulos requieren la función `sitios` y una decisión de privacidad.
 - Estado laboral de la persona (contratado/retirado/…) y "actualizar desde origen" por persona.
 - Feed de "problemas reportados" unificado.
+
+## Decisiones cerradas (Koichi, 2026-10-13)
+- **Ventanas**: se muestran solo **app y sitio** (p. ej. «Word», «Gmail»), nunca el título completo, para todos los roles por ahora.
+- **Margen de 15 minutos en la hora de entrada**: llegar hasta 15 min después de la hora de entrada cuenta como **a tiempo**; más de 15 min después, **tarde**; más de 15 min antes, **temprano**. Hoy el cálculo marca «tarde» desde el primer segundo de retraso (`ActivityReports.php:176`, `late_seconds>0`): hay que cambiarlo.
+- **Problemas reportados**: la lista propuesta (equipos sin conexión en horario, entrada simulada, K3 abierto, controles fallidos, agente degradado, doble empleo y apps sospechosas sin revisar, ausencias por aprobar; fallo del cálculo solo para plataforma).
