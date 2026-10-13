@@ -26,7 +26,7 @@ export function canSeeOnboarding(access) {
 }
 
 export function allowed(access, key) {
-  if (['platform-home', 'tenants', 'plans', 'releases', 'server-health', 'sources'].includes(key)) return !!access.platform;
+  if (['platform-home', 'tenants', 'plans', 'releases', 'server-health', 'sources', 'portal-origins'].includes(key)) return !!access.platform;
   if (key === 'onboarding') return canSeeOnboarding(access);
   const need = NEEDS[key];
   if (!need || access.platform) return true;

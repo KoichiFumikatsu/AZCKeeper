@@ -156,7 +156,7 @@ function myAccessTests(Database $db): void
     check(count($fo) === 5, 'FEATURE_OF parsed');
     foreach ($fo as $x) { check(isset(\Keeper\Features::CATALOG[$x[2]]), "menu {$x[1]} function {$x[2]} exists"); }
     preg_match_all("/\['([a-z-]+)', '[^']+', '\/[^']*'/", file_get_contents(dirname(__DIR__) . '/public/partials/sidebar.php'), $s);
-    $platformKeys = ['platform-home', 'tenants', 'plans', 'releases', 'server-health', 'group', 'home'];
+    $platformKeys = ['platform-home', 'tenants', 'plans', 'releases', 'server-health', 'portal-origins', 'group', 'home'];
     foreach (array_diff($s[1], $platformKeys) as $key) { check(isset($rules[$key]), "menu item $key has a permission rule"); }
     echo 'PASS my access (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

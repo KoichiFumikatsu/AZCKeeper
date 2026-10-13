@@ -3580,6 +3580,52 @@ async function healthPage() {
   }
 }
 
+// ---- Portal: direcciones autorizadas --------------------------------------------------------------------------------
+// El Portal (app aparte) usa /portal/v1 desde el navegador: solo estas direcciones reciben CORS, exactas y sin comodines.
+async function portalOriginsPage() {
+  let origins = (await api('GET', '/admin/portal-origins', { tenant: PLATFORM_TENANT })).data;
+  const s = surface('Direcciones autorizadas');
+  s.append(el('p', 'El Portal es la aplicación web donde supervisores y gerentes ven a su gente. El navegador solo le deja leer los datos de Keeper si su dirección está en esta lista. Agrega cada dirección exacta: la del Portal y, si hace falta, la de vista previa.', 'help'));
+  const form = el('form', undefined, 'toolbar'); form.noValidate = true;
+  const input = labeled(form, 'Dirección', el('input'), 'Ejemplo: https://portal.azclegal.com — con https://, sin ruta, sin barra final y sin *. Para pruebas locales vale http://localhost:5173.');
+  input.name = 'origin'; input.autocomplete = 'off'; input.maxLength = 255; input.placeholder = 'https://portal.empresa.com';
+  const add = el('button', 'Agregar dirección', 'primary'); add.type = 'submit'; form.append(add);
+  const problem = el('p', undefined, 'error-message'); problem.hidden = true; problem.setAttribute('role', 'alert');
+  const list = el('div');
+  s.append(form, problem, list);
+  const say = text => { problem.textContent = text || ''; problem.hidden = !text; };
+  const render = () => {
+    list.replaceChildren();
+    if (!origins.length) { empty(list, 'Sin direcciones', 'Nadie puede usar el Portal desde el navegador hasta que agregues su dirección.'); return; }
+    const ul = el('ul', undefined, 'plain-list');
+    for (const o of origins) {
+      const li = el('li'); li.append(el('code', o.origin), ' ');
+      const rm = el('button', 'Quitar'); rm.type = 'button';
+      rm.addEventListener('click', async () => {
+        if (!window.confirm(`¿Quitar ${o.origin}? El Portal en esa dirección deja de poder leer datos de inmediato.`)) return;
+        rm.disabled = true;
+        try { await api('DELETE', `/admin/portal-origins/${o.id}`, { tenant: PLATFORM_TENANT }); origins = origins.filter(x => x.id !== o.id); render(); $('page-status').textContent = `${o.origin} quitada.`; }
+        catch (e) { rm.disabled = false; say(errorMessage(e)); }
+      });
+      li.append(rm); ul.append(li);
+    }
+    list.append(ul);
+  };
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault(); say('');
+    const value = input.value.trim().replace(/\/+$/, '');
+    if (!value) { say('Escribe la dirección completa, por ejemplo https://portal.empresa.com.'); return; }
+    add.disabled = true;
+    try {
+      const o = await api('POST', '/admin/portal-origins', { tenant: PLATFORM_TENANT, body: { origin: value } });
+      origins = [...origins, o].sort((a, b) => a.origin.localeCompare(b.origin)); input.value = ''; render(); $('page-status').textContent = `${o.origin} autorizada.`;
+    } catch (e) {
+      say(e.status === 422 ? 'Dirección no válida: usa https://dominio (o http://localhost), sin ruta, sin barra final y sin *.' : e.status === 409 ? 'Esa dirección ya está autorizada.' : errorMessage(e));
+    } finally { add.disabled = false; }
+  });
+  render();
+}
+
 // ---- Ajustes del panel ----------------------------------------------------------------------------------------------
 // Última revisión nocturna de retención (config/retention-cron.php), en palabras: qué se borraría o qué se borró.
 const plural = (n, one, many) => `${new Intl.NumberFormat('es-CO').format(n)} ${n === 1 ? one : many}`;
@@ -4164,7 +4210,7 @@ async function start() {
   if ($('platform-group')) $('platform-group').hidden = !session.is_platform_admin;
   // Una cuenta de empresa siempre trabaja en su empresa. Superadmin: Cuentas, Empresas y Planes son globales (empresa duena);
   // las pantallas de una empresa usan la elegida en el selector (por defecto la primera empresa cliente).
-  const globalPage = ['tenants', 'plans'].includes(page);
+  const globalPage = ['tenants', 'plans', 'portal-origins'].includes(page);
   try {
     if (session.is_platform_admin) {
       companies = sortCompanies(await allPages('/tenants', PLATFORM_TENANT));
@@ -4221,6 +4267,7 @@ async function start() {
     else if (page === 'onboarding') await onboardingPage({ tenant, content: $('page-content'), status: $('page-status') });
     else if (page === 'tenants') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await tenantsPage(); }
     else if (page === 'plans') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await plansPage(); }
+    else if (page === 'portal-origins') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await portalOriginsPage(); }
     done();
   } catch (e) {
     if (e.status === 403) { $('page-content').replaceChildren(); empty($('page-content'), 'Sin permiso', 'Tu cuenta no tiene acceso a esta sección. Pide a un administrador el permiso correspondiente.'); $('page-status').textContent = ''; }

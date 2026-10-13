@@ -19,7 +19,7 @@ $routes = [
     '/miembro.php' => 'miembro.php', '/reglas.php' => 'reglas.php', '/reportes.php' => 'reportes.php',
     '/admin/' => 'admin/index.php', '/admin/index.php' => 'admin/index.php',
     '/admin/tenants.php' => 'admin/tenants.php', '/admin/roles.php' => 'admin/roles.php',
-    '/admin/releases.php' => 'admin/releases.php',
+    '/admin/releases.php' => 'admin/releases.php', '/admin/portal.php' => 'admin/portal.php',
     '/admin/auditoria.php' => 'admin/auditoria.php',
 ];
 if ($path === '/admin') {
