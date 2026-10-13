@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Probador API Portal</title>
+<style>
+  :root{--bg:#f9fafb;--card:#fff;--line:#e5e7eb;--ink:#111827;--muted:#4b5563;--accent:#3C4082;--accent-soft:#eff0f9;--ok:#166534;--ok-bg:#dcfce7;--bad:#991b1b;--bad-bg:#fee2e2;--warn:#92400e;--warn-bg:#fef3c7}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  header{background:var(--card);border-bottom:1px solid var(--line);padding:16px 24px}
+  h1{margin:0;font-size:20px} h2{font-size:16px;margin:0 0 12px}
+  main{max-width:1200px;margin:0 auto;padding:20px 16px;display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .row{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
+  label{display:grid;gap:4px;font-size:12px;font-weight:600;color:var(--muted)}
+  input,select{font:inherit;padding:8px 10px;border:1px solid #868c96;border-radius:8px;min-width:0;background:#fff}
+  input:focus,select:focus,button:focus{outline:2px solid var(--accent);outline-offset:2px}
+  button{font:inherit;font-weight:600;padding:8px 14px;border-radius:8px;border:1px solid #868c96;background:#fff;cursor:pointer;min-height:38px}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .muted{color:var(--muted);font-size:13px}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:8px;border-top:1px solid var(--line);vertical-align:top}
+  th{font-size:12px;color:var(--muted);font-weight:600;border-top:0}
+  code{font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
+  .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+  .pill.ok{background:var(--ok-bg);color:var(--ok)} .pill.bad{background:var(--bad-bg);color:var(--bad)} .pill.skip,.pill.wait{background:var(--warn-bg);color:var(--warn)} .pill.idle{background:#f3f4f6;color:var(--muted)}
+  details{margin-top:6px} summary{cursor:pointer;color:var(--accent);font-size:12.5px}
+  pre{background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;overflow:auto;max-height:320px;font-size:12px;white-space:pre-wrap;word-break:break-word}
+  .group td{background:var(--accent-soft);font-weight:700;color:var(--accent)}
+  .warn{background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:10px 12px;font-size:13px}
+  .summary{font-weight:700}
+  @media (max-width:700px){td:nth-child(3),th:nth-child(3){display:none}}
+</style>
+</head>
+<body>
+<header><h1>Probador de la API del Portal de Keeper</h1><p class="muted">Llama a cada ruta de <code>/portal/v1</code>, marca si funciona y muestra el pedido y la respuesta exactos. El código de <code>keeper-portal-client.js</code> es el ejemplo de cómo debe llamarla el Portal.</p></header>
+<main>
+  <section class="card">
+    <h2>1. Sesión</h2>
+    <div class="row">
+      <label>Servidor <input id="server" value="https://devkeep.azclegal.com" size="32"></label>
+      <label>Correo <input id="email" type="email" autocomplete="username" size="26"></label>
+      <label>Contraseña <input id="password" type="password" autocomplete="current-password" size="18"></label>
+      <button class="primary" id="login">Iniciar sesión</button>
+      <button id="logout" disabled>Cerrar sesión</button>
+    </div>
+    <p class="muted" id="session">Sin sesión. La contraseña no se guarda: solo viaja a Keeper por HTTPS.</p>
+    <div class="warn" id="cors-hint" hidden>El navegador bloqueó la respuesta (CORS). Esta página corre en <code id="origin"></code>: un superadministrador debe agregarla en Keeper → Plataforma → Portal: direcciones autorizadas.</div>
+  </section>
+
+  <section class="card">
+    <h2>2. Datos para las pruebas</h2>
+    <div class="row">
+      <label>Desde <input id="from" type="date"></label>
+      <label>Hasta (excluida) <input id="to" type="date"></label>
+      <label>Día (línea de tiempo) <input id="day" type="date"></label>
+      <label>Persona <select id="user"><option value="">(se llena tras «Quién soy» y «Personas»)</option></select></label>
+      <label>Equipo <select id="device"><option value="">(se llena tras «Equipos»)</option></select></label>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="allow-write"> Permitir la prueba que CREA una ausencia real de 1 minuto (no se puede borrar desde el Portal)</label>
+      <label style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="allow-destructive"> Incluir pruebas que cierran la sesión (renovación reutilizada, cierre)</label>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <h2 style="margin:0">3. Pruebas</h2>
+      <div class="row"><span class="summary" id="totals"></span><button class="primary" id="run-all" disabled>Probar todas</button></div>
+    </div>
+    <table><thead><tr><th>Prueba</th><th>Pedido</th><th>Qué debe pasar</th><th>Resultado</th><th></th></tr></thead><tbody id="tests"></tbody></table>
+  </section>
+
+  <section class="card">
+    <h2>Reglas para el Portal (Lovable)</h2>
+    <ul class="muted">
+      <li>Guardar <code>access_token</code> y <code>refresh_token</code> solo en memoria (o <code>sessionStorage</code>). Nunca en <code>localStorage</code>, cookies ni en la URL.</li>
+      <li>Cada <code>refresh_token</code> sirve una vez. Si dos pedidos vencen a la vez, hacer UNA renovación y que el resto espere (ver <code>refresh()</code> en el cliente).</li>
+      <li>No filtrar en el navegador: Keeper ya devuelve solo lo que la persona puede ver. No pedir datos «de más» para esconderlos.</li>
+      <li>Ante <code>429</code>, esperar <code>Retry-After</code>. No reintentar el login en bucle.</li>
+      <li>Error de CORS = falta autorizar la dirección en Keeper. No intentar saltarlo con proxies.</li>
+      <li>Incluir <code>X-Request-ID</code> al reportar cualquier error.</li>
+    </ul>
+  </section>
+</main>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
