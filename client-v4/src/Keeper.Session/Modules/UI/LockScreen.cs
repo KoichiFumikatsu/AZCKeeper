@@ -25,8 +25,16 @@ public sealed class LockScreen : ModuleBase, IDisposable, ILockWindows
 
     public string? TakePin() => Interlocked.Exchange(ref _pin, null);
 
+    private volatile bool _lockRequested;
+    /// <summary>
+    /// Bloqueo pedido por el agente en el ultimo intercambio (<c>SessionRequest.Locked</c>). La medicion (4.0.24) usa la
+    /// orden, no si las ventanas llegaron a mostrarse: un bloqueo degradado tambien es tiempo bloqueado.
+    /// </summary>
+    public bool LockRequested => _lockRequested;
+
     public Task SetStateAsync(bool locked, bool pinAllowed, PinStatus? pinStatus = null)
     {
+        _lockRequested = locked;
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _dispatcher.BeginInvoke(() =>
         {

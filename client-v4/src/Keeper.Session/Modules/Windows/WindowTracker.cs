@@ -54,6 +54,14 @@ public sealed class WindowTracker(IForegroundSource source, ActivityTracker acti
         {
             if (interval.End <= _consumed) continue;
             _consumed = interval.End;
+            // Bloqueado (4.0.24): se cierra el episodio en curso y el tramo se omite. Un episodio con activo=0 e inactivo=0
+            // no se envia de todos modos (>= 1 s), y la ventana de bloqueo (Keeper.Session, LockApp) no es uso de ninguna app.
+            if (interval.Locked)
+            {
+                await CloseAsync(ct);
+                _start = _end = interval.End;
+                continue;
+            }
             var day = activity.Schedule.Day(interval.Start);
             if (_end != interval.Start || day != _day || interval.Category != _category || (interval.End - _start).TotalSeconds > 120)
             {

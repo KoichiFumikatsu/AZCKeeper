@@ -21,8 +21,9 @@ public sealed class WindowsInputIdleSource : IInputIdleSource
     private static extern bool GetLastInputInfo(ref LastInput info);
 }
 
-public sealed record ActivityInterval(DateTimeOffset Start, DateTimeOffset End, bool Active, TimeCategory Category);
-public sealed record ActivityTotals(double Active, double Idle);
+// Locked (4.0.24): tramo con el equipo bloqueado (Windows o Keeper). No es activo ni inactivo; WindowTracker lo omite.
+public sealed record ActivityInterval(DateTimeOffset Start, DateTimeOffset End, bool Active, TimeCategory Category, bool Locked = false);
+public sealed record ActivityTotals(double Active, double Idle, double Locked = 0);
 
 /// <summary>
 /// Acumulado del dia que acompaña al desglose por franja. Tres campos existen porque en K3
@@ -39,26 +40,32 @@ public sealed record ActivityTotals(double Active, double Idle);
 /// </summary>
 /// <para><c>Simulated</c> (4.0.22): segundos con entrada segun GetLastInputInfo pero sin teclado/raton fisico (jiggler,
 /// DWService); van en <c>Idle</c>. <c>Remote</c>: activos en sesion RDP. Ambos null = el dia no se midio con Raw Input.</para>
+/// <para><c>Locked</c> (4.0.24): segundos con el equipo bloqueado, fuera de <c>Active</c> e <c>Idle</c>. null = dia restaurado
+/// de un estado anterior que aun no tuvo un tick de 4.0.24.</para>
 public sealed record DayActivity(double Active, double Idle, double Call,
-    DateTimeOffset? First, DateTimeOffset? Last, long Samples, double? Simulated = null, double? Remote = null);
+    DateTimeOffset? First, DateTimeOffset? Last, long Samples, double? Simulated = null, double? Remote = null, double? Locked = null);
 
 // Estado persistido del dia: sin esto cada reinicio de la sesion (reinicio del equipo, cierre de sesion, update del
 // agente) volvia los contadores y la secuencia a cero, y el servidor (upsert monotonico por dia) rechazaba todas las
 // fotos siguientes de ese dia. Regresion vista 2026-09-30: una sola foto aceptada en toda la historia del equipo.
 public sealed record ActivityState(long Sequence, List<ActivityStateDay> Days, List<ActivityStateTotal> Totals);
-// Simulated/Remote opcionales: un estado escrito por 4.0.21 o anterior se restaura con ambos en null.
+// Simulated/Remote opcionales: un estado escrito por 4.0.21 o anterior se restaura con ambos en null. Locked igual para 4.0.23.
 public sealed record ActivityStateDay(DateOnly Day, double Active, double Idle, double Call, DateTimeOffset? First, DateTimeOffset? Last, long Samples,
-    double? Simulated = null, double? Remote = null);
-public sealed record ActivityStateTotal(DateOnly Day, TimeCategory Category, double Active, double Idle);
+    double? Simulated = null, double? Remote = null, double? Locked = null);
+public sealed record ActivityStateTotal(DateOnly Day, TimeCategory Category, double Active, double Idle, double Locked = 0);
 
 /// <summary>
 /// Desde 4.0.22 solo la entrada FISICA cuenta como uso (<c>physical</c>, Raw Input). GetLastInputInfo tambien se refresca
 /// con entrada inyectada: en produccion (2026-10-09) un jiggler o DWService daban 15-22 h seguidas "en uso" de noche con la
 /// pantalla de bloqueo delante. Ese tiempo ahora es inactivo y se suma aparte como simulado. Sin fuente fisica, o si Raw
 /// Input no se pudo registrar, se mide como antes.
+/// <para>4.0.24: con el equipo bloqueado (<c>locked</c>: pantalla de bloqueo de Windows o bloqueo de Keeper) el tiempo no es
+/// activo ni inactivo ni simulado: es bloqueado (decision del dueño 2026-10-09; en produccion la pantalla de Keeper estuvo
+/// 3,5 h delante contando como en uso). El estado se toma al tick, como la inactividad.</para>
 /// </summary>
 public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall = null,
-    double idleThresholdSeconds = 600, double callMaxIdleSeconds = 300, string? statePath = null, IPhysicalInputSource? physical = null) : ModuleBase
+    double idleThresholdSeconds = 600, double callMaxIdleSeconds = 300, string? statePath = null, IPhysicalInputSource? physical = null,
+    Func<bool>? locked = null) : ModuleBase
 {
     public static readonly TimeSpan SimulatedStreakReport = TimeSpan.FromMinutes(5);
     private bool _unavailableReported;
@@ -96,8 +103,8 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
             if (state is null) return;
             var cutoff = Schedule.Day(Context.Clock.GetUtcNow()).AddDays(-7);
             _sequence = Math.Max(_sequence, state.Sequence);
-            foreach (var d in state.Days.Where(d => d.Day >= cutoff)) Days[d.Day] = new(d.Active, d.Idle, d.Call, d.First, d.Last, d.Samples, d.Simulated, d.Remote);
-            foreach (var t in state.Totals.Where(t => t.Day >= cutoff)) Totals[(t.Day, t.Category)] = new(t.Active, t.Idle);
+            foreach (var d in state.Days.Where(d => d.Day >= cutoff)) Days[d.Day] = new(d.Active, d.Idle, d.Call, d.First, d.Last, d.Samples, d.Simulated, d.Remote, d.Locked);
+            foreach (var t in state.Totals.Where(t => t.Day >= cutoff)) Totals[(t.Day, t.Category)] = new(t.Active, t.Idle, t.Locked);
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or NotSupportedException) { }
     }
@@ -108,8 +115,8 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
         try
         {
             var state = new ActivityState(_sequence,
-                Days.Select(d => new ActivityStateDay(d.Key, d.Value.Active, d.Value.Idle, d.Value.Call, d.Value.First, d.Value.Last, d.Value.Samples, d.Value.Simulated, d.Value.Remote)).ToList(),
-                Totals.Select(t => new ActivityStateTotal(t.Key.Day, t.Key.Category, t.Value.Active, t.Value.Idle)).ToList());
+                Days.Select(d => new ActivityStateDay(d.Key, d.Value.Active, d.Value.Idle, d.Value.Call, d.Value.First, d.Value.Last, d.Value.Samples, d.Value.Simulated, d.Value.Remote, d.Value.Locked)).ToList(),
+                Totals.Select(t => new ActivityStateTotal(t.Key.Day, t.Key.Category, t.Value.Active, t.Value.Idle, t.Value.Locked)).ToList());
             Directory.CreateDirectory(Path.GetDirectoryName(statePath)!);
             var temp = statePath + ".tmp";
             File.WriteAllBytes(temp, JsonSerializer.SerializeToUtf8Bytes(state));
@@ -136,6 +143,14 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
             await ReportAsync("capture_gap", ct);
             return;
         }
+        if (locked?.Invoke() == true)
+        {
+            IsActive = false;
+            // Bloquear corta la racha simulada: lo que siga tras desbloquear es otra racha.
+            await TrackSimulatedStreakAsync(false, elapsed, ct);
+            await TrackAsync(start, now, ct, isLocked: true);
+            return;
+        }
         var idle = input.GetIdleTime().TotalSeconds;
         var inCallNow = inCall?.Invoke() == true;
         var reading = physical?.Read();
@@ -157,6 +172,12 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
         else IsActive = anyInput;
         var simulated = measured && anyInput && !IsActive;
         await TrackSimulatedStreakAsync(simulated, elapsed, ct);
+        await TrackAsync(start, now, ct, inCallNow, measured, simulated, remote);
+    }
+
+    private async Task TrackAsync(DateTimeOffset start, DateTimeOffset now, CancellationToken ct, bool inCallNow = false,
+        bool measured = false, bool simulated = false, bool remote = false, bool isLocked = false)
+    {
         var intervals = new List<ActivityInterval>();
         // Split at seconds so midnight and schedule boundaries cannot charge the wrong day/category.
         while (start < now)
@@ -167,12 +188,21 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
             var key = (Schedule.Day(start), category);
             var old = Totals.GetValueOrDefault(key) ?? new ActivityTotals(0, 0);
             var seconds = (end - start).TotalSeconds;
-            Totals[key] = new(old.Active + (IsActive ? seconds : 0), old.Idle + (IsActive ? 0 : seconds));
-
             var dayKey = key.Item1;
             var day = Days.GetValueOrDefault(dayKey) ?? new DayActivity(0, 0, 0, null, null, 0);
+            if (isLocked)
+            {
+                Totals[key] = old with { Locked = old.Locked + seconds };
+                Days[dayKey] = day with { Locked = (day.Locked ?? 0) + seconds };
+                intervals.Add(new(start, end, false, category, Locked: true));
+                start = end;
+                continue;
+            }
+            Totals[key] = old with { Active = old.Active + (IsActive ? seconds : 0), Idle = old.Idle + (IsActive ? 0 : seconds) };
             Days[dayKey] = day with
             {
+                // Desde 4.0.24 el dia siempre mide bloqueado (0 si no hubo); null solo en un estado restaurado sin tick nuevo.
+                Locked = day.Locked ?? 0,
                 Active = day.Active + (IsActive ? seconds : 0),
                 Idle = day.Idle + (IsActive ? 0 : seconds),
                 // Las llamadas son un subconjunto del tiempo activo, nunca un contador aparte.
@@ -258,6 +288,11 @@ public sealed class ActivityTracker(IInputIdleSource input, Func<bool>? inCall =
             UtcOffsetMinutes = (long)offset.TotalMinutes,
             SimulatedSeconds = totals.Simulated is { } simulated ? (long)Math.Round(simulated) : null,
             RemoteSeconds = totals.Remote is { } remote ? (long)Math.Round(remote) : null,
+            // Un dia restaurado de 4.0.23 sin tick nuevo no sabe cuanto estuvo bloqueado: sin los campos (desconocido).
+            LockedSeconds = totals.Locked is { } lockedSeconds ? (long)Math.Round(lockedSeconds) : null,
+            WorkHoursLockedSeconds = totals.Locked is null ? null : (long)Math.Round(work.Locked),
+            LunchLockedSeconds = totals.Locked is null ? null : (long)Math.Round(lunch.Locked),
+            AfterHoursLockedSeconds = totals.Locked is null ? null : (long)Math.Round(after.Locked),
         };
     }
 }
