@@ -114,7 +114,15 @@ function tenantArchiveTests(Database $db): void
     check(adminRequest($mine, 'PATCH', '/tenants/' . $tid, ['archived' => true, 'name' => 'x'], ['if-match' => '"' . $t['version'] . '"'])[1]['detail'] === 'archive_alone', 'archive is its own change');
     $archived = expect(adminRequest($mine, 'PATCH', '/tenants/' . $tid, ['archived' => true], ['if-match' => '"' . $t['version'] . '"']), 200, 'archive tenant');
     check($archived['archived'] === true && $archived['status'] === 'suspended', 'archived tenant is suspended');
-    $ids = fn ($q) => array_column(expect(adminRequest($platform, 'GET', '/tenants' . $q), 200, 'list tenants')['data'], 'id');
+    $ids = function ($q) use ($platform) {
+        $ids=[]; $cursor=null;
+        do {
+            $suffix=$cursor?($q===''?'?':'&').'cursor='.urlencode($cursor):'';
+            $page=expect(adminRequest($platform,'GET','/tenants'.$q.$suffix),200,'list tenants');
+            array_push($ids,...array_column($page['data'],'id')); $cursor=$page['next_cursor'];
+        } while ($cursor!==null);
+        return $ids;
+    };
     check(!in_array($tid, $ids(''), true) && in_array($tid, $ids('?include_archived=true'), true), 'archived hidden unless asked');
     check(adminRequest($mine, 'GET', '/users')[0] === 200, 'archived stays readable for superadmin');
     $w = adminRequest($mine, 'POST', '/organization', ['kind' => 'site', 'name' => 'Nueva', 'parent_id' => null, 'active' => true]);

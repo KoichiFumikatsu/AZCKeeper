@@ -64,6 +64,15 @@ function lockedSystemTests(Database $db): void
     $people = expect(adminRequest($company, 'GET', "/reports/people?from=$older&to=$to"), 200, 'people report with locked');
     $mine = array_values(array_filter($people['data'], fn ($p) => $p['user_id'] === $uid))[0] ?? null;
     check(($mine['totals']['locked_seconds'] ?? null) === 5400, 'people report exposes locked_seconds');
+    check($row['work_hours_active_seconds']===null && $activity['totals']['work_hours_active_seconds']===null,'unmeasured time bands stay null');
+    $db->run('UPDATE day_summary SET work_hours_active_seconds=6000,lunch_active_seconds=600,after_hours_active_seconds=600,work_hours_idle_seconds=12000,lunch_idle_seconds=1200,after_hours_idle_seconds=1200 WHERE tenant_id=? AND user_id=? AND day=?',[$tenant,$u['id'],$day]);
+    $split=expect(adminRequest($company,'GET',"/users/$uid/activity?from=$day&to=$to"),200,'person measured time bands');
+    check($split['totals']['work_hours_active_seconds']===6000 && $split['totals']['lunch_active_seconds']===600 && $split['totals']['after_hours_active_seconds']===600,'time bands total exposed');
+    check($split['data'][0]['work_hours_active_seconds']===6000 && $split['data'][0]['first_activity']!==null && $split['data'][0]['last_activity']!==null,'daily CSV fields exposed');
+    $ranking=expect(adminRequest($company,'GET',"/reports/people?from=$day&to=$to&user_id=$uid"),200,'ranking supports person filter');
+    check($ranking['data'][0]['totals']['days_with_activity']===1 && $ranking['data'][0]['totals']['work_hours_active_seconds']===6000,'ranking measured days and time bands');
+    $dashboard=expect(adminRequest($company,'GET',"/dashboard?from=$day&to=$to&user_id=$uid"),200,'dashboard measured activity');
+    check($dashboard['active_seconds']===7200 && $dashboard['weekly_output'][0]['active_seconds']===7200 && $dashboard['total_members']===1,'dashboard aggregates multiple devices once per person');
     $productivity = expect(adminRequest($company, 'GET', "/reports/productivity?from=$older&to=$to&user_id=$uid"), 200, 'productivity with locked');
     $series = array_column($productivity['series'], 'locked_seconds', 'day');
     check(($series[$day] ?? null) === 5400 && array_key_exists($older, $series) && $series[$older] === null, 'productivity series exposes locked_seconds ' . json_encode($series));

@@ -1,5 +1,5 @@
 {
-  "source_sha256": "93702dad04fcbbd2e2c5ad7ecc748f1029d8f9ef32d4a16fed96a5b90323d1c1",
+  "source_sha256": "8e099cecc833ba9e400f147db7f9580b78476dc4bfb79037f3e048ddf1973630",
   "paths": {
     "/admin/tenants/{id}/unlock-pin": {
       "get": {
@@ -3015,6 +3015,138 @@
         },
         "x-permission": "usuarios.crear",
         "x-max-body-bytes": 65536
+      }
+    },
+    "/dashboard": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "getAdminDashboard",
+        "summary": "KPIs, gráficas y roster preview",
+        "description": "KPIs, gráficas y roster preview",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [
+          "Dashboard"
+        ],
+        "responses": {
+          "200": {
+            "description": "KPIs, gráficas y roster preview",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dashboard"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Company"
+          },
+          {
+            "$ref": "#/components/parameters/Country"
+          },
+          {
+            "$ref": "#/components/parameters/City"
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "area_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "x-permission": "reportes.ver"
       }
     },
     "/me/access": {
@@ -7351,6 +7483,85 @@
         "x-max-body-bytes": 65536
       }
     },
+    "/reports/dual-job-alerts/{id}": {
+      "patch": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "reviewDualJobAlert",
+        "summary": "Marcar alerta revisada",
+        "description": "Marca revisada una alerta dentro del alcance, con auditoria. Repetir la misma marca es idempotente.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [
+          "DualJobAlertList"
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "204": {
+            "description": "Alerta revisada"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "x-permission": "cumplimiento.editar",
+        "x-max-body-bytes": 1024,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reviewed"
+                ],
+                "properties": {
+                  "reviewed": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/reports/dual-job-alerts": {
       "get": {
         "tags": [
@@ -7465,6 +7676,29 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "reviewed",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "severity",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high"
+              ]
             }
           }
         ],
@@ -7777,6 +8011,14 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 1000000
+            }
+          },
+          {
+            "name": "site_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -15193,6 +15435,15 @@
         },
         "parameters": [
           {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
             "$ref": "#/components/parameters/Tenant"
           },
           {
@@ -20831,6 +21082,105 @@
             }
           ],
           "description": "Tiempo con el equipo bloqueado (Windows o Keeper); no cuenta como en uso ni como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.24)."
+        },
+        "work_hours_active_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "work_hours_idle_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lunch_active_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lunch_idle_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "after_hours_active_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "after_hours_idle_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "work_hours_locked_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lunch_locked_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "after_hours_locked_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -20993,6 +21343,121 @@
                 }
               ],
               "description": "Tiempo con el equipo bloqueado (Windows o Keeper); no cuenta como en uso ni como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.24)."
+            },
+            "work_hours_active_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "work_hours_idle_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lunch_active_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lunch_idle_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "after_hours_active_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "after_hours_idle_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "work_hours_locked_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lunch_locked_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "after_hours_locked_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "constancy_pct": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "days_with_activity": {
+              "type": "integer",
+              "minimum": 0
             }
           }
         }
@@ -22878,10 +23343,68 @@
                     "type": "null"
                   }
                 ]
+              },
+              "connection_status": {
+                "type": "string",
+                "enum": [
+                  "online",
+                  "away",
+                  "offline"
+                ]
+              },
+              "devices": {
+                "type": "string"
+              },
+              "last_seen_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "active_seconds": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "focus_score": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             }
           },
           "maxItems": 20
+        },
+        "away_members": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "offline_members": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "idle_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "from": {
+          "type": "string",
+          "format": "date"
+        },
+        "to": {
+          "type": "string",
+          "format": "date"
         }
       },
       "description": "Roster preview 20; online=last_seen<=300s, no prueba de presencia humana."
@@ -23417,6 +23940,25 @@
         "version": {
           "type": "integer",
           "minimum": 1
+        },
+        "release_ring": {
+          "type": "string",
+          "enum": [
+            "stable",
+            "pruebas",
+            "pausado"
+          ]
+        },
+        "release_pause_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -23696,8 +24238,28 @@
             "revoked",
             "decommissioned"
           ]
+        },
+        "release_ring": {
+          "type": "string",
+          "enum": [
+            "stable",
+            "pruebas",
+            "pausado"
+          ]
+        },
+        "release_pause_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
-      }
+      },
+      "description": "Solo plataforma puede cambiar release_ring. Pausado exige release_pause_reason no vacio; al reanudar se borra el motivo. Se exige If-Match y se audita cada equipo."
     },
     "DeviceSecurityReport": {
       "type": "object",
@@ -28103,6 +28665,121 @@
                 }
               ],
               "description": "Tiempo con el equipo bloqueado (Windows o Keeper); no cuenta como en uso ni como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.24)."
+            },
+            "work_hours_active_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "work_hours_idle_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lunch_active_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lunch_idle_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "after_hours_active_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "after_hours_idle_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "work_hours_locked_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lunch_locked_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "after_hours_locked_seconds": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "constancy_pct": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "days_with_activity": {
+              "type": "integer",
+              "minimum": 0
             }
           }
         }
@@ -29060,7 +29737,10 @@
         },
         "ring": {
           "type": "string",
-          "maxLength": 80
+          "enum": [
+            "stable",
+            "pruebas"
+          ]
         },
         "percentage": {
           "type": "integer",

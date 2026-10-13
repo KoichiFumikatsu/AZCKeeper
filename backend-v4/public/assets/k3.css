@@ -157,3 +157,9 @@ tr.group-row th{background:#d6d6d6;color:var(--ink);white-space:normal;padding:4
 .settings-group{margin:0 0 20px}.settings-group>.help{margin:0 0 10px}.settings-review{margin:0 0 16px}
 input[aria-invalid=true],select[aria-invalid=true]{border-color:var(--error);box-shadow:0 0 0 1px var(--error)}
 dialog>form>h2{margin-bottom:14px}
+
+.fleet-versions label{margin-top:12px;max-width:700px}
+.fleet-versions meter{display:block;width:100%;height:24px;margin-top:4px;accent-color:var(--accent)}
+.fleet-versions meter::-webkit-meter-bar{background:var(--p-100);border:0;border-radius:8px}
+.fleet-versions meter::-webkit-meter-optimum-value{background:var(--accent)}
+.fleet-versions meter::-moz-meter-bar{background:var(--accent)}

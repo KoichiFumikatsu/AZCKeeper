@@ -15,6 +15,7 @@ final class AdminApi
         $permission=$r->operation['x-permission'];
         // Permisos de la propia cuenta (menu del panel): cualquier sesion valida de la empresa los puede leer.
         if ($r->operation['operationId']==='getMyAccess') { return; }
+        if ($r->operation['operationId']==='patchDevice' && (property_exists($r->body,'release_ring') || property_exists($r->body,'release_pause_reason')) && !$c['platform']) { throw new ApiError(403,'permission_denied'); }
         if ($r->operation['operationId']==='createDeviceCommand') {
             $permission=match($r->body->type) { 'lock'=>'equipos.bloquear','unlock'=>'equipos.desbloquear','restart'=>'equipos.reiniciar','shutdown'=>'equipos.apagar','wipe'=>'equipos.borrar','refresh_policy'=>'reglas.aplicar','rename_computer'=>'equipos.editar',default=>throw new ApiError(422,'validation_failed') };
         }
@@ -133,9 +134,9 @@ final class AdminApi
             'getTenantWindowsSecurity','setTenantWindowsSecurity'=>(new WindowsSecurity($this->db,$this->c,$this->r))->admin($this->access),
             'getTenantHardening','setTenantHardening','revealTenantHardening','getDeviceHardening','createHardeningCommand'=>(new Hardening($this->db,$this->c,$this->r))->admin($this->access),
             'listHolidays','createHoliday','getHoliday','putHoliday','deleteHoliday','listHolidayCalendars','createHolidayCalendar','getHolidayCalendar','putHolidayCalendar','assignHolidayCalendar','listHolidaySocieties','createHolidaySociety','getHolidaySociety','putHolidaySociety','deleteHolidaySociety',
-            'listSuspiciousApps','createSuspiciousApp','getSuspiciousApp','putSuspiciousApp','deleteSuspiciousApp','listDualJobAlerts','listSuspiciousDetections','listComplianceSignals',
+            'listSuspiciousApps','createSuspiciousApp','getSuspiciousApp','putSuspiciousApp','deleteSuspiciousApp','reviewDualJobAlert','listDualJobAlerts','listSuspiciousDetections','listComplianceSignals',
             'listInstallCoverage','putInstallCoverage','listClientLogs','getServerHealth','getPanelSettings','putPanelSettings'=>(new OperationsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
-            'getAppsReport','getPresenceReport','getUserActivity','getUserPolicies','getPeopleReport'=>(new ActivityReports($this->db,$this->c,$this->access))->dispatch($op,$id),
+            'getAdminDashboard','getAppsReport','getPresenceReport','getUserActivity','getUserPolicies','getPeopleReport'=>(new ActivityReports($this->db,$this->c,$this->access))->dispatch($op,$id),
             'issueMigrationAuthorization','validateMigrationAuthorization','getEscrowKey','persistDeviceEscrow','verifyDeviceEscrow','recoverDeviceEscrow','getDeviceMigration','setDeviceMigration'=>(new MigrationApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listTenants','createTenant','getTenant','patchTenant','setRbacGate'=>$this->tenants($op,$b), 'uploadTenantLogo'=>$this->tenantLogo($b),
             'listOrganization','createOrgUnit','getOrgUnit','patchOrgUnit','deleteOrgUnit'=>$this->organization($op,$id,$b),
@@ -589,7 +590,7 @@ final class AdminApi
     private function deviceDto(array $r): array
     {
         $out=[]; foreach (['id','tenant_id','user_id'] as $k) { $out[$k]=Util::id($r[$k]); }
-        foreach (['hostname','asset_code','status','agent_version','os_edition','cpu','encryption_state'] as $k) { $out[$k]=$r[$k]; }
+        foreach (['hostname','asset_code','status','agent_version','os_edition','cpu','encryption_state','release_ring','release_pause_reason'] as $k) { $out[$k]=$r[$k]; }
         // Smart App Control declarado por el agente (4.0.19+) en su inventario; null si nunca lo reporto.
         $specs=$r['specs']===null?null:json_decode($r['specs'],true); $out['smart_app_control']=is_array($specs)&&in_array($specs['smart_app_control']??null,['off','on','evaluation','unknown'],true)?$specs['smart_app_control']:null;
         // K3 residual segun el inventario del agente: {running,autostart,installed} con bool o null (desconocido); null si nunca lo reporto.
@@ -656,6 +657,12 @@ final class AdminApi
             $this->update('devices',$id,['user_id'=>$u['id']]); $this->revokeDevice($id); $this->dirty([$id]);
         } else {
             if (isset($b->status) && $b->status==='active' && $d['status']!=='active') { throw new ApiError(409,'invalid_transition'); }
+            if (property_exists($b,'release_pause_reason') && !isset($b->release_ring)) { throw new ApiError(422,'validation_failed'); }
+            if (isset($b->release_ring)) {
+                $reason=trim($b->release_pause_reason??'');
+                if ($b->release_ring==='pausado' && $reason==='') { throw new ApiError(422,'validation_failed'); }
+                $b->release_pause_reason=$b->release_ring==='pausado'?$reason:null;
+            }
             $this->update('devices',$id,get_object_vars($b)); if (isset($b->status) && $b->status!=='active') { $this->revokeDevice($id); }
         }
         $this->audit('device',$id,array_keys(get_object_vars($b))); return $this->result($this->deviceDto($this->row('devices',$id)));

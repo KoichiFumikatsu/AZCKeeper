@@ -4,7 +4,7 @@ import { enhance } from './tablekit.js';
 import { applyNavAccess, loadAccess, allowed, canSeeOnboarding } from './nav-access.js';
 import { scopeSummary, sameAccess, scopeConditions, scopeChips, SCOPE_RULE, TEAM_LABEL } from './access-scope.js';
 import { wireDialog, confirmBox, noticeBox, feedback } from './dialogs.js';
-import { coordinator } from './coordinator.js';
+import { coordinator, connectionLabel, connectionState } from './coordinator.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings, withReauth, canceled } from './hardening-settings.js';
 import { onboardingPage, returnBand, AUDIT_LABELS as ONBOARDING_AUDIT } from './onboarding.js';
 import { canConfigureUnlockPin, mountUnlockPin } from './unlock-pin.js';
@@ -1469,6 +1469,13 @@ async function patient(fn) {
 }
 async function people() {
   const [users, org, schedules, domains, sources, calendarPage] = await Promise.all([allPages('/users'), allPages('/organization'), optional(allPages('/schedules')), optional(api('GET', '/data-domains')), optional(api('GET', '/data-sources')), optional(api('GET', '/schedules/holiday-calendars?limit=100'))]);
+  const day = zoneToday(), range = `from=${day}&to=${shiftDay(day, 1)}`;
+  const [activity, presence, devices] = await Promise.allSettled([api('GET', `/reports/people?${range}`), api('GET', `/reports/presence?${range}`), allPages(`/tenants/${tenant}/devices`)]);
+  const metricsByPerson = new Map((activity.value?.data || []).map(r => [r.user_id, r.totals]));
+  const firstByPerson = new Map((presence.value?.data || []).map(r => [r.user_id, r.first_activity]));
+  const state = u => devices.status === 'fulfilled' ? connectionLabel(connectionState(devices.value.filter(d => d.user_id === u.id))) : 'Sin dato';
+  const hours = v => typeof v === 'number' ? `${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1 }).format(v / 3600)} h` : 'Sin dato';
+  const score = v => typeof v === 'number' ? `${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1 }).format(v)} %` : 'Sin dato';
   let list = users; const n = names(org);
   const personUrl = u => `/miembro.php?id=${encodeURIComponent(u.id)}&tab=datos`;
   const calendars = (calendarPage?.data || []).filter(c => c.active);
@@ -1498,10 +1505,12 @@ async function people() {
   const selected = new Set();
   const render = () => {
     $('page-content').replaceChildren();
-    kpis([['Personas', String(list.length)], ['Activas', String(list.filter(u => u.status === 'active').length)],
-      ['Con cédula', String(list.filter(u => u.document).length), 'La usa el alta de equipos para saber de quién es el PC'],
-      ['Con cuenta del panel', String(list.filter(u => u.panel_login_enabled).length)]]);
-    const s = surface('Personas de la empresa');
+    kpis([['Personas', String(list.length)], ...['En línea', 'Ausente', 'Desconectado'].map(label => [label, devices.status === 'fulfilled' ? String(list.filter(u => u.status === 'active' && state(u) === label).length) : 'Sin dato'])]);
+    const s = surface('Tu personal activo');
+    s.append(el('p', `Actividad de hoy (${day}) · ${tenantZone}. Conexión: en línea hasta 5 minutos, ausente hasta 15; después, desconectado.`, 'help'));
+    for (const [result, name] of [[activity, 'Tiempo y productividad'], [presence, 'Primer ingreso'], [devices, 'Conexión']]) {
+      if (result.status === 'rejected') s.append(el('p', `${name}: ${errorMessage(result.reason)}`, 'error-message'));
+    }
     renderExclusions();
     // Origen y plan por defecto (F7): el plan solo se nombra si la cuenta puede verlo; nunca se infiere «sin plan» de un 403.
     s.append(el('p', `Origen de las personas: ${owner ? `${owner} (se corrigen allá)` : 'Keeper (se crean y editan aquí)'}${avail ? ` · Plan por defecto del cliente: ${planName(avail.default_plan_id) || 'sin plan'}` : ''}.`, 'help people-origin'));
@@ -1540,14 +1549,18 @@ async function people() {
       edit.addEventListener('click', () => batchEditor(list.filter(u => selected.has(u.id))).catch(fail));
     }
     table(s, 'Personas', [
-      ['Nombre', u => { const a = el('a', u.display_name); a.href = personUrl(u); const d = el('div'); d.append(a); if (u.email) d.append(el('small', u.email)); return d; }],
+      ['Nombre', u => { const a = el('a', u.display_name); a.href = `/miembro.php?id=${encodeURIComponent(u.id)}&tab=actividad`; const d = el('div'); d.append(a); if (u.email) d.append(el('small', u.email)); return d; }],
+      ['Conexión', u => badge(state(u), state(u) === 'En línea' ? 'good' : '')],
+      ['Primer ingreso hoy', u => firstByPerson.get(u.id) ? new Intl.DateTimeFormat('es-CO', { timeZone: tenantZone, timeStyle: 'short' }).format(new Date(firstByPerson.get(u.id))) : 'Sin registro'],
+      ['Tiempo de hoy', u => hours(metricsByPerson.get(u.id)?.active_seconds)],
+      ['Productividad', u => score(metricsByPerson.get(u.id)?.productivity_percent)], ['Focus /100', u => score(metricsByPerson.get(u.id)?.focus_score).replace(' %', '')],
       ['Cédula', u => u.document || '—'], ['Empresa', u => n.get(u.company_id) || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'],
       ['Acceso al panel', u => u.access ? scopeSummary(u.access.role_name, u.access.scope, n) : 'Sin acceso al panel'],
       ['Estado', u => { const d = el('div'); d.append(badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : '')); if (u.monitoring === 'excluded') d.append(' ', badge('No se monitorea', 'info')); return d; }],
       ...(avail ? [['Plan', u => ownPlan(u)?.name || defaultLabel]] : []),
       ['Acciones', u => { if (u.managed_by) return el('small', `Gestionada por ${u.managed_by}`); const b = el('a', 'Editar', 'link-button'); b.href = personUrl(u); return b; }]],
-      list, { filters: [['Empresa', u => n.get(u.company_id) || 'Sin empresa'], ['País', u => countryName(siteCountry(u))], ['Ciudad', u => org.find(o => o.id === u.site_id)?.city || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']],
-        search: u => [u.display_name, u.email, u.document], selection });
+      list, { filters: [['Conexión', state], ['Empresa', u => n.get(u.company_id) || 'Sin empresa'], ['País', u => countryName(siteCountry(u))], ['Ciudad', u => org.find(o => o.id === u.site_id)?.city || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']],
+        search: u => [u.display_name, u.email, u.document, n.get(u.position_id), n.get(u.company_id)], selection });
   };
   // Cargos que no se monitorean (directivos y dueños): sus equipos nunca se aprueban solos en el alta.
   let excluded = (await optional(api('GET', '/monitoring-exclusions')))?.position_ids || null;
@@ -2062,7 +2075,7 @@ async function personPage() {
     empty($('page-content'), 'Persona no encontrada', 'No existe en este cliente o está fuera de tu alcance. Vuelve a Personas y búscala allí.'); return;
   }
   const hash = PERSON_HASH[location.hash.slice(1)];
-  const tab = PERSON_TABS.some(([k]) => k === params.get('tab')) ? params.get('tab') : hash?.[0] || 'datos';
+  const tab = PERSON_TABS.some(([k]) => k === params.get('tab')) ? params.get('tab') : hash?.[0] || (ctx.has('reportes.ver') ? 'actividad' : 'datos');
   personProfile(ctx, u, { tab, subtab: hash?.[1] || null });
 }
 
@@ -3400,6 +3413,7 @@ async function plansPage() {
 // Todas las acciones auditables (operaciones del contrato y eventos automaticos), en palabras. auditAction() tiene
 // un respaldo que traduce verbo + objeto, para que una accion nueva nunca salga en ingles tecnico.
 const AUDIT_ACTIONS = {
+  reviewDualJobAlert: 'Marcar alerta revisada',
   setTenantUnlockPin: 'Cambió el PIN de desbloqueo local',
   revealTenantUnlockPin: 'Consultó el PIN de desbloqueo local',
   'unlock_pin.changed': 'Cambió el PIN de desbloqueo local',

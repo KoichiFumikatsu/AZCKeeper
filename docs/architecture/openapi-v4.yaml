@@ -2015,13 +2015,39 @@ paths:
           $ref: '#/components/responses/Unavailable'
       parameters:
       - $ref: '#/components/parameters/Tenant'
-      - $ref: '#/components/parameters/From'
-      - $ref: '#/components/parameters/To'
-      - $ref: '#/components/parameters/Area'
-      - $ref: '#/components/parameters/Site'
       - $ref: '#/components/parameters/Company'
       - $ref: '#/components/parameters/Country'
       - $ref: '#/components/parameters/City'
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+      - name: area_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: site_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: user_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
       x-permission: reportes.ver
   /me/access:
     get:
@@ -5046,16 +5072,66 @@ paths:
               $ref: '#/components/schemas/SuspiciousAppInput'
       x-permission: cumplimiento.editar
       x-max-body-bytes: 65536
+  /reports/dual-job-alerts/{id}:
+    patch:
+      tags:
+      - admin
+      operationId: reviewDualJobAlert
+      summary: Marcar alerta revisada
+      description: Marca revisada una alerta dentro del alcance, con auditoria. Repetir la misma marca es idempotente.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
+      x-resources:
+      - DualJobAlertList
+      responses:
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '204':
+          description: Alerta revisada
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/Tenant'
+      x-permission: cumplimiento.editar
+      x-max-body-bytes: 1024
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - reviewed
+              properties:
+                reviewed:
+                  type: boolean
+                  const: true
   /reports/dual-job-alerts:
     get:
       tags:
       - admin
       operationId: listDualJobAlerts
       summary: listDualJobAlerts
-      description: 'Señales para revisión humana, no conclusiones de doble empleo. Tenant y alcance del usuario
-        obligatorios; filtro ajeno devuelve 404. from incluido, to excluido, máximo 366 días; por defecto últimos
-        30 días UTC. Catálogo: patrones literales sin comodines, comparación sin distinguir mayúsculas sobre proceso
-        o título. Paginación offset, sin snapshot.'
+      description: 'Señales para revisión humana, no conclusiones de doble empleo. Tenant y alcance del usuario obligatorios;
+        filtro ajeno devuelve 404. from incluido, to excluido, máximo 366 días; por defecto últimos 30 días UTC. Catálogo:
+        patrones literales sin comodines, comparación sin distinguir mayúsculas sobre proceso o título. Paginación
+        offset, sin snapshot.'
       security:
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
@@ -5124,6 +5200,21 @@ paths:
         schema:
           type: string
           format: uuid
+      - name: reviewed
+        in: query
+        schema:
+          type: string
+          enum:
+          - '0'
+          - '1'
+      - name: severity
+        in: query
+        schema:
+          type: string
+          enum:
+          - low
+          - medium
+          - high
       x-permission: cumplimiento.ver
   /reports/suspicious-apps:
     get:
@@ -5327,6 +5418,11 @@ paths:
           type: integer
           minimum: 0
           maximum: 1000000
+      - name: site_id
+        in: query
+        schema:
+          type: string
+          format: uuid
       x-permission: cobertura.ver
   /audit/client-logs:
     get:
@@ -10414,6 +10510,12 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
       parameters:
+      - name: user_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
       - $ref: '#/components/parameters/Tenant'
       - $ref: '#/components/parameters/Company'
       - $ref: '#/components/parameters/Country'
@@ -15472,17 +15574,69 @@ components:
               - type: integer
                 minimum: 0
               - type: 'null'
-              description: >-
-                Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta
+              description: Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta
                 como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22).
             locked_seconds:
               anyOf:
               - type: integer
                 minimum: 0
               - type: 'null'
-              description: >-
-                Tiempo con el equipo bloqueado (Windows o Keeper); no cuenta como en uso ni como inactivo.
+              description: Tiempo con el equipo bloqueado (Windows o Keeper); no cuenta como en uso ni como inactivo.
                 null = ningún equipo de la persona lo midió (agente anterior a 4.0.24).
+            work_hours_active_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            work_hours_idle_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            lunch_active_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            lunch_idle_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            after_hours_active_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            after_hours_idle_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            work_hours_locked_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            lunch_locked_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            after_hours_locked_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            constancy_pct:
+              anyOf:
+              - type: number
+                minimum: 0
+                maximum: 100
+              - type: 'null'
+            days_with_activity:
+              type: integer
+              minimum: 0
     EnrollmentRequestInput:
       type: object
       additionalProperties: false
@@ -17870,13 +18024,25 @@ components:
             - unknown
           - type: 'null'
         legacy_k3:
-          description: Keeper 3 (K3) en el equipo según el último inventario del agente con detector de K3; null si no lo ha reportado.
+          description: Keeper 3 (K3) en el equipo según el último inventario del agente con detector de K3; null si
+            no lo ha reportado.
           anyOf:
           - $ref: '#/components/schemas/LegacyK3Status'
           - type: 'null'
         version:
           type: integer
           minimum: 1
+        release_ring:
+          type: string
+          enum:
+          - stable
+          - pruebas
+          - pausado
+        release_pause_reason:
+          anyOf:
+          - type: string
+            maxLength: 500
+          - type: 'null'
     LegacyK3Status:
       type: object
       additionalProperties: false
@@ -17919,6 +18085,19 @@ components:
           - active
           - revoked
           - decommissioned
+        release_ring:
+          type: string
+          enum:
+          - stable
+          - pruebas
+          - pausado
+        release_pause_reason:
+          anyOf:
+          - type: string
+            maxLength: 500
+          - type: 'null'
+      description: Solo plataforma puede cambiar release_ring. Pausado exige release_pause_reason no vacio; al reanudar
+        se borra el motivo. Se exige If-Match y se audita cada equipo.
     DeviceAssignment:
       type: object
       additionalProperties: false
@@ -18990,7 +19169,9 @@ components:
           format: uuid
         ring:
           type: string
-          maxLength: 80
+          enum:
+          - stable
+          - pruebas
         percentage:
           type: integer
           minimum: 0
@@ -19239,7 +19420,7 @@ components:
         active_seconds:
           type: integer
           minimum: 0
-        focus_score:
+        focus_score: &dashboardFocus
           anyOf:
           - type: number
             minimum: 0
@@ -19297,7 +19478,39 @@ components:
                   minimum: 0
                   maximum: 100
                 - type: 'null'
+              connection_status:
+                type: string
+                enum:
+                - online
+                - away
+                - offline
+              devices:
+                type: string
+              last_seen_at:
+                anyOf:
+                - type: string
+                  format: date-time
+                - type: 'null'
+              active_seconds:
+                type: integer
+                minimum: 0
+              focus_score: *dashboardFocus
           maxItems: 20
+        away_members:
+          type: integer
+          minimum: 0
+        offline_members:
+          type: integer
+          minimum: 0
+        idle_seconds:
+          type: integer
+          minimum: 0
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
       description: Roster preview 20; online=last_seen<=300s, no prueba de presencia humana.
     TeamMember:
       type: object
@@ -20871,17 +21084,60 @@ components:
           - type: integer
             minimum: 0
           - type: 'null'
-          description: >-
-            Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta
-            como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22).
+          description: Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta como
+            inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22).
         locked_seconds:
           anyOf:
           - type: integer
             minimum: 0
           - type: 'null'
-          description: >-
-            Tiempo con el equipo bloqueado (Windows o Keeper); no cuenta como en uso ni como inactivo.
-            null = ningún equipo de la persona lo midió (agente anterior a 4.0.24).
+          description: Tiempo con el equipo bloqueado (Windows o Keeper); no cuenta como en uso ni como inactivo. null
+            = ningún equipo de la persona lo midió (agente anterior a 4.0.24).
+        work_hours_active_seconds:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        work_hours_idle_seconds:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        lunch_active_seconds:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        lunch_idle_seconds:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        after_hours_active_seconds:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        after_hours_idle_seconds:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        work_hours_locked_seconds:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        lunch_locked_seconds:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        after_hours_locked_seconds:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
     ActivityReport:
       type: object
       additionalProperties: false
@@ -20982,17 +21238,69 @@ components:
               - type: integer
                 minimum: 0
               - type: 'null'
-              description: >-
-                Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta
+              description: Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta
                 como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22).
             locked_seconds:
               anyOf:
               - type: integer
                 minimum: 0
               - type: 'null'
-              description: >-
-                Tiempo con el equipo bloqueado (Windows o Keeper); no cuenta como en uso ni como inactivo.
+              description: Tiempo con el equipo bloqueado (Windows o Keeper); no cuenta como en uso ni como inactivo.
                 null = ningún equipo de la persona lo midió (agente anterior a 4.0.24).
+            work_hours_active_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            work_hours_idle_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            lunch_active_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            lunch_idle_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            after_hours_active_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            after_hours_idle_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            work_hours_locked_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            lunch_locked_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            after_hours_locked_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            constancy_pct:
+              anyOf:
+              - type: number
+                minimum: 0
+                maximum: 100
+              - type: 'null'
+            days_with_activity:
+              type: integer
+              minimum: 0
     PresenceRow:
       type: object
       additionalProperties: false

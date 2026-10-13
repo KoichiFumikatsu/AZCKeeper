@@ -198,6 +198,7 @@ function adminTests(Database $db): void
     check($delivered['id']===$release['id'],'delivery verifies canonical signed release');
     $synced=expect(request('POST','/client/sync',['protocol_version'=>1,'sequence'=>1,'policy_version'=>null,'release_id'=>null],$releaseAgentKey,$releaseAgent['access_token'],Util::uuid()),200,'normalized release delivered by sync');
     check($synced['release']['id']===$release['id'],'sync verifies canonical signed release');
+    k3UpdateTests($db,$platformTenant,$admin,$releaseAgent,$releaseAgentKey,$release);
     // Ficha del equipo: ultimo SecurityReport por observed_at (no por orden de llegada), alcance por empresa.
     $secPath='/devices/'.$releaseAgent['device_id'].'/security';
     expect(adminRequest($admin,'GET',$secPath),404,'no security report yet');

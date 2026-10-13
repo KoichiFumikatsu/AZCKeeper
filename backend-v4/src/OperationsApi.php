@@ -27,6 +27,12 @@ final class OperationsApi
             return AdminApi::response(['data'=>$rows,'next_offset'=>null]);
         }
         if (in_array($op,['listDualJobAlerts','listSuspiciousDetections'],true)) { return $this->signals($op); }
+        if ($op==='reviewDualJobAlert') {
+            $alert=$this->row('dual_job_alerts',$id); $this->access->user($alert['user_id']);
+            $this->db->run('UPDATE dual_job_alerts SET reviewed=TRUE WHERE tenant_id=? AND id=?',[$this->tenant,$id]);
+            $this->audit('dual_job_alert',$id,$b);
+            return AdminApi::response(null,204);
+        }
         if (in_array($op,['listInstallCoverage','putInstallCoverage'],true)) { return $this->coverage($id,$b); }
         if ($op==='listClientLogs') { return $this->logs(); }
         $this->access->requireFull();
@@ -117,6 +123,8 @@ final class OperationsApi
         if ($from>=$to || (new \DateTimeImmutable($from))->diff(new \DateTimeImmutable($to))->days>366) { throw new ApiError(422,'invalid_range'); }
         if (isset($_GET['user_id'])) { $user=Util::bin($_GET['user_id']); $this->access->user($user); $scope.=' AND u.id=?'; $args[]=$user; }
         $table=$op==='listDualJobAlerts'?'dual_job_alerts':'suspicious_app_detections';
+        if ($op==='listDualJobAlerts' && isset($_GET['reviewed'])) { $scope.=' AND s.reviewed=?'; $args[]=(int)$_GET['reviewed']; }
+        if ($op==='listDualJobAlerts' && isset($_GET['severity'])) { $scope.=' AND s.severity=?'; $args[]=$_GET['severity']; }
         return $this->page("SELECT s.*,u.display_name FROM $table s JOIN users u ON u.tenant_id=s.tenant_id AND u.id=s.user_id JOIN retention_settings r ON r.tenant_id=s.tenant_id WHERE s.tenant_id=? AND s.day>=? AND s.day<? AND s.day>=DATE_SUB(UTC_DATE(),INTERVAL r.aggregate_months MONTH) AND $scope ORDER BY s.day DESC,s.id",[$this->tenant,$from,$to,...$args],static function($r) use ($op) {
             $out=['id'=>Util::id($r['id']),'user_id'=>Util::id($r['user_id']),'display_name'=>$r['display_name'],'day'=>$r['day']];
             if ($op==='listDualJobAlerts') { return $out+['alert_type'=>$r['alert_type'],'severity'=>$r['severity'],'evidence'=>$r['evidence']??'{}','reviewed'=>(bool)$r['reviewed'],'notes'=>$r['notes']]; }
@@ -132,6 +140,11 @@ final class OperationsApi
         }
         [$scope,$args]=$this->access->usersSql('u');
         if ($id) { $scope.=' AND u.id=?'; $args[]=$id; }
+        if (isset($_GET['site_id'])) {
+            $site=Util::bin($_GET['site_id']); $unit=$this->row('org_units',$site);
+            if ($unit['kind']!=='site') { throw new ApiError(404,'resource_not_found'); }
+            $this->access->requireFilter('site',$site); $scope.=' AND u.site_id=?'; $args[]=$site;
+        }
         $sql="SELECT u.id user_id,u.display_name,COALESCE(n.note_text,'') note_text,COALESCE(n.is_exempt,FALSE) is_exempt,
             (SELECT COUNT(*) FROM devices d WHERE d.tenant_id=u.tenant_id AND d.user_id=u.id AND d.status='active') device_count,
             (SELECT COUNT(*) FROM devices d WHERE d.tenant_id=u.tenant_id AND d.user_id=u.id AND d.status='active' AND EXISTS (SELECT 1 FROM device_keys k WHERE k.tenant_id=d.tenant_id AND k.device_id=d.id AND k.revoked_at IS NULL)) enrolled_count,

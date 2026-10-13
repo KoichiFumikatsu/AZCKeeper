@@ -62,6 +62,7 @@ final class Resources
     }
     public function release(?string $id = null): ?array
     {
+        if ($this->c['release_ring']==='pausado') { return null; }
         $architecture = self::releaseArchitecture($this->c['specs'] ?? null);
         if ($architecture === null) { return null; }
         $args = [$this->c['tenant_id'], $this->c['release_ring'], $architecture];

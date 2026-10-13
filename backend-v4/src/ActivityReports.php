@@ -4,6 +4,7 @@ namespace Keeper;
 
 final class ActivityReports
 {
+    private const PERIOD_FIELDS=['work_hours_active_seconds','work_hours_idle_seconds','lunch_active_seconds','lunch_idle_seconds','after_hours_active_seconds','after_hours_idle_seconds','work_hours_locked_seconds','lunch_locked_seconds','after_hours_locked_seconds'];
     public function __construct(private Database $db,private array $c,private AdminAccess $access) {}
     private function range(bool $presence=false): array
     {
@@ -45,7 +46,7 @@ final class ActivityReports
         if (isset($_GET['tenant']) && Util::bin($_GET['tenant'])!==$this->c['tenant_id']) { throw new ApiError(404,'resource_not_found'); }
         if ($user!==null) { $this->access->user($user); }
         if ($op==='getUserPolicies') { return AdminApi::response((new PolicyCompiler($this->db))->forUser($this->c['tenant_id'],$user)); }
-        [$from,$to]=$this->range($op==='getPresenceReport');
+        [$from,$to]=$this->range(in_array($op,['getPresenceReport','getAdminDashboard'],true));
         if ($op==='getAppsReport') { return $this->apps($from,$to); }
         ActivityCalendar::create($this->db,$this->c['tenant_id'],$from,$to);
         try {
@@ -65,7 +66,9 @@ final class ActivityReports
             $queryArgs=[$this->c['tenant_id'],$from,$to,$this->c['tenant_id'],...$args];
             $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_report_data');
             // Materialize per-assignment calendar values before grouping: MariaDB enforces correlated GROUP BY differently.
-            $this->db->run("CREATE TEMPORARY TABLE activity_report_data ENGINE=InnoDB AS SELECT c.day,a.user_id,u.display_name,
+            $periodSelect=implode(',',array_map(static fn($field)=>"d.$field",self::PERIOD_FIELDS));
+            $periodSums=implode(',',array_map(static fn($field)=>"IF(COUNT($field)=COUNT(*),SUM($field),NULL) $field",self::PERIOD_FIELDS));
+            $this->db->run("CREATE TEMPORARY TABLE activity_report_data ENGINE=InnoDB AS SELECT c.day,a.user_id,u.display_name,$periodSelect,
                 COALESCE(d.active_seconds,ed.active_seconds,0) active_seconds,COALESCE(d.idle_seconds,0) idle_seconds,
                 COALESCE(d.call_seconds,0) call_seconds,COALESCE(d.productive_seconds,0) productive_seconds,d.simulated_seconds,d.locked_seconds,
                 COALESCE(d.window_active_seconds,d.active_seconds,ed.active_seconds,0) window_active_seconds,COALESCE(d.unclassified_seconds,0) unclassified_seconds,
@@ -75,7 +78,7 @@ final class ActivityReports
                 $scheduled scheduled_at,COALESCE(f.scheduled_start,c.start_local) scheduled_start,
                 f.first_activity_time,f.productivity_pct,f.constancy_pct,COALESCE(f.deep_work_sessions,0) deep_work_sessions,
                 COALESCE(f.longest_focus_streak_seconds,0) longest_focus_streak_seconds $base",$queryArgs);
-            $rows=$this->db->run('SELECT day,user_id,display_name,SUM(active_seconds) active_seconds,SUM(idle_seconds) idle_seconds,
+            $rows=$this->db->run('SELECT '.$periodSums.',day,user_id,display_name,SUM(active_seconds) active_seconds,SUM(idle_seconds) idle_seconds,
                 SUM(call_seconds) call_seconds,SUM(productive_seconds) productive_seconds,SUM(simulated_seconds) simulated_seconds,SUM(locked_seconds) locked_seconds,SUM(focus_seconds) focus_seconds,
                 SUM(window_active_seconds) window_active_seconds,SUM(unclassified_seconds) unclassified_seconds,
                 SUM(context_switches) context_switches,SUM(deep_work_seconds) deep_work_seconds,SUM(distraction_seconds) distraction_seconds,
@@ -86,6 +89,7 @@ final class ActivityReports
                 IF(MAX(expected_seconds)=0 OR MIN(first_activity) IS NULL,NULL,GREATEST(0,TIMESTAMPDIFF(SECOND,MIN(IF(expected_seconds>0,scheduled_at,NULL)),MIN(first_activity)))) late_seconds
                 FROM activity_report_data GROUP BY day,user_id,display_name ORDER BY day,display_name,user_id')->fetchAll();
             $data=array_map(fn($row)=>$this->day($row,$op==='getPresenceReport'),$rows);
+            if ($op==='getAdminDashboard') { return $this->dashboard($rows,$from,$to); }
             if ($op==='getPresenceReport') { return AdminApi::response(['from'=>$from,'to'=>$to,'data'=>$data]); }
             if ($op==='getPeopleReport') {
                 // Mismas filas (dia, persona) que /users/{id}/activity, sumadas por persona en una sola consulta.
@@ -105,6 +109,35 @@ final class ActivityReports
             return AdminApi::response(['user_id'=>Util::id($user),'from'=>$from,'to'=>$to,'data'=>$data,'totals'=>$this->metrics($sums)+self::measured($rows)]);
         } finally { $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_report_data'); $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_calendar'); }
     }
+    private function dashboard(array $rows,string $from,string $to): array
+    {
+        [$scope,$args]=$this->filter();
+        $members=$this->db->run("SELECT a.id,a.display_name,a.area_id,
+            (SELECT MAX(d.last_seen_at) FROM devices d WHERE d.tenant_id=a.tenant_id AND d.user_id=a.id AND d.status='active') last_seen_at,
+            (SELECT GROUP_CONCAT(d.hostname ORDER BY d.hostname SEPARATOR ', ') FROM devices d WHERE d.tenant_id=a.tenant_id AND d.user_id=a.id AND d.status='active') devices
+            FROM (SELECT u.*,u.id user_id FROM users u) a WHERE a.tenant_id=? AND a.status='active' AND $scope ORDER BY a.display_name,a.id",[$this->c['tenant_id'],...$args])->fetchAll();
+        $sum=static function(array $list): array { $out=[]; foreach (['active_seconds','idle_seconds','productive_seconds','window_active_seconds','focus_seconds'] as $field) { $out[$field]=array_sum(array_column($list,$field)); } return $out; };
+        $totals=$this->metrics($sum($rows)); $byUser=[]; $byDay=[];
+        foreach ($rows as $row) { $byUser[$row['user_id']][]=$row; $byDay[$row['day']][]=$row; }
+        $roster=[]; $areas=[]; $counts=['online'=>0,'away'=>0,'offline'=>0];
+        foreach ($members as $member) {
+            $seconds=$member['last_seen_at']===null?PHP_INT_MAX:max(0,time()-strtotime($member['last_seen_at'].' UTC'));
+            $state=$seconds<=300?'online':($seconds<=900?'away':'offline'); $counts[$state]++;
+            $m=$this->metrics($sum($byUser[$member['id']]??[]));
+            $expected=array_sum(array_column($byUser[$member['id']]??[],'expected_seconds'));
+            if ($member['area_id']!==null) { $area=Util::id($member['area_id']); $areas[$area]=($areas[$area]??0)+$m['active_seconds']; }
+            $roster[]=['user_id'=>Util::id($member['id']),'display_name'=>$member['display_name'],'online'=>$state==='online','connection_status'=>$state,
+                'utilization_percent'=>$expected>0?min(100,round(100*$m['active_seconds']/$expected,2)):null,'active_seconds'=>$m['active_seconds'],'focus_score'=>$m['focus_score'],
+                'devices'=>$member['devices']??'','last_seen_at'=>$member['last_seen_at']===null?null:Util::time($member['last_seen_at'])];
+        }
+        usort($roster,static fn($a,$b)=>array_search($a['connection_status'],['online','away','offline'])<=>array_search($b['connection_status'],['online','away','offline']) ?: strcmp($a['display_name'],$b['display_name']));
+        $series=[]; foreach ($byDay as $day=>$list) { $m=$this->metrics($sum($list)); $series[]=['day'=>$day,'active_seconds'=>$m['active_seconds'],'idle_seconds'=>$m['idle_seconds'],'productivity_percent'=>$m['productivity_percent'],'focus_score'=>$m['focus_score']]; }
+        $workload=[]; foreach ($areas as $area=>$seconds) { $workload[]=['area_id'=>$area,'active_seconds'=>$seconds]; }
+        return AdminApi::response(['tenant_id'=>Util::id($this->c['tenant_id']),'from'=>$from,'to'=>$to,'generated_at'=>Util::now(),'data_through'=>null,'timezone'=>$this->c['timezone'],
+            'online_members'=>$counts['online'],'away_members'=>$counts['away'],'offline_members'=>$counts['offline'],'total_members'=>count($members),
+            'active_seconds'=>$totals['active_seconds'],'idle_seconds'=>$totals['idle_seconds'],'focus_score'=>$totals['focus_score'],'productivity_percent'=>$totals['productivity_percent'],
+            'weekly_output'=>$series,'workload_by_area'=>array_slice($workload,0,100),'roster'=>array_slice($roster,0,20)]);
+    }
     /** Entrada simulada (agente 4.0.22+) y bloqueado (4.0.24+) del periodo: null si ningun dia lo midio, no cero. */
     private static function measured(array $rows): array
     {
@@ -113,6 +146,14 @@ final class ActivityReports
             $values=array_filter(array_column($rows,$field),static fn($v)=>$v!==null);
             $out[$field]=$values?(int)array_sum($values):null;
         }
+        $active=array_filter($rows,static fn($r)=>(int)$r['active_seconds']+(int)$r['idle_seconds']+(int)($r['locked_seconds']??0)>0);
+        foreach (self::PERIOD_FIELDS as $field) {
+            $values=array_filter(array_column($active,$field),static fn($v)=>$v!==null);
+            $out[$field]=$active && count($values)===count($active)?(int)array_sum($values):null;
+        }
+        $constancy=array_filter(array_column($active,'constancy_pct'),static fn($v)=>$v!==null);
+        $out['constancy_pct']=$constancy?round(array_sum($constancy)/count($constancy),2):null;
+        $out['days_with_activity']=count(array_unique(array_column(array_filter($rows,static fn($r)=>(int)$r['active_seconds']>0),'day')));
         return $out;
     }
     private function metrics(array $r): array
@@ -134,7 +175,8 @@ final class ActivityReports
         $out=['day'=>$r['day'],'first_activity'=>$r['first_activity']===null?null:Util::time($r['first_activity']),'last_activity'=>$r['last_activity']===null?null:Util::time($r['last_activity']),'late_seconds'=>$r['late_seconds']===null?null:(int)$r['late_seconds'],
             'scheduled_start'=>$r['scheduled_start'],'punctuality_minutes'=>$r['punctuality_minutes']===null?null:(int)$r['punctuality_minutes'],
             'status'=>$r['expected_seconds']==0?'no_laborable':($r['first_activity']===null?($r['active_seconds']>0?'actividad_sin_hora':'sin_actividad'):($r['late_seconds']>0?'tarde':'a_tiempo'))];
-        return $presence ? $out+['user_id'=>Util::id($r['user_id']),'display_name'=>$r['display_name'],'active_seconds'=>(int)$r['active_seconds']] : $out+$this->metrics($r)+[
+        $period=[]; foreach (self::PERIOD_FIELDS as $field) { $period[$field]=$r[$field]===null?null:(int)$r[$field]; }
+        return $presence ? $out+['user_id'=>Util::id($r['user_id']),'display_name'=>$r['display_name'],'active_seconds'=>(int)$r['active_seconds']] : $out+$this->metrics($r)+$period+[
             'expected_seconds'=>(int)$r['expected_seconds'],'first_activity_time'=>$r['first_activity_time'],
             'productivity_pct'=>$r['productivity_pct']===null?null:round((float)$r['productivity_pct'],2),'constancy_pct'=>$r['constancy_pct']===null?null:round((float)$r['constancy_pct'],2),
             'deep_work_sessions'=>(int)$r['deep_work_sessions'],'longest_focus_streak_seconds'=>(int)$r['longest_focus_streak_seconds'],

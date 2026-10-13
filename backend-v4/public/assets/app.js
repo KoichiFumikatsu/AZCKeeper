@@ -9,6 +9,7 @@ import './menu.js';
 import { wireDialog } from './dialogs.js';
 import { onboardingBanner, returnBand } from './onboarding.js';
 import { mountRelocations } from './relocations.js';
+import { fleet, deviceUpdates, releaseDeployments } from './fleet.js';
 
 const page = document.body.dataset.page;
 const surface = document.body.dataset.surface;
@@ -445,6 +446,7 @@ async function device() {
   ]);
   const header = deviceSummary(d, owner, org, hardening, log);
   $('content').append(header.section);
+  deviceUpdates($('content'), d, tenant, session.is_platform_admin);
   const remote = await remoteActionsSection(d, log);
   if (remote) $('content').append(remote);
   $('content').append(renameSection(d, log));
@@ -971,10 +973,11 @@ async function load() {
     }
     else if (page === 'home') await dashboard();
     else if (page === 'device') await device();
+    else if (page === 'devices') await fleet({ root: $('content'), tenant, allPages, platform: session.is_platform_admin });
     else if (page === 'reports') await reports();
     else await listing(page);
     // Releases (plataforma): mudanzas de servidor firmadas, agente 4.0.24+.
-    if (page === 'releases' && surface === 'admin') await mountRelocations($('content'));
+    if (page === 'releases' && surface === 'admin') { await releaseDeployments($('content'), allPages); await mountRelocations($('content')); }
     // Las pantallas del coordinador fechan en la zona de la empresa; las demás, en la del navegador. Se dice cuál.
     const companyZone = surface === 'portal' && ['home', 'users', 'reports', 'policies'].includes(page);
     const zoneText = companyZone ? `Fechas y horas en la zona horaria de la empresa (${timezone})` : 'Fechas de eventos en la zona horaria del navegador';

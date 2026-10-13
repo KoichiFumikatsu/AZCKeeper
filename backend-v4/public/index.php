@@ -15,7 +15,7 @@ $routes = [
     '/festivos.php'=>'festivos.php','/doble-empleo.php'=>'doble-empleo.php','/apps-sospechosas.php'=>'apps-sospechosas.php','/cobertura.php'=>'cobertura.php',
     '/admin/logs.php'=>'admin/logs.php','/admin/salud.php'=>'admin/salud.php','/admin/ajustes.php'=>'admin/ajustes.php','/admin/festivos.php'=>'admin/festivos.php',
     '/' => 'index.php', '/index.php' => 'index.php', '/login.php' => 'login.php',
-    '/equipos.php' => 'equipos.php', '/usuarios.php' => 'usuarios.php',
+    '/equipos.php' => 'equipos.php', '/equipo.php' => 'equipo.php', '/usuarios.php' => 'usuarios.php',
     '/miembro.php' => 'miembro.php', '/reglas.php' => 'reglas.php', '/reportes.php' => 'reportes.php',
     '/admin/' => 'admin/index.php', '/admin/index.php' => 'admin/index.php',
     '/admin/tenants.php' => 'admin/tenants.php', '/admin/roles.php' => 'admin/roles.php',

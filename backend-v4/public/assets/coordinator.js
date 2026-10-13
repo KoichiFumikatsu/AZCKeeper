@@ -55,11 +55,11 @@ function csvButton(parent, name, columns, records) {
     const url = URL.createObjectURL(new Blob(['\ufeff', content], { type: 'text/csv;charset=utf-8' })); const a = link('', url); a.download = `${name}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }; parent.append(button);
 }
-function chart(parent, series) {
+function chart(parent, series, unit = 'día') {
   if (!series.some(r => numeric(r.productivity_percent) || numeric(r.focus_score))) { empty(parent, 'Sin mediciones de productividad o focus para dibujar la tendencia.'); return; }
   const svgEl = (tag, attrs = {}, text) => { const n = document.createElementNS('http://www.w3.org/2000/svg', tag); Object.entries(attrs).forEach(([k, v]) => n.setAttribute(k, v)); if (text !== undefined) n.textContent = text; return n; };
-  const svg = svgEl('svg', { viewBox: '0 0 760 250', role: 'img', 'aria-label': 'Tendencia diaria de productividad y focus. Escala de 0 a 100. Los huecos indican datos ausentes.', class: 'trend-chart' });
-  svg.append(svgEl('title', {}, 'Productividad y focus por día'));
+  const svg = svgEl('svg', { viewBox: '0 0 760 250', role: 'img', 'aria-label': `Productividad y focus por ${unit}. Escala de 0 a 100. Los huecos indican datos ausentes.`, class: 'trend-chart' });
+  svg.append(svgEl('title', {}, `Productividad y focus por ${unit}`));
   [0, 25, 50, 75, 100].forEach(v => { const y = 210 - v * 1.8; svg.append(svgEl('line', { x1: 42, x2: 738, y1: y, y2: y, class: 'chart-grid' }), svgEl('text', { x: 4, y: y + 5 }, String(v))); });
   for (const [field, cls, title] of [['productivity_percent', 'productivity-line', 'Productividad'], ['focus_score', 'focus-line', 'Focus']]) {
     let path = '', gap = true;
@@ -68,7 +68,7 @@ function chart(parent, series) {
   }
   svg.append(svgEl('text', { x: 42, y: 240 }, series[0].day), svgEl('text', { x: 738, y: 240, 'text-anchor': 'end' }, series.at(-1).day));
   const frame = el('div', undefined, 'chart-frame'); frame.tabIndex = 0; frame.setAttribute('role', 'region'); frame.setAttribute('aria-label', 'Gráfico de tendencia; desplazable en pantallas pequeñas'); frame.append(svg);
-  parent.append(frame, el('p', 'Línea continua índigo oscuro: productividad (%) · Línea discontinua índigo claro: focus (/100). Cada punto es un día; los huecos son días sin dato.', 'help'));
+  parent.append(frame, el('p', `Línea continua índigo oscuro: productividad (%) · Línea discontinua índigo claro: focus (/100). Cada punto representa ${unit === 'día' ? 'un día' : 'una semana'}; los huecos indican ausencia de datos.`, 'help'));
 }
 const COUNTRY_NAMES = { CO: 'Colombia', US: 'Estados Unidos', HN: 'Honduras', MX: 'México', PE: 'Perú', EC: 'Ecuador', PA: 'Panamá', CR: 'Costa Rica', GT: 'Guatemala', SV: 'El Salvador', ES: 'España', DO: 'República Dominicana', NI: 'Nicaragua', VE: 'Venezuela', BO: 'Bolivia', CL: 'Chile', AR: 'Argentina', UY: 'Uruguay', PY: 'Paraguay', BR: 'Brasil', PR: 'Puerto Rico', CA: 'Canadá' };
 // Día ISO (AAAA-MM-DD) en texto: «1 oct 2026». Es un día calendario, no un instante: se formatea en UTC.
@@ -96,6 +96,27 @@ function tabSet(parent, name, prefix) {
 async function pool(items, task, alive = () => true) {
   let index = 0;
   await Promise.all(Array.from({ length: Math.min(4, items.length) }, async () => { while (index < items.length && alive()) { const i = index++; await task(items[i], i); } }));
+}
+
+export const connectionLabel = state => ({ online: 'En línea', away: 'Ausente', offline: 'Desconectado' }[state] || 'Sin dato');
+export function connectionState(devices) {
+  const seen = devices.filter(d => d.status === 'active' && d.last_seen_at).map(d => Date.parse(d.last_seen_at));
+  const age = seen.length ? Date.now() - Math.max(...seen) : Infinity;
+  return age <= 300000 ? 'online' : age <= 900000 ? 'away' : 'offline';
+}
+export function periodControls(parent, today, shiftDay) {
+  const preset = el('select'); preset.setAttribute('aria-label', 'Período');
+  for (const [value, text] of [['today', 'Hoy'], ['week', '7 días'], ['month', 'Mes'], ['custom', 'Rango']]) { const o = el('option', text); o.value = value; preset.append(o); }
+  const from = el('input'), to = el('input'); from.type = to.type = 'date'; from.required = to.required = true;
+  const start = el('label', 'Desde'), end = el('label', 'Hasta (incluida)'); start.append(from); end.append(to); parent.append(preset, start, end);
+  const apply = () => { to.value = today(); from.value = preset.value === 'month' ? today().slice(0, 8) + '01' : preset.value === 'week' ? shiftDay(today(), -6) : today(); };
+  preset.onchange = () => { to.setCustomValidity(''); if (preset.value !== 'custom') apply(); };
+  from.oninput = to.oninput = () => to.setCustomValidity(''); from.onchange = to.onchange = () => { to.setCustomValidity(''); preset.value = 'custom'; }; apply();
+  return { range: () => {
+    to.setCustomValidity('');
+    if (!from.value || !to.value || from.value > to.value || (Date.parse(to.value) - Date.parse(from.value)) / 86400000 >= 31) { to.setCustomValidity('Elige un período de 1 a 31 días.'); to.reportValidity(); return null; }
+    return { from: from.value, to: shiftDay(to.value, 1) };
+  } };
 }
 
 export async function coordinator(ctx) {
@@ -239,37 +260,40 @@ export async function coordinator(ctx) {
     more.onclick = batch; await batch();
   }
   if (page === 'home') {
-    host.append(el('p', 'Últimos 7 días · Información disponible en tu alcance. Sin filtros ves todo el grupo; elige una empresa, un país o una sede para ver solo esa parte.', 'help'));
     const homeOrg = await optional('/organization');
-    const bar = el('form', undefined, 'toolbar'); bar.onsubmit = e => e.preventDefault(); const controls = orgFilters(bar, homeOrg, ['site']);
-    const body = el('div'); if (Object.keys(controls).length) host.append(bar); host.append(body);
-    const draw = async () => { body.replaceChildren(); const f = selected(controls); await Promise.all([
-      section(body, 'Pulso de la semana', async p => { const data = await report('productivity', week, f); productivity(p, data); if (data.series.length && data.coverage_percent < 80) { const a = el('p', undefined, 'notice'); a.append(link(`Solo se registró el ${percent(data.coverage_percent)} de la jornada esperada (equipos apagados o sin reportar). Revisar reportes`, '/reportes.php')); p.append(a); } }),
-      section(body, 'Equipos y conectividad', async p => {
-        const devices = await allPages(query(devicesPath, f)); const now = Date.now();
-        metrics(p, [['En línea / total', `${devices.filter(d => d.status === 'active' && d.last_seen_at && now - Date.parse(d.last_seen_at) <= 300000).length} / ${devices.length}`, 'En línea: equipo activo con señal en los últimos 5 minutos.']]);
-        const stale = devices.filter(d => d.status === 'active' && (!d.last_seen_at || now - Date.parse(d.last_seen_at) >= 3 * 86400000));
-        pagedTable(p, 'Alerta: sin conectar durante 3 días o sin registro', [['Equipo', 'hostname'], ['Última conexión', d => time(d.last_seen_at)], ['Acción', d => link('Revisar ficha', `/miembro.php?id=${encodeURIComponent(d.user_id)}#equipos`)]], stale);
-        await migration(body, devices.filter(d => d.status === 'active'));
-      }),
-      apps(body, week, f),
-      section(body, 'Ranking de personas', async p => {
-        if (reportsDenied) throw ctx.permissions.get('reports');
-        const users = await allPages(query('/users', f));
-        if (!users.length) { empty(p, 'No hay personas en tu alcance.'); return; }
-        const status = el('p', 'Preparando ranking…', 'help'); status.setAttribute('role', 'status'); p.append(status);
-        p.hidden = false;
-        let totals;
-        try { totals = await people(week, f); }
-        catch (e) { if (e.status === 403) { p.remove(); return; } throw e; }
-        const ranked = users.filter(u => totals.has(u.id)).map(u => ({ ...u, ...totals.get(u.id).totals }));
-        const failures = 0, denied = 0;
-        const measured = ranked.filter(r => numeric(r.productivity_percent)).sort((a, b) => b.productivity_percent - a.productivity_percent || a.display_name.localeCompare(b.display_name));
-        status.textContent = `${measured.length} con medición · ${ranked.length - measured.length} sin medición · ${failures} consultas fallidas${denied ? ` · ${denied} fuera de alcance` : ''}. ${failures || denied ? 'Ranking parcial.' : 'Últimos 7 días; totales ponderados por persona.'}`;
-        pagedTable(p, 'Personas por productividad', [['Persona', memberLink], ['Productividad', r => percent(r.productivity_percent)], ['Focus /100', r => numeric(r.focus_score) ? fmt.format(r.focus_score) : 'Sin dato'], ['Activo', r => hours(r.active_seconds)]], measured, 10);
-      }),
-    ]); };
-    Object.values(controls).forEach(c => { c.onchange = () => draw(); }); await draw();
+    const bar = el('form', undefined, 'toolbar'); const controls = orgFilters(bar, homeOrg);
+    const period = periodControls(bar, today, shiftDay); const submit = el('button', 'Consultar', 'primary'); submit.type = 'submit'; bar.append(submit);
+    const body = el('div'); host.append(bar, body);
+    let cycle = 0;
+    const draw = async () => {
+      const run = ++cycle; const range = period.range(); if (!range) return;
+      submit.disabled = true; body.replaceChildren(); const f = selected(controls);
+      try {
+        const dayRange = { from: today(), to: shiftDay(today(), 1) };
+        const dashboard = r => get(query('/dashboard', { ...r, ...f }));
+        const main = dashboard(range);
+        const [data, current, presence, month] = await Promise.all([
+          main, range.from === dayRange.from && range.to === dayRange.to ? main : dashboard(dayRange), report('presence', dayRange, f),
+          dashboard({ from: today().slice(0, 8) + '01', to: shiftDay(today(), 1) }),
+        ]);
+        if (run !== cycle || !alive()) return;
+        metrics(body, [['En línea ahora', data.online_members], ['Ausentes ahora', data.away_members], ['Desconectados ahora', data.offline_members],
+          ['Horas de hoy', hours(current.active_seconds)], ['Primer ingreso hoy', time(rows(presence).map(r => r.first_activity).filter(Boolean).sort()[0])],
+          ['Horas este mes', hours(month.active_seconds)], ['Productividad del período', percent(data.productivity_percent)], ['Focus /100', numeric(data.focus_score) ? fmt.format(data.focus_score) : 'Sin dato'], ['Tiempo inactivo', hours(data.idle_seconds)]]);
+        const live = panel(body, 'Personal activo ahora');
+        live.append(el('p', 'En línea: señal hasta hace 5 minutos · Ausente: entre 5 y 15 minutos · Desconectado: más de 15 minutos. Es conexión del equipo, no prueba de presencia humana.', 'help'));
+        pagedTable(live, 'Personal y equipos', [['Persona', memberLink], ['Equipo', r => r.devices || 'Sin equipo activo'], ['Conexión', r => connectionLabel(r.connection_status)], ['Última señal', r => time(r.last_seen_at)]], data.roster, 20);
+        if (data.total_members > data.roster.length) live.append(link(`Ver las ${data.total_members} personas`, '/usuarios.php'));
+        const pulse = panel(body, 'Productividad y focus del período'); chart(pulse, data.weekly_output);
+        pulse.append(link('Ver detalle de productividad', '/reportes.php'));
+        const ranked = rows(await report('people', range, f)).sort((a, b) => b.totals.active_seconds - a.totals.active_seconds).slice(0, 5);
+        const top = panel(body, 'Top personas del período');
+        pagedTable(top, 'Personas por tiempo en uso', [['Persona', memberLink], ['Tiempo en uso', r => hours(r.totals.active_seconds)], ['Productividad', r => percent(r.totals.productivity_percent)], ['Focus', r => percent(r.totals.focus_score)]], ranked);
+        await apps(body, range, f);
+      } catch (e) { if (run === cycle) error(body, e); }
+      finally { if (run === cycle) submit.disabled = false; }
+    };
+    bar.onsubmit = e => { e.preventDefault(); draw(); }; await draw();
   } else if (page === 'users') {
     const [users, org, devices] = await Promise.all([allPages('/users'), optional('/organization'), optional(devicesPath)]);
     const p = panel(host, 'Personas de la empresa'); dependency(p, org, 'Organización no disponible'); dependency(p, devices, 'Equipos no disponibles');
@@ -316,7 +340,7 @@ export async function coordinator(ctx) {
     const [org, users] = await Promise.all([optional('/organization'), optional('/users')]);
     const presets = el('div', undefined, 'report-presets'); presets.setAttribute('role', 'group'); presets.setAttribute('aria-label', 'Períodos rápidos');
     const end = today();
-    for (const [text, start] of [['Últimos 7 días', shiftDay(end, -6)], ['Últimos 30 días', shiftDay(end, -29)], ['Este mes', `${end.slice(0, 8)}01`]]) {
+    for (const [text, start] of [['Hoy', end], ['Últimos 7 días', shiftDay(end, -6)], ['Últimos 30 días', shiftDay(end, -29)], ['Este mes', `${end.slice(0, 8)}01`]]) {
       const b = el('button', text); b.type = 'button'; b.onclick = () => { fromInput.value = start; toInput.value = end; sync(); }; presets.append(b);
     }
     const filters = el('div', undefined, 'toolbar report-filters');
@@ -357,10 +381,46 @@ export async function coordinator(ctx) {
       tabs = tabSet(results, 'Tipo de reporte', 'report');
       const fresh = (kind, r, f) => api('GET', query(`/reports/${kind}`, { ...r, ...f }), { tenant });
       const summary = tabs.add('resumen', 'Resumen'), appsTab = tabs.add('aplicaciones', 'Aplicaciones'), presenceTab = tabs.add('presencia', 'Presencia');
+      const overview = el('div'), trendTab = el('div'), rankTab = el('div'); summary.append(overview, trendTab, rankTab);
       tabs.activate(keep || 'resumen');
       try {
         await Promise.all([
-          section(summary, 'Productividad', async p => { const data = await fresh('productivity', range, values); const list = productivity(p, data); pagedTable(p, 'Serie diaria', productColumns, list); csvButton(p, `productividad-${from}-${last}`, productColumns, list); }),
+          section(overview, 'Productividad', async p => { const data = await fresh('productivity', range, values); const list = productivity(p, data); const daily = el('details'); daily.append(el('summary', 'Ver serie diaria y exportar')); p.append(daily); pagedTable(daily, 'Serie diaria', productColumns, list); csvButton(daily, `productividad-${from}-${last}`, productColumns, list); }),
+          section(rankTab, 'Ranking individual', async p => {
+            const data = rows(await fresh('people', range, values)).map(r => ({ ...r, ...r.totals, area: org.data?.find(o => o.id === users.data?.find(u => u.id === r.user_id)?.area_id)?.name || 'Sin área disponible' }));
+            const average = field => { const measured = data.map(r => r[field]).filter(numeric); return measured.length ? measured.reduce((a, b) => a + b, 0) / measured.length : null; };
+            metrics(p, [['Personas con actividad', data.filter(r => r.active_seconds > 0).length], ['Constancia promedio', percent(average('constancy_pct'))], ['Trabajo profundo promedio', hours(average('deep_work_seconds'))], ['Cambios de aplicación promedio', numeric(average('context_switches')) ? fmt.format(average('context_switches')) : 'Sin dato']]);
+            const bar = el('div', undefined, 'toolbar'); const order = selector(bar, 'Ordenar por', 'ranking', [
+              { id: 'productivity_percent', name: 'Productividad' }, { id: 'focus_score', name: 'Focus' }, { id: 'constancy_pct', name: 'Constancia' },
+              { id: 'deep_work_seconds', name: 'Trabajo profundo' }, { id: 'context_switches', name: 'Cambios' }, { id: 'days_with_activity', name: 'Días' }, { id: 'area', name: 'Área' }, { id: 'display_name', name: 'Persona' },
+            ]); order.querySelector('option').remove(); order.value = 'productivity_percent';
+            const direction = selector(bar, 'Orden', 'ranking-direction', [{ id: 'desc', name: 'Mayor a menor' }, { id: 'asc', name: 'Menor a mayor' }]); direction.querySelector('option').remove(); direction.value = 'desc';
+            const view = el('div'); p.append(bar, view);
+            const columns = [['Persona', memberLink], ['Área actual', 'area'], ['Productividad', r => percent(r.productivity_percent)], ['Focus', r => percent(r.focus_score)], ['Constancia', r => percent(r.constancy_pct)], ['Trabajo profundo', r => hours(r.deep_work_seconds)], ['Cambios', 'context_switches'], ['Días con actividad', 'days_with_activity']];
+            const draw = () => {
+              const key = order.value, sign = direction.value === 'asc' ? 1 : -1;
+              const sorted = [...data].sort((a, b) => a[key] == null ? (b[key] == null ? 0 : 1) : b[key] == null ? -1 : sign * (typeof a[key] === 'string' ? a[key].localeCompare(b[key], 'es') : a[key] - b[key]));
+              view.replaceChildren(); pagedTable(view, 'Personas por productividad', columns, sorted, 25); csvButton(view, `ranking-${from}-${last}`, columns, sorted);
+            }; order.onchange = direction.onchange = draw; draw();
+            const areas = new Map();
+            for (const r of data) { if (!areas.has(r.area)) areas.set(r.area, { area: r.area, people: 0, active: 0, productive: 0, base: 0, focus: 0 }); const a = areas.get(r.area); a.people++; a.active += r.active_seconds; a.productive += r.productive_seconds; a.base += r.window_active_seconds || r.active_seconds; a.focus += r.focus_seconds; }
+            const ranked = [...areas.values()].map(a => ({ ...a, productivity: a.base ? Math.min(100, 100 * a.productive / a.base) : null, score: a.productive ? Math.min(100, 100 * a.focus / a.productive) : null })).sort((a, b) => (b.productivity ?? -1) - (a.productivity ?? -1));
+            pagedTable(p, 'Ranking por área actual', [['Área', 'area'], ['Personas', 'people'], ['Tiempo en uso', a => hours(a.active)], ['Productividad', a => percent(a.productivity)], ['Focus', a => percent(a.score)]], ranked, 25);
+            p.append(el('p', 'El área corresponde a la asignación actual. Constancia solo se muestra cuando existe una medición; no se sustituye por cero.', 'help'));
+          }),
+          section(trendTab, 'Tendencia de 8 semanas', async p => {
+            const start = shiftDay(range.to, -56), middle = shiftDay(range.to, -28);
+            const chunks = await Promise.all([fresh('productivity', { from: start, to: middle }, values), fresh('productivity', { from: middle, to: range.to }, values)]);
+            const daily = chunks.flatMap(c => c.series), weekly = [];
+            for (let i = 0; i < 8; i++) {
+              const day = shiftDay(start, i * 7), end = shiftDay(day, 7), days = daily.filter(d => d.day >= day && d.day < end);
+              const mean = key => { const values = days.map(d => d[key]).filter(numeric); return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null; };
+              weekly.push({ day, productivity_percent: mean('productivity_percent'), focus_score: mean('focus_score') });
+            }
+            p.append(el('p', `Ocho períodos de siete días hasta ${dayText(last)}. Cada punto es el promedio de los días medidos de esa semana; los huecos indican ausencia de mediciones.`, 'help'));
+            chart(p, weekly, 'semana');
+            pagedTable(p, 'Promedio semanal', [['Semana desde', 'day'], ['Productividad', r => percent(r.productivity_percent)], ['Focus', r => percent(r.focus_score)]], weekly);
+          }),
           apps(appsTab, range, values, true, fresh),
           section(presenceTab, 'Presencia', async p => { const list = rows(await fresh('presence', range, values)); p.append(el('p', `Los estados salen del horario de cada persona y de su calendario de festivos: un festivo o una ausencia aprobada cuentan como «No laborable». Horas en la zona horaria de la empresa (${ctx.timezone}).`, 'help')); pagedTable(p, 'Presencia diaria', presenceColumns, list); csvButton(p, `presencia-${from}-${last}`, presenceColumns, list); }),
         ]);
@@ -374,22 +434,22 @@ export async function coordinator(ctx) {
       sync();
     }
     form.onsubmit = event => { event.preventDefault(); if (alive()) run(); };
-    if (form.dataset.queried) await run();
-    else { results.append(el('p', 'Aún no hay resultados. Elige el período (las dos fechas se incluyen) y, si quieres, filtra por empresa, sede, área o persona. Luego pulsa «Consultar».', 'empty-state report-empty')); sync(); }
+    await run();
   } else if (page === 'member') {
     // Pestaña «Actividad» de la ficha única de la persona (k3.js, revisión UX G1): la ficha ya muestra datos, plan y
     // equipos; aquí solo productividad, presencia y reglas efectivas. El plan vigente está en «Acceso y plan».
     const id = ctx.user?.id || new URLSearchParams(location.search).get('id'); if (!isUuid(id)) throw new Error('Selecciona una persona desde Personas.');
     const u = ctx.user || await get(`/users/${id}`);
-    const rangeBar = el('div', undefined, 'toolbar'); const rangeLabel = el('label', 'Período'); rangeLabel.htmlFor = 'member-range'; const rangeSelect = el('select'); rangeSelect.id = 'member-range'; for (const n of [7, 30]) { const o = el('option', `${n} días`); o.value = n; rangeSelect.append(o); } rangeBar.append(rangeLabel, rangeSelect); host.append(rangeBar);
+    const rangeBar = el('form', undefined, 'toolbar'); const period = periodControls(rangeBar, today, shiftDay);
+    const submit = el('button', 'Consultar', 'primary'); submit.type = 'submit'; rangeBar.append(submit); host.append(rangeBar);
     const kpis = el('div'); host.append(kpis);
     const tabs = el('div', undefined, 'tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Actividad de la persona'); host.append(tabs);
     const panels = el('div'); host.append(panels); let cycle = 0;
     async function renderMember() {
-      const version = ++cycle, range = { from: shiftDay(today(), 1 - Number(rangeSelect.value)), to: shiftDay(today(), 1) };
+      const range = period.range(); if (!range) return; const version = ++cycle;
       const activeTab = tabs.querySelector('[aria-selected="true"]')?.dataset.key || ctx.subtab || 'resumen';
-      rangeSelect.disabled = true; kpis.replaceChildren(); tabs.replaceChildren(); panels.replaceChildren();
-      const [act, devices, schedules, effective] = await Promise.all([optional(query(`/users/${id}/activity`, range), false), optional(query(devicesPath, { user_id: id })), optional('/schedules'), optional(`/users/${id}/policies`, false)]);
+      submit.disabled = true; kpis.replaceChildren(); tabs.replaceChildren(); panels.replaceChildren();
+      const [act, devices, schedules, effective, month] = await Promise.all([optional(query(`/users/${id}/activity`, range), false), optional(query(devicesPath, { user_id: id })), optional('/schedules'), optional(`/users/${id}/policies`, false), optional(query(`/users/${id}/activity`, { from: today().slice(0, 8) + '01', to: shiftDay(today(), 1) }), false)]);
       if (!alive() || cycle !== version) return;
       const canActivity = ![401, 403].includes(act.error?.status);
       if (act.data) {
@@ -407,13 +467,30 @@ export async function coordinator(ctx) {
       }
       tabs.onkeydown = e => { const buttons = [...tabs.children]; const i = buttons.indexOf(document.activeElement); let next; if (e.key === 'ArrowRight') next = (i + 1) % buttons.length; if (e.key === 'ArrowLeft') next = (i + buttons.length - 1) % buttons.length; if (e.key === 'Home') next = 0; if (e.key === 'End') next = buttons.length - 1; if (next !== undefined) { e.preventDefault(); buttons[next].click(); buttons[next].focus(); } };
       const summary = tab('resumen', 'Resumen');
-      if (devices.data) details(summary, [['Equipos activos', devices.data.filter(d => d.status === 'active').map(d => d.hostname).join(', ') || 'Sin equipo activo']]); else dependency(summary, devices, 'Equipos');
+      if (devices.data) details(summary, [['Conexión', connectionLabel(connectionState(devices.data))], ['Equipos activos', devices.data.filter(d => d.status === 'active').map(d => `${d.hostname} · v${d.agent_version} · Visto: ${time(d.last_seen_at)}`).join(', ') || 'Sin equipo activo']]); else dependency(summary, devices, 'Equipos');
       if (schedules.data) { const s = schedules.data.find(s => s.id === u.schedule_id); details(summary, [['Horario', s ? `${s.name} · ${s.start_local}–${s.end_local} · ${s.timezone}` : 'Sin horario disponible'], ['Días', s ? s.days.map(d => ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'][d - 1]).join(', ') : 'Sin dato']]); } else dependency(summary, schedules, 'Horario');
       if (act.data) { simulatedNotice(summary, act.data.totals.simulated_seconds); chart(summary, act.data.data); details(summary, [['Trabajo profundo', hours(act.data.totals.deep_work_seconds)], ['Distracción', hours(act.data.totals.distraction_seconds)], ['Cambios de contexto', act.data.totals.context_switches]]); }
+      if (act.data) {
+        const t = act.data.totals;
+        metrics(summary, [['En uso', hours(t.active_seconds)], ['Inactivo', hours(t.idle_seconds)], ['Bloqueado', hours(t.locked_seconds)], ['Entrada simulada', hours(t.simulated_seconds)], ['Constancia', percent(t.constancy_pct)]]);
+        const split = panel(summary, 'Desglose de tiempo del período');
+        details(split, [['Horario laboral (en uso)', hours(t.work_hours_active_seconds)], ['Almuerzo (en uso)', hours(t.lunch_active_seconds)], ['Fuera de horario (en uso)', hours(t.after_hours_active_seconds)], ['En llamadas', hours(t.call_seconds)]]);
+        split.append(el('p', 'Las llamadas ya forman parte del tiempo en uso. La entrada simulada está incluida en inactivo. «Sin dato» indica que el agente no midió la franja completa.', 'help'));
+      }
+      if (month.data) {
+        const t = month.data.totals, days = month.data.data.filter(d => d.active_seconds > 0).length;
+        const monthly = panel(summary, 'Resumen del mes');
+        metrics(monthly, [['Total en uso', hours(t.active_seconds)], ['En horario laboral', hours(t.work_hours_active_seconds)], ['Promedio por día con actividad', days ? hours(t.active_seconds / days) : 'Sin dato']]);
+      } else dependency(summary, month, 'Resumen del mes');
+      if (canActivity) await apps(summary, range, { user_id: id });
       if (canActivity) {
         const activityPanel = tab('actividad', 'Actividad');
-        if (act.data) { pagedTable(activityPanel, 'Actividad diaria', [...productColumns, ['Llamadas', r => hours(r.call_seconds)]], act.data.data); activityPanel.append(el('p', 'Las llamadas son parte del tiempo activo; no se suman de nuevo.', 'help')); } else error(activityPanel, act.error);
-        await apps(activityPanel, range, { user_id: id });
+        if (act.data) {
+          const columns = [...productColumns, ['Horario laboral', r => hours(r.work_hours_active_seconds)], ['Almuerzo', r => hours(r.lunch_active_seconds)], ['Fuera de horario', r => hours(r.after_hours_active_seconds)], ['Llamadas', r => hours(r.call_seconds)], ['Primer ingreso', r => time(r.first_activity)], ['Último evento', r => time(r.last_activity)]];
+          pagedTable(activityPanel, 'Actividad diaria', columns, act.data.data);
+          csvButton(activityPanel, `actividad-${id}-${range.from}`, columns, act.data.data);
+          activityPanel.append(el('p', 'Las llamadas son parte del tiempo activo; no se suman de nuevo.', 'help'));
+        } else error(activityPanel, act.error);
         const presence = tab('presencia', 'Presencia');
         if (act.data) { details(presence, [['Días sin actividad', act.data.data.filter(d => d.status === 'sin_actividad').length]]); pagedTable(presence, 'Check-ins observados a partir de la actividad', presenceColumns.slice(1), act.data.data); presence.append(el('p', 'Primera y última actividad observadas; no son registros de login ni marcaciones manuales.', 'help')); } else error(presence, act.error);
       }
@@ -425,9 +502,9 @@ export async function coordinator(ctx) {
           pagedTable(policies, 'Reglas efectivas y origen de cada regla', [['Equipo', 'device'], ['Tipo', r => r.rule.kind], ['Efecto', r => label(r.rule.effect)], ['Destinos', r => r.rule.targets.join(', ') || 'Sin destinos'], ['Scope de origen', r => label(r.scope)], ['Asignaciones de origen', r => r.assignment_ids.join(', ') || 'Sin asignación'], ['Prioridad', r => r.rule.priority]], sources);
         }
       }
-      activate([...tabs.children].some(b => b.dataset.key === activeTab) ? activeTab : 'resumen'); rangeSelect.disabled = false;
+      activate([...tabs.children].some(b => b.dataset.key === activeTab) ? activeTab : 'resumen'); submit.disabled = false;
     }
-    rangeSelect.onchange = () => renderMember().catch(e => { error(kpis, e); rangeSelect.disabled = false; }); await renderMember();
+    rangeBar.onsubmit = e => { e.preventDefault(); renderMember().catch(e => { error(kpis, e); submit.disabled = false; }); }; await renderMember();
   } else if (page === 'policies') {
     const [policies, org, users, devices] = await Promise.all([allPages('/policies'), optional('/organization'), optional('/users'), optional(devicesPath)]);
     const p = panel(host, 'Políticas y alcance'); dependency(p, org, 'Organización'); dependency(p, users, 'Personas'); dependency(p, devices, 'Equipos');

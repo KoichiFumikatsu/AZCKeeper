@@ -1,4 +1,5 @@
 import { api, errorMessage } from './api.js';
+import { loadAccess } from './nav-access.js';
 
 export const operationPaths = {
   holidays: '/schedules/holidays', 'dual-job': '/reports/dual-job-alerts',
@@ -9,7 +10,7 @@ const el = (tag, text) => { const n = document.createElement(tag); if (text !== 
 const names = { missing: 'Sin equipo', pending: 'Pendiente de enrolar', stale: 'Sin conexión reciente', covered: 'Instalado', exempt: 'Exento', low: 'Baja', medium: 'Media', high: 'Alta', remote_desktop: 'Escritorio remoto', foreign_app: 'Aplicación externa', suspicious_idle: 'Inactividad elevada', after_hours_pattern: 'Patrón fuera de horario' };
 const columns = {
   holidays: [['Fecha', 'day'], ['Festivo', 'name'], ['Sociedades', r => r.society_ids.join(', ') || 'Toda la empresa']],
-  'dual-job': [['Día', 'day'], ['Persona', 'display_name'], ['Señal', 'alert_type'], ['Prioridad', 'severity'], ['Evidencia', 'evidence'], ['Notas', 'notes']],
+  'dual-job': [['Día', 'day'], ['Persona', 'display_name'], ['Señal', 'alert_type'], ['Prioridad', 'severity'], ['Estado', r => r.reviewed ? 'Revisada' : 'Pendiente'], ['Evidencia', 'evidence'], ['Notas', 'notes']],
   'suspicious-apps': [['Día', 'day'], ['Persona', 'display_name'], ['Equipo', 'device_id'], ['Aplicación', 'process_name'], ['Segundos activos', 'active_seconds']],
   coverage: [['Persona', 'display_name'], ['Estado', 'status'], ['Equipos', 'device_count'], ['Enrolados', 'enrolled_count'], ['Última conexión', 'last_seen_at'], ['Nota', 'note_text']],
   'client-logs': [['Fecha', 'at'], ['Equipo', 'hostname'], ['Nivel', 'level'], ['Componente', 'component'], ['Código', 'code'], ['Error', 'error_code']],
@@ -80,14 +81,40 @@ export async function operations({ page, tenant, today, shiftDay }) {
   }
   if (page === 'holidays') { await catalog(parent, tenant, path, page, refresh); return; }
   const filters = el('form'); filters.className = 'toolbar'; parent.append(filters);
-  if (['dual-job', 'suspicious-apps'].includes(page)) { input(filters, 'Desde', 'from', shiftDay(today(), -29), 'date'); input(filters, 'Hasta (excluido)', 'to', shiftDay(today(), 1), 'date'); input(filters, 'ID de persona', 'user_id'); }
+  const chooser = (title, name, values) => { const wrap = el('label', title), s = el('select'); s.name = name; s.append(new Option('Todos', '')); values.forEach(([value, text]) => s.append(new Option(text, value))); wrap.append(s); filters.append(wrap); return s; };
+  async function all(path) {
+    const rows = []; let cursor = null;
+    do { const result = await api('GET', `${path}?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { tenant }); rows.push(...result.data); cursor = result.next_cursor; } while (cursor);
+    return rows;
+  }
+  if (['dual-job', 'suspicious-apps'].includes(page)) {
+    input(filters, 'Desde', 'from', shiftDay(today(), -29), 'date'); input(filters, 'Hasta (excluido)', 'to', shiftDay(today(), 1), 'date');
+    try { chooser('Persona', 'user_id', (await all('/users')).map(u => [u.id, u.display_name])); }
+    catch (e) { if (e.status !== 403) throw e; filters.append(el('p', 'Sin permiso para listar personas; se muestran las alertas dentro de tu alcance.')); }
+  }
+  let canReview = false;
+  if (page === 'dual-job') {
+    chooser('Revisión', 'reviewed', [['0', 'Pendientes'], ['1', 'Revisadas']]); chooser('Prioridad', 'severity', [['low', 'Baja'], ['medium', 'Media'], ['high', 'Alta']]);
+    const access = await loadAccess(); canReview = access?.platform || access?.permissions?.some(p => p.code === 'cumplimiento.editar');
+  }
+  if (page === 'coverage') {
+    try { chooser('Sede', 'site_id', (await all('/organization')).filter(o => o.kind === 'site').map(o => [o.id, o.name])); }
+    catch (e) { if (e.status !== 403) throw e; filters.append(el('p', 'Sin permiso para listar sedes.')); }
+  }
   if (page === 'client-logs') { input(filters, 'ID de equipo', 'device_id'); const l = el('label', 'Nivel'); const s = el('select'); s.name = 'level'; ['', 'info', 'warn', 'error'].forEach(v => { const o = el('option', v || 'Todos'); o.value = v; s.append(o); }); l.append(s); filters.append(l); }
   const view = el('div'); parent.append(view); let offset = 0;
   async function load() {
     view.replaceChildren(); const params = new URLSearchParams({ offset, limit: 50 }); new FormData(filters).forEach((v, k) => { if (v) params.set(k, v); });
-    const result = await api('GET', `${path}?${params}`, { tenant });
+    let result;
+    if (page === 'coverage') {
+      const data = []; let next = 0;
+      do { params.set('offset', next); params.set('limit', 100); const batch = await api('GET', `${path}?${params}`, { tenant }); data.push(...batch.data); next = batch.next_offset; } while (next !== null);
+      const kpis = el('dl'); kpis.className = 'kpi-grid';
+      for (const reason of ['covered', 'missing', 'pending', 'stale', 'exempt']) { const box = el('div'); box.className = 'metric'; box.append(el('dt', names[reason]), el('dd', String(data.filter(r => r.status === reason).length))); kpis.append(box); }
+      view.append(kpis); result = { data: data.slice(offset, offset + 50), next_offset: offset + 50 < data.length ? offset + 50 : null };
+    } else result = await api('GET', `${path}?${params}`, { tenant });
     if (!result.data.length) view.append(el('p', 'No hay registros para esta consulta.'));
-    const region = el('div'); region.className = 'table-region'; region.tabIndex = 0; const table = el('table'); const head = el('tr'); columns[page].forEach(([name]) => { const th = el('th', name); th.scope = 'col'; head.append(th); }); table.append(head);
+    const region = el('div'); region.className = 'table-region'; region.tabIndex = 0; const table = el('table'); const head = el('tr'); columns[page].forEach(([name]) => { const th = el('th', name); th.scope = 'col'; head.append(th); }); if (page === 'coverage' || canReview) { const th = el('th', 'Acción'); th.scope = 'col'; head.append(th); } table.append(head);
     result.data.forEach(row => {
       const tr = el('tr'); columns[page].forEach(([, field]) => { const value = typeof field === 'function' ? field(row) : row[field]; tr.append(el('td', names[value] || value || '—')); });
       if (page === 'coverage') {
@@ -95,6 +122,11 @@ export async function operations({ page, tenant, today, shiftDay }) {
           td.replaceChildren(); const f = form(td, async f => { await api('PUT', `/users/${row.user_id}/install-coverage`, { tenant, body: { note_text: f.elements.note_text.value, is_exempt: f.elements.is_exempt.checked } }); await load(); });
           input(f, 'Nota', 'note_text', row.note_text).maxLength = 4000; input(f, 'Exento', 'is_exempt', row.is_exempt, 'checkbox'); submit(f);
         }); tr.append(td);
+      }
+      if (canReview) {
+        const td = el('td'); if (!row.reviewed) {
+          const review = button(td, 'Marcar revisada', async () => { review.disabled = true; try { await api('PATCH', `/reports/dual-job-alerts/${row.id}`, { tenant, body: { reviewed: true } }); await load(); } catch (e) { td.append(el('p', errorMessage(e))); review.disabled = false; } });
+        } else td.textContent = 'Revisada'; tr.append(td);
       }
       table.append(tr);
     }); region.append(table); view.append(region);

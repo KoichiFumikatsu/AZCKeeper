@@ -4,6 +4,8 @@ require dirname(__DIR__) . '/config/bootstrap.php';
 require __DIR__ . '/regressions.php';
 require __DIR__ . '/policy-compiler.php';
 require __DIR__ . '/admin.php';
+require __DIR__ . '/k3-dashboard.php';
+require __DIR__ . '/k3-updates.php';
 require __DIR__ . '/admin-review.php';
 require __DIR__ . '/external.php';
 require __DIR__ . '/external-auth.php';
@@ -402,6 +404,7 @@ try {
     uriReferences();
     policyCompilerTests($db);
     adminTests($db);
+    k3DashboardTests($db);
     externalTests($db);
     externalAuthTests($db);
     activityMigrationTests($db);
