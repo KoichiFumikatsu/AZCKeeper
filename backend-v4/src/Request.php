@@ -14,6 +14,8 @@ final class Request
     public readonly array $operation;
     public readonly ?string $resourceId;
     public readonly string $route;
+    /** Peticion por la puerta del Portal (/portal/v1). */
+    public readonly bool $portal;
 
     public function __construct(Validator $validator)
     {
@@ -41,7 +43,9 @@ final class Request
         // Use configured external origin; forwarded headers never select the signature authority.
         $this->target = $origin . $uri;
         $external = str_starts_with($this->path, '/ext/v1/');
-        $route = $external ? $this->path : substr($this->path, 3);
+        // Portal: sus rutas de sesion estan en el contrato con la ruta completa; las de datos son las mismas del panel.
+        $this->portal = str_starts_with($this->path, Portal::PREFIX . '/');
+        $route = $external ? $this->path : ($this->portal ? (isset($validator->contract['paths'][$this->path]) ? $this->path : substr($this->path, strlen(Portal::PREFIX))) : substr($this->path, 3));
         $resource = null;
         foreach (isset($validator->contract['paths'][$route]) ? [] : $validator->contract['paths'] as $template => $operations) {
             if (!str_contains($template, '{')) { continue; }
@@ -52,7 +56,9 @@ final class Request
                 $route = $template; break;
             }
         }
-        if ((!$external && !str_starts_with($this->path, '/v1/')) || (!$external && str_starts_with($route, '/ext/')) || !isset($validator->contract['paths'][$route][strtolower($this->method)])) { throw new ApiError(404, 'resource_not_found'); }
+        if ((!$external && !$this->portal && !str_starts_with($this->path, '/v1/')) || (!$external && str_starts_with($route, '/ext/')) || !isset($validator->contract['paths'][$route][strtolower($this->method)])) { throw new ApiError(404, 'resource_not_found'); }
+        // Lista blanca del Portal antes de validar nada: fuera de ella la ruta no existe (404); el panel no sirve rutas del Portal.
+        if ($this->portal ? !Portal::allowed($this->method, $route) : str_starts_with($route, Portal::PREFIX . '/')) { throw new ApiError(404, 'resource_not_found'); }
         $this->route = $route;
         $this->resourceId = $resource;
         $this->operation = $validator->contract['paths'][$route][strtolower($this->method)];
@@ -61,6 +67,8 @@ final class Request
         foreach ($this->operation['parameters'] ?? [] as $parameter) {
             $parameter = isset($parameter['$ref']) ? $validator->contract['parameters'][basename($parameter['$ref'])] : $parameter;
             if (str_starts_with($route, '/client/') && $parameter['in'] === 'header') { continue; }
+            // Portal: la empresa la da el token; X-Tenant-ID es opcional (si viene, Portal::context exige que sea la del token).
+            if ($this->portal && $parameter['name'] === 'X-Tenant-ID' && !isset($headers['x-tenant-id'])) { continue; }
             if ($parameter['in'] === 'query') { $allowedQuery[] = $parameter['name']; }
             if (!in_array($parameter['in'], ['query', 'header'], true)) { continue; }
             $value = $parameter['in'] === 'query' ? ($_GET[$parameter['name']] ?? null) : ($headers[strtolower($parameter['name'])] ?? null);

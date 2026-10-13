@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 // Preserve the existing API front controller without loading it for presentation.
-if ($path === '/v1' || str_starts_with($path, '/v1/') || str_starts_with($path, '/ext/v1/')) {
+if ($path === '/v1' || str_starts_with($path, '/v1/') || str_starts_with($path, '/ext/v1/') || str_starts_with($path, '/portal/v1/')) {
     ini_set('display_errors', '0');
     require dirname(__DIR__) . '/config/bootstrap.php';
     (new Keeper\Application())->run();

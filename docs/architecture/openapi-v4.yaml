@@ -13,6 +13,9 @@ info:
 servers:
 - url: /v1
   description: Origen HTTPS del despliegue; agente y administración.
+- url: /portal/v1
+  description: Puerta del Portal (token de persona, seguridad portalBearer). Solo las operaciones con portalBearer y la
+    sesión /portal/v1/login, /refresh, /logout y /password (declaradas con su ruta completa).
 security: []
 tags:
 - name: client
@@ -20,6 +23,394 @@ tags:
 - name: auth
 - name: external
 paths:
+  /me:
+    get:
+      tags:
+      - admin
+      operationId: getMe
+      summary: Quién soy
+      description: Persona de la cuenta, rol, alcance, funciones de la empresa, permisos efectivos y empresa con su marca.
+        Panel y Portal. No exige un permiso propio; la API sigue validando cada operación.
+      security:
+      - adminSession: []
+      - portalBearer: []
+      x-tenant-boundary: Tenant validado contra sesión o token.
+      x-resources:
+      - Me
+      responses:
+        '200':
+          description: Quién soy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      x-permission: sesion
+  /portal/v1/login:
+    post:
+      tags:
+      - auth
+      operationId: portalLogin
+      summary: Iniciar sesión en el Portal
+      description: Correo y contraseña de la cuenta del panel. Exige cuenta activa y el interruptor «Puede entrar al Portal» (403 portal_not_enabled). Límite por IP y correo (429 con Retry-After). access_token de 15 min y refresh_token hasta 8 h desde el login.
+      security: []
+      x-tenant-boundary: Tenant y persona del token.
+      x-resources:
+      - PortalSession
+      responses:
+        '200':
+          description: Iniciar sesión en el Portal
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store
+              description: No almacenar tokens.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortalTokens'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminLogin'
+      x-permission: sesion
+      x-max-body-bytes: 4096
+  /portal/v1/refresh:
+    post:
+      tags:
+      - auth
+      operationId: portalRefresh
+      summary: Renovar tokens del Portal
+      description: Rota el refresh_token (de un solo uso) y entrega un par nuevo; el access_token anterior deja de servir. Reutilizar un refresh_token ya usado revoca toda la sesión (401).
+      security: []
+      x-tenant-boundary: Tenant y persona del token.
+      x-resources:
+      - PortalSession
+      responses:
+        '200':
+          description: Renovar tokens del Portal
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store
+              description: No almacenar tokens.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortalTokens'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PortalRefresh'
+      x-permission: sesion
+      x-max-body-bytes: 4096
+  /portal/v1/logout:
+    post:
+      tags:
+      - auth
+      operationId: portalLogout
+      summary: Cerrar sesión del Portal
+      description: Revoca el access_token y el refresh_token de la sesión.
+      security:
+      - portalBearer: []
+      x-tenant-boundary: Tenant y persona del token.
+      x-resources:
+      - PortalSession
+      responses:
+        '204':
+          description: Cerrar sesión del Portal
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters: []
+      x-permission: sesion
+      x-max-body-bytes: 0
+  /portal/v1/password:
+    post:
+      tags:
+      - auth
+      operationId: portalChangePassword
+      summary: Cambiar mi contraseña desde el Portal
+      description: La misma contraseña del panel. Invalida todos los tokens del Portal y las sesiones del panel y entrega un par nuevo.
+      security:
+      - portalBearer: []
+      x-tenant-boundary: Tenant y persona del token.
+      x-resources:
+      - PortalSession
+      responses:
+        '200':
+          description: Cambiar mi contraseña desde el Portal
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store
+              description: No almacenar tokens.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortalTokens'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordChange'
+      x-permission: sesion
+      x-max-body-bytes: 4096
+  /admin/portal-origins:
+    get:
+      tags:
+      - admin
+      operationId: listPortalOrigins
+      summary: Portal - direcciones autorizadas
+      description: Orígenes que reciben CORS en /portal/v1 (exactos). Solo superadmin.
+      security:
+      - adminSession: []
+      x-tenant-boundary: Plataforma.
+      x-resources:
+      - PortalOrigin
+      responses:
+        '200':
+          description: Direcciones autorizadas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortalOriginList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      x-permission: empresas.gestionar
+      x-platform-only: true
+    post:
+      tags:
+      - admin
+      operationId: createPortalOrigin
+      summary: Autorizar dirección del Portal
+      description: https://dominio[:puerto] sin ruta ni comodines (http solo para localhost y 127.0.0.1). Se guarda en minúsculas;
+        409 si ya existe.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Plataforma.
+      x-resources:
+      - PortalOrigin
+      responses:
+        '201':
+          description: Dirección autorizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortalOrigin'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PortalOriginInput'
+      x-permission: empresas.gestionar
+      x-platform-only: true
+      x-max-body-bytes: 1024
+  /admin/portal-origins/{id}:
+    delete:
+      tags:
+      - admin
+      operationId: deletePortalOrigin
+      summary: Quitar dirección del Portal
+      description: Deja de recibir CORS de inmediato.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Plataforma.
+      x-resources:
+      - PortalOrigin
+      responses:
+        '204':
+          description: Dirección quitada
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      x-permission: empresas.gestionar
+      x-platform-only: true
+      x-max-body-bytes: 0
   /schedules/settings:
     get:
       tags:
@@ -144,6 +535,7 @@ paths:
       summary: getUserWindows
       description: getUserWindows
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -206,6 +598,7 @@ paths:
       summary: getUserTimeline
       description: getUserTimeline
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -275,6 +668,7 @@ paths:
       summary: getDashboardProblems
       description: getDashboardProblems
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -2281,6 +2675,7 @@ paths:
       summary: Listar membresías
       description: Listar membresías
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -2409,6 +2804,7 @@ paths:
       summary: KPIs, gráficas y roster preview
       description: KPIs, gráficas y roster preview
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -2492,6 +2888,7 @@ paths:
       description: Permisos y alcances de la cuenta en la empresa elegida. El panel lo usa para mostrar solo los
         modulos que la cuenta puede abrir. No exige un permiso propio; la API sigue validando cada operacion.
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesion.
       x-resources:
@@ -3162,6 +3559,7 @@ paths:
       summary: Leer horarios
       description: Leer horarios
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -3571,6 +3969,7 @@ paths:
       summary: Productividad y focus agregado
       description: Productividad y focus agregado
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -4733,6 +5132,7 @@ paths:
         de segundos activos+idle; porcentaje sobre todo el conjunto filtrado antes del límite. tenant debe coincidir
         con X-Tenant-ID; filtros alias deben coincidir. Retención raw aplicada.
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -4851,6 +5251,7 @@ paths:
         horas UTC en respuesta, horario local del usuario. Festivos excluidos por sociedad o tenant. actividad_sin_hora
         indica contadores existentes sin marcas horarias; nunca inventa puntualidad.
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -6440,6 +6841,7 @@ paths:
       summary: Listar equipos de empresa
       description: Listar equipos de empresa
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: ID validado y alcance de rol aplicado.
       x-resources:
@@ -6497,6 +6899,7 @@ paths:
       summary: Leer equipo/specs y capacidades
       description: Leer equipo/specs y capacidades
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -7038,6 +7441,7 @@ paths:
       summary: Leer registro completo
       description: Leer registro completo
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -7301,6 +7705,7 @@ paths:
       description: Serie diaria SQL, from inclusivo/to exclusivo, máximo 31 días locales del horario. Totales ponderados;
         días sin actividad incluidos. Llamadas son subconjunto del tiempo activo. Agregados sujetos al cron y retención.
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -10905,6 +11310,7 @@ paths:
       description: Totales del período por persona del alcance, en una sola consulta (mismo cálculo que /users/{id}/activity).
         Máximo 31 días. Evita una consulta por persona en ranking y directorio.
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -13529,6 +13935,7 @@ paths:
       summary: Ausencias
       description: Vacaciones, licencias, incapacidades y permisos de las personas visibles.
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol (personas visibles).
       x-resources:
@@ -13605,6 +14012,7 @@ paths:
       summary: Registrar ausencia
       description: Si cubre la jornada, ese día no cuenta como ausencia ni tardanza. Bloqueado si One manda en "ausencias".
       security:
+      - portalBearer: []
       - adminSession: []
         csrfToken: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol (personas visibles).
@@ -17598,6 +18006,178 @@ components:
           - type: integer
             minimum: 0
           - type: 'null'
+    Me:
+      type: object
+      additionalProperties: false
+      description: Quién soy (panel y Portal). scope null = superadmin o cuenta sin acceso en esta empresa.
+      required:
+      - user_id
+      - admin_id
+      - display_name
+      - email
+      - platform
+      - role
+      - scope
+      - features
+      - permissions
+      - tenant
+      properties:
+        user_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+        admin_id:
+          type: string
+          format: uuid
+        display_name:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+        email:
+          type: string
+          maxLength: 254
+        platform:
+          type: boolean
+        role:
+          anyOf:
+          - type: object
+            additionalProperties: false
+            required:
+            - id
+            - name
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+                maxLength: 200
+          - type: 'null'
+        scope:
+          anyOf:
+          - $ref: '#/components/schemas/AccessScope'
+          - type: 'null'
+        features:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            maxLength: 80
+        permissions:
+          type: array
+          maxItems: 500
+          items:
+            type: string
+            maxLength: 80
+        tenant:
+          $ref: '#/components/schemas/Tenant'
+    PortalTokens:
+      type: object
+      additionalProperties: false
+      required:
+      - access_token
+      - token_type
+      - expires_in
+      - refresh_token
+      - refresh_expires_at
+      - user
+      properties:
+        access_token:
+          type: string
+          minLength: 43
+          maxLength: 43
+        token_type:
+          const: Bearer
+        expires_in:
+          type: integer
+          minimum: 1
+          maximum: 900
+        refresh_token:
+          type: string
+          minLength: 43
+          maxLength: 43
+        refresh_expires_at:
+          type: string
+          format: date-time
+        user:
+          type: object
+          additionalProperties: false
+          required:
+          - id
+          - admin_id
+          - tenant_id
+          - display_name
+          - email
+          - must_change_password
+          properties:
+            id:
+              type: string
+              format: uuid
+            admin_id:
+              type: string
+              format: uuid
+            tenant_id:
+              type: string
+              format: uuid
+            display_name:
+              type: string
+              maxLength: 200
+            email:
+              type: string
+              maxLength: 254
+            must_change_password:
+              type: boolean
+    PortalRefresh:
+      type: object
+      additionalProperties: false
+      required:
+      - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          minLength: 1
+          maxLength: 200
+          writeOnly: true
+    PortalOriginInput:
+      type: object
+      additionalProperties: false
+      required:
+      - origin
+      properties:
+        origin:
+          type: string
+          minLength: 8
+          maxLength: 255
+    PortalOrigin:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - origin
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        origin:
+          type: string
+          maxLength: 255
+        created_at:
+          type: string
+          format: date-time
+    PortalOriginList:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      properties:
+        data:
+          type: array
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/PortalOrigin'
     Problem:
       type: object
       additionalProperties: false
@@ -22491,6 +23071,15 @@ components:
             format: date-time
           - type: 'null'
   securitySchemes:
+    portalBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Token de persona del Portal (POST /portal/v1/login). Las operaciones con portalBearer se sirven también
+        bajo /portal/v1/<ruta> con el mismo contrato y el mismo alcance que el panel; el resto responde 404 en /portal/v1.
+        access_token 15 min; refresh de un solo uso; sesión de 8 h. Sin cookies ni CSRF. X-Tenant-ID es opcional (la
+        empresa la da el token; otra empresa responde 404). CORS solo para las direcciones
+        autorizadas por superadmin (/admin/portal-origins); nunca en /v1.
     adminSession:
       type: apiKey
       in: cookie

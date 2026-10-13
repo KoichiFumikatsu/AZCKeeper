@@ -6,15 +6,25 @@ final class Application
 {
     private Validator $validator;
     private RateLimiter $limiter;
+    /** Cabeceras CORS de /portal/v1 (solo origenes autorizados); vacio en el resto. */
+    private array $cors = [];
+    private bool $portal = false;
     public function run(): void
     {
         $id = Util::uuid();
         $this->limiter = new RateLimiter();
         try {
             Config::key();
+            $db = null;
+            // Portal: CORS antes que nada (tambien los errores lo llevan) y la consulta previa del navegador sin autenticar.
+            if (str_starts_with(explode('?', $_SERVER['REQUEST_URI'] ?? '', 2)[0], Portal::PREFIX . '/')) {
+                $this->portal = true; $db = new Database();
+                $this->cors = Portal::cors($db, $_SERVER['HTTP_ORIGIN'] ?? '');
+                if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') { $this->send(204, '', $id, ['Cache-Control' => 'no-store']); return; }
+            }
             $this->validator = new Validator();
             $r = new Request($this->validator); $id = $r->requestId;
-            $db = new Database(); $auth = new Auth($db, new Signature(), $this->limiter);
+            $db ??= new Database(); $auth = new Auth($db, new Signature(), $this->limiter);
             if ($r->route === '/oauth/token') { $response = $this->ok($auth->external()->issue($r)); }
             elseif (str_starts_with($r->route, '/ext/v1/')) {
                 $c = $auth->external()->context($r);
@@ -25,22 +35,15 @@ final class Application
                     return $db->transaction(fn () => $this->ok((new ExternalApi($db, $c, $r, $this->validator))->dispatch(), 200, ['Cache-Control'=>'private, max-age=30', 'Vary'=>'Authorization, X-API-Key']));
                 });
             }
-            elseif (str_starts_with($r->route, '/auth/')) { $response = $auth->admin()->handle($r); }
-            elseif (!str_starts_with($r->route, '/client/')) {
-                $context = null; $admin = null;
-                // function (no fn): $context y $admin deben llegar por referencia al codigo de despues.
-                $response = $this->afterRollback($db, function () use ($db, $auth, $r, &$context, &$admin): array { return $db->transaction(function () use ($db, $auth, $r, &$context, &$admin): array {
-                    $context = $auth->admin()->context($r);
-                    $admin = new AdminApi($db, $context, $r, $this->validator);
-                    $handler = fn () => $admin->dispatch();
-                    $idempotent=in_array('#/components/parameters/Idempotency',array_column($r->operation['parameters']??[],'$ref'),true);
-                    $result=$idempotent ? (new Idempotency($db))->execute($context, $r, $handler) : $handler();
-                    if ($r->method!=='GET') { AdminApi::validatePending($db,$context['tenant_id'],$admin->recompileScope()); }
-                    return $result;
-                }); });
-                try { AdminApi::compilePending($db, $context['tenant_id'], $admin?->recompileScope()); }
-                catch (\Throwable $e) { if (isset($response['stream'])) { fclose($response['stream']['handle']); } if (isset($response['undelivered'])) { $this->undelivered($response['undelivered'], $id); } throw $e; }
+            elseif ($r->portal) {
+                // Misma API, otra puerta: sesion propia del Portal o la operacion del panel con el contexto del token.
+                $portal = new Portal($db, $this->limiter);
+                $response = str_starts_with($r->route, Portal::PREFIX . '/')
+                    ? $this->afterRollback($db, fn () => $db->transaction(fn () => $portal->session($r)))
+                    : $this->admin($db, $r, fn () => $portal->context($r), $id);
             }
+            elseif (str_starts_with($r->route, '/auth/')) { $response = $auth->admin()->handle($r); }
+            elseif (!str_starts_with($r->route, '/client/')) { $response = $this->admin($db, $r, fn () => $auth->admin()->context($r), $id); }
             // Modo mudado (Relocations): challenge y login de un equipo ya mudado responden 409 device_relocated sin tocar nada.
             elseif ($r->route === '/client/auth/challenges') { (new Relocations($db))->enforceBootstrap($r); $response = $this->ok($auth->challenge($r)); }
             elseif ($r->route === '/client/login') { (new Relocations($db))->enforceBootstrap($r); $response = $this->ok($auth->login($r)); }
@@ -92,6 +95,25 @@ final class Application
     {
         try { $fn(); error_log('keeper request=' . $id . ' installer_undelivered key_revoked'); }
         catch (\Throwable $e) { error_log('keeper request=' . $id . ' installer_undelivered revoke_failed=' . get_class($e)); }
+    }
+    /** Operacion del panel (AdminApi) con el contexto de la puerta que corresponda (cookie del panel o token del Portal). */
+    private function admin(Database $db, Request $r, callable $authenticate, string $id): array
+    {
+        $context = null; $admin = null;
+        $response = $this->afterRollback($db, function () use ($db, $r, $authenticate, &$context, &$admin): array {
+            return $db->transaction(function () use ($db, $r, $authenticate, &$context, &$admin): array {
+                $context = $authenticate();
+                $admin = new AdminApi($db, $context, $r, $this->validator);
+                $handler = fn () => $admin->dispatch();
+                $idempotent=in_array('#/components/parameters/Idempotency',array_column($r->operation['parameters']??[],'$ref'),true);
+                $result=$idempotent ? (new Idempotency($db))->execute($context, $r, $handler) : $handler();
+                if ($r->method!=='GET') { AdminApi::validatePending($db,$context['tenant_id'],$admin->recompileScope()); }
+                return $result;
+            });
+        });
+        try { AdminApi::compilePending($db, $context['tenant_id'], $admin?->recompileScope()); }
+        catch (\Throwable $e) { if (isset($response['stream'])) { fclose($response['stream']['handle']); } if (isset($response['undelivered'])) { $this->undelivered($response['undelivered'], $id); } throw $e; }
+        return $response;
     }
     // Lo que una denegacion debe dejar guardado aunque la peticion haga rollback (auditoria, revocaciones). Nunca tapa el error.
     private function afterRollback(Database $db, callable $fn): array
@@ -197,7 +219,7 @@ final class Application
             try {
                 ignore_user_abort(true); // si el cliente corta, seguir hasta poder revocar la clave
                 http_response_code($status); header('X-Request-ID: ' . $id); header('Content-Length: ' . ($left + strlen($stream['tail'])));
-                foreach ($headers + $this->limiter->headers as $key => $value) { foreach (is_array($value) ? $value : [$value] as $line) { header($key . ': ' . $line, $key !== 'Set-Cookie'); } }
+                foreach ($headers + $this->limiter->headers + $this->cors as $key => $value) { foreach (is_array($value) ? $value : [$value] as $line) { header($key . ': ' . $line, $key !== 'Set-Cookie'); } }
                 while (ob_get_level() > 0) { ob_end_clean(); }
                 if (fseek($h, 0) === 0) {
                     while ($left > 0 && !connection_aborted()) {
@@ -217,8 +239,8 @@ final class Application
         header('X-Request-ID: ' . $id);
         header('Content-Type: ' . ($problem ? 'application/problem+json' : 'application/json'));
         header('Cache-Control: no-store');
-        if ($status === 401) { header('WWW-Authenticate: Bearer realm="keeper-agent"'); }
-        foreach ($headers + $this->limiter->headers as $key => $value) { foreach (is_array($value)?$value:[$value] as $line) { header($key . ': ' . $line,$key!=='Set-Cookie'); } }
+        if ($status === 401) { header('WWW-Authenticate: Bearer realm="' . ($this->portal ? 'keeper-portal' : 'keeper-agent') . '"'); }
+        foreach ($headers + $this->limiter->headers + $this->cors as $key => $value) { foreach (is_array($value)?$value:[$value] as $line) { header($key . ': ' . $line,$key!=='Set-Cookie'); } }
         if ($status !== 304 && $status !== 204) { echo $json; }
     }
 }

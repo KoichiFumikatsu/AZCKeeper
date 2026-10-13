@@ -14,7 +14,7 @@ final class AdminApi
         if (($r->operation['x-platform-only'] ?? false) && !$c['platform']) { throw new ApiError(403,'permission_denied'); }
         $permission=$r->operation['x-permission'];
         // Permisos de la propia cuenta (menu del panel): cualquier sesion valida de la empresa los puede leer.
-        if ($r->operation['operationId']==='getMyAccess') { return; }
+        if (in_array($r->operation['operationId'],['getMyAccess','getMe'],true)) { return; }
         if ($r->operation['operationId']==='patchDevice' && (property_exists($r->body,'release_ring') || property_exists($r->body,'release_pause_reason')) && !$c['platform']) { throw new ApiError(403,'permission_denied'); }
         if ($r->operation['operationId']==='createDeviceCommand') {
             $permission=match($r->body->type) { 'lock'=>'equipos.bloquear','unlock'=>'equipos.desbloquear','restart'=>'equipos.reiniciar','shutdown'=>'equipos.apagar','wipe'=>'equipos.borrar','refresh_policy'=>'reglas.aplicar','rename_computer'=>'equipos.editar',default=>throw new ApiError(422,'validation_failed') };
@@ -188,7 +188,8 @@ final class AdminApi
             'listAbsences','createAbsence','patchAbsence'=>(new Absences($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listDoors','createDoor','patchDoor','getDoorQuarantine'=>(new DoorsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
-            'getMyAccess'=>$this->myAccess(),
+            'getMyAccess'=>$this->myAccess(), 'getMe'=>$this->me(),
+            'listPortalOrigins','createPortalOrigin','deletePortalOrigin'=>$this->portalOrigins($op,$id,$b),
             'setUserPlan'=>$this->userPlan($id,$b),
             'setUserAccess'=>$this->userAccess($id,$b),
             'listFeatures','listFeaturePackages','createFeaturePackage','patchFeaturePackage','getTenantFeatures','putTenantFeatures','listPersonPlans','createPersonPlan','patchPersonPlan','getTenantPlanUsage','listAvailablePersonPlans'=>(new FeatureAdmin($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
@@ -578,6 +579,41 @@ final class AdminApi
         $codes=array_values(array_filter($codes,function ($code) use ($features) { $f=Features::forOperation('',$code); return $f===null || in_array($f,$features,true); }));
         return self::response(['platform'=>false,'features'=>$features,'permissions'=>array_map(fn($code)=>['code'=>$code,'scopes'=>[$kind]],$codes)]);
     }
+    /** Quien soy (panel y Portal): persona, rol, alcance, funciones de la empresa, permisos efectivos y empresa con su marca. */
+    private function me(): array
+    {
+        $a=$this->db->one('SELECT email FROM admin_accounts WHERE tenant_id=? AND id=?',[$this->c['admin_tenant_id'],$this->c['admin_id']]);
+        $user=($this->c['user_id']??null)===null?null:$this->db->one('SELECT display_name FROM users WHERE tenant_id=? AND id=?',[$this->tenant,$this->c['user_id']]);
+        $access=json_decode($this->myAccess()['json'],true);
+        $grant=$this->c['platform']?null:AccessGrants::forContext($this->db,$this->c);
+        $role=$grant===null?null:$this->db->one('SELECT id,name FROM roles WHERE tenant_id=? AND id=?',[$this->tenant,$grant['role_id']]);
+        return self::response(['user_id'=>($this->c['user_id']??null)===null?null:Util::id($this->c['user_id']),'admin_id'=>Util::id($this->c['admin_id']),
+            'display_name'=>$user['display_name']??null,'email'=>$a['email'],'platform'=>$this->c['platform'],
+            'role'=>$role?['id'=>Util::id($role['id']),'name'=>$role['name']]:null,'scope'=>$grant===null?null:$grant['scope']->dto(),
+            'features'=>$access['features'],'permissions'=>array_column($access['permissions'],'code'),
+            'tenant'=>$this->tenantDto($this->db->one('SELECT * FROM tenants WHERE tenant_id=?',[$this->tenant]))]);
+    }
+    /** Direcciones autorizadas del Portal (CORS de /portal/v1). Solo superadmin (x-platform-only). */
+    private function portalOrigins(string $op,?string $id,?object $b): array
+    {
+        $platform=Util::bin(AdminAuth::PLATFORM);
+        $dto=static fn(array $r)=>['id'=>Util::id($r['id']),'origin'=>$r['origin'],'created_at'=>Util::time($r['created_at'])];
+        if ($op==='listPortalOrigins') { return self::response(['data'=>array_map($dto,$this->db->run('SELECT * FROM portal_origins WHERE tenant_id=? ORDER BY origin LIMIT 500',[$platform])->fetchAll())]); }
+        if ($op==='deletePortalOrigin') {
+            $row=$this->db->one('SELECT * FROM portal_origins WHERE tenant_id=? AND id=? FOR UPDATE',[$platform,$id]);
+            if (!$row) { throw new ApiError(404,'resource_not_found'); }
+            $this->db->run('DELETE FROM portal_origins WHERE tenant_id=? AND id=?',[$platform,$id]);
+            $this->audit('portal_origin',$id,['origin']);
+            return ['status'=>204,'json'=>'','headers'=>[]];
+        }
+        $origin=Portal::normalizeOrigin($b->origin);
+        if ($origin===null) { throw new ApiError(422,'validation_failed',[],'invalid_origin'); }
+        if ($this->db->one('SELECT id FROM portal_origins WHERE origin=?',[$origin])) { throw new ApiError(409,'invalid_transition',[],'origin_exists'); }
+        $new=Util::bin(Util::uuid());
+        $this->db->run('INSERT INTO portal_origins (tenant_id,id,origin) VALUES (?,?,?)',[$platform,$new,$origin]);
+        $this->audit('portal_origin',$new,['origin']);
+        return self::response($dto($this->db->one('SELECT * FROM portal_origins WHERE tenant_id=? AND id=?',[$platform,$new])),201);
+    }
     private function placeholderFirm(): string { return Placeholders::unit($this->db,$this->tenant,'firm'); }
     private function placeholderSchedule(): string { return Placeholders::schedule($this->db,$this->tenant,$this->c['timezone']); }
     /** Jefe valido: persona de la empresa y sin ciclos (A reporta a B que reporta a A). */
@@ -960,6 +996,12 @@ final class AdminApi
     }
     private function schedules(string $op,?string $id,?object $b): array
     {
+        // Portal sin alcance de todo el cliente: solo su propio horario efectivo (el suyo o, si es el provisional, el de la empresa).
+        if ($op==='listSchedules' && ($this->c['channel']??null)==='portal' && !$this->access->full()) {
+            $own=$this->db->one('SELECT schedule_id FROM users WHERE tenant_id=? AND id=?',[$this->tenant,$this->c['user_id']])['schedule_id']??null;
+            if ($own===null || Placeholders::is($this->db,$this->tenant,$own,'schedule_id')) { $own=$this->db->one('SELECT default_schedule_id FROM tenants WHERE tenant_id=?',[$this->tenant])['default_schedule_id']??$own; }
+            return $this->page('SELECT * FROM schedules WHERE tenant_id=? AND id=?',[$this->tenant,$own],fn($x)=>$this->scheduleDto($x));
+        }
         $this->access->requireFull();
         if ($op==='listSchedules') { return $this->page('SELECT * FROM schedules WHERE tenant_id=?',[$this->tenant],fn($x)=>$this->scheduleDto($x)); }
         if ($id) { $old=$this->row('schedules',$id); if ($op==='getSchedule') { return $this->result($this->scheduleDto($old)); } $this->match($old); }
