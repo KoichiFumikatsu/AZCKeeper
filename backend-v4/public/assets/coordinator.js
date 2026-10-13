@@ -189,7 +189,7 @@ export async function coordinator(ctx) {
     return { controls, narrow, describe };
   }
   function selected(controls) { return Object.fromEntries(Object.entries(controls).filter(([, v]) => v.value).map(([k, v]) => [k, v.value])); }
-  const productColumns = [['Día', 'day'], ['En uso', r => hours(r.active_seconds)], ['Encendido sin uso', r => hours(r.idle_seconds)], ['Productividad', r => percent(r.productivity_percent)], ['Focus /100', r => numeric(r.focus_score) ? fmt.format(r.focus_score) : 'Sin dato'], ['Entrada simulada (h)', r => numeric(r.simulated_seconds) ? fmt.format(r.simulated_seconds / 3600) : 'Sin dato']];
+  const productColumns = [['Día', 'day'], ['En uso', r => hours(r.active_seconds)], ['Encendido sin uso', r => hours(r.idle_seconds)], ['Bloqueado (h)', r => numeric(r.locked_seconds) ? fmt.format(r.locked_seconds / 3600) : 'Sin dato'], ['Productividad', r => percent(r.productivity_percent)], ['Focus /100', r => numeric(r.focus_score) ? fmt.format(r.focus_score) : 'Sin dato'], ['Entrada simulada (h)', r => numeric(r.simulated_seconds) ? fmt.format(r.simulated_seconds / 3600) : 'Sin dato']];
   // Agente 4.0.22+: entrada que Windows registra sin teclado ni ratón físicos (jiggler, DWService); ya va en "sin uso".
   function simulatedNotice(p, seconds) {
     if (numeric(seconds) && seconds > 1800) p.append(el('p', `Entrada simulada en el período: ${hours(seconds)}. Windows registró actividad sin teclado ni ratón físicos (un "mouse jiggler" o control remoto como DWService); ese tiempo se cuenta como encendido sin uso, no como uso real.`, 'notice'));

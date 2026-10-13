@@ -2817,35 +2817,40 @@ async function absencesPage() {
 }
 
 // ---- Clasificacion de aplicaciones y sitios ------------------------------------------------------------------------
-const CATEGORY = { productive: ['Productiva', 'good'], neutral: ['Neutra', ''], unproductive: ['Poco productiva', 'bad'], unclassified: ['Sin clasificar', 'warn'] };
+// system (0056): Keeper y pantalla de bloqueo; fuera de todas las medidas. Solo la plataforma lo pone en la base.
+const CATEGORY = { productive: ['Productiva', 'good'], neutral: ['Neutra', ''], unproductive: ['Poco productiva', 'bad'], unclassified: ['Sin clasificar', 'warn'], system: ['Sistema', ''] };
 async function classificationPage() {
   const org = (await optional(allPages('/organization'))) || [];
   const n = names(org);
   let data = await api('GET', '/app-classification');
   const appName = a => a.label || (a.key.startsWith('site:') ? `${a.key.slice(5)} (sitio web)` : a.key);
-  const effective = a => a.company_category || a.base_category || 'unclassified';
+  const effective = a => a.base_category === 'system' ? 'system' : a.company_category || a.base_category || 'unclassified';
+  const platform = !!readSession()?.is_platform_admin;
   const render = () => {
     $('page-content').replaceChildren();
     const apps = data.apps;
-    const used = apps.filter(a => a.active_seconds_30d > 0);
+    const used = apps.filter(a => a.active_seconds_30d > 0 && effective(a) !== 'system');
     const totalUse = used.reduce((s, a) => s + a.active_seconds_30d, 0);
     const unclassUse = used.filter(a => effective(a) === 'unclassified').reduce((s, a) => s + a.active_seconds_30d, 0);
     kpis([['Apps y sitios usados (30 días)', String(used.length)], ['Sin clasificar', String(used.filter(a => effective(a) === 'unclassified').length), 'Lo que no está clasificado no cuenta como productivo ni como distracción'],
       ['Tiempo sin clasificar', totalUse ? pct(100 * unclassUse / totalUse) : 'Sin uso', 'Más de 20 % = indicadores poco confiables'], ['Excepciones por área o cargo', String(apps.reduce((s, a) => s + a.overrides.length, 0))]]);
     const s = surface('Clasificación');
-    s.append(el('p', 'Productiva suma a productividad y focus; poco productiva suma a distracción; neutra (explorador, configuración) no suma a ninguna. La base la pone Keeper; la empresa la cambia aquí, y un área o cargo puede tener su excepción (por ejemplo, Facebook productivo para Mercadeo). Los cambios recalculan los últimos 30 días.', 'help'));
+    s.append(el('p', 'Productiva suma a productividad y focus; poco productiva suma a distracción; neutra (explorador, configuración) no suma a ninguna; sistema (Keeper y la pantalla de bloqueo) queda fuera de todos los porcentajes. La base la pone Keeper; la empresa la cambia aquí, y un área o cargo puede tener su excepción (por ejemplo, Facebook productivo para Mercadeo). Los cambios recalculan los últimos 30 días.', 'help'));
     table(s, 'Aplicaciones y sitios', [
       ['Aplicación o sitio', a => appName(a)],
       ['Uso (30 días)', a => a.active_seconds_30d ? `${(a.active_seconds_30d / 3600).toFixed(1)} h · ${a.people_30d} personas` : '—'],
       ['Base de Keeper', a => a.base_category ? CATEGORY[a.base_category][0] : '—'],
       ['En la empresa', a => {
-        const sel = el('select'); [['', `Usar la base${a.base_category ? ` (${CATEGORY[a.base_category][0]})` : ''}`], ['productive', 'Productiva'], ['neutral', 'Neutra'], ['unproductive', 'Poco productiva']].forEach(([v, t]) => sel.append(new Option(t, v)));
+        // Sistema es fijo para la empresa; la plataforma puede ponerlo (en su propia base).
+        if (a.base_category === 'system' && !platform) return 'Sistema (fijo)';
+        const sel = el('select'); [['', `Usar la base${a.base_category ? ` (${CATEGORY[a.base_category][0]})` : ''}`], ['productive', 'Productiva'], ['neutral', 'Neutra'], ['unproductive', 'Poco productiva'], ...(platform ? [['system', 'Sistema']] : [])].forEach(([v, t]) => sel.append(new Option(t, v)));
         sel.value = a.company_category && a.company_category !== 'unclassified' ? a.company_category : '';
         sel.addEventListener('change', async () => { sel.disabled = true; try { data = await api('PUT', '/app-classification', { body: { key: a.key, category: sel.value || 'unclassified' } }); render(); done(); } catch (e) { fail(e); sel.disabled = false; } });
         return sel;
       }],
       ['Resultado', a => { const [t, tone] = CATEGORY[effective(a)]; return badge(t, tone); }],
       ['Excepciones', a => {
+        if (effective(a) === 'system') return '—';
         const box = el('div');
         a.overrides.forEach(o => {
           const line = el('div', `${o.area_id ? `Área ${n.get(o.area_id) || '—'}` : `Cargo ${n.get(o.position_id) || '—'}`}: ${CATEGORY[o.category][0]} `);

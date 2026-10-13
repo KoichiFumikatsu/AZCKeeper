@@ -42,7 +42,7 @@ final class ActivityCalendar
             try {
                 $expected=self::expected('a');
                 $db->run("UPDATE day_summary d JOIN user_assignments a ON a.tenant_id=d.tenant_id AND a.id=d.user_assignment_id JOIN activity_calendar c ON c.schedule_id=a.schedule_id AND c.day=d.day
-                    SET d.expected_seconds=$expected,d.coverage_percent=IF($expected=0,0,LEAST(100,100*(d.active_seconds+d.idle_seconds)/NULLIF($expected,0))),
+                    SET d.expected_seconds=$expected,d.coverage_percent=IF($expected=0,0,LEAST(100,100*(d.active_seconds+d.idle_seconds+COALESCE(d.locked_seconds,0))/NULLIF($expected,0))),
                     d.late_seconds=IF($expected=0 OR d.first_activity IS NULL,NULL,GREATEST(0,TIMESTAMPDIFF(SECOND,c.work_start,d.first_activity))) WHERE d.tenant_id=? AND d.day=?",[$tenant,$day]);
                 $db->run("UPDATE focus_daily f JOIN user_assignments a ON a.tenant_id=f.tenant_id AND a.id=f.user_assignment_id JOIN activity_calendar c ON c.schedule_id=a.schedule_id AND c.day=f.day
                     SET f.punctuality_minutes=IF($expected=0 OR f.first_activity_time IS NULL,NULL,TIMESTAMPDIFF(MINUTE,TIMESTAMP(f.day,f.first_activity_time),TIMESTAMP(f.day,COALESCE(f.scheduled_start,c.start_local)))) WHERE f.tenant_id=? AND f.day=?",[$tenant,$day]);
