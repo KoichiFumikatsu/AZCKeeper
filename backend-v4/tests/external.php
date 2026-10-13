@@ -38,6 +38,8 @@ function externalToken(array $c, ?string $scope=null): array
 function externalData(Database $db,array $u,int $active): array
 {
     $t=$u['tenant_id']; $id=$u['id']; $device=Util::bin(Util::uuid()); $assignment=$db->one('SELECT id FROM user_assignments WHERE tenant_id=? AND user_id=?',[$t,$id])['id'];
+    // Fixture con fechas fijas (2026-09-10): con la llegada tardia por defecto (30 dias) el trigger de episodes la rechaza desde 2026-10-11.
+    $db->run('UPDATE retention_settings SET late_arrival_days=90 WHERE tenant_id=?',[$t]);
     $db->run("UPDATE user_assignments SET starts_at='2026-09-01' WHERE tenant_id=? AND id=?",[$t,$assignment]);
     $db->run("INSERT INTO devices (tenant_id,id,user_id,hostname,agent_version,os_edition,cpu,ram_bytes,capabilities,last_seen_at) VALUES (?,?,?,'external-device','4.0','test','test',1024,'[]',UTC_TIMESTAMP(6))",[$t,$device,$id]);
     $da=Util::bin(Util::uuid()); $db->run("INSERT INTO device_assignments (tenant_id,id,device_id,user_id,starts_at,reason) VALUES (?,?,?,?,'2026-09-01','fixture')",[$t,$da,$device,$id]);

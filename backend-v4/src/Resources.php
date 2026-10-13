@@ -91,10 +91,15 @@ final class Resources
         if ($architecture === null) { return 'x64'; }
         return in_array($architecture, ['x64', 'arm64'], true) ? $architecture : null;
     }
-    public function verifyRelease(array $release): void
+    // Claves publicas de releases (key_id => JWK). Tambien verifican las mudanzas de servidor (Relocations).
+    public static function releaseKeys(): array
     {
         $keysFile = Config::get('RELEASE_KEYS_FILE', dirname(__DIR__) . '/config/release-keys.json');
-        $keys = is_file($keysFile) ? json_decode(file_get_contents($keysFile), true, 32, JSON_THROW_ON_ERROR) : [];
+        return is_file($keysFile) ? json_decode(file_get_contents($keysFile), true, 32, JSON_THROW_ON_ERROR) : [];
+    }
+    public function verifyRelease(array $release): void
+    {
+        $keys = self::releaseKeys();
         $parts = explode('.', $release['manifest_jws']);
         try {
             if (count($parts) !== 3 || !isset($keys[$release['key_id']])) { throw new \RuntimeException('Untrusted release'); }

@@ -40,13 +40,16 @@ final class Application
                 try { AdminApi::compilePending($db, $context['tenant_id'], $admin?->recompileScope()); }
                 catch (\Throwable $e) { if (isset($response['stream'])) { fclose($response['stream']['handle']); } if (isset($response['undelivered'])) { $this->undelivered($response['undelivered'], $id); } throw $e; }
             }
-            elseif ($r->route === '/client/auth/challenges') { $response = $this->ok($auth->challenge($r)); }
-            elseif ($r->route === '/client/login') { $response = $this->ok($auth->login($r)); }
+            // Modo mudado (Relocations): challenge y login de un equipo ya mudado responden 409 device_relocated sin tocar nada.
+            elseif ($r->route === '/client/auth/challenges') { (new Relocations($db))->enforceBootstrap($r); $response = $this->ok($auth->challenge($r)); }
+            elseif ($r->route === '/client/login') { (new Relocations($db))->enforceBootstrap($r); $response = $this->ok($auth->login($r)); }
             elseif ($r->route === '/client/enrollment-requests') { $response = $this->ok((new DeviceIntake($db))->client($r, new Signature(), $this->limiter), 200, ['Cache-Control' => 'no-store']); }
             else {
                 // Commit proof consumption before business handling, including failed requests and replays.
                 $c = $db->transaction(fn () => $auth->authenticate($r));
                 $this->limiter->device($c);
+                // Modo mudado: 409 antes de cualquier ingesta; el agente conserva su cola y la reenvia al destino.
+                (new Relocations($db))->enforce($c['tenant_id'], $c['device_id'], $c['agent_version']);
                 // Un device recién enrolado aún no tiene política compilada; el primer sync la
                 // provisiona on-demand (recompile abre su propia transacción) en vez de responder 503.
                 if ($r->route === '/client/sync' &&
@@ -74,7 +77,7 @@ final class Application
                 $this->send($e->status,Util::json(['error'=>$e->status===401?'invalid_client':'invalid_request']),$id,$e->status===401?['WWW-Authenticate'=>'Basic realm="keeper-oauth"']:[]);
                 return;
             }
-            $this->send($e->status, Util::json(['type' => 'about:blank', 'title' => $e->errorCode, 'status' => $e->status, 'code' => $e->errorCode, 'request_id' => $id] + ($e->detail===null?[]:['detail'=>$e->detail]) + ($e->errors===[]?[]:['errors'=>$e->errors])), $id, $e->headers, true);
+            $this->send($e->status, Util::json(['type' => 'about:blank', 'title' => $e->errorCode, 'status' => $e->status, 'code' => $e->errorCode, 'request_id' => $id] + ($e->detail===null?[]:['detail'=>$e->detail]) + ($e->errors===[]?[]:['errors'=>$e->errors]) + $e->extra), $id, $e->headers, true);
         } catch (\Throwable $e) {
             $status = $e instanceof \PDOException ? 503 : 500;
             // Exception messages may contain secrets; log only class, correlation ID and numeric driver metadata.
@@ -138,6 +141,8 @@ final class Application
                 if (version_compare($c['agent_version'], '4.0.19', '>=')) {
                     $response['windows_security'] = (new WindowsSecurity($db, $c, $r))->clientSettings();
                 }
+                // Desde 4.0.24: mudanza de servidor firmada que aplica a este equipo (el agente la verifica y decide).
+                if (($relocation = (new Relocations($db))->deliver($c)) !== null) { $response['relocation'] = $relocation; }
                 // Una release no verificable (p. ej. release-keys.json desalineado) se RETIENE, no tumba el sync:
                 // si lanzara aqui, toda la flota del tenant perderia politica, comandos e ingesta hasta corregirla.
                 // GET /client/releases/{id} sigue respondiendo 503 para diagnostico.

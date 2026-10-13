@@ -3436,6 +3436,8 @@ const AUDIT_ACTIONS = {
   createIntegration: 'Creó una integración', revokeIntegration: 'Revocó una integración', rotateIntegration: 'Cambió la clave de una integración', issueExternalToken: 'Una integración pidió acceso',
   createWebhook: 'Creó un aviso automático (webhook)', deleteWebhook: 'Quitó un aviso automático (webhook)',
   registerRelease: 'Registró una versión del agente', deployRelease: 'Desplegó una versión del agente',
+  registerRelocation: 'Registró una mudanza de servidor', setRelocationEnforcement: 'Cambió el modo mudado de una mudanza de servidor',
+  'relocation.registered': 'Registró una mudanza de servidor', 'relocation.enforced': 'Activó el modo mudado (los equipos deben irse al servidor nuevo)', 'relocation.released': 'Quitó el modo mudado',
   issueMigrationAuthorization: 'Autorizó una migración desde K3', validateMigrationAuthorization: 'Validó una autorización de migración', setDeviceMigration: 'Cambió la migración de un equipo',
   persistDeviceEscrow: 'Guardó la llave de migración', recoverDeviceEscrow: 'Recuperó la llave de migración', verifyDeviceEscrow: 'Verificó la llave de migración',
   // Puesta en marcha guardada (piloto, revisiones y cierre): etiquetas de onboarding.js.
@@ -3457,6 +3459,7 @@ const AUDIT_FIELDS = {
   note: 'nota', starts_at: 'desde', ends_at: 'hasta', all_day: 'día completo', install_coverage_heartbeat_days: 'días sin conexión', raw_days: 'retención del detalle', aggregate_months: 'retención de resúmenes',
   log_days: 'retención de registros', retention_enforce: 'aplicar la retención', archived: 'archivada', country_code: 'país', company_id: 'empresa del grupo', holiday_calendar_id: 'calendario de festivos', calendar_id: 'calendario', is_default: 'por defecto', user_ids: 'personas', tenant_ids: 'empresas', position_ids: 'cargos', condition_kind: 'condición', confirm_sensitive: 'confirmación', assignable_by_rule: 'asignable por regla',
   shared_password: 'contraseña compartida', admin_name: 'usuario administrador', action: 'acción', reason: 'motivo', ring: 'anillo', percentage: 'porcentaje', version: 'versión',
+  sequence: 'secuencia', from_base: 'servidor de origen', to_base: 'servidor de destino', tenants: 'empresas', exclude_devices: 'equipos excluidos', enforced_at: 'modo mudado',
 };
 const auditFields = list => (list || []).map(f => AUDIT_FIELDS[f] || String(f).replace(/^branding\./, 'marca: ').replace(/_/g, ' ')).filter((v, i, a) => a.indexOf(v) === i).join(', ');
 const ACTOR = { admin: 'Persona', device: 'Equipo', integration: 'Integración', system: 'Keeper' };
@@ -3491,6 +3494,8 @@ const LOG_CODES = {
   local_unlock: 'Equipo desbloqueado con el PIN local',
   smart_app_control_disabled: 'Smart App Control desactivado (aplica al reiniciar)', smart_app_control_disable_failed: 'No se pudo desactivar Smart App Control',
   update_launch_failed: 'Windows no dejó arrancar el instalador de la actualización', update_apply_stalled: 'La actualización no terminó; se reintentará',
+  relocated: 'El equipo se mudó a este servidor (orden firmada); el detalle es el servidor nuevo', relocation_failed: 'No se pudo usar el servidor nuevo; sigue en el actual y reintenta cada 15 min (el motivo va en Detalle)',
+  relocation_rejected: 'El equipo ignoró una orden de mudanza que no cumple las reglas (firma, destino, empresa o vigencia; el motivo va en Detalle)', device_relocated: 'El servidor anterior avisó que este equipo ya se mudó',
   legacy_k3_running: 'Keeper 3 (K3) está abierto en el equipo', legacy_k3_autostart: 'Keeper 3 (K3) arranca al iniciar sesión', legacy_k3_gone: 'Keeper 3 (K3) ya no corre ni arranca',
   simulated_input: 'Entrada simulada: Windows registra uso sin teclado ni ratón físicos (jiggler o control remoto); cuenta como inactivo', simulated_input_end: 'Terminó la entrada simulada', session_log_rejected: 'El agente descartó un aviso no permitido de la sesión del usuario (el código va en Error)', physical_input_unavailable: 'No se pudo leer el teclado/ratón físico; la actividad se mide como antes (puede contar entrada simulada)',
   capture_gap: 'El equipo estuvo suspendido o sin medir unos segundos (normal al dormir o bloquear)', applied: 'Regla aplicada en el equipo', degraded: 'Algún control no está funcionando del todo',
@@ -3498,7 +3503,7 @@ const LOG_CODES = {
   restore_point_created: 'Punto de restauración creado', failed: 'Falló', unsupported_rule: 'El equipo no soporta una regla', conflicting_rules: 'Reglas en conflicto',
 };
 const LOG_COMPONENTS = { ActivityTracker: 'Medición de actividad', WebEnforcer: 'Bloqueo web', UsbEnforcer: 'USB', InstallEnforcer: 'Instalaciones', DownloadEnforcer: 'Descargas',
-  DeviceLock: 'Bloqueo de equipo', UpdateManager: 'Actualizaciones', LocalAccountHardening: 'Cuentas de Windows', RestorePoint: 'Puntos de restauración', AgentDiagnostics: 'Diagnóstico', Presence: 'Presencia', SmartAppControl: 'Smart App Control', LegacyK3: 'Keeper 3 (K3)' };
+  DeviceLock: 'Bloqueo de equipo', UpdateManager: 'Actualizaciones', LocalAccountHardening: 'Cuentas de Windows', RestorePoint: 'Puntos de restauración', AgentDiagnostics: 'Diagnóstico', Presence: 'Presencia', SmartAppControl: 'Smart App Control', LegacyK3: 'Keeper 3 (K3)', ServerRelocation: 'Cambio de servidor' };
 async function logsPage() {
   const devices = (await optional(allPages(`/tenants/${tenant}/devices`))) || [];
   const day = o => new Date(Date.now() + o * 864e5).toISOString().slice(0, 10);

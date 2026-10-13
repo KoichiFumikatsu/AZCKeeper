@@ -147,6 +147,7 @@ final class AdminApi
             'listPermissions','getPermission','patchPermission'=>$this->permissions($op,$b),
             'listPolicies','getPolicy','createPolicy','patchPolicy'=>$this->policies($op,$id,$b),
             'listReleases','registerRelease','deployRelease'=>$this->releases($op,$b),
+            'listRelocations','registerRelocation','setRelocationEnforcement'=>$this->relocations($op,$b),
             'listExpectedDevices','createExpectedDevice','importExpectedDevices','cancelExpectedDevice','listEnrollmentRequests','approveEnrollmentRequest','rejectEnrollmentRequest',
             'getEnrollmentSettings','putEnrollmentSettings','listEnrollmentKeys','createEnrollmentKey','revokeEnrollmentKey','downloadInstaller'=>(new DeviceIntake($this->db))->admin($op,$id,$b,$this->access,$this->c,$this->r),
             'listPanelAccounts','createPanelAccount','patchPanelAccount','resetPanelAccountPassword'=>(new PanelAccounts($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
@@ -776,6 +777,22 @@ final class AdminApi
         if (!$this->c['platform'] && !$this->db->one('SELECT release_id FROM release_deployments WHERE tenant_id=? AND release_id=?',[$this->tenant,$id])) { throw new ApiError(404,'resource_not_found'); }
         $this->db->run('INSERT INTO release_deployments (tenant_id,release_id,ring,percentage,enabled) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE percentage=VALUES(percentage),enabled=VALUES(enabled)',[$this->tenant,$id,$b->ring,$b->percentage,(int)$b->enabled]);
         $this->audit('release_deployment',$id,['ring','percentage','enabled']); return self::response($b,201);
+    }
+    // Mudanzas de servidor (Relocations): solo plataforma, en su propio contexto; registrar y activar el modo mudado piden reauth.
+    private function relocations(string $op,?object $b): array
+    {
+        $this->access->requireFull(); $platform=Util::bin(AdminAuth::PLATFORM);
+        if ($this->tenant!==$platform) { throw new ApiError(404,'resource_not_found'); }
+        if ($op==='listRelocations') { return $this->page('SELECT * FROM relocations WHERE tenant_id=?',[$platform],fn($x)=>Relocations::dto($x),'registered_at'); }
+        $this->reauth(); $relocations=new Relocations($this->db);
+        if ($op==='registerRelocation') {
+            $row=$relocations->register($b->relocation_jws,$this->c['principal_id']);
+            (new Audit($this->db))->record($this->c,$this->r,'relocation.registered','relocation',$row['id'],['sequence','from_base','to_base','tenants','exclude_devices']);
+            return self::response(Relocations::dto($row),201);
+        }
+        $row=$relocations->enforcement($this->r->resourceId,$b->enforced,$this->c['principal_id']);
+        (new Audit($this->db))->record($this->c,$this->r,$b->enforced?'relocation.enforced':'relocation.released','relocation',$row['id'],['enforced_at']);
+        return self::response(Relocations::dto($row));
     }
     private function dates(int $maximum=366): array
     {

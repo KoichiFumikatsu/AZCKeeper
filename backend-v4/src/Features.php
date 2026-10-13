@@ -42,7 +42,7 @@ final class Features
      * Solo de la plataforma: nunca se vende (lo protege x-platform-only o el rol de superadmin). Gestionar y aprobar
      * integraciones deciden cargos y jefes, y con ellos los roles de las reglas por cargo (0044): no van a un cliente.
      */
-    public const PLATFORM_PERMISSIONS = ['empresas.gestionar', 'empresas.rbac_habilitar', 'releases.ver', 'releases.publicar', 'releases.desplegar',
+    public const PLATFORM_PERMISSIONS = ['empresas.gestionar', 'empresas.rbac_habilitar', 'releases.ver', 'releases.publicar', 'releases.desplegar', 'servidor.mudar',
         'migracion.ver', 'migracion.gestionar', 'migracion.recuperar', 'operacion.salud', 'integraciones.gestionar', 'integraciones.aprobar'];
 
     /** @return list<string> */
