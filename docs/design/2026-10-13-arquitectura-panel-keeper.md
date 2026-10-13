@@ -43,3 +43,9 @@ Todo lo anterior más todos los poderes de plataforma que ya existen (empresas, 
 - **Margen de 15 minutos en la hora de entrada**: llegar hasta 15 min después de la hora de entrada cuenta como **a tiempo**; más de 15 min después, **tarde**; más de 15 min antes, **temprano**. Hoy el cálculo marca «tarde» desde el primer segundo de retraso (`ActivityReports.php:176`, `late_seconds>0`): hay que cambiarlo.
 - **Problemas reportados**: la lista propuesta (equipos sin conexión en horario, entrada simulada, K3 abierto, controles fallidos, agente degradado, doble empleo y apps sospechosas sin revisar, ausencias por aprobar; fallo del cálculo solo para plataforma).
 - **El margen se edita en keep**: en la página de Horarios, una tarjeta «Margen de puntualidad» (minutos, por defecto 15) por empresa. Cambiarlo recalcula los últimos 30 días, igual que la clasificación de apps; los días más viejos conservan el cálculo anterior y la tarjeta lo advierte.
+
+## Horarios en Grupo AZC (medido 2026-10-13)
+- El modelo ya soporta un horario distinto por día de la semana y sábados de medio tiempo (`schedule_days`), y hay 15 horarios: de 07:00 a 10:00 de entrada, con viernes cortos y sábados. El margen de puntualidad se mide contra la hora de entrada de CADA persona en CADA día, así que un solo margen por empresa sirve aunque los horarios varíen.
+- **98 de 314 personas están «Sin horario»**: para ellas no hay jornada esperada, ni puntualidad, ni productividad sobre jornada. Hay que asignarles horario antes de que esas métricas signifiquen algo.
+- Hoy el horario se asigna persona por persona; las firmas/clientes (`org_units`) no tienen horario por defecto. Propuesta: horario por defecto en la firma/cliente o el área, heredado por sus personas salvo que la persona tenga uno propio.
+- La pantalla Horarios debe permitir crear horarios como «L-J 10:30-19:00 · V 10:30-17:30 · S 08:00-12:00» sin escribir códigos.
