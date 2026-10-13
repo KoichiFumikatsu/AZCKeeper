@@ -50,6 +50,12 @@ function appClassificationTests(Database $db): void
     $recompute();
     $d3 = $db->one('SELECT productive_seconds,unclassified_seconds FROM day_summary WHERE tenant_id=? AND day=? AND user_id=?', [$tenant, $day, $u['id']]);
     check((int) $d3['productive_seconds'] === 1800 && (int) $d3['unclassified_seconds'] === 0, 'company classification and removed exception applied');
+    // Mismo navegador con y sin sitio reconocido el mismo dia: dos categorias para chrome. Antes la clave de episode_daily no
+    // incluia la categoria y el calculo del dia entero fallaba por clave duplicada (produccion, 2026-10-13 15:40 UTC).
+    $episode('chrome', null, 5);
+    $recompute();
+    $chrome = $db->run("SELECT category,active_seconds FROM episode_daily WHERE tenant_id=? AND day=? AND user_id=? AND process_name='chrome' ORDER BY category", [$tenant, $day, $u['id']])->fetchAll();
+    check(count($chrome) === 2 && array_sum(array_column($chrome, 'active_seconds')) == 900, 'chrome with and without site keeps one row per category ' . json_encode($chrome));
     // Sitio reconocido al recibir: solo la etiqueta, nunca el titulo.
     $class = new ReflectionClass(Keeper\Ingest::class); $ingest = $class->newInstanceWithoutConstructor();
     foreach (['db' => $db, 'c' => ['tenant_id' => $tenant]] as $prop => $value) { $class->getProperty($prop)->setValue($ingest, $value); }
