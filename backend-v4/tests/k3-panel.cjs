@@ -8,7 +8,7 @@ const destination = path.resolve(__dirname, '../../docs/design/2026-10-13-captur
 (async () => {
   fs.mkdirSync(destination, { recursive: true });
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const page = await browser.newPage({ viewport: { width: 1366, height: 1000 } });
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.addInitScript(({ tenant }) => {
@@ -21,18 +21,42 @@ const destination = path.resolve(__dirname, '../../docs/design/2026-10-13-captur
   try {
     const screens = (process.env.KEEPER_K3_SCREENS || 'inicio,personas,ficha,ventanas,linea,controles,editar,horarios,administradores,salud,productividad,equipos,equipo,versiones,doble,cobertura').split(',');
     for (const screen of screens) {
-      const routes = { inicio: '/', personas: '/usuarios.php', ficha: `/miembro.php?id=${uid}&tab=actividad`, productividad: '/reportes.php', equipos: '/equipos.php', equipo: `/equipo.php?id=${device}`, versiones: '/admin/releases.php', doble: '/doble-empleo.php', cobertura: '/cobertura.php' };
-      Object.assign(routes, { ventanas: routes.ficha, linea: routes.ficha, controles: routes.ficha, editar: `/miembro.php?id=${uid}&tab=datos`, horarios: '/horarios.php', administradores: '/cuentas.php', salud: '/admin/salud.php' });
+      const routes = { inicio: '/', personas: '/usuarios.php', ficha: `/miembro.php?id=${uid}&tab=resumen`, productividad: '/reportes.php', equipos: '/equipos.php', equipo: `/equipo.php?id=${device}`, versiones: '/admin/releases.php', doble: '/doble-empleo.php', cobertura: '/cobertura.php' };
+      Object.assign(routes, { ventanas: `/miembro.php?id=${uid}&tab=ventanas`, linea: `/miembro.php?id=${uid}&tab=linea`, controles: `/miembro.php?id=${uid}&tab=controles`, editar: `/miembro.php?id=${uid}&tab=datos`, horarios: '/horarios.php', administradores: '/cuentas.php', salud: '/admin/salud.php' });
       await page.goto(`http://127.0.0.1:8780${routes[screen]}`);
       if (screen === 'inicio') { await page.getByRole('heading', { name: 'Personal activo ahora' }).waitFor(); await page.getByRole('heading', { name: 'Problemas reportados' }).waitFor(); }
       else {
         const headings = { personas: 'Tu personal activo', ficha: 'Resumen del mes', productividad: 'Ranking individual', equipos: 'Versiones instaladas', equipo: 'Actualizaciones', versiones: 'Publicar versión por anillo' };
-        Object.assign(headings, { ventanas: 'Resumen del mes', linea: 'Resumen del mes', controles: 'Resumen del mes', editar: 'Datos de la persona', horarios: 'Margen de puntualidad y horario predeterminado', administradores: 'Acceso al Portal', salud: 'Estado del cálculo' });
+        Object.assign(headings, { ventanas: 'Aplicaciones y sitios', linea: 'Línea de tiempo', controles: 'Historial de órdenes', editar: 'Datos de la persona', horarios: 'Margen de puntualidad y horario predeterminado', administradores: 'Acceso al Portal', salud: 'Estado del cálculo' });
         if (headings[screen]) await page.getByRole('heading', { name: headings[screen], exact: true }).waitFor();
         else await page.getByRole('cell', { name: person.display_name, exact: true }).waitFor();
       }
-      if (['ventanas', 'linea', 'controles'].includes(screen)) { await page.locator(`#tab-${screen}`).click(); if (screen === 'ventanas') await page.getByLabel('Ordenar ventanas').selectOption('sessions'); }
-      if (screen === 'personas') { await page.getByRole('columnheader', { name: 'Primer ingreso hoy' }).waitFor(); await page.getByRole('columnheader', { name: 'Focus /100' }).waitFor(); }
+      if (screen === 'ventanas') await page.getByLabel('Ordenar ventanas').selectOption('sessions');
+      if (screen === 'linea') await page.locator('#panel-linea tbody tr').first().waitFor();
+      if (screen === 'controles') {
+        await page.getByText('No hay órdenes registradas.', { exact: true }).waitFor();
+        assert.equal(await page.locator('#panel-controles').getByText(/No hay datos para este período/).count(), 0);
+      }
+      if (['ficha', 'ventanas', 'linea', 'controles', 'editar'].includes(screen)) {
+        assert.equal(await page.getByRole('tablist').count(), 1);
+        assert.deepEqual(await page.getByRole('tab').allTextContents(), ['Resumen', 'Ventanas', 'Línea de tiempo', 'Equipo y controles', 'Presencia', 'Reglas', 'Datos y acceso']);
+        const tops = await page.getByRole('tab').evaluateAll(tabs => tabs.map(t => Math.round(t.getBoundingClientRect().top)));
+        assert.equal(new Set(tops).size, 1, 'Una sola fila de pestañas a 1366 px');
+        assert.equal(await page.getByLabel('Período', { exact: true }).count(), ['ficha', 'ventanas'].includes(screen) ? 1 : 0);
+      }
+      if (screen === 'inicio') {
+        assert.equal(await page.locator('.coordinator .kpi-grid').count(), 1);
+        assert.deepEqual(await page.locator('.coordinator .kpi-grid dt').allTextContents(), ['Activos / total', 'Sedes activas', 'Productividad en tiempo real', 'Focus en tiempo real', 'Llegadas', 'Horas de hoy', 'Primer ingreso']);
+      }
+      if (screen === 'personas') {
+        await page.getByRole('columnheader', { name: 'Primer ingreso', exact: true }).waitFor();
+        assert.deepEqual((await page.locator('.people-list thead th').allTextContents()).filter(Boolean), ['Nombre', 'Acciones', 'Conexión', 'Primer ingreso', 'Última vez en uso', 'Tiempo trabajado', 'Productividad', 'Focus /100']);
+        assert.ok(await page.locator('.people-list .table-wrap').evaluate(e => e.scrollWidth <= e.clientWidth + 1), 'Personas sin desplazamiento horizontal a 1366 px');
+        for (const action of ['Ver', 'Editar']) {
+          const box = await page.locator('.people-list tbody').getByRole('link', { name: action, exact: true }).first().boundingBox();
+          assert.ok(box && box.x >= 0 && box.x + box.width <= 1366, `${action} visible a 1366 px`);
+        }
+      }
       if (screen === 'productividad') { await page.getByRole('heading', { name: 'Tendencia de 8 semanas' }).waitFor(); await page.getByLabel('Ordenar por').selectOption('area'); }
       if (screen === 'equipos') {
         await page.getByLabel('Seleccionar AZC-ANA', { exact: true }).check();

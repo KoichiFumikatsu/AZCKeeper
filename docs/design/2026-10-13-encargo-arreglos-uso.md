@@ -1,0 +1,9 @@
+# Encargo 3: tres arreglos de uso (base b1c83eb)
+
+Revisión de capturas `docs/design/2026-10-13-capturas-arquitectura/` contra la regla del dueño: «que un inexperto navegue sin perderse».
+
+1. **Personas** (`personas.png`): la tabla es más ancha que la pantalla y **Ver / Editar quedan fuera de vista** a la derecha. Pon las acciones Ver y Editar visibles sin desplazar (primera columna tras el nombre o el nombre como enlace + botón Editar junto a él), y reduce columnas: deja Nombre, Conexión, Primer ingreso, Última vez en uso, Tiempo trabajado, Productividad, Focus, Acciones; mueve cédula, empresa, sede, área, cargo y acceso a un desplegable «Más columnas» o a la ficha. A 1366 px de ancho no debe haber desplazamiento horizontal.
+2. **Inicio** (`inicio.png`): hay dos bloques de indicadores que repiten datos («Activos / total» vs «En línea ahora»; productividad y focus dos veces). Un solo bloque, en este orden: Activos/total, Sedes activas, Productividad en tiempo real, Focus en tiempo real, Llegadas (a tiempo / tarde / temprano / sin actividad), Horas de hoy, Primer ingreso. Problemas reportados justo debajo.
+3. **Ficha de la persona** (`ventanas.png`, `controles.png`): hay **dos filas de pestañas** apiladas. Una sola fila: Resumen · Ventanas · Línea de tiempo · Equipo y controles · Presencia · Reglas · Datos y acceso. El selector de período solo aparece en las pestañas que lo usan. En «Equipo y controles» el aviso «No hay datos para este período» entre secciones confunde: quítalo o colócalo dentro de la sección a la que se refiere.
+
+Pruebas: smoke PHP (base 3967), `node --check` en JS tocado, actualiza `tests/k3-panel.cjs`/fixture si cambian encabezados (yo tomo capturas). Sin commits (tu entorno no puede), sin push ni despliegue. Reporte breve al final de `docs/design/2026-10-13-reporte-arquitectura-panel.md` («Arreglos de uso»). No dejes servidores ni carpetas temporales en el repo al terminar.

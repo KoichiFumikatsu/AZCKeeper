@@ -7,7 +7,7 @@ const { createFixture } = require('./k3-panel-fixture.cjs');
 const fixture = createFixture();
 const root = path.resolve(__dirname, '../public/assets');
 async function open(route, entry) {
-  const url = `http://127.0.0.1:8780${route}`, response = await fetch(url); assert.equal(response.status, 200, route);
+  const url = `${process.env.KEEPER_PANEL_ORIGIN || 'http://127.0.0.1:8780'}${route}`, response = await fetch(url); assert.equal(response.status, 200, route);
   const errors = [], vc = new VirtualConsole(); vc.on('jsdomError', e => { if (!e.message.includes('navigation')) errors.push(e.message); });
   const dom = new JSDOM(await response.text(), { url, runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole: vc }); const w = dom.window;
   w.sessionStorage.setItem('keeper.presentation.session', JSON.stringify({ tenant_id: fixture.tenant, is_platform_admin: true, expires_at: '2099-01-01T00:00:00Z' }));
@@ -49,31 +49,53 @@ async function open(route, entry) {
       assert.deepEqual(c.errors, [], route);
       assert.ok(!c.text().includes('undefined'), route + ': ' + c.text());
       if (route === '/') {
+        const blocks = c.w.document.querySelectorAll('.coordinator .kpi-grid'); assert.equal(blocks.length, 1);
+        assert.deepEqual([...blocks[0].querySelectorAll('dt')].map(n => n.textContent), ['Activos / total', 'Sedes activas', 'Productividad en tiempo real', 'Focus en tiempo real', 'Llegadas', 'Horas de hoy', 'Primer ingreso']);
+        assert.equal(blocks[0].nextElementSibling.querySelector('h2').textContent, 'Problemas reportados');
         const form = c.w.document.querySelector('.coordinator form'), dates = form.querySelectorAll('input[type=date]');
         const valid = dates[1].value; dates[0].value = '2020-01-01'; form.dispatchEvent(new c.w.Event('submit', { cancelable: true }));
         assert.ok(dates[1].validationMessage.includes('31 días'));
         dates[0].value = valid; dates[0].dispatchEvent(new c.w.Event('input')); assert.equal(dates[1].validationMessage, '');
       }
+      if (route === '/usuarios.php') {
+        const table = c.w.document.querySelector('.people-list table');
+        assert.deepEqual([...table.querySelectorAll('thead th')].map(n => n.textContent).filter(Boolean), ['Nombre', 'Acciones', 'Conexión', 'Primer ingreso', 'Última vez en uso', 'Tiempo trabajado', 'Productividad', 'Focus /100']);
+        const actions = table.querySelector('tbody tr').children[2]; assert.deepEqual([...actions.querySelectorAll('a')].map(a => a.textContent), ['Ver', 'Editar']);
+      }
       if (route.startsWith('/miembro.php') && !route.includes('tab=datos')) {
-        await c.wait(() => c.w.document.querySelector('#tab-controles'));
-        c.w.document.querySelector('#tab-ventanas').click();
+        const tabs = c.w.document.querySelectorAll('[role=tablist]'); assert.equal(tabs.length, 1);
+        assert.deepEqual([...tabs[0].children].map(b => b.textContent), ['Resumen', 'Ventanas', 'Línea de tiempo', 'Equipo y controles', 'Presencia', 'Reglas', 'Datos y acceso']);
+        c.w.document.querySelector('#person-tab-ventanas').click();
+        await c.wait(() => c.w.document.querySelector('#panel-ventanas tbody tr'));
+        assert.ok(c.w.document.querySelector('#person-panel-ventanas [aria-label="Período"]'));
         const sort = c.w.document.querySelector('[aria-label="Ordenar ventanas"]'); sort.value = 'sessions'; sort.dispatchEvent(new c.w.Event('change'));
         assert.ok(c.w.document.querySelector('#panel-ventanas tbody tr').textContent.includes('chrome'));
-        c.w.document.querySelector('#tab-linea').click(); assert.ok(c.w.document.querySelector('#panel-linea').textContent.includes('WINWORD'));
-        c.w.document.querySelector('#tab-controles').click();
+        c.w.document.querySelector('#person-tab-linea').click(); await c.wait(() => c.w.document.querySelector('#panel-linea')?.textContent.includes('WINWORD'));
+        assert.equal(c.w.document.querySelector('#person-panel-linea [aria-label="Período"]'), null);
+        c.w.document.querySelector('#person-tab-controles').click();
+        await c.wait(() => c.w.document.querySelector('#panel-controles .command-history')?.textContent.includes('No hay órdenes registradas.'));
+        assert.equal(c.w.document.querySelector('#person-panel-controles [aria-label="Período"]'), null);
+        assert.ok(!c.w.document.querySelector('#panel-controles').textContent.includes('No hay datos para este período'));
         c.w.document.querySelector('#panel-controles [data-command="wipe"]').click();
         const wipe = c.w.document.querySelector('dialog form'); const confirm = wipe.querySelector('[name="confirmation"]');
         assert.ok(wipe.querySelector('button[type=submit]').disabled); confirm.value = 'incorrecto'; confirm.dispatchEvent(new c.w.Event('input')); assert.ok(wipe.querySelector('button[type=submit]').disabled);
         confirm.value = 'AZC-ANA'; confirm.dispatchEvent(new c.w.Event('input')); assert.ok(!wipe.querySelector('button[type=submit]').disabled); c.w.document.querySelector('dialog').remove();
         c.w.document.querySelector('#panel-controles [data-command="lock"]').click(); c.w.document.querySelector('dialog form').dispatchEvent(new c.w.Event('submit', { cancelable: true }));
         await c.wait(() => fixture.writes.some(w => w.path.endsWith('/commands') && w.body.type === 'lock'));
-        c.w.document.querySelector('#tab-actividad').click();
-        [...c.w.document.querySelectorAll('#panel-actividad button')].find(b => b.textContent === 'Exportar CSV').click();
+        c.w.document.querySelector('#person-tab-presencia').click(); await c.wait(() => c.w.document.querySelector('#panel-presencia table'));
+        assert.ok(c.w.document.querySelector('#person-panel-presencia [aria-label="Período"]'));
+        c.w.document.querySelector('#person-tab-politicas').click(); await c.wait(() => c.w.document.querySelector('#panel-politicas'));
+        assert.equal(c.w.document.querySelector('#person-panel-politicas [aria-label="Período"]'), null);
+        c.w.document.querySelector('#person-tab-resumen').click();
+        [...c.w.document.querySelectorAll('#panel-resumen button')].find(b => b.textContent === 'Exportar CSV').click();
         assert.equal(c.blobs.length, 1);
         const csv = await new Promise(resolve => { const reader = new c.w.FileReader(); reader.onload = () => resolve(reader.result); reader.readAsText(c.blobs[0]); });
         for (const field of ['Horario laboral', 'Primer ingreso', 'Último evento', 'Almuerzo', 'Fuera de horario']) assert.ok(csv.includes(field), field);
       }
       if (route.includes('tab=datos')) {
+        assert.equal(c.w.document.querySelectorAll('[role=tablist]').length, 1);
+        assert.ok(c.text().includes('Cuenta y acceso al panel'));
+        assert.equal(c.w.document.querySelector('#person-panel-datos [aria-label="Período"]'), null);
         const form = c.w.document.querySelector('.person-form'), employment = [...form.querySelectorAll('select')].find(s => [...s.options].some(o => o.value === 'vacaciones'));
         employment.value = 'vacaciones'; form.dispatchEvent(new c.w.Event('submit', { cancelable: true }));
         await c.wait(() => fixture.writes.some(w => w.body.employment_status === 'vacaciones') && c.text().includes('Datos guardados'));

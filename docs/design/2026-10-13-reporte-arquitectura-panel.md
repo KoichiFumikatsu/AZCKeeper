@@ -101,3 +101,26 @@ Los archivos compartidos necesitan selección de fragmentos, no añadir el archi
 7. **Evidencia y generados:** `tests/k3-panel-fixture.cjs`, `tests/k3-panel.cjs`, `tests/k3-dom.cjs`, este reporte y los archivos generados de contrato/C# correspondientes al conjunto final.
 
 Sin dudas de producto pendientes para lo implementado. La validación visual en Chromium queda para el usuario, como establece el encargo.
+
+## Arreglos de uso
+
+Encargo 3, base `b1c83eb`, 2026-10-13. Cambios sin commitear, sin push ni despliegue.
+
+- **Personas:** ocho columnas de datos, con Ver/Editar inmediatamente después del nombre. Tabla de ancho fijo al contenedor, encabezados y contenido ajustables; conserva casillas, filtros, búsqueda y edición en lote. Cédula, organización, estado, acceso y plan se consultan en la ficha. La ayuda distingue primer ingreso de hoy de las métricas del período elegido.
+- **Inicio:** un único bloque, en orden: Activos/total, Sedes activas, Productividad en tiempo real, Focus en tiempo real, Llegadas, Horas de hoy y Primer ingreso. Llegadas agrupa los cuatro estados. Problemas reportados queda inmediatamente debajo. Se conserva el refresco de 60 segundos y los informes del período; se elimina la consulta mensual que alimentaba los indicadores duplicados.
+- **Ficha:** una sola fila Resumen / Ventanas / Línea de tiempo / Equipo y controles / Presencia / Reglas / Datos y acceso. Cada vista carga sus consultas al abrirla. El período aparece solo en Resumen, Ventanas y Presencia; Línea de tiempo conserva su selector de día. Actividad diaria y CSV pasan a Resumen; datos, contraseña, acceso y plan comparten Datos y acceso, conservando el aviso de cambios sin guardar. Los enlaces antiguos `actividad`, `equipos` y `acceso` siguen funcionando. El historial vacío dice «No hay órdenes registradas» dentro de «Historial de órdenes».
+
+Archivos de producto: `backend-v4/public/assets/k3.js`, `coordinator.js` y `k3.css`. Sin cambios de API, migraciones, contrato ni C#.
+
+Validación:
+
+| Prueba | Resultado |
+|---|---|
+| `powershell -NoProfile -File backend-v4/tests/mysql-smoke.ps1 -DebugResponses` | **PASS, 3.967 comprobaciones**. |
+| `node --check` | Correcto en los dos JS de producto y los dos CJS modificados. |
+| `node --experimental-vm-modules backend-v4/tests/k3-dom.cjs` | **PASS, 13 vistas**, con comprobaciones del bloque único, columnas y acciones, pestañas, selectores y controles. Se reutilizó el servidor del smoke mediante `KEEPER_PANEL_ORIGIN=http://127.0.0.1:18084`. |
+| `git diff --check` | Correcto. |
+
+`tests/k3-panel.cjs` actualizado para capturas a **1366 px**, con comprobaciones de tabla sin desplazamiento horizontal, Ver/Editar dentro de la pantalla, una sola fila de pestañas y ausencia del aviso ambiguo. No se ejecutó Chromium; la comprobación visual y esas medidas geométricas quedan para las capturas del usuario. La fixture existente sigue siendo válida.
+
+Limpieza: el runner cerró sus servidores PHP/MySQL y eliminó su directorio temporal. Sin listeners en 8780, 18084 ni 13384 al finalizar. Se encontraron restos **preexistentes** en `backend-v4/.validation/` (MySQL del 5 de octubre y logs del encargo anterior); la política de ejecución rechazó su eliminación sin detallar la causa. Esa limpieza queda pendiente por restricción del entorno. No se crearon carpetas temporales adicionales. `artifacts/`, `graphify-out/` y el archivo del encargo, preexistentes sin seguimiento, se conservaron.

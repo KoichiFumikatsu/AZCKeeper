@@ -1506,7 +1506,6 @@ async function people() {
   const canCreatePeople = isSuper || !myAccess || !!myAccess.permissions?.some(p => p.code === 'usuarios.crear');
   const planName = id => avail?.data.find(p => p.id === id)?.name || allPlans.find(p => p.id === id)?.name || null;
   const defaultLabel = avail ? `Por defecto (${planName(avail.default_plan_id) || 'sin plan'})` : '';
-  const ownPlan = u => avail?.data.find(p => p.id === u.plan_id) || null;
   // Edición en lote: datos (usuarios.editar), plan (si se pueden ver planes) y acceso (roles.gestionar). La API valida igual.
   const can = code => isSuper || !!myAccess?.permissions?.some(p => p.code === code);
   const batchFields = { data: isSuper || !myAccess || can('usuarios.editar'), plan: !!avail, access: can('roles.gestionar') };
@@ -1516,8 +1515,9 @@ async function people() {
     $('page-content').replaceChildren();
     kpis([['Personas', String(list.length)], ...['En línea', 'Ausente', 'Desconectado'].map(label => [label, devices.status === 'fulfilled' ? String(list.filter(u => u.status === 'active' && state(u) === label).length) : 'Sin dato'])]);
     const s = surface('Tu personal activo');
+    s.classList.add('people-list');
     s.append(periodForm);
-    s.append(el('p', `Actividad de hoy (${day}) · ${tenantZone}. Conexión: en línea hasta 5 minutos, ausente hasta 15; después, desconectado.`, 'help'));
+    s.append(el('p', `Primer ingreso de hoy (${day}); última vez en uso, tiempo trabajado, productividad y focus del período elegido · ${tenantZone}. Conexión: en línea hasta 5 minutos, ausente hasta 15; después, desconectado. Los datos laborales, acceso y plan están en la ficha.`, 'help'));
     for (const [result, name] of [[activity, 'Tiempo y productividad'], [presence, 'Primer ingreso'], [devices, 'Conexión']]) {
       if (result.status === 'rejected') s.append(el('p', `${name}: ${errorMessage(result.reason)}`, 'error-message'));
     }
@@ -1559,17 +1559,13 @@ async function people() {
       edit.addEventListener('click', () => batchEditor(list.filter(u => selected.has(u.id))).catch(fail));
     }
     table(s, 'Personas', [
-      ['Nombre', u => { const a = el('a', u.display_name); a.href = `/miembro.php?id=${encodeURIComponent(u.id)}&tab=actividad`; const d = el('div'); d.append(a); if (u.email) d.append(el('small', u.email)); return d; }],
+      ['Nombre', u => { const a = el('a', u.display_name); a.href = `/miembro.php?id=${encodeURIComponent(u.id)}&tab=resumen`; const d = el('div'); d.append(a); if (u.email) d.append(el('small', u.email)); return d; }],
+      ['Acciones', u => { const d = el('div', undefined, 'actions no-margin'); const v = el('a', 'Ver', 'link-button'); v.href = `/miembro.php?id=${encodeURIComponent(u.id)}`; d.append(v); if (batchFields.data) { const b = el('a', 'Editar', 'link-button'); b.href = personUrl(u); d.append(b); } return d; }],
       ['Conexión', u => badge(state(u), state(u) === 'En línea' ? 'good' : '')],
-      ['Primer ingreso hoy', u => firstByPerson.get(u.id) ? new Intl.DateTimeFormat('es-CO', { timeZone: tenantZone, timeStyle: 'short' }).format(new Date(firstByPerson.get(u.id))) : 'Sin registro'],
-      ['Última vez en uso (período)', u => when(lastByPerson.get(u.id))],
-      ['Tiempo trabajado del período', u => hours(metricsByPerson.get(u.id)?.active_seconds)],
-      ['Productividad', u => score(metricsByPerson.get(u.id)?.productivity_percent)], ['Focus /100', u => score(metricsByPerson.get(u.id)?.focus_score).replace(' %', '')],
-      ['Cédula', u => u.document || '—'], ['Empresa', u => n.get(u.company_id) || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'],
-      ['Acceso al panel', u => u.access ? scopeSummary(u.access.role_name, u.access.scope, n) : 'Sin acceso al panel'],
-      ['Estado', u => { const d = el('div'); d.append(badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : '')); if (u.monitoring === 'excluded') d.append(' ', badge('No se monitorea', 'info')); return d; }],
-      ...(avail ? [['Plan', u => ownPlan(u)?.name || defaultLabel]] : []),
-      ['Acciones', u => { const d = el('div', undefined, 'actions'); const v = el('a', 'Ver', 'link-button'); v.href = `/miembro.php?id=${encodeURIComponent(u.id)}`; d.append(v); if (batchFields.data) { const b = el('a', 'Editar', 'link-button'); b.href = personUrl(u); d.append(b); } return d; }]],
+      ['Primer ingreso', u => firstByPerson.get(u.id) ? new Intl.DateTimeFormat('es-CO', { timeZone: tenantZone, timeStyle: 'short' }).format(new Date(firstByPerson.get(u.id))) : 'Sin registro'],
+      ['Última vez en uso', u => when(lastByPerson.get(u.id))],
+      ['Tiempo trabajado', u => hours(metricsByPerson.get(u.id)?.active_seconds)],
+      ['Productividad', u => score(metricsByPerson.get(u.id)?.productivity_percent)], ['Focus /100', u => score(metricsByPerson.get(u.id)?.focus_score).replace(' %', '')]],
       list, { filters: [['Conexión', state], ['Empresa', u => n.get(u.company_id) || 'Sin empresa'], ['País', u => countryName(siteCountry(u))], ['Ciudad', u => org.find(o => o.id === u.site_id)?.city || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']],
         search: u => [u.display_name, u.email, u.document, n.get(u.position_id), n.get(u.company_id)], selection });
   };
@@ -1876,12 +1872,9 @@ async function people() {
 }
 
 // ---- Ficha única de la persona (revisión UX G1 · PER-4) y alta por bloques (M3 · PER-2/3) ---------------------------
-// miembro.php?id=<persona>&tab=datos|acceso|actividad|equipos (los enlaces antiguos «#equipos» siguen sirviendo) y
-// miembro.php?nueva=1 para crear. Cada bloque guarda por separado (datos: PATCH; acceso: PUT …/access; plan: PUT …/plan)
-// y dice qué quedó guardado. Los bloques que la cuenta no puede editar se muestran en lectura; la API valida igual.
-const PERSON_TABS = [['datos', 'Datos'], ['acceso', 'Acceso y plan'], ['actividad', 'Actividad'], ['equipos', 'Equipos']];
-const PERSON_HASH = { datos: ['datos'], acceso: ['acceso'], equipos: ['equipos'], actividad: ['actividad', 'actividad'], resumen: ['actividad', 'resumen'], presencia: ['actividad', 'presencia'], politicas: ['actividad', 'politicas'] };
-const DEVICE_STATUS = { active: ['Activo', 'good'], inactive: ['Inactivo', ''], revoked: ['Revocado', 'bad'], decommissioned: ['Retirado', ''] };
+// Las pestañas antiguas se traducen a la navegación actual; cada formulario conserva su guardado independiente.
+const PERSON_TABS = [['resumen', 'Resumen'], ['ventanas', 'Ventanas'], ['linea', 'Línea de tiempo'], ['controles', 'Equipo y controles'], ['presencia', 'Presencia'], ['politicas', 'Reglas'], ['datos', 'Datos y acceso']];
+const PERSON_ALIASES = { acceso: 'datos', equipos: 'controles', actividad: 'resumen' };
 const UNIT_EMPTY = { company: 'Aún no hay empresas del grupo (es opcional).', site: 'Aún no hay sedes: crea la primera para asignarla a personas.', area: 'Aún no hay áreas: crea la primera para asignarla a personas.', position: 'Aún no hay cargos: crea el primero para asignarlo a personas.' };
 const clock = () => new Intl.DateTimeFormat('es-CO', { timeStyle: 'short' }).format(new Date()).replace(/\.$/, '');
 // Guardado fallido de una persona, en español (conflictos, validaciones y §7 de v4-clientes-funciones-accesos.md).
@@ -2082,14 +2075,14 @@ async function personPage() {
     personHeader(ctx, null, 'Persona no encontrada'); document.querySelector('.page-head p').textContent = '';
     empty($('page-content'), 'Persona no encontrada', 'No existe en este cliente o está fuera de tu alcance. Vuelve a Personas y búscala allí.'); return;
   }
-  const hash = PERSON_HASH[location.hash.slice(1)];
-  const tab = PERSON_TABS.some(([k]) => k === params.get('tab')) ? params.get('tab') : hash?.[0] || (ctx.has('reportes.ver') ? 'actividad' : 'datos');
-  personProfile(ctx, u, { tab, subtab: hash?.[1] || null });
+  const requested = params.get('tab') || location.hash.slice(1);
+  const key = PERSON_ALIASES[requested] || requested;
+  const tab = PERSON_TABS.some(([k]) => k === key) ? key : (ctx.has('reportes.ver') ? 'resumen' : 'datos');
+  personProfile(ctx, u, { tab });
 }
 
-function personProfile(ctx, u, { tab = 'datos', subtab = null, created = null, draft = null } = {}) {
+function personProfile(ctx, u, { tab = 'datos', created = null, draft = null } = {}) {
   const content = $('page-content'); content.replaceChildren(); personHeader(ctx, u);
-  const devicesReq = optional(allPages(`/tenants/${tenant}/devices?user_id=${encodeURIComponent(u.id)}`));
   if (created) {
     const n = el('div', undefined, 'notice'); n.setAttribute('role', created.pending.length ? 'alert' : 'status');
     if (created.pending.length) {
@@ -2102,7 +2095,7 @@ function personProfile(ctx, u, { tab = 'datos', subtab = null, created = null, d
     const more = el('a', 'Crear otra persona', 'link-button'); more.href = '/miembro.php?nueva=1'; next.append(more);
     n.append(el('p', u.panel_login_enabled ? '' : 'Todavía no puede iniciar sesión en el panel: necesita una cuenta.', 'help'), next); content.append(n);
   }
-  const tabs = el('div', undefined, 'tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Ficha de la persona'); content.append(tabs);
+  const tabs = el('div', undefined, 'tabs person-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Ficha de la persona'); content.append(tabs);
   const views = {};
   for (const [key, label] of PERSON_TABS) {
     const b = el('button', label); b.type = 'button'; b.id = `person-tab-${key}`; b.dataset.key = key; b.setAttribute('role', 'tab'); b.setAttribute('aria-controls', `person-panel-${key}`);
@@ -2113,10 +2106,12 @@ function personProfile(ctx, u, { tab = 'datos', subtab = null, created = null, d
   let current = null;
   const draw = key => {
     const v = views[key]; v.panel.replaceChildren(); v.dirty = () => false; v.drawn = true;
-    if (key === 'datos') v.dirty = dataPanel(v.panel, ctx, () => u, saved => { u = saved; personHeader(ctx, u); });
-    else if (key === 'acceso') v.dirty = accessPanel(v.panel, ctx, () => u, saved => { u = saved; personHeader(ctx, u); }, draft);
-    else if (key === 'actividad') activityPanel(v.panel, u, subtab);
-    else devicesPanel(v.panel, ctx, devicesReq);
+    if (key === 'datos') {
+      const saved = value => { u = value; personHeader(ctx, u); };
+      const dataDirty = dataPanel(v.panel, ctx, () => u, saved);
+      const accessDirty = accessPanel(v.panel, ctx, () => u, saved, draft);
+      v.dirty = () => dataDirty() || accessDirty();
+    } else activityPanel(v.panel, u, key, ctx.canIntake);
     draft = null;
   };
   const go = async (key, { force = false } = {}) => {
@@ -2136,14 +2131,12 @@ function personProfile(ctx, u, { tab = 'datos', subtab = null, created = null, d
     if (next !== undefined) { e.preventDefault(); list[next].click(); if (current === list[next].dataset.key) list[next].focus(); }
   });
   window.addEventListener('beforeunload', e => { if (Object.values(views).some(v => v.drawn && v.dirty())) { e.preventDefault(); e.returnValue = ''; } });
-  // Equipos: el conteo va en la pestaña en cuanto se conoce.
-  devicesReq.then(list => { if (list) { const c = el('span', String(list.length), 'tab-count'); views.equipos.button.append(' ', c); } }).catch(() => {});
   const action = $('page-action');
   if (ctx.canEdit) {
     action.textContent = 'Editar persona'; action.hidden = false;
     action.onclick = () => { go('datos'); views.datos.panel.querySelector('input')?.focus(); };
   }
-  go(tab, { force: true });
+  go(PERSON_ALIASES[tab] || tab, { force: true });
 }
 
 // Pestaña Datos: datos básicos y ubicación laboral, un solo «Guardar datos» (PATCH /users/{id}).
@@ -2288,38 +2281,10 @@ function accessPanel(panel, ctx, getUser, onSaved, draft) {
   return () => accessDirty() || planDirty();
 }
 
-// Pestaña Actividad: las vistas del coordinador (productividad, presencia y reglas efectivas) para esta persona.
-function activityPanel(panel, u, subtab) {
+function activityPanel(panel, u, subtab, canIntake) {
   const get = path => api('GET', path);
-  coordinator({ page: 'member', tenant, timezone: tenantZone, get, allPages: path => allPages(path), today: zoneToday, shiftDay, query: withQuery, permissions: new Map(), root: panel, user: u, subtab })
+  coordinator({ page: 'member', tenant, timezone: tenantZone, get, allPages: path => allPages(path), today: zoneToday, shiftDay, query: withQuery, permissions: new Map(), root: panel, user: u, subtab, canIntake })
     .catch(e => { const p = el('p', errorMessage(e), 'error-text'); p.setAttribute('role', 'alert'); panel.append(p); });
-}
-
-// Pestaña Equipos: los equipos asignados a la persona, cada uno con su ficha.
-async function devicesPanel(panel, ctx, request) {
-  const s = surface('Equipos asignados', panel);
-  const wait = el('p', 'Consultando equipos…', 'help'); s.append(wait);
-  let list;
-  try { list = await request; } catch (e) { const p = el('p', errorMessage(e), 'error-text'); p.setAttribute('role', 'alert'); wait.replaceWith(p); return; }
-  wait.remove();
-  if (!list) { s.append(el('p', 'Tu cuenta no puede consultar equipos.', 'notice')); return; }
-  if (!list.length) {
-    const box = el('div', undefined, 'empty'); box.append(el('h2', 'Sin equipos'), el('p', 'Esta persona aún no tiene equipos registrados. Al instalar Keeper con su cédula, el equipo queda asignado a ella.'));
-    if (ctx.canIntake) { const a = el('a', 'Registrar equipos', 'button'); a.href = '/alta.php'; box.append(a); }
-    s.append(box); return;
-  }
-  const wrap = el('div', undefined, 'table-wrap'); wrap.tabIndex = 0; s.append(wrap);
-  const t = el('table'); t.append(el('caption', `Equipos de la persona · ${list.length}`));
-  const hr = el('tr'); ['Equipo', 'Estado', 'Última conexión', 'Sistema', 'Agente'].forEach(h => { const th = el('th', h); th.scope = 'col'; hr.append(th); });
-  const head = el('thead'); head.append(hr); const body = el('tbody');
-  for (const d of list) {
-    const tr = el('tr'); const a = el('a', d.hostname || 'Equipo sin nombre'); a.href = `/equipo.php?id=${encodeURIComponent(d.id)}`;
-    const [st, tone] = DEVICE_STATUS[d.status] || [d.status || '—', ''];
-    const status = el('div'); status.append(badge(st, tone)); if (online(d)) status.append(' ', badge('En línea', 'info'));
-    [a, status, when(d.last_seen_at), d.os_edition || '—', d.agent_version || '—'].forEach(v => { const td = el('td'); if (v instanceof Node) td.append(v); else td.textContent = v; tr.append(td); });
-    body.append(tr);
-  }
-  t.append(head, body); wrap.append(t);
 }
 
 // Alta por bloques: 1) datos básicos, 2) ubicación laboral (con «+ Nueva …» si falta el catálogo), 3) acceso y plan
