@@ -34,6 +34,8 @@ internal static class Program
             "AZCKeeper", "v4", "logs"), "session");
         using var screen = new LockScreen(dispatcher, message => sessionLog.Write("ERROR", "LockScreen", message));
         using var notice = new PowerNoticeWindow(dispatcher);
+        // En el hilo STA que corre Application.Run: SystemEvents entrega SessionSwitch por su bomba de mensajes.
+        using var sessionLock = new WindowsSessionLockSource();
         Application.ApplicationExit += (_, _) => stopping.Cancel();
         var task = Task.Run(async () =>
         {
@@ -44,7 +46,9 @@ internal static class Program
             // Raw Input: solo teclado/raton fisico cuenta como uso (4.0.22). Si no registra, el tracker mide como antes.
             using var physical = new WindowsPhysicalInputSource();
             physical.Start();
-            var activity = new ActivityTracker(new WindowsInputIdleSource(), () => calls.IsInCall, statePath: activityState, physical: physical);
+            // Bloqueado (4.0.24): pantalla de bloqueo de Windows o bloqueo de Keeper ordenado por el agente.
+            var activity = new ActivityTracker(new WindowsInputIdleSource(), () => calls.IsInCall, statePath: activityState, physical: physical,
+                locked: () => sessionLock.IsLocked || screen.LockRequested);
             var presenceFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AZCKeeper", "v4", "presence-day.txt");
             await using var modules = new ModuleHost([calls, activity, new WindowTracker(foreground, activity), new PresenceTracker(presenceFile), screen],
                 new ModuleContext(sink, TimeProvider.System, _ => { }, stopping.Token));

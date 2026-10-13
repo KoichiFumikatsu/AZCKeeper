@@ -247,6 +247,30 @@ powershell -NoProfile -ExecutionPolicy Bypass -File backend-v4/tests/mysql-smoke
 dotnet test client-v4/tests/Keeper.Agent.Tests/Keeper.Agent.Tests.csproj -c Release -m:1 -nodeReuse:false --filter "FullyQualifiedName~RelocationTests"
 ```
 
+### Tiempo bloqueado y categoría «Sistema» — agente 4.0.24 (decisión del dueño 2026-10-09)
+
+«Si estoy en pantalla de bloqueo 8 horas, quiere decir que encendió el equipo pero no trabajó en nada.» En producción la
+pantalla de bloqueo de Keeper estuvo 3,5 h delante contando como en uso. Desde 4.0.24 el `ActivityTracker` de
+Keeper.Session, con el equipo bloqueado (pantalla de bloqueo de Windows, por `SystemEvents.SessionSwitch` con estado
+inicial de `WTSQuerySessionInformation`, o bloqueo de Keeper, `SessionRequest.Locked`), no suma activo, inactivo ni
+simulado: suma `locked_seconds` y su reparto por franja (`work_hours_/lunch_/after_hours_locked_seconds`). Bloquear corta
+la racha de entrada simulada. Los tramos bloqueados no entran en ningún episodio de ventana.
+
+`ActivitySnapshot` lleva los cuatro campos opcionales (ausentes = agente anterior). Migración `0056_locked_system.sql`:
+columnas NULL en `activity_snapshots` y `day_summary`; la ingesta acepta activo + inactivo + bloqueado hasta el largo del
+día + 120 s (recorta el bloqueado a 86400). `ProductivityWorker` los suma por persona y día (NULL si ningún equipo los
+reporta); el registro vs. jornada cuenta el bloqueado como equipo encendido. Exponen `locked_seconds`:
+`/users/{id}/activity` (día y total), `/reports/people` y `/reports/productivity`. Panel: columna «Bloqueado (h)».
+
+Categoría `system` («Sistema») en `app_classification`, base de plataforma para `Keeper.Session`, `Keeper.Agent`,
+`Keeper.Bootstrapper`, `LockApp` (antes neutra) y `LogonUI`. Manda sobre la clasificación de la empresa y las excepciones;
+sus episodios salen del cálculo antes de todo: no cuentan en uso por ventanas, productividad, distracción, sin
+clasificar, focus, constancia ni cambios de contexto (no cortan rachas), ni en el reporte de apps. Solo la plataforma
+puede poner `system` (`PUT /app-classification` desde su tenant; otra empresa recibe 422 `system_platform_only`). La
+migración marca los últimos 30 días para recalcular.
+
+**Orden de despliegue:** migración y backend primero, después el agente 4.0.24.
+
 ### Suite general
 
 `tests/admin.php` se integra en el smoke completo sobre MySQL aislado. Comprueba contratos de salida además del modo `KEEPER_DEBUG`, dos tenants, distintos roles, gates, autoescalada directa/indirecta, expiración, CSRF/origen, IDOR, scopes, cursores, versiones de edición, compilación y rollback de conflictos, comandos auditados/idempotentes, revocación y releases firmadas. Incluye datos agregados reales y verifica que no se duplican métricas ni se cruzan tenants.

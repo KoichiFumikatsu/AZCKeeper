@@ -24,6 +24,7 @@ require __DIR__ . '/doors.php';
 require __DIR__ . '/absences.php';
 require __DIR__ . '/day-split.php';
 require __DIR__ . '/simulated-input.php';
+require __DIR__ . '/locked-system.php';
 require __DIR__ . '/app-classification.php';
 require __DIR__ . '/policy-exceptions.php';
 require __DIR__ . '/ops.php';
@@ -269,6 +270,25 @@ try {
     check(expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'activity with oversized simulated')['activity_ack']['status'] === 'accepted', 'oversized simulated/remote accepted');
     check(array_map('intval', $stored()) === ['simulated_seconds' => 10, 'remote_seconds' => 51], 'simulated capped to idle, remote to active');
     unset($sync['activity']['simulated_seconds'], $sync['activity']['remote_seconds']);
+    // 4.0.24: bloqueado va aparte de activo e inactivo (sin el, NULL); su desglose no pasa de su total.
+    $locked = fn () => $db->one('SELECT locked_seconds,work_hours_locked_seconds,lunch_locked_seconds,after_hours_locked_seconds FROM activity_snapshots WHERE tenant_id=? AND device_id=? AND day=?', [$tenant, $device, $sync['activity']['day']]);
+    check(array_filter($locked(), static fn ($v) => $v !== null) === [], 'snapshot without locked stores NULL (agent < 4.0.24)');
+    $sync['activity']['snapshot_id'] = Util::uuid(); $sync['activity']['sequence']++;
+    $sync['activity'] += ['locked_seconds' => 100, 'work_hours_locked_seconds' => 60, 'lunch_locked_seconds' => 0, 'after_hours_locked_seconds' => 40];
+    check(expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'activity with locked')['activity_ack']['status'] === 'accepted', 'snapshot with locked accepted');
+    check(array_map('intval', $locked()) === ['locked_seconds' => 100, 'work_hours_locked_seconds' => 60, 'lunch_locked_seconds' => 0, 'after_hours_locked_seconds' => 40], 'locked and split stored');
+    $sync['activity']['snapshot_id'] = Util::uuid(); $sync['activity']['sequence']++; $sync['activity']['work_hours_locked_seconds'] = 200;
+    $s = expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'locked split over total');
+    check($s['activity_ack']['status'] === 'rejected' && $s['activity_ack']['code'] === 'breakdown_exceeds_total', 'locked split over total rejected');
+    // Redondeo: activo + inactivo + bloqueado hasta 120 s sobre el dia se acepta recortando el bloqueado; mas, se rechaza.
+    $sync['activity']['work_hours_locked_seconds'] = 60; $sync['activity']['locked_seconds'] = 86400;
+    check(expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'locked rounding')['activity_ack']['status'] === 'accepted', 'locked rounding accepted');
+    check((int) $locked()['locked_seconds'] === 86400 - 51 - 10, 'locked capped to the rest of the day');
+    $sync['activity']['snapshot_id'] = Util::uuid(); $sync['activity']['sequence']++; $sync['activity']['idle_seconds'] = 30000; $sync['activity']['locked_seconds'] = 60000;
+    $s = expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'active + idle + locked over a day');
+    check($s['activity_ack']['status'] === 'rejected' && $s['activity_ack']['code'] === 'invalid_range', 'active + idle + locked over a day rejected');
+    $sync['activity']['idle_seconds'] = 10;
+    unset($sync['activity']['locked_seconds'], $sync['activity']['work_hours_locked_seconds'], $sync['activity']['lunch_locked_seconds'], $sync['activity']['after_hours_locked_seconds']);
     // Sesion abierta todo el dia: el redondeo puede sumar 86401; un dia imposible (mas de 24 h + margen) se rechaza.
     $sync['activity']['snapshot_id'] = Util::uuid(); $sync['activity']['sequence']++; $sync['activity']['active_seconds'] = 60000; $sync['activity']['idle_seconds'] = 26401;
     check(expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'full day with rounding')['activity_ack']['status'] === 'accepted', 'full day plus rounding accepted');
@@ -398,6 +418,7 @@ try {
     absenceTests($db);
     daySplitTests($db);
     simulatedInputTests($db);
+    lockedSystemTests($db);
     appClassificationTests($db);
     policyExceptionTests();
     opsTests($db);

@@ -47,8 +47,9 @@ final class ProductivityWorker
                       FLOOR(idle_seconds*b/duration)-FLOOR(idle_seconds*a/duration) idle,
                       COALESCE(FLOOR(call_seconds*FLOOR(active_seconds*b/duration)/NULLIF(active_seconds,0))-FLOOR(call_seconds*FLOOR(active_seconds*a/duration)/NULLIF(active_seconds,0)),0) calls
                     FROM (SELECT e.user_id,e.user_assignment_id,e.device_id,e.event_id,e.process_name,
-                      COALESCE(op.category,oa.category,NULLIF(kt.category,'unclassified'),NULLIF(kp.category,'unclassified'),
-                        IF(e.site IS NULL,NULL,COALESCE(NULLIF(bt.category,'unclassified'),NULLIF(bp.category,'unclassified'))),'unclassified') category,e.active_seconds,e.idle_seconds,e.call_seconds,
+                      -- Sistema (Keeper, pantalla de bloqueo) es de la base de la plataforma y manda sobre empresa y excepciones.
+                      IF(kp.category='system','system',COALESCE(op.category,oa.category,NULLIF(kt.category,'unclassified'),NULLIF(kp.category,'unclassified'),
+                        IF(e.site IS NULL,NULL,COALESCE(NULLIF(bt.category,'unclassified'),NULLIF(bp.category,'unclassified'))),'unclassified')) category,e.active_seconds,e.idle_seconds,e.call_seconds,
                       GREATEST(e.started_at,c.starts_at) first_at,LEAST(e.ended_at,c.ends_at) last_at,
                       TIMESTAMPDIFF(MICROSECOND,e.started_at,e.ended_at) duration,
                       TIMESTAMPDIFF(MICROSECOND,e.started_at,GREATEST(e.started_at,c.starts_at)) a,
@@ -63,6 +64,10 @@ final class ProductivityWorker
                     LEFT JOIN app_classification bp ON bp.tenant_id=0x00000000000040008000000000000001 AND bp.process_name=e.process_name
                     WHERE e.tenant_id=? AND e.event_date BETWEEN DATE_SUB(?,INTERVAL 2 DAY) AND DATE_ADD(?,INTERVAL 1 DAY)
                       AND e.started_at<c.ends_at AND e.ended_at>c.starts_at) x",[$tenant,$day,$day]);
+                // Las ventanas de sistema (0056) no cuentan en ninguna medida de ventanas: ni uso por app, ni productividad,
+                // distraccion o sin clasificar, ni rachas de focus, cambios de contexto o constancia. Se quitan aqui para que
+                // un vistazo a Keeper entre dos ratos de Word no corte la racha ni cuente dos cambios.
+                $this->db->run("DELETE FROM activity_segments WHERE category='system'");
                 $this->db->run("CREATE TEMPORARY TABLE activity_runs ENGINE=InnoDB AS
                     SELECT z.*,SUM(new_run) OVER (PARTITION BY user_id,user_assignment_id,device_id ORDER BY first_at,event_id ROWS UNBOUNDED PRECEDING) run_id
                     FROM (SELECT y.*,IF(previous_category IS NULL OR previous_category<>'productive' OR category<>'productive' OR previous_end<first_at-INTERVAL 120 SECOND OR idle>120 OR COALESCE(previous_idle,0)>120,1,0) new_run,
@@ -89,12 +94,13 @@ final class ProductivityWorker
                 // sumar mas que su total.
                 $this->db->run("INSERT INTO day_summary (tenant_id,day,user_id,user_assignment_id,active_seconds,idle_seconds,call_seconds,productive_seconds,expected_seconds,coverage_percent,productivity_percent,calculation_version,timezone,calculated_at,data_through,first_activity,last_activity,late_seconds,
                       work_hours_active_seconds,work_hours_idle_seconds,lunch_active_seconds,lunch_idle_seconds,after_hours_active_seconds,after_hours_idle_seconds,sample_count,utc_offset_minutes,simulated_seconds,remote_seconds,
+                      locked_seconds,work_hours_locked_seconds,lunch_locked_seconds,after_hours_locked_seconds,
                       window_active_seconds,unproductive_seconds,unclassified_seconds,focus_block_seconds)
                     SELECT ?,?,u.user_id,u.id,COALESCE(s.active,e.active,0),COALESCE(s.idle,e.idle,0),COALESCE(s.calls,e.calls,0),COALESCE(e.productive,0),$expected,
-                    IF($expected=0,0,LEAST(100,100*COALESCE(s.active+s.idle,e.active+e.idle,0)/NULLIF($expected,0))),100*e.productive/NULLIF(e.active,0),?,c.timezone,UTC_TIMESTAMP(6),?,
+                    IF($expected=0,0,LEAST(100,100*COALESCE(s.active+s.idle+COALESCE(s.locked,0),e.active+e.idle,0)/NULLIF($expected,0))),100*e.productive/NULLIF(e.active,0),?,c.timezone,UTC_TIMESTAMP(6),?,
                     COALESCE(s.first_at,e.first_at),COALESCE(s.last_at,e.last_at),
                     IF($expected=0 OR COALESCE(s.first_at,e.first_at) IS NULL,NULL,GREATEST(0,TIMESTAMPDIFF(SECOND,c.work_start,COALESCE(s.first_at,e.first_at)))),
-                    s.work_active,s.work_idle,s.lunch_active,s.lunch_idle,s.after_active,s.after_idle,s.samples,s.utc_offset,s.simulated,s.remote,
+                    s.work_active,s.work_idle,s.lunch_active,s.lunch_idle,s.after_active,s.after_idle,s.samples,s.utc_offset,s.simulated,s.remote,s.locked,s.work_locked,s.lunch_locked,s.after_locked,
                     e.active,e.unproductive,e.unclassified,COALESCE(fb.blocks,0)
                     FROM user_assignments u JOIN activity_calendar c ON c.schedule_id=u.schedule_id
                     LEFT JOIN (SELECT user_id,SUM(focus_seconds) blocks FROM activity_focus GROUP BY user_id) fb ON fb.user_id=u.user_id
@@ -105,6 +111,8 @@ final class ProductivityWorker
                       MIN(first_activity_at) first_at,MAX(last_activity_at) last_at,SUM(sample_count) samples,MIN(utc_offset_minutes) utc_offset,
                       -- Entrada simulada/remota (agente 4.0.22+): SUM ignora NULL; NULL si ningun dispositivo lo reporta.
                       SUM(simulated_seconds) simulated,SUM(remote_seconds) remote,
+                      -- Bloqueado (agente 4.0.24+), igual: NULL si ningun dispositivo lo reporta.
+                      SUM(locked_seconds) locked,SUM(work_hours_locked_seconds) work_locked,SUM(lunch_locked_seconds) lunch_locked,SUM(after_hours_locked_seconds) after_locked,
                       -- Si algun dispositivo no reporta el desglose, el reparto del dia queda
                       -- DESCONOCIDO en vez de una suma parcial que aparentaria estar completa.
                       IF(COUNT(*)=COUNT(work_hours_active_seconds),SUM(work_hours_active_seconds),NULL) work_active,

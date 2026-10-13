@@ -13611,6 +13611,7 @@ components:
                   - neutral
                   - unproductive
                   - unclassified
+                  - system
                 - type: 'null'
               company_category:
                 anyOf:
@@ -13619,6 +13620,7 @@ components:
                   - neutral
                   - unproductive
                   - unclassified
+                  - system
                 - type: 'null'
               active_seconds_30d:
                 type: integer
@@ -13692,6 +13694,10 @@ components:
           - neutral
           - unproductive
           - unclassified
+          - system
+          description: >-
+            system (Sistema: Keeper, pantalla de bloqueo) solo la puede poner la plataforma en la base;
+            queda fuera de productividad, distracción, sin clasificar y focus.
         label:
           anyOf:
           - type: string
@@ -15469,6 +15475,14 @@ components:
               description: >-
                 Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta
                 como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22).
+            locked_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+              description: >-
+                Tiempo con el equipo bloqueado (Windows o Keeper); no cuenta como en uso ni como inactivo.
+                null = ningún equipo de la persona lo midió (agente anterior a 4.0.24).
     EnrollmentRequestInput:
       type: object
       additionalProperties: false
@@ -18486,6 +18500,29 @@ components:
           description: >-
             Subconjunto de active_seconds medido en sesión RDP, donde la entrada del cliente
             remoto llega sin dispositivo y solo GetLastInputInfo sirve. Ausente = desconocido.
+        locked_seconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          description: >-
+            Segundos del día con el equipo bloqueado (pantalla de bloqueo de Windows o bloqueo
+            de Keeper). No están en active_seconds ni en idle_seconds: active + idle + locked
+            no pasa del día. Ausente = el agente no lo mide (anterior a 4.0.24), no cero.
+        work_hours_locked_seconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          description: Parte de locked_seconds en horario laboral. Ausente = desconocido.
+        lunch_locked_seconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          description: Parte de locked_seconds en almuerzo. Ausente = desconocido.
+        after_hours_locked_seconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          description: Parte de locked_seconds fuera de jornada. Ausente = desconocido.
       description: >-
         Contadores absolutos por device/día; upsert monotónico, no suma.
         El desglose horario (work_hours/lunch/after_hours) reproduce la categorización
@@ -19106,6 +19143,14 @@ components:
           description: >-
             Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta
             como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22).
+        locked_seconds:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+          description: >-
+            Tiempo con el equipo bloqueado (Windows o Keeper); no cuenta como en uso ni como inactivo.
+            null = ningún equipo de la persona lo midió (agente anterior a 4.0.24).
     ProductivityReport:
       type: object
       additionalProperties: false
@@ -20829,6 +20874,14 @@ components:
           description: >-
             Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta
             como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22).
+        locked_seconds:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+          description: >-
+            Tiempo con el equipo bloqueado (Windows o Keeper); no cuenta como en uso ni como inactivo.
+            null = ningún equipo de la persona lo midió (agente anterior a 4.0.24).
     ActivityReport:
       type: object
       additionalProperties: false
@@ -20932,6 +20985,14 @@ components:
               description: >-
                 Tiempo con entrada de Windows sin teclado ni ratón físicos (jiggler, DWService); ya cuenta
                 como inactivo. null = ningún equipo de la persona lo midió (agente anterior a 4.0.22).
+            locked_seconds:
+              anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+              description: >-
+                Tiempo con el equipo bloqueado (Windows o Keeper); no cuenta como en uso ni como inactivo.
+                null = ningún equipo de la persona lo midió (agente anterior a 4.0.24).
     PresenceRow:
       type: object
       additionalProperties: false

@@ -78,13 +78,20 @@ public static class SessionProtocol
         long?[] counters = [activity.ActiveSeconds, activity.IdleSeconds, activity.CallSeconds,
             activity.WorkHoursActiveSeconds, activity.WorkHoursIdleSeconds, activity.LunchActiveSeconds,
             activity.LunchIdleSeconds, activity.AfterHoursActiveSeconds, activity.AfterHoursIdleSeconds,
-            activity.SampleCount];
+            activity.SampleCount, activity.LockedSeconds, activity.WorkHoursLockedSeconds, activity.LunchLockedSeconds,
+            activity.AfterHoursLockedSeconds];
         if (counters.Any(c => c is < 0 or > day)) throw new InvalidDataException("invalid_session_activity");
+        // Bloqueado (4.0.24) va aparte de activo e inactivo: los tres juntos no pasan del dia. Margen de un dia de 25 h (cambio
+        // de hora) mas el redondeo por separado, el mismo que acepta el servidor (largo del dia + 120 s).
+        if (activity.ActiveSeconds + activity.IdleSeconds + (activity.LockedSeconds ?? 0) > 25 * 3600 + 120)
+            throw new InvalidDataException("invalid_session_activity");
         if (activity.CallSeconds > activity.ActiveSeconds) throw new InvalidDataException("call_exceeds_activity");
         // Ausente significa DESCONOCIDO, no cero: un desglose a medias no se compara, para no
         // rechazar por "suma menor" lo que simplemente no vino.
         if (Sum(activity.WorkHoursActiveSeconds, activity.LunchActiveSeconds, activity.AfterHoursActiveSeconds) > activity.ActiveSeconds
-            || Sum(activity.WorkHoursIdleSeconds, activity.LunchIdleSeconds, activity.AfterHoursIdleSeconds) > activity.IdleSeconds)
+            || Sum(activity.WorkHoursIdleSeconds, activity.LunchIdleSeconds, activity.AfterHoursIdleSeconds) > activity.IdleSeconds
+            // Cada franja se redondea por separado: hasta 3 s de margen sobre el total bloqueado.
+            || Sum(activity.WorkHoursLockedSeconds, activity.LunchLockedSeconds, activity.AfterHoursLockedSeconds) > (activity.LockedSeconds ?? 0) + 3)
             throw new InvalidDataException("breakdown_exceeds_total");
         if (activity.FirstActivityAt > activity.LastActivityAt) throw new InvalidDataException("invalid_session_activity");
     }

@@ -7,7 +7,7 @@ namespace Keeper;
 // los ultimos 30 dias para recalcular: el cron de productividad los vuelve a calcular con la clasificacion nueva.
 final class AppClassification
 {
-    public const CATEGORIES = ['productive', 'neutral', 'unproductive', 'unclassified'];
+    public const CATEGORIES = ['productive', 'neutral', 'unproductive', 'unclassified', 'system'];
     private string $tenant; private string $platform;
     public function __construct(private Database $db, private array $c, private AdminAccess $access, private Request $r)
     {
@@ -56,6 +56,8 @@ final class AppClassification
     /** Clasificacion de la empresa para una app o sitio; "unclassified" la quita (vuelve a la base). */
     private function classify(object $b): array
     {
+        // Sistema (0056: Keeper, pantalla de bloqueo) queda fuera de todas las medidas; solo la plataforma lo pone, en la base.
+        if ($b->category === 'system' && $this->tenant !== $this->platform) { throw new ApiError(422, 'validation_failed', [], 'system_platform_only'); }
         if ($b->category === 'unclassified') { $this->db->run('DELETE FROM app_classification WHERE tenant_id=? AND process_name=?', [$this->tenant, $b->key]); }
         else {
             $this->db->run('INSERT INTO app_classification (tenant_id,id,process_name,category,label) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE category=VALUES(category),label=COALESCE(VALUES(label),label),version=version+1',

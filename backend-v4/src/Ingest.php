@@ -192,7 +192,8 @@ final class Ingest
     /** Contadores del desglose que viajan junto a los totales; el orden fija el de las columnas. */
     private const BREAKDOWN = ['call_seconds', 'work_hours_active_seconds', 'work_hours_idle_seconds',
         'lunch_active_seconds', 'lunch_idle_seconds', 'after_hours_active_seconds', 'after_hours_idle_seconds',
-        'sample_count', 'utc_offset_minutes', 'simulated_seconds', 'remote_seconds'];
+        'sample_count', 'utc_offset_minutes', 'simulated_seconds', 'remote_seconds',
+        'locked_seconds', 'work_hours_locked_seconds', 'lunch_locked_seconds', 'after_hours_locked_seconds'];
 
     public function activity(object $e): array
     {
@@ -201,7 +202,8 @@ final class Ingest
         $zone = new \DateTimeZone($this->c['timezone']);
         $dayStart = new \DateTimeImmutable($e->day, $zone);
         $dayLength = $dayStart->modify('+1 day')->getTimestamp() - $dayStart->getTimestamp();
-        if ($e->active_seconds + $e->idle_seconds > $dayLength + 120 || $e->day > (new \DateTimeImmutable('now', $zone))->format('Y-m-d')) { throw new ApiError(422, 'invalid_range'); }
+        // Bloqueado (4.0.24) va aparte de activo e inactivo: los tres juntos no pasan del dia.
+        if ($e->active_seconds + $e->idle_seconds + ($e->locked_seconds ?? 0) > $dayLength + 120 || $e->day > (new \DateTimeImmutable('now', $zone))->format('Y-m-d')) { throw new ApiError(422, 'invalid_range'); }
         // La tabla guarda como maximo 86400 s por dia: el exceso de redondeo (o la hora extra de un cambio de hora) se
         // descuenta del tiempo inactivo, nunca del activo.
         if ($e->active_seconds > 86400) { $e->active_seconds = 86400; }
@@ -209,15 +211,17 @@ final class Ingest
         // Simulado va dentro del inactivo y remoto dentro del activo: tras recortar se ajustan en vez de rechazar el dia.
         if (isset($e->simulated_seconds) && $e->simulated_seconds > $e->idle_seconds) { $e->simulated_seconds = $e->idle_seconds; }
         if (isset($e->remote_seconds) && $e->remote_seconds > $e->active_seconds) { $e->remote_seconds = $e->active_seconds; }
+        if (isset($e->locked_seconds) && $e->active_seconds + $e->idle_seconds + $e->locked_seconds > 86400) { $e->locked_seconds = 86400 - $e->active_seconds - $e->idle_seconds; }
         // Un dato imposible se rechaza en el borde: las llamadas son un subconjunto del tiempo
         // activo y el desglose no puede sumar mas que su total. K3 no comprobaba ninguna de las
         // dos y por eso tiene dias con 184 horas de llamada.
         if (($e->call_seconds ?? 0) > $e->active_seconds) { throw new ApiError(422, 'call_exceeds_activity'); }
         foreach ([['active_seconds', 'work_hours_active_seconds', 'lunch_active_seconds', 'after_hours_active_seconds'],
-                  ['idle_seconds', 'work_hours_idle_seconds', 'lunch_idle_seconds', 'after_hours_idle_seconds']] as $split) {
+                  ['idle_seconds', 'work_hours_idle_seconds', 'lunch_idle_seconds', 'after_hours_idle_seconds'],
+                  ['locked_seconds', 'work_hours_locked_seconds', 'lunch_locked_seconds', 'after_hours_locked_seconds']] as $split) {
             $total = array_shift($split);
             $parts = array_map(static fn($f) => $e->$f ?? null, $split);
-            if (!in_array(null, $parts, true) && array_sum($parts) > $e->$total + 60) { throw new ApiError(422, 'breakdown_exceeds_total'); }
+            if (!in_array(null, $parts, true) && array_sum($parts) > ($e->$total ?? 0) + 60) { throw new ApiError(422, 'breakdown_exceeds_total'); }
         }
         $day = new \DateTimeImmutable($e->day, new \DateTimeZone($this->c['timezone']));
         if (Util::sqlTime($day->modify('+1 day')->format(DATE_RFC3339)) <= $this->c['assignment_start']) { throw new ApiError(422, 'assignment_conflict'); }
