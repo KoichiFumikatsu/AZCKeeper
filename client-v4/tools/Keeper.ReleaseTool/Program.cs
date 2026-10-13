@@ -8,6 +8,11 @@
 //   backend-keys --public <release-key.public.json>
 //   verify       --public <release-key.public.json> --release <release.json> --package <zip>
 //                [--installed-sequence N] [--agent-version X.Y.Z]
+//   relocation   --key <release-signing-key.dpapi> --public <release-key.public.json> --tenants id1,id2 --sequence N
+//                [--exclude dev1,dev2] [--from https://devkeep.azclegal.com/] [--to https://keep.azclegal.com/]
+//                [--not-before 2026-10-17T00:00:00Z] [--expires-at ... | --days 14] --out <relocation.json>
+//                Orden de mudanza de servidor (agente 4.0.24) firmada con la MISMA clave de releases; el archivo de
+//                salida es el cuerpo de POST /relocations ({"relocation_jws": ...}).
 //   export       --key <release-signing-key.dpapi> --public <release-key.public.json> --out <respaldo.p8>
 //   import       --in <respaldo.p8> --public <release-key.public.json> --out <dir>
 //
@@ -26,6 +31,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Keeper.Agent.Modules.Update;
 using Keeper.Agent.Storage;
+using Keeper.Agent.Transport;
+using Keeper.Shared.Contracts;
 using Keeper.Shared.Protocol;
 
 namespace Keeper.ReleaseTool;
@@ -46,6 +53,7 @@ public static class Program
                 case "keygen": KeyGen(Required(o, "out")); break;
                 case "trust": Trust(o); break;
                 case "sign": await SignAsync(o); break;
+                case "relocation": SignRelocation(o); break;
                 case "backend-keys": Console.WriteLine(BackendKeys(PublicKey.Load(Required(o, "public")))); break;
                 case "export": Export(o); break;
                 case "import": Import(o); break;
@@ -305,6 +313,51 @@ public static class Program
             throw new InvalidDataException("el trust del paquete no contiene esta clave de release");
         if (trust.InstalledSequence != sequence || trust.Channel != channel)
             throw new InvalidDataException($"el trust del paquete declara sequence {trust.InstalledSequence}/{trust.Channel}; la release es {sequence}/{channel}");
+    }
+
+    private static void SignRelocation(Dictionary<string, string> o)
+    {
+        var pub = PublicKey.Load(Required(o, "public"));
+        using var key = LoadPrivate(Required(o, "key"));
+        if (PublicKey.From(key).KeyId != pub.KeyId) throw new CryptographicException("la clave privada no corresponde a la publica indicada");
+        static string[] List(string? value) => (value ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(v => Guid.TryParse(v, out var id) ? id.ToString() : throw new ArgumentException($"UUID invalido: {v}")).ToArray();
+        var now = DateTimeOffset.UtcNow;
+        var notBefore = o.TryGetValue("not-before", out var nb) ? DateTimeOffset.Parse(nb, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal) : now;
+        var expiresAt = o.TryGetValue("expires-at", out var ea) ? DateTimeOffset.Parse(ea, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal)
+            : notBefore.AddDays(int.Parse(o.GetValueOrDefault("days", "14"), CultureInfo.InvariantCulture));
+        var jws = SignRelocation(key, pub.KeyId, o.GetValueOrDefault("from", "https://devkeep.azclegal.com/"), o.GetValueOrDefault("to", "https://keep.azclegal.com/"),
+            List(Required(o, "tenants")), List(o.GetValueOrDefault("exclude")), long.Parse(Required(o, "sequence"), CultureInfo.InvariantCulture), notBefore, expiresAt, Guid.NewGuid());
+        // Autoverificacion con el mismo verificador del agente (firma, forma y destino permitido).
+        using var verifier = pub.CreateVerifier();
+        var manifest = RelocationVerifier.Parse(jws, new Dictionary<string, ECDsa> { [pub.KeyId] = verifier });
+        if (manifest.ToBase.Scheme != Uri.UriSchemeHttps || !ApiBaseOverride.AllowedHost(manifest.ToBase.Host))
+            throw new ArgumentException("--to debe ser https://<host>.azclegal.com/ (lista fija del agente)");
+        var output = Required(o, "out");
+        File.WriteAllText(output, new JsonObject { ["relocation_jws"] = jws }.ToJsonString(Indented));
+        Console.WriteLine($"mudanza: {output}");
+        Console.WriteLine($"id {manifest.Id}, sequence {manifest.Sequence}, {manifest.FromBase} -> {manifest.ToBase}, {manifest.Tenants.Count} tenant(s), {manifest.ExcludeDevices.Count} excluido(s)");
+        Console.WriteLine($"vigencia {manifest.NotBefore:u} .. {manifest.ExpiresAt:u}; key_id {pub.KeyId}");
+        Console.WriteLine("autoverificado con RelocationVerifier del agente: OK");
+    }
+
+    public static string SignRelocation(ECDsa key, string keyId, string from, string to, string[] tenants, string[] exclude, long sequence,
+        DateTimeOffset notBefore, DateTimeOffset expiresAt, Guid id)
+    {
+        if (sequence < 1) throw new ArgumentException("--sequence debe ser >= 1");
+        if (tenants.Length == 0) throw new ArgumentException("--tenants requiere al menos un tenant_id");
+        if (expiresAt <= notBefore) throw new ArgumentException("expires_at debe ser posterior a not_before");
+        var payload = new JsonObject
+        {
+            ["type"] = "relocation", ["id"] = id.ToString(), ["sequence"] = sequence, ["from_base"] = from, ["to_base"] = to,
+            ["tenants"] = new JsonArray(tenants.Select(t => (JsonNode)t).ToArray()), ["exclude_devices"] = new JsonArray(exclude.Select(d => (JsonNode)d).ToArray()),
+            ["not_before"] = notBefore.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
+            ["expires_at"] = expiresAt.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture)
+        };
+        var header = new JsonObject { ["alg"] = "ES256", ["kid"] = keyId };
+        var input = B64(Encoding.UTF8.GetBytes(header.ToJsonString())) + "." + B64(Encoding.UTF8.GetBytes(payload.ToJsonString()));
+        var signature = key.SignData(Encoding.ASCII.GetBytes(input), HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+        return input + "." + B64(signature);
     }
 
     public static string BackendKeys(PublicKey pub) =>

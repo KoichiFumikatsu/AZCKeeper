@@ -15,6 +15,7 @@ Implementa 47 operaciones administrativas y las cuatro de sesión bajo `/v1`, co
 | Planes | `GET /person-plans/available`; `PUT /users/{id}/plan`; catálogo de planes solo plataforma (`/person-plans`) |
 | Reportes | `GET /reports/productivity` |
 | Releases | `GET/POST /releases`; `POST /release-deployments` |
+| Mudanzas de servidor | `GET/POST /relocations`; `PATCH /relocations/{id}` (solo plataforma) |
 | Auditoría | `GET /audit` |
 
 ## Autenticación y autorización
@@ -183,6 +184,68 @@ y aviso en la ficha de la persona y en Productividad si el período pasa de 30 m
 
 **Orden de despliegue:** primero migración y backend (el contrato anterior rechaza los campos nuevos con 422), después
 el agente: `build-installer.ps1 -Version 4.0.22`.
+
+### Mudanza de servidor por orden firmada — agente 4.0.24 (2026-10-13)
+
+Todo v4 corre hoy en devkeep; al terminar la migración K3 → v4 la BD de devkeep se copia a producción (keep, mismo
+Hestia, otra BD, otro sitio y su propio `KEEPER_ORIGIN`) y devkeep queda de pruebas. El agente toma la API de
+`KEEPER_API_BASE` (fijada al instalar); para cambiarla sin reinstalar, plataforma firma una **orden de mudanza**: un JWS
+ES256 con la **misma clave de releases** (la que el agente ya trae en `installation-trust.json`). Que la entregue el
+servidor no basta: sin esa firma el agente la ignora.
+
+Payload: `type: "relocation"`, `id` (uuid), `sequence` (monótona), `from_base` (`https://devkeep.azclegal.com/`),
+`to_base` (`https://keep.azclegal.com/`), `tenants` (tenant_id incluidos), `exclude_devices` (device_id que se quedan,
+p. ej. los 3 de prueba), `not_before`, `expires_at`. El agente (`RelocationVerifier`) acepta solo si: firma válida con su
+clave de confianza; `to_base` https bajo `.azclegal.com` (lista fija en código, servidor y agente); `from_base` = su base
+actual; su tenant está incluido y su equipo no está excluido; `sequence` mayor que la última aplicada; dentro de
+`not_before..expires_at`. Entonces prueba el destino (`POST /client/auth/challenges` + login firmado con la MISMA clave de
+equipo: la BD copiada lo conoce). Si funciona escribe `{data}\api-base.json` (`api_base`, `installed_base`, `sequence`,
+`relocation_id`), que manda sobre `KEEPER_API_BASE` mientras esa variable siga siendo `installed_base` (una reinstalación
+contra otro servidor manda sobre el archivo); abre conexión nueva (la firma HTTP usa la URI absoluta y el token se guarda
+con clave base+keyId: login nuevo) y reenvía la cola (el lote pendiente sale igual, con su misma idempotencia). Si el
+destino falla (DNS, TLS, 401 porque la BD aún no está copiada) se queda donde está y reintenta cada 15 min hasta
+`expires_at`; la cola no se toca. Logs `ServerRelocation/…`: `relocated` (info, error_code = host destino),
+`relocation_failed` (warn, motivo: `dns`, `tls`, `timeout`, `network`, `http_<código>`, `persist_failed`; al servidor
+solo cuando cambia el motivo), `relocation_rejected` (warn, motivo, una vez por orden) y `device_relocated` (info, el
+origen respondió 409). El bootstrapper (salud tras un update) y `Keeper-Recovery.ps1` también leen `api-base.json`; las
+descargas de release usan la URL absoluta del manifiesto y no dependen de la base.
+
+| Operación | Ruta bajo `/v1` | Detalle |
+|---|---|---|
+| GET | `/relocations` | Lista paginada (solo plataforma, contexto de plataforma; `servidor.mudar`) |
+| POST | `/relocations` | `{ "relocation_jws": "…" }`; verifica firma contra `RELEASE_KEYS_FILE`, forma, `from_base` = `ORIGIN` de este servidor, vigencia y `sequence` mayor que toda la registrada (409 si no); reauth < 5 min; audita `relocation.registered` |
+| PATCH | `/relocations/{id}` | `{ "enforced": bool }` activa/quita el **modo mudado**; reauth < 5 min; audita `relocation.enforced` / `relocation.released` |
+
+Migración `0055_relocations.sql` (tabla `relocations` + permiso de plataforma no delegable `servidor.mudar`, dado al rol
+de plataforma). `/client/sync` incluye `relocation` (el JWS) para agentes **4.0.24+** de los tenants incluidos y no
+excluidos, mientras la orden esté vigente. **Modo mudado** (`enforced_at`): toda llamada `/v1/client/*` de esos equipos
+—challenge y login incluidos— responde `409 device_relocated` con el JWS en `Problem.relocation` y no acepta ni guarda
+nada; los excluidos y los agentes anteriores a 4.0.24 siguen normal (no sabrían mudarse y con 409 tampoco recibirían la
+actualización que sí sabe). La fila viaja con la BD copiada pero en keep no aplica: su `ORIGIN` no es `from_base`.
+Panel: **Releases → Mudanzas de servidor** (registrar pegando el archivo firmado, activar/quitar modo mudado).
+
+Firmar (en la máquina y perfil de Windows que tienen la clave DPAPI de releases; desde `client-v4`):
+
+```powershell
+powershell -NoProfile -File tools/sign-relocation.ps1 `
+  -ReleaseKeyPrivate C:\ruta\release-signing-key.dpapi -ReleaseKeyPublic C:\ruta\release-key.public.json `
+  -Tenants 6e888b88-b3ef-4ac8-adae-d2fcf12d6b12 -ExcludeDevices <prueba1>,<prueba2>,<prueba3> `
+  -Sequence 1 -NotBefore 2026-10-17T00:00:00Z -Days 14
+# deja artifacts/relocation-1.json = cuerpo de POST /relocations; autoverificado con el verificador del agente
+```
+
+Equivale a `Keeper.ReleaseTool relocation --key … --public … --tenants … --exclude … --sequence N [--from …] [--to …]
+[--not-before …] [--expires-at … | --days N] --out …`. Cada orden nueva (otra ventana, otros tenants) lleva `sequence`
+mayor; una orden vencida no se reactiva: se firma otra.
+
+**Orden de despliegue:** migración 0055 + backend (`Relocations.php`, `Application.php`, `AdminApi.php`,
+`Resources.php`, `ApiError.php`, `Features.php`, `config/contract.json`, `public/assets/{app,k3,relocations}.js`) en
+devkeep **y** en keep; después el agente 4.0.24 (`build-installer.ps1 -Version 4.0.24`) a toda la flota antes del corte.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File backend-v4/tests/mysql-smoke.ps1 -DebugResponses   # incluye tests/relocations.php
+dotnet test client-v4/tests/Keeper.Agent.Tests/Keeper.Agent.Tests.csproj -c Release -m:1 -nodeReuse:false --filter "FullyQualifiedName~RelocationTests"
+```
 
 ### Suite general
 
