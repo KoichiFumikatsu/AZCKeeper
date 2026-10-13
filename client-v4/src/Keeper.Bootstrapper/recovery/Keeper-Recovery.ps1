@@ -79,7 +79,18 @@ function Get-ApiBase {
     $env = (Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" -Name Environment -ErrorAction Stop).Environment
     $line = $env | Where-Object { $_ -like 'KEEPER_API_BASE=*' } | Select-Object -First 1
     if (-not $line) { throw 'sin_api_base' }
-    return [Uri]$line.Substring(16)
+    $installed = [Uri]$line.Substring(16)
+    # Equipo mudado por orden firmada (agente 4.0.24): api-base.json manda mientras installed_base siga siendo la instalada.
+    $movedPath = Join-Path $DataDir 'api-base.json'
+    if (Test-Path -LiteralPath $movedPath) {
+        try {
+            $moved = Get-Content -LiteralPath $movedPath -Raw | ConvertFrom-Json
+            $api = [Uri]$moved.api_base
+            if ([Uri]::Compare([Uri]$moved.installed_base, $installed, [UriComponents]::AbsoluteUri, [UriFormat]::SafeUnescaped, [StringComparison]::OrdinalIgnoreCase) -eq 0 -and
+                $api.Scheme -eq 'https' -and $api.Host.EndsWith('.azclegal.com', [StringComparison]::OrdinalIgnoreCase)) { return $api }
+        } catch { Write-Log "api-base.json ilegible ($($_.Exception.Message)): se usa la base instalada." }
+    }
+    return $installed
 }
 
 # --- 1 y 2: salud y servicio ---

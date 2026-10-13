@@ -1,5 +1,6 @@
 using System.Runtime.Versioning;
 using System.Text.Json;
+using Keeper.Shared.Contracts;
 using Keeper.Shared.Diagnostics;
 using Microsoft.Win32;
 
@@ -65,7 +66,8 @@ public sealed class WindowsUpdateGuard(string installDirectory, TimeSpan timeout
         try
         {
             using var key = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{BootstrapApplication.ServiceName}");
-            var api = (key?.GetValue("Environment") as string[])?.FirstOrDefault(v => v.StartsWith("KEEPER_API_BASE=", StringComparison.Ordinal))?[16..];
+            // Equipo mudado por orden firmada (agente 4.0.24): su servidor es el de {data}\api-base.json, no el instalado.
+            var api = ApiBaseOverride.Resolve(Data, (key?.GetValue("Environment") as string[])?.FirstOrDefault(v => v.StartsWith("KEEPER_API_BASE=", StringComparison.Ordinal))?[16..]);
             if (api is null || !Uri.TryCreate(api, UriKind.Absolute, out var root)) return false;
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
             using var response = http.GetAsync(new Uri(root, "auth/csrf")).GetAwaiter().GetResult();

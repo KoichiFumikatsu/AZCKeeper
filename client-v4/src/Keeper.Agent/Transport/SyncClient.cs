@@ -104,6 +104,15 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
         return checked((int)response.NextSyncAfterSeconds);
     }
 
+    // Mudanza (ServerRelocation): login contra el destino antes de cambiar. El token guardado es del servidor anterior
+    // (otra clave base+keyId), asi que no se lee; el de este login se guarda con el primer sync aceptado del destino.
+    public async Task ProbeLoginAsync(CancellationToken ct)
+    {
+        _tokenLoaded = true;
+        _token = null;
+        await LoginAsync(ct);
+    }
+
     private async Task LoginAsync(CancellationToken ct)
     {
         var ticket = _enrollmentTicket;
@@ -167,7 +176,11 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
         signer.Sign(request, [], clock.GetUtcNow(), HttpMessageSigner.CreateNonce());
         RequestCount++;
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (response.StatusCode == HttpStatusCode.Conflict) return false;
+        if (response.StatusCode == HttpStatusCode.Conflict)
+        {
+            if (await RelocationAsync(response, ct) is { } relocation) throw new DeviceRelocatedException(relocation);
+            return false;
+        }
         if (!response.IsSuccessStatusCode)
         {
             if (response.StatusCode == HttpStatusCode.Unauthorized)
@@ -206,6 +219,8 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
         if (allowNotModified && response.StatusCode == HttpStatusCode.NotModified) return null;
         if (!response.IsSuccessStatusCode)
         {
+            if (response.StatusCode == HttpStatusCode.Conflict && await RelocationAsync(response, ct) is { } relocation)
+                throw new DeviceRelocatedException(relocation);
             var retry = response.Headers.RetryAfter;
             throw new TransportException(response.StatusCode, retry?.Delta ?? (retry?.Date - clock.GetUtcNow()));
         }
@@ -221,6 +236,28 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
         }
         return JsonSerializer.Deserialize<T>(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), ProtocolJson.Options)
             ?? throw new InvalidDataException("empty_response");
+    }
+
+    // 409 device_relocated (servidor de origen en modo mudado): la orden firmada viene en Problem.relocation.
+    private static async Task<string?> RelocationAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        const int limit = 32 * 1024;
+        if (response.Content.Headers.ContentLength > limit) return null;
+        try
+        {
+            await using var stream = await response.Content.ReadAsStreamAsync(ct);
+            var buffer = new byte[limit + 1];
+            var length = 0;
+            int count;
+            while (length <= limit && (count = await stream.ReadAsync(buffer.AsMemory(length), ct)) > 0) length += count;
+            if (length > limit) return null;
+            using var document = JsonDocument.Parse(buffer.AsMemory(0, length));
+            var root = document.RootElement;
+            return root.ValueKind == JsonValueKind.Object && root.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String &&
+                code.GetString() == "device_relocated" && root.TryGetProperty("relocation", out var relocation) && relocation.ValueKind == JsonValueKind.String
+                ? relocation.GetString() : null;
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or HttpRequestException) { return null; }
     }
 
     private static byte[] Serialize<T>(T value) => JsonSerializer.SerializeToUtf8Bytes(value, ProtocolJson.Options);
