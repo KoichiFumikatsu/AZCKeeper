@@ -39,26 +39,47 @@ async function open(route, entry) {
     [`/miembro.php?id=${fixture.uid}`, 'k3.js', 'Resumen del mes'], ['/reportes.php', 'app.js', 'Ranking individual'],
     ['/equipos.php', 'app.js', 'Versiones instaladas'], [`/equipo.php?id=${fixture.device}`, 'app.js', 'Actualizaciones'],
     ['/admin/releases.php', 'app.js', 'Publicar versión por anillo'], ['/doble-empleo.php', 'app.js', 'Marcar revisada'], ['/cobertura.php', 'app.js', 'Ana Torres'],
+    ['/horarios.php', 'k3.js', 'Margen de puntualidad'], ['/cuentas.php', 'k3.js', 'Acceso al Portal'], ['/admin/salud.php', 'k3.js', 'Fallo sintético del cálculo'],
+    [`/miembro.php?id=${fixture.uid}&tab=datos`, 'k3.js', 'Estado laboral'],
   ];
   for (const [route, entry, expected] of screens) {
     const c = await open(route, entry);
     try {
       await c.wait(() => c.text().includes(expected));
       assert.deepEqual(c.errors, [], route);
-      assert.ok(!c.text().includes('undefined'), route);
+      assert.ok(!c.text().includes('undefined'), route + ': ' + c.text());
       if (route === '/') {
         const form = c.w.document.querySelector('.coordinator form'), dates = form.querySelectorAll('input[type=date]');
         const valid = dates[1].value; dates[0].value = '2020-01-01'; form.dispatchEvent(new c.w.Event('submit', { cancelable: true }));
         assert.ok(dates[1].validationMessage.includes('31 días'));
         dates[0].value = valid; dates[0].dispatchEvent(new c.w.Event('input')); assert.equal(dates[1].validationMessage, '');
       }
-      if (route.startsWith('/miembro.php')) {
+      if (route.startsWith('/miembro.php') && !route.includes('tab=datos')) {
+        await c.wait(() => c.w.document.querySelector('#tab-controles'));
+        c.w.document.querySelector('#tab-ventanas').click();
+        const sort = c.w.document.querySelector('[aria-label="Ordenar ventanas"]'); sort.value = 'sessions'; sort.dispatchEvent(new c.w.Event('change'));
+        assert.ok(c.w.document.querySelector('#panel-ventanas tbody tr').textContent.includes('chrome'));
+        c.w.document.querySelector('#tab-linea').click(); assert.ok(c.w.document.querySelector('#panel-linea').textContent.includes('WINWORD'));
+        c.w.document.querySelector('#tab-controles').click();
+        c.w.document.querySelector('#panel-controles [data-command="wipe"]').click();
+        const wipe = c.w.document.querySelector('dialog form'); const confirm = wipe.querySelector('[name="confirmation"]');
+        assert.ok(wipe.querySelector('button[type=submit]').disabled); confirm.value = 'incorrecto'; confirm.dispatchEvent(new c.w.Event('input')); assert.ok(wipe.querySelector('button[type=submit]').disabled);
+        confirm.value = 'AZC-ANA'; confirm.dispatchEvent(new c.w.Event('input')); assert.ok(!wipe.querySelector('button[type=submit]').disabled); c.w.document.querySelector('dialog').remove();
+        c.w.document.querySelector('#panel-controles [data-command="lock"]').click(); c.w.document.querySelector('dialog form').dispatchEvent(new c.w.Event('submit', { cancelable: true }));
+        await c.wait(() => fixture.writes.some(w => w.path.endsWith('/commands') && w.body.type === 'lock'));
         c.w.document.querySelector('#tab-actividad').click();
         [...c.w.document.querySelectorAll('#panel-actividad button')].find(b => b.textContent === 'Exportar CSV').click();
         assert.equal(c.blobs.length, 1);
         const csv = await new Promise(resolve => { const reader = new c.w.FileReader(); reader.onload = () => resolve(reader.result); reader.readAsText(c.blobs[0]); });
         for (const field of ['Horario laboral', 'Primer ingreso', 'Último evento', 'Almuerzo', 'Fuera de horario']) assert.ok(csv.includes(field), field);
       }
+      if (route.includes('tab=datos')) {
+        const form = c.w.document.querySelector('.person-form'), employment = [...form.querySelectorAll('select')].find(s => [...s.options].some(o => o.value === 'vacaciones'));
+        employment.value = 'vacaciones'; form.dispatchEvent(new c.w.Event('submit', { cancelable: true }));
+        await c.wait(() => fixture.writes.some(w => w.body.employment_status === 'vacaciones') && c.text().includes('Datos guardados'));
+      }
+      if (route === '/horarios.php') { const form = c.w.document.querySelector('#page-content form'); form.querySelector('input[type=number]').value = '20'; form.dispatchEvent(new c.w.Event('submit', { cancelable: true })); await c.wait(() => fixture.writes.some(w => w.path === '/schedules/settings' && w.body.punctuality_margin_minutes === 20) && !form.querySelector('button').disabled); }
+      if (route === '/cuentas.php') { const toggle = c.w.document.querySelector('[role=switch]'); toggle.checked = true; toggle.dispatchEvent(new c.w.Event('change')); await c.wait(() => fixture.person.portal_login_enabled && !toggle.disabled); }
       if (route === '/equipos.php') {
         const box = c.w.document.querySelector('[aria-label="Seleccionar AZC-ANA"]'); box.checked = true; box.dispatchEvent(new c.w.Event('change'));
         const form = [...c.w.document.forms].find(f => f.textContent.includes('Aplicar a seleccionados'));
@@ -78,5 +99,5 @@ async function open(route, entry) {
     } finally { c.close(); }
   }
   assert.deepEqual(fixture.writes.filter(w => w.path === '/release-deployments').map(w => w.body.ring), ['pruebas', 'stable']);
-  console.log('PASS K3 DOM: 9 pantallas, pausa y publicación por anillos; sin validación visual.');
+  console.log('PASS panel DOM: 13 vistas, ventanas, cronología, controles, margen, Portal y estado laboral; sin validación visual.');
 })().catch(e => { console.error(e); process.exitCode = 1; });

@@ -121,6 +121,9 @@ final class PolicyCompiler
         $userId = $assignment['user_id'] ?? $d['user_id'];
         $user = $this->db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$tenant, $userId]);
         $org = $this->current('user_assignments', 'user_id', $tenant, $userId, $at) ?? $user;
+        if ($org['schedule_id']===null || Placeholders::is($this->db,$tenant,$org['schedule_id'],'schedule_id')) {
+            $org['schedule_id']=$this->db->one('SELECT default_schedule_id FROM tenants WHERE tenant_id=?',[$tenant])['default_schedule_id']??$org['schedule_id'];
+        }
         foreach (['firm', 'site', 'area', 'position'] as $kind) {
             if (!$this->db->one('SELECT id FROM org_units WHERE tenant_id=? AND id=? AND kind=? AND active=TRUE', [$tenant, $org[$kind . '_id'], $kind])) {
                 throw new \RuntimeException('Inactive organizational assignment');

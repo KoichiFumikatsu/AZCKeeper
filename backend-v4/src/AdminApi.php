@@ -130,6 +130,10 @@ final class AdminApi
         $op=$this->r->operation['operationId']; $b=$this->r->body;
         $id=$this->r->resourceId!==null && !str_starts_with($op,'getPermission') && $op!=='patchPermission'?Util::bin($this->r->resourceId):null;
         return match($op) {
+            'refreshUserSource'=>$this->refreshUserSource($id,$b),
+            'setUserPortalAccess'=>$this->portalAccess($id,$b),
+            'getScheduleSettings','putScheduleSettings'=>(new ScheduleSettings($this->db,$this->c,$this->access,$this->r))->dispatch($b),
+            'getDashboardProblems','getUserWindows','getUserTimeline'=>(new PanelActivity($this->db,$this->c,$this->access))->dispatch($op,$id),
             'getTenantUnlockPin','setTenantUnlockPin','revealTenantUnlockPin'=>(new UnlockPin($this->db,$this->c,$this->r))->admin($this->access),
             'getTenantWindowsSecurity','setTenantWindowsSecurity'=>(new WindowsSecurity($this->db,$this->c,$this->r))->admin($this->access),
             'getTenantHardening','setTenantHardening','revealTenantHardening','getDeviceHardening','createHardeningCommand'=>(new Hardening($this->db,$this->c,$this->r))->admin($this->access),
@@ -391,10 +395,34 @@ final class AdminApi
         $doc=$this->db->one("SELECT external_ref FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source IN ('document','k3:cc') ORDER BY source='document' DESC LIMIT 1",[$this->tenant,$r['id']]);
         $out['plan_id']=$r['plan_id']===null?null:Util::id($r['plan_id']);
         $out['document']=$doc['external_ref']??null;
+        $out['employment_status']=$r['employment_status']; $out['portal_login_enabled']=(bool)$r['portal_login_enabled'];
+        $effective=$r['schedule_id'];
+        if ($effective===null || Placeholders::is($this->db,$this->tenant,$effective,'schedule_id')) { $effective=$this->db->one('SELECT default_schedule_id FROM tenants WHERE tenant_id=?',[$this->tenant])['default_schedule_id']??$effective; }
+        $out['effective_schedule_id']=$effective===null?null:Util::id($effective);
+        $out['source_owners']=array_map(static fn($s)=>['domain'=>$s['domain'],'source_id'=>Util::id($s['id']),'name'=>$s['name']],$this->db->run("SELECT o.domain,s.id,s.name FROM data_domain_owners o JOIN data_sources s ON s.tenant_id=o.tenant_id AND s.id=o.source_id JOIN entity_links l ON l.tenant_id=o.tenant_id AND l.source_id=o.source_id AND l.entity_type='user' AND l.entity_id=? WHERE o.tenant_id=?",[$r['id'],$this->tenant])->fetchAll());
         $out['managed_by']=DataSources::managedBy($this->db,$this->tenant,$r['id']);
         $out['reports_to_user_id']=$r['reports_to_user_id']===null?null:Util::id($r['reports_to_user_id']);
         $out['monitoring_override']=$r['monitoring_override']; $out['monitoring']=RoleRules::monitoring($this->db,$r);
         return $out;
+    }
+    private function portalAccess(string $id,object $b): array
+    {
+        $this->access->requireFull(); $this->access->user($id);
+        if (!$this->c['platform'] && !Features::has($this->db,$this->tenant,'autogestion_accesos')) { throw new ApiError(403,'permission_denied'); }
+        $this->db->run('UPDATE users SET portal_login_enabled=?,version=version+1 WHERE tenant_id=? AND id=?',[(int)$b->portal_login_enabled,$this->tenant,$id]);
+        $this->audit('user',$id,['portal_login_enabled']);
+        return self::response(['portal_login_enabled'=>$b->portal_login_enabled]);
+    }
+    private function refreshUserSource(string $id,object $b): array
+    {
+        $this->access->user($id); $this->access->requireFull();
+        $source=Util::bin($b->source_id);
+        $s=$this->db->one("SELECT s.* FROM data_sources s JOIN entity_links l ON l.tenant_id=s.tenant_id AND l.source_id=s.id AND l.entity_type='user' AND l.entity_id=? JOIN data_domain_owners o ON o.tenant_id=s.tenant_id AND o.source_id=s.id AND o.domain IN ('personas','jerarquia','empresas','firmas','sedes','areas','cargos','horarios') WHERE s.tenant_id=? AND s.id=? AND s.active=TRUE",[$id,$this->tenant,$source]);
+        if (!$s) { throw new ApiError(404,'resource_not_found'); }
+        $run=(new DataSync($this->db))->run($this->tenant,$source,'incremental','manual',false,null,$id);
+        $r=$this->db->one('SELECT status FROM sync_runs WHERE tenant_id=? AND id=?',[$this->tenant,$run]);
+        $this->audit('user',$id,['refresh_source']);
+        return self::response(['status'=>$r['status'],'source_name'=>$s['name']]);
     }
     private function filterUsers(string $alias='u'): array
     {
@@ -435,10 +463,13 @@ final class AdminApi
         // propios de Keeper (calendario de festivos, excepcion de monitoreo) nunca se bloquean.
         if (!$id) { DataSources::guardWrite($this->db,$this->tenant,'personas','user',null); }
         else {
-            $domains=['display_name'=>'personas','email'=>'personas','status'=>'personas','document'=>'personas','company_id'=>'empresas','firm_id'=>'firmas','site_id'=>'sedes','area_id'=>'areas','position_id'=>'cargos','schedule_id'=>'horarios','reports_to_user_id'=>'jerarquia'];
+            $domains=['display_name'=>'personas','email'=>'personas','status'=>'personas','employment_status'=>'personas','document'=>'personas','company_id'=>'empresas','firm_id'=>'firmas','site_id'=>'sedes','area_id'=>'areas','position_id'=>'cargos','schedule_id'=>'horarios','reports_to_user_id'=>'jerarquia'];
             foreach (array_unique(array_values(array_intersect_key($domains,get_object_vars($b)))) as $domain) { DataSources::guardWrite($this->db,$this->tenant,$domain,'user',$id); }
         }
         $values=[]; $fields=get_object_vars($b);
+        if (($fields['employment_status']??null)==='retirado') { $fields['status']='inactive'; }
+        if (($fields['status']??null)==='inactive') { $fields['employment_status']='retirado'; }
+        if (($fields['status']??null)==='active' && ($old['employment_status']??null)==='retirado' && !isset($fields['employment_status'])) { $fields['employment_status']='contratado'; }
         $document=array_key_exists('document',$fields)?$fields['document']:false; unset($fields['document']);
         if (array_key_exists('reports_to_user_id',$fields) && $fields['reports_to_user_id']!==null) { $this->managerOk(Util::bin($fields['reports_to_user_id']),$id); }
         if (is_string($document)) { $document=DeviceIntake::document($document); $this->documentFree($document,$id); }
@@ -474,7 +505,7 @@ final class AdminApi
                 if ($this->batch) { $this->batchCalendars=true; } else { (new HolidayCalendars($this->db,$this->c,$this->access,$this->r))->recompute(array_column($this->db->run('SELECT id FROM holiday_calendars WHERE tenant_id=?',[$this->tenant])->fetchAll(),'id')); }
             }
             $this->invalidateUser($id);
-            if (($b->status??null)==='inactive') {
+            if (($values['status']??null)==='inactive') {
                 $this->db->run("UPDATE enrollments SET status='revoked' WHERE tenant_id=? AND user_id=? AND status='pending'",[$this->tenant,$id]);
                 $this->db->run("UPDATE devices SET status='revoked',auth_version=auth_version+1,version=version+1 WHERE tenant_id=? AND user_id=? AND status='active'",[$this->tenant,$id]);
                 $this->db->run("UPDATE device_command c JOIN devices d ON d.tenant_id=c.tenant_id AND d.id=c.device_id SET c.status='cancelled' WHERE d.tenant_id=? AND d.user_id=? AND c.status IN ('pending','delivered')",[$this->tenant,$id]);

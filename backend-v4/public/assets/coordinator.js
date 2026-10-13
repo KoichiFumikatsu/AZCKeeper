@@ -1,4 +1,6 @@
 import { api, ApiError, errorMessage, isUuid } from './api.js';
+import { deviceUpdates } from './fleet.js';
+import { remoteActionsSection, commandTypes, commandStates } from './device-actions.js';
 
 const el = (tag, text, cls) => {
   const n = document.createElement(tag);
@@ -10,7 +12,7 @@ const fmt = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1 });
 const numeric = v => typeof v === 'number' && Number.isFinite(v);
 const percent = v => numeric(v) ? `${fmt.format(v)} %` : 'Sin dato';
 const hours = v => numeric(v) ? `${fmt.format(v / 3600)} h` : 'Sin dato';
-const names = { tenant: 'Empresa', global: 'Global', site: 'Sede', area: 'Área', user: 'Persona', device: 'Equipo', active: 'Activo', inactive: 'Inactivo', revoked: 'Revocado', decommissioned: 'Retirado', a_tiempo: 'A tiempo', tarde: 'Tarde', actividad_sin_hora: 'Actividad sin hora registrada', sin_actividad: 'Sin actividad', no_laborable: 'No laborable', allow: 'Permitir', deny: 'Denegar', require: 'Exigir', instalado: 'Instalado', enrolado: 'Enrolado', escrow_ok: 'Respaldo verificado', degradado: 'Degradado', pendiente_reinicio: 'Pendiente de reinicio', completo: 'Completo', excepcion: 'Excepción' };
+const names = { tenant: 'Empresa', global: 'Global', site: 'Sede', area: 'Área', user: 'Persona', device: 'Equipo', active: 'Activo', inactive: 'Inactivo', revoked: 'Revocado', decommissioned: 'Retirado', a_tiempo: 'A tiempo', tarde: 'Tarde', temprano: 'Temprano', actividad_sin_hora: 'Actividad sin hora registrada', sin_actividad: 'Sin actividad', no_laborable: 'No laborable', allow: 'Permitir', deny: 'Denegar', require: 'Exigir', instalado: 'Instalado', enrolado: 'Enrolado', escrow_ok: 'Respaldo verificado', degradado: 'Degradado', pendiente_reinicio: 'Pendiente de reinicio', completo: 'Completo', excepcion: 'Excepción' };
 const label = v => names[v] || v || 'Sin dato';
 const link = (text, href) => { const a = el('a', text); a.href = href; return a; };
 const memberLink = u => link(u.display_name, `/miembro.php?id=${encodeURIComponent(u.id || u.user_id)}`);
@@ -270,15 +272,21 @@ export async function coordinator(ctx) {
       submit.disabled = true; body.replaceChildren(); const f = selected(controls);
       try {
         const dayRange = { from: today(), to: shiftDay(today(), 1) };
-        const dashboard = r => get(query('/dashboard', { ...r, ...f }));
+        const dashboard = r => api('GET', query('/dashboard', { ...r, ...f }));
         const main = dashboard(range);
         const [data, current, presence, month] = await Promise.all([
-          main, range.from === dayRange.from && range.to === dayRange.to ? main : dashboard(dayRange), report('presence', dayRange, f),
+          main, range.from === dayRange.from && range.to === dayRange.to ? main : dashboard(dayRange), api('GET', query('/reports/presence', { ...dayRange, ...f })).catch(e => { if ([401, 403].includes(e.status)) return null; throw e; }),
           dashboard({ from: today().slice(0, 8) + '01', to: shiftDay(today(), 1) }),
         ]);
         if (run !== cycle || !alive()) return;
+        metrics(body, [['Activos / total de trabajadores', `${current.online_members} / ${current.total_members}`], ['Sedes activas / total', `${current.active_sites ?? '—'} / ${current.total_sites ?? '—'}`], ['Productividad en tiempo real', percent(current.productivity_percent), 'Hoy · consulta cada 60 segundos'], ['Focus en tiempo real', percent(current.focus_score), 'Hoy · sujeto al cálculo de productividad']]);
+        if (presence) metrics(body, [['a_tiempo', 'A tiempo'], ['tarde', 'Tarde'], ['temprano', 'Temprano'], ['sin_actividad', 'Sin actividad']].map(([state, name]) => [name, rows(presence).filter(r => r.status === state).length, 'Llegadas de hoy']));
+        await section(body, 'Problemas reportados', async p => {
+          const problems = await api('GET', '/dashboard/problems');
+          pagedTable(p, 'Problemas en tu alcance', [['Problema', r => link(r.label, r.device_id ? `/equipo.php?id=${r.device_id}` : r.user_id ? `/miembro.php?id=${r.user_id}` : '/admin/salud.php')], ['Persona', r => r.display_name || 'Empresa'], ['Equipo', r => r.hostname || '—']], rows(problems), 20);
+        });
         metrics(body, [['En línea ahora', data.online_members], ['Ausentes ahora', data.away_members], ['Desconectados ahora', data.offline_members],
-          ['Horas de hoy', hours(current.active_seconds)], ['Primer ingreso hoy', time(rows(presence).map(r => r.first_activity).filter(Boolean).sort()[0])],
+          ['Horas de hoy', hours(current.active_seconds)], ['Primer ingreso hoy', presence ? time(rows(presence).map(r => r.first_activity).filter(Boolean).sort()[0]) : 'No disponible'],
           ['Horas este mes', hours(month.active_seconds)], ['Productividad del período', percent(data.productivity_percent)], ['Focus /100', numeric(data.focus_score) ? fmt.format(data.focus_score) : 'Sin dato'], ['Tiempo inactivo', hours(data.idle_seconds)]]);
         const live = panel(body, 'Personal activo ahora');
         live.append(el('p', 'En línea: señal hasta hace 5 minutos · Ausente: entre 5 y 15 minutos · Desconectado: más de 15 minutos. Es conexión del equipo, no prueba de presencia humana.', 'help'));
@@ -294,6 +302,8 @@ export async function coordinator(ctx) {
       finally { if (run === cycle) submit.disabled = false; }
     };
     bar.onsubmit = e => { e.preventDefault(); draw(); }; await draw();
+    const refresh = setInterval(() => { if (!alive()) { clearInterval(refresh); return; } if (!submit.disabled && !document.hidden) draw(); }, 60000);
+    window.addEventListener('pagehide', () => clearInterval(refresh), { once: true });
   } else if (page === 'users') {
     const [users, org, devices] = await Promise.all([allPages('/users'), optional('/organization'), optional(devicesPath)]);
     const p = panel(host, 'Personas de la empresa'); dependency(p, org, 'Organización no disponible'); dependency(p, devices, 'Equipos no disponibles');
@@ -453,8 +463,8 @@ export async function coordinator(ctx) {
       if (!alive() || cycle !== version) return;
       const canActivity = ![401, 403].includes(act.error?.status);
       if (act.data) {
-        rows(act.data); const days = act.data.data, t = act.data.totals; if (!t) throw invalid(); const punctual = days.filter(d => ['a_tiempo', 'tarde'].includes(d.status));
-        metrics(kpis, [['Primera actividad del período', time(days.map(d => d.first_activity).filter(Boolean).sort()[0])], ['Horas activas', days.length ? hours(t.active_seconds) : 'Sin datos'], ['Productividad', percent(t.productivity_percent)], ['Focus /100', numeric(t.focus_score) ? fmt.format(t.focus_score) : 'Sin dato'], ['Puntualidad', punctual.length ? percent(punctual.filter(d => d.status === 'a_tiempo').length * 100 / punctual.length) : 'Sin dato', 'Sobre días laborables con actividad']]);
+        rows(act.data); const days = act.data.data, t = act.data.totals; if (!t) throw invalid(); const punctual = days.filter(d => ['a_tiempo', 'temprano', 'tarde'].includes(d.status));
+        metrics(kpis, [['Primera actividad del período', time(days.map(d => d.first_activity).filter(Boolean).sort()[0])], ['Horas activas', days.length ? hours(t.active_seconds) : 'Sin datos'], ['Productividad', percent(t.productivity_percent)], ['Focus /100', numeric(t.focus_score) ? fmt.format(t.focus_score) : 'Sin dato'], ['Puntualidad', punctual.length ? percent(punctual.filter(d => d.status !== 'tarde').length * 100 / punctual.length) : 'Sin dato', 'Sobre días laborables con actividad']]);
       } else if (canActivity) error(kpis, act.error);
       else kpis.append(el('p', 'Tu cuenta no puede consultar la actividad de esta persona (requiere el permiso de ver reportes).', 'notice'));
       function tab(key, title) {
@@ -468,7 +478,7 @@ export async function coordinator(ctx) {
       tabs.onkeydown = e => { const buttons = [...tabs.children]; const i = buttons.indexOf(document.activeElement); let next; if (e.key === 'ArrowRight') next = (i + 1) % buttons.length; if (e.key === 'ArrowLeft') next = (i + buttons.length - 1) % buttons.length; if (e.key === 'Home') next = 0; if (e.key === 'End') next = buttons.length - 1; if (next !== undefined) { e.preventDefault(); buttons[next].click(); buttons[next].focus(); } };
       const summary = tab('resumen', 'Resumen');
       if (devices.data) details(summary, [['Conexión', connectionLabel(connectionState(devices.data))], ['Equipos activos', devices.data.filter(d => d.status === 'active').map(d => `${d.hostname} · v${d.agent_version} · Visto: ${time(d.last_seen_at)}`).join(', ') || 'Sin equipo activo']]); else dependency(summary, devices, 'Equipos');
-      if (schedules.data) { const s = schedules.data.find(s => s.id === u.schedule_id); details(summary, [['Horario', s ? `${s.name} · ${s.start_local}–${s.end_local} · ${s.timezone}` : 'Sin horario disponible'], ['Días', s ? s.days.map(d => ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'][d - 1]).join(', ') : 'Sin dato']]); } else dependency(summary, schedules, 'Horario');
+      if (schedules.data) { const s = schedules.data.find(s => s.id === (u.effective_schedule_id || u.schedule_id)); details(summary, [['Horario', s ? `${s.name} · ${s.start_local}–${s.end_local} · ${s.timezone}` : 'Sin horario disponible'], ['Días', s ? s.days.map(d => ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'][d - 1]).join(', ') : 'Sin dato']]); } else dependency(summary, schedules, 'Horario');
       if (act.data) { simulatedNotice(summary, act.data.totals.simulated_seconds); chart(summary, act.data.data); details(summary, [['Trabajo profundo', hours(act.data.totals.deep_work_seconds)], ['Distracción', hours(act.data.totals.distraction_seconds)], ['Cambios de contexto', act.data.totals.context_switches]]); }
       if (act.data) {
         const t = act.data.totals;
@@ -483,6 +493,36 @@ export async function coordinator(ctx) {
         metrics(monthly, [['Total en uso', hours(t.active_seconds)], ['En horario laboral', hours(t.work_hours_active_seconds)], ['Promedio por día con actividad', days ? hours(t.active_seconds / days) : 'Sin dato']]);
       } else dependency(summary, month, 'Resumen del mes');
       if (canActivity) await apps(summary, range, { user_id: id });
+      if (canActivity) {
+        const windows = tab('ventanas', 'Ventanas visitadas');
+        await section(windows, 'Aplicaciones y sitios', async p => {
+          const data = rows(await get(query(`/users/${id}/windows`, range)));
+          const select = el('select'); select.setAttribute('aria-label', 'Ordenar ventanas');
+          const columns = [['App', 'process_name'], ['Sitio', 'site'], ['En uso', 'active_seconds'], ['Abierta sin uso', 'idle_seconds'], ['Veces al frente', 'sessions']];
+          columns.forEach(([title, key]) => select.append(new Option(title, key)));
+          select.value = 'active_seconds'; const direction = el('button', 'Descendente'); direction.type = 'button'; let asc = false;
+          const view = el('div'); p.append(select, direction, view);
+          const draw = () => { view.replaceChildren(); const key = select.value; const sorted = [...data].sort((a, b) => (typeof a[key] === 'number' ? a[key] - b[key] : String(a[key] || '').localeCompare(String(b[key] || ''), 'es')) * (asc ? 1 : -1)); pagedTable(view, 'Ventanas · solo app y sitio', columns.map(([title, key]) => [title, r => key.endsWith('seconds') ? hours(r[key]) : r[key] || '—']), sorted, 25); };
+          select.onchange = draw; direction.onclick = () => { asc = !asc; direction.textContent = asc ? 'Ascendente' : 'Descendente'; draw(); }; draw();
+        });
+        const timeline = tab('linea', 'Línea de tiempo');
+        const day = el('input'); day.type = 'date'; day.value = today(); const dayLabel = el('label', 'Día'); dayLabel.append(day); const consult = el('button', 'Consultar día'); consult.type = 'button'; const view = el('div'); timeline.append(dayLabel, consult, view);
+        const drawTimeline = async () => { if (!day.value) return; consult.disabled = true; view.replaceChildren(); try { let offset = 0; const data = []; do { const page = await get(query(`/users/${id}/timeline`, { day: day.value, offset, limit: 500 })); data.push(...rows(page)); offset = page.next_offset; } while (offset !== null); pagedTable(view, 'Cronología de apps y sitios', [['Inicio', r => time(r.started_at)], ['Fin', r => time(r.ended_at)], ['App', 'process_name'], ['Sitio', r => r.site || '—']], data, 50); } catch (e) { error(view, e); } finally { consult.disabled = false; } };
+        consult.onclick = drawTimeline; await drawTimeline();
+      }
+      if (devices.data?.length) {
+        const equipment = tab('controles', 'Controles del equipo');
+        const access = await api('GET', '/me/access');
+        for (const d of devices.data) {
+          const p = panel(equipment, d.hostname); details(p, [['Versión', d.agent_version], ['Última conexión', time(d.last_seen_at)], ['K3 abierto', d.legacy_k3?.running === true ? 'Sí' : d.legacy_k3?.running === false ? 'No' : 'Sin dato'], ['Smart App Control', { off: 'Desactivado', on: 'Activado', evaluation: 'En evaluación', unknown: 'Sin dato' }[d.smart_app_control] || 'Sin dato']]);
+          await deviceUpdates(p, d, tenant, access.platform);
+          const history = el('div');
+          const log = { load: async () => { history.replaceChildren(); try { const commands = await api('GET', `/devices/${d.id}/commands?limit=20`); pagedTable(history, 'Historial del equipo', [['Orden', r => commandTypes[r.type] || r.type], ['Estado', r => commandStates[r.status]?.[0] || r.status], ['Fecha', r => time(r.created_at)]], rows(commands)); } catch (e) { error(history, e); } } };
+          const remote = await remoteActionsSection(d, log); if (remote) p.append(remote);
+          p.append(history); if (remote) await log.load();
+          try { const security = await api('GET', `/devices/${d.id}/security`); details(p, security.controls.map(c => [c.control_id, { applied: 'Aplicado', failed: 'Fallido', unsupported: 'No compatible', unknown: 'Sin dato' }[c.state] || c.state])); } catch (e) { if (![403, 404].includes(e.status)) error(p, e); }
+        }
+      }
       if (canActivity) {
         const activityPanel = tab('actividad', 'Actividad');
         if (act.data) {

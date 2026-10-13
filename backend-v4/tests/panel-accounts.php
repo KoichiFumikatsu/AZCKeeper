@@ -81,6 +81,8 @@ function panelAccountsTests(Database $db): void
     check(array_values(array_filter($a2, fn ($x) => $x['id'] === $acct))[0]['access']['role_id'] === Util::id($role), 'access survives enable/disable');
     check(adminRequest($platform, 'POST', '/panel-accounts', ['kind' => 'platform', 'email' => 'x.' . $superEmail, 'display_name' => 'X', 'user_id' => null, 'access' => ['role_id' => Util::id($role), 'scope' => accessScopeBody('all')]])[0] === 422, 'platform accounts have no access');
     $reset = expect(adminRequest($platform, 'POST', '/panel-accounts/' . $acct . '/reset-password'), 200, 'reset password');
+    expect(adminRequest($platform,'POST','/panel-accounts/'.$acct.'/reset-password',['password'=>'short']),422,'chosen password minimum');
+    $reset=expect(adminRequest($platform,'POST','/panel-accounts/'.$acct.'/reset-password',['password'=>'Temporary-Test-Password-42']),200,'chosen password accepted');
     check($reset['account']['must_change_password'] && $reset['temporary_password'] !== $created['temporary_password'], 'new temporary password');
     check(panelLoginStatus($email, 'Nueva-clave-segura-1') === 401 && panelLoginStatus($email, $reset['temporary_password']) === 200, 'only the new temporary password logs in');
     // Personas con cedula: normalizada, unica por empresa y visible en la ficha.

@@ -4,6 +4,7 @@ import { api } from './api.js';
 // un permiso y, varias, alcance "toda la empresa" (la API exige requireFull). La API sigue validando todo: esto solo
 // evita mostrar lo que daria "sin permiso".
 const NEEDS = {
+  home: ['reportes.ver', false],
   sites: ['organizacion.ver', true], users: ['usuarios.ver', false], devices: ['equipos.ver', false], reports: ['reportes.ver', false],
   intake: ['equipos.enrolar', true], organization: ['organizacion.ver', true], schedules: ['horarios.ver', true], holidays: ['festivos.ver', true],
   absences: ['presencia.ver', false], doors: ['organizacion.ver', true], assignments: ['equipos.asignar', false], policies: ['reglas.ver', true],
@@ -25,6 +26,7 @@ export function canSeeOnboarding(access) {
 }
 
 export function allowed(access, key) {
+  if (['platform-home', 'tenants', 'plans', 'releases', 'server-health', 'sources'].includes(key)) return !!access.platform;
   if (key === 'onboarding') return canSeeOnboarding(access);
   const need = NEEDS[key];
   if (!need || access.platform) return true;
@@ -44,11 +46,11 @@ export async function applyNavAccess() {
   const access = await loadAccess();
   if (!access) return null;
   for (const link of document.querySelectorAll('#navigation a[data-key]')) {
-    if (link.closest('#platform-group, #group-group')) continue;
+    if (link.closest('#group-group')) continue;
     link.hidden = !allowed(access, link.dataset.key);
   }
   for (const group of document.querySelectorAll('#navigation .nav-group')) {
-    if (group.id === 'platform-group' || group.id === 'group-group') continue;
+    if (group.id === 'group-group') continue;
     group.hidden = ![...group.querySelectorAll('a[data-key]')].some(a => !a.hidden);
   }
   return access;

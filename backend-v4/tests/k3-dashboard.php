@@ -11,7 +11,11 @@ function k3DashboardTests(Database $db): void
     $db->run('UPDATE devices SET last_seen_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?',[$tenant,Util::bin($token['device_id'])]);
     $day=(new DateTimeImmutable('now',new DateTimeZone('America/Bogota')))->format('Y-m-d');
     $to=(new DateTimeImmutable($day))->modify('+1 day')->format('Y-m-d'); $query="?from=$day&to=$to";
-    $a=adminFixture($db,$u,['reportes.ver','cumplimiento.ver','cumplimiento.editar','cobertura.ver'],false,'self');
+    $a=adminFixture($db,$u,['reportes.ver','equipos.ver','cumplimiento.ver','cumplimiento.editar','cobertura.ver'],false,'self');
+    foreach ([$child,$outside] as $person) { enroll($db,$person,keypair()); }
+    $db->run('UPDATE devices SET last_seen_at=UTC_TIMESTAMP()-INTERVAL 1 DAY WHERE tenant_id=? AND user_id<>?',[$tenant,$u['id']]);
+    $db->run('UPDATE devices SET specs=? WHERE tenant_id=?',[Util::json(['legacy_k3'=>['running'=>true]]),$tenant]);
+    $db->run("INSERT INTO productivity_cron_status (tenant_id,status,last_error) VALUES (?,'failed','Platform only')",[$tenant]);
     $alerts=[];
     foreach ([$u,$child,$outside] as $person) {
         $alert=Util::bin(Util::uuid()); $alerts[$person['id']]=$alert;
@@ -24,6 +28,14 @@ function k3DashboardTests(Database $db): void
         check($r['online_members']===1 && $r['away_members']===0 && $r['offline_members']===$count-1,'dashboard connection counts '.$scope);
         check($r['active_seconds']===0 && $r['productivity_percent']===null,'dashboard empty activity is not invented');
         expect(adminRequest($a,'GET','/users/'.Util::id($u['id']).'/activity'.$query),200,'activity own in '.$scope);
+        foreach (['windows'.$query,'timeline?day='.$day] as $path) {
+            expect(adminRequest($a,'GET','/users/'.Util::id($u['id']).'/'.$path),200,'person detail self '.$scope);
+            expect(adminRequest($a,'GET','/users/'.Util::id($child['id']).'/'.$path),$scope==='self'?404:200,'person detail child '.$scope);
+            expect(adminRequest($a,'GET','/users/'.Util::id($outside['id']).'/'.$path),$scope==='all'?200:404,'person detail outside '.$scope);
+        }
+        $problems=expect(adminRequest($a,'GET','/dashboard/problems'),200,'problems '.$scope);
+        check(count($problems['data'])===$count+1,'problems honor device scope and review status '.$scope);
+        check(!in_array('calculation_failed',array_column($problems['data'],'kind'),true),'calculation failure hidden from company '.$scope);
         $coverage=expect(adminRequest($a,'GET','/devices/install-coverage?site_id='.Util::id($u['site_id'])),200,'coverage scoped site '.$scope);
         check(count($coverage['data'])===$count,'coverage applies scope and site');
         $alertPath='/reports/dual-job-alerts/'.Util::id($alerts[$u['id']]);
@@ -36,9 +48,11 @@ function k3DashboardTests(Database $db): void
     expect(adminRequest($a,'GET',"/dashboard?from=$to&to=$day"),422,'dashboard reversed range');
     expect(adminRequest($a,'GET','/dashboard?from=2026-01-01&to=2026-03-01'),422,'dashboard range capped');
     $other=secondTenant($db);
+    foreach (['windows'.$query,'timeline?day='.$day] as $path) { expect(adminRequest($a,'GET','/users/'.Util::id($other['id']).'/'.$path),404,'person detail tenant boundary'); }
     expect(adminRequest($a,'GET','/dashboard'.$query.'&user_id='.Util::id($other['id'])),404,'dashboard tenant boundary');
     $reader=adminFixture($db,$outside,['usuarios.ver']);
     expect(adminRequest($reader,'GET','/dashboard'.$query),403,'dashboard requires reports permission');
+    foreach (['/dashboard/problems','/users/'.Util::id($outside['id']).'/windows'.$query,'/users/'.Util::id($outside['id']).'/timeline?day='.$day] as $path) { expect(adminRequest($reader,'GET',$path),403,'panel detail permission required'); }
     expect(adminRequest($reader,'PATCH',$alertPath,['reviewed'=>true]),403,'review permission required');
     expect(adminRequest($a,'PATCH',$alertPath,['reviewed'=>false]),422,'review cannot silently reopen');
     $reviewed=expect(adminRequest($a,'GET','/reports/dual-job-alerts'.$query.'&reviewed=1&severity=high'),200,'reviewed filter');

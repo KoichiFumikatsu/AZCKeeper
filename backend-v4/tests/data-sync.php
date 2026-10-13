@@ -80,9 +80,32 @@ function dataSyncTests(Database $db): void
     check(($reasons['matched_name'] ?? 0) === 1 && ($reasons['orphan'] ?? 0) === 1, 'name match and orphan pending ' . json_encode($reasons));
 
     // 3) Bloqueo de edicion de lo que gestiona One.
+    $watermark=$db->one('SELECT updated_since,last_full_at FROM data_sources WHERE tenant_id=? AND id=?',[$tenant,$sid]);
+    $world['people'][0]['display_name']='Solo esta persona'; $world['people'][1]['display_name']='No debe cambiar';
+    $single=$db->transaction(fn()=>$sync->run($tenant,$sid,'incremental','manual',false,false,$p1['id']));
+    check($db->one('SELECT status FROM sync_runs WHERE tenant_id=? AND id=?',[$tenant,$single])['status']==='applied','single source refresh applied');
+    check($db->one('SELECT display_name FROM users WHERE tenant_id=? AND id=?',[$tenant,$p1['id']])['display_name']==='Solo esta persona','single source refresh target changed');
+    check(!$db->one("SELECT id FROM users WHERE tenant_id=? AND display_name='No debe cambiar'",[$tenant]),'single source refresh leaves other people alone');
+    check($db->one('SELECT updated_since,last_full_at FROM data_sources WHERE tenant_id=? AND id=?',[$tenant,$sid])===$watermark,'single source refresh preserves global cursor');
+    $savedPerson=$world['people'][0];
+    $db->pdo->beginTransaction();
+    try {
+        $db->run("DELETE FROM data_domain_owners WHERE tenant_id=? AND domain='personas'",[$tenant]);
+        $world['people'][0]['display_name']='Not owned'; $world['people'][0]['schedule_external_id']=null;
+        $runId=$sync->run($tenant,$sid,'incremental','manual',false,false,$p1['id']);
+        $changed=$db->one('SELECT display_name,schedule_id FROM users WHERE tenant_id=? AND id=?',[$tenant,$p1['id']]);
+        check($changed['display_name']==='Solo esta persona' && $changed['schedule_id']!==$p1['schedule_id'],'single refresh only changes owned domains');
+        check($db->one('SELECT status FROM sync_runs WHERE tenant_id=? AND id=?',[$tenant,$runId])['status']==='applied','schedule-only owner refresh applied');
+    } finally { $db->pdo->rollBack(); $world['people'][0]=$savedPerson; }
+    $world['people'][1]['display_name']='Persona 2';
     $pid = Util::id($p1['id']);
     $user = expect(adminRequest($platform, 'GET', '/users/' . $pid), 200, 'read synced person');
     check($user['managed_by'] === 'AZC One', 'person shows its source');
+    check(count($user['source_owners'])===7,'person exposes domain owners without source credentials');
+    expect(adminRequest($platform,'PATCH','/users/'.$pid,['employment_status'=>'retirado'],['if-match'=>'"'.$user['version'].'"']),409,'source owns employment status');
+    expect(adminRequest($platform,'POST','/users/'.Util::id($orphan).'/refresh-source',['source_id'=>$src['id']]),404,'refresh only linked person');
+    $refresh=expect(adminRequest($platform,'POST','/users/'.$pid.'/refresh-source',['source_id'=>$src['id']]),200,'refresh source endpoint unreachable');
+    check($refresh['status']==='failed','unreachable source never deactivates person');
     check(adminRequest($platform, 'PATCH', '/users/' . $pid, ['display_name' => 'Otro'], ['if-match' => '"' . $user['version'] . '"'])[1]['detail'] === 'managed_by_source', 'synced person locked');
     $orphanDto = expect(adminRequest($platform, 'GET', '/users/' . Util::id($orphan)), 200, 'read local person');
     check($orphanDto['managed_by'] === null && adminRequest($platform, 'PATCH', '/users/' . Util::id($orphan), ['display_name' => 'Persona local editada'], ['if-match' => '"' . $orphanDto['version'] . '"'])[0] === 200, 'local person still editable');

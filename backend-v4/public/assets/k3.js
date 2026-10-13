@@ -4,7 +4,7 @@ import { enhance } from './tablekit.js';
 import { applyNavAccess, loadAccess, allowed, canSeeOnboarding } from './nav-access.js';
 import { scopeSummary, sameAccess, scopeConditions, scopeChips, SCOPE_RULE, TEAM_LABEL } from './access-scope.js';
 import { wireDialog, confirmBox, noticeBox, feedback } from './dialogs.js';
-import { coordinator, connectionLabel, connectionState } from './coordinator.js';
+import { coordinator, connectionLabel, connectionState, periodControls } from './coordinator.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings, withReauth, canceled } from './hardening-settings.js';
 import { onboardingPage, returnBand, AUDIT_LABELS as ONBOARDING_AUDIT } from './onboarding.js';
 import { canConfigureUnlockPin, mountUnlockPin } from './unlock-pin.js';
@@ -864,6 +864,7 @@ const ownerName = () => companies.find(c => c.id === PLATFORM_TENANT)?.branding?
 const companyName = id => { const c = companies.find(x => x.id === id); return c ? (c.branding?.display_name || c.name) : 'Empresa'; };
 
 async function accounts() {
+  const portalPeople = await optional(allPages('/users'));
   const session = readSession(); const platform = !!session?.is_platform_admin;
   const list = await api('GET', '/panel-accounts');
   const groups = platform ? ((await optional(api('GET', '/company-groups')))?.data || []) : [];
@@ -945,6 +946,10 @@ async function accounts() {
     s.append(legend);
     table(s, 'Cuentas', columns, rows, { filters: [...(platform ? [['Empresa', a => a.kind === 'platform' ? ownerName() : a.tenant_name]] : []), ['Estado', stateOf]],
       search: a => [a.user_name, a.display_name, a.email, a.tenant_name] });
+    if (portalPeople) {
+      const portal = surface('Acceso al Portal'); portal.append(el('p', 'Permiso guardado para el futuro Portal. La cuenta y su contraseña se administran arriba.', 'help'));
+      table(portal, 'Personas y Portal', [['Persona', u => u.display_name], ['Rol', u => u.access?.role_name || 'Sin acceso al panel'], ['Puede entrar al Portal', u => { const input = el('input'); input.type = 'checkbox'; input.checked = !!u.portal_login_enabled; input.setAttribute('role', 'switch'); input.setAttribute('aria-label', `Puede entrar al Portal: ${u.display_name}`); input.onchange = async () => { input.disabled = true; try { const saved = await api('PUT', `/users/${u.id}/portal-access`, { body: { portal_login_enabled: input.checked } }); u.portal_login_enabled = saved.portal_login_enabled; } catch (e) { input.checked = !!u.portal_login_enabled; fail(e); } finally { input.disabled = false; } }; return input; }]], portalPeople, { search: u => [u.display_name, u.email] });
+    }
   };
   const refresh = async () => {
     list.data = (await api('GET', '/panel-accounts')).data;
@@ -1470,8 +1475,12 @@ async function patient(fn) {
 async function people() {
   const [users, org, schedules, domains, sources, calendarPage] = await Promise.all([allPages('/users'), allPages('/organization'), optional(allPages('/schedules')), optional(api('GET', '/data-domains')), optional(api('GET', '/data-sources')), optional(api('GET', '/schedules/holiday-calendars?limit=100'))]);
   const day = zoneToday(), range = `from=${day}&to=${shiftDay(day, 1)}`;
-  const [activity, presence, devices] = await Promise.allSettled([api('GET', `/reports/people?${range}`), api('GET', `/reports/presence?${range}`), allPages(`/tenants/${tenant}/devices`)]);
-  const metricsByPerson = new Map((activity.value?.data || []).map(r => [r.user_id, r.totals]));
+  let [activity, presence, devices] = await Promise.allSettled([api('GET', `/reports/people?${range}`), api('GET', `/reports/presence?${range}`), allPages(`/tenants/${tenant}/devices`)]);
+  let metricsByPerson = new Map((activity.value?.data || []).map(r => [r.user_id, r.totals]));
+  let lastByPerson = new Map((activity.value?.data || []).map(r => [r.user_id, r.last_activity]));
+  const periodForm = el('form', undefined, 'toolbar'); const period = periodControls(periodForm, zoneToday, shiftDay);
+  const consultPeriod = el('button', 'Consultar período', 'primary'); consultPeriod.type = 'submit'; periodForm.append(consultPeriod);
+  periodForm.onsubmit = async e => { e.preventDefault(); const r = period.range(); if (!r) return; consultPeriod.disabled = true; try { activity = { status: 'fulfilled', value: await api('GET', `/reports/people?${new URLSearchParams(r)}`) }; metricsByPerson = new Map(activity.value.data.map(r => [r.user_id, r.totals])); lastByPerson = new Map(activity.value.data.map(r => [r.user_id, r.last_activity])); render(); } catch (e) { fail(e); } finally { consultPeriod.disabled = false; } };
   const firstByPerson = new Map((presence.value?.data || []).map(r => [r.user_id, r.first_activity]));
   const state = u => devices.status === 'fulfilled' ? connectionLabel(connectionState(devices.value.filter(d => d.user_id === u.id))) : 'Sin dato';
   const hours = v => typeof v === 'number' ? `${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1 }).format(v / 3600)} h` : 'Sin dato';
@@ -1507,6 +1516,7 @@ async function people() {
     $('page-content').replaceChildren();
     kpis([['Personas', String(list.length)], ...['En línea', 'Ausente', 'Desconectado'].map(label => [label, devices.status === 'fulfilled' ? String(list.filter(u => u.status === 'active' && state(u) === label).length) : 'Sin dato'])]);
     const s = surface('Tu personal activo');
+    s.append(periodForm);
     s.append(el('p', `Actividad de hoy (${day}) · ${tenantZone}. Conexión: en línea hasta 5 minutos, ausente hasta 15; después, desconectado.`, 'help'));
     for (const [result, name] of [[activity, 'Tiempo y productividad'], [presence, 'Primer ingreso'], [devices, 'Conexión']]) {
       if (result.status === 'rejected') s.append(el('p', `${name}: ${errorMessage(result.reason)}`, 'error-message'));
@@ -1552,13 +1562,14 @@ async function people() {
       ['Nombre', u => { const a = el('a', u.display_name); a.href = `/miembro.php?id=${encodeURIComponent(u.id)}&tab=actividad`; const d = el('div'); d.append(a); if (u.email) d.append(el('small', u.email)); return d; }],
       ['Conexión', u => badge(state(u), state(u) === 'En línea' ? 'good' : '')],
       ['Primer ingreso hoy', u => firstByPerson.get(u.id) ? new Intl.DateTimeFormat('es-CO', { timeZone: tenantZone, timeStyle: 'short' }).format(new Date(firstByPerson.get(u.id))) : 'Sin registro'],
-      ['Tiempo de hoy', u => hours(metricsByPerson.get(u.id)?.active_seconds)],
+      ['Última vez en uso (período)', u => when(lastByPerson.get(u.id))],
+      ['Tiempo trabajado del período', u => hours(metricsByPerson.get(u.id)?.active_seconds)],
       ['Productividad', u => score(metricsByPerson.get(u.id)?.productivity_percent)], ['Focus /100', u => score(metricsByPerson.get(u.id)?.focus_score).replace(' %', '')],
       ['Cédula', u => u.document || '—'], ['Empresa', u => n.get(u.company_id) || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'],
       ['Acceso al panel', u => u.access ? scopeSummary(u.access.role_name, u.access.scope, n) : 'Sin acceso al panel'],
       ['Estado', u => { const d = el('div'); d.append(badge(u.status === 'active' ? 'Activa' : 'Inactiva', u.status === 'active' ? 'good' : '')); if (u.monitoring === 'excluded') d.append(' ', badge('No se monitorea', 'info')); return d; }],
       ...(avail ? [['Plan', u => ownPlan(u)?.name || defaultLabel]] : []),
-      ['Acciones', u => { if (u.managed_by) return el('small', `Gestionada por ${u.managed_by}`); const b = el('a', 'Editar', 'link-button'); b.href = personUrl(u); return b; }]],
+      ['Acciones', u => { const d = el('div', undefined, 'actions'); const v = el('a', 'Ver', 'link-button'); v.href = `/miembro.php?id=${encodeURIComponent(u.id)}`; d.append(v); if (batchFields.data) { const b = el('a', 'Editar', 'link-button'); b.href = personUrl(u); d.append(b); } return d; }]],
       list, { filters: [['Conexión', state], ['Empresa', u => n.get(u.company_id) || 'Sin empresa'], ['País', u => countryName(siteCountry(u))], ['Ciudad', u => org.find(o => o.id === u.site_id)?.city || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']],
         search: u => [u.display_name, u.email, u.document, n.get(u.position_id), n.get(u.company_id)], selection });
   };
@@ -1663,7 +1674,7 @@ async function people() {
           if (res.item) payload[`${kind}_id`] = res.item.id; else problems.push(unitIssue(label, v, res));
         }
         const sv = get('schedule');
-        if (!sv) { const sc = defaultSchedule(); if (sc) { payload.schedule_id = sc.id; assume(`schedule:${sc.id}`, `Horario vacío: se usa «${sc.name}» (sugerido, no revisado)`); } }
+        if (!sv) { payload.schedule_id = null; assume('schedule:default', 'Horario vacío: se usa el predeterminado de la empresa'); }
         else { const res = resolve(schedPool, [], sv, s => s.name); if (res.item) payload.schedule_id = res.item.id; else problems.push(unitIssue('Horario', sv, res).replace('está inactiva', 'está inactivo')); }
         const cv = get('company');
         if (cv) { const res = resolve(units('company'), org.filter(o => o.kind === 'company' && !o.active), cv, unitLabel); if (res.item) payload.company_id = res.item.id; else problems.push(unitIssue('Empresa', cv, res)); }
@@ -1763,7 +1774,7 @@ async function people() {
       }
       const boss = select(list.filter(u => u.status === 'active').sort((a, b) => a.display_name.localeCompare(b.display_name, 'es')).map(u => [u.id, u.display_name]), ['', 'Nadie']);
       add('reports_to_user_id', 'Jefe (reporta a)', boss, { domain: 'jerarquia', text: () => shownText(boss), read: out => { out.changes.reports_to_user_id = boss.value || null; return null; } });
-      const sched = select(scheduleList.map(x => [x.id, x.name]), ['', 'Sin horario (no se espera jornada)']);
+      const sched = select(scheduleList.map(x => [x.id, x.name]), ['', 'Predeterminado de empresa (sin horario propio)']);
       add('schedule_id', 'Horario', sched, { domain: 'horarios', text: () => shownText(sched), read: out => { out.changes.schedule_id = sched.value || null; return null; } });
       if (calendarPage) {
         const cal = select(calendars.map(c => [c.id, c.name]), ['', 'Automático (festivos del país de su sede)']);
@@ -1947,7 +1958,7 @@ function unitField(parent, ctx, kind, label, value, { optionalText = null, onCre
   const tab = ORG_TABS.find(t => t.kind === kind);
   const syncHint = () => {
     const none = !ctx.units(kind).length;
-    hint.textContent = none ? `${UNIT_EMPTY[kind]}${ctx.canUnits || kind === 'company' ? '' : ' Pide a quien administra Organización que la cree.'}` : '';
+    hint.textContent = none ? `${UNIT_EMPTY[kind] || 'Sin unidades disponibles.'}${ctx.canUnits || kind === 'company' ? '' : ' Pide a quien administra Organización que la cree.'}` : '';
     hint.hidden = !none;
   };
   syncHint();
@@ -1985,17 +1996,14 @@ function laborFields(parent, ctx, u, extras = parent) {
   if (ctx.units('firm').length || u?.firm_id) selects.firm = unitField(grid, ctx, 'firm', 'Firma', pick('firm'), { optionalText: 'Sin firma (se asigna después)' });
   const sched = el('select');
   const fillSchedules = v => {
-    sched.replaceChildren(new Option('Sin horario (no se espera jornada)', '')); ctx.schedules.forEach(x => sched.append(new Option(x.name, x.id)));
+    sched.replaceChildren(new Option('Predeterminado de empresa (sin horario propio)', '')); ctx.schedules.forEach(x => sched.append(new Option(x.placeholder ? `${x.name} · usa el predeterminado` : x.name, x.id)));
     if (v && ![...sched.options].some(o => o.value === v)) sched.append(new Option('Horario no disponible', v));
     sched.value = v || '';
   };
-  const named = ctx.schedules.find(s => fold(s.name).includes('por defecto'));
-  const suggested = u ? null : named || ctx.schedules[0] || null;
-  fillSchedules(u ? (u.schedule_id || '') : (suggested?.id || ''));
+  fillSchedules(u?.schedule_id || '');
   const schedWrap = el('div', undefined, 'unit-field'); grid.append(schedWrap);
   labeled(schedWrap, 'Horario', sched);
-  const schedHint = el('p', !ctx.schedules.length ? `Aún no hay horarios: sin horario no se espera jornada${ctx.canSchedules ? '.' : ' (pide a quien administra Horarios que lo cree).'}`
-    : suggested ? `Sugerido: «${suggested.name}» (${named ? 'el horario llamado «por defecto»' : 'el primero de la lista'}). Elige otro o «Sin horario» si no aplica.` : '', 'help');
+  const schedHint = el('p', 'Sin horario propio se usa el predeterminado configurado en Horarios.', 'help');
   schedHint.hidden = !schedHint.textContent; schedWrap.append(schedHint);
   // + Nuevo horario (F6): el mismo editor de Horarios; el creado queda elegido y el resto del formulario no se toca.
   if (ctx.canSchedules) {
@@ -2022,7 +2030,7 @@ function laborFields(parent, ctx, u, extras = parent) {
     if (holidays && (!u || (holidays.value || null) !== (u.holiday_calendar_id || null))) out.holiday_calendar_id = holidays.value || null;
     return out;
   };
-  return { missing, read, company, selects, sched, holidays };
+  return { missing, read, company, selects, sched, holidays, fields: { company_id: company, schedule_id: sched, ...Object.fromEntries(Object.entries(selects).map(([k, v]) => [`${k}_id`, v])) } };
 }
 const formValues = root => JSON.stringify([...root.querySelectorAll('input, select, textarea')].map(i => i.type === 'checkbox' ? i.checked : i.value));
 // Pie de un bloque: botón de guardar con su propio estado (éxito u error), independiente de los demás bloques.
@@ -2131,7 +2139,7 @@ function personProfile(ctx, u, { tab = 'datos', subtab = null, created = null, d
   // Equipos: el conteo va en la pestaña en cuanto se conoce.
   devicesReq.then(list => { if (list) { const c = el('span', String(list.length), 'tab-count'); views.equipos.button.append(' ', c); } }).catch(() => {});
   const action = $('page-action');
-  if (ctx.canEdit && !u.managed_by) {
+  if (ctx.canEdit) {
     action.textContent = 'Editar persona'; action.hidden = false;
     action.onclick = () => { go('datos'); views.datos.panel.querySelector('input')?.focus(); };
   }
@@ -2139,10 +2147,19 @@ function personProfile(ctx, u, { tab = 'datos', subtab = null, created = null, d
 }
 
 // Pestaña Datos: datos básicos y ubicación laboral, un solo «Guardar datos» (PATCH /users/{id}).
+async function personPassword(parent, ctx, user) {
+  if (!ctx.canAccounts) return;
+  const accounts = await api('GET', '/panel-accounts'); const account = accounts.data.find(a => a.user_id === user.id);
+  const box = surface('Contraseña del panel / Portal', parent);
+  if (!account) { const a = el('a', 'Crear cuenta', 'button'); a.href = ctx.accountsHref(user, true); box.append(a); return; }
+  const form = el('form'); const password = labeled(form, 'Nueva contraseña', el('input')); password.type = 'password'; password.autocomplete = 'new-password'; password.minLength = 12; password.maxLength = 128; password.required = true;
+  const save = el('button', 'Cambiar contraseña'); save.type = 'submit'; form.append(save); box.append(form);
+  form.onsubmit = async e => { e.preventDefault(); if (!form.reportValidity()) return; save.disabled = true; try { const r = await withReauth(() => api('POST', `/panel-accounts/${account.id}/reset-password`, { body: { password: password.value } }), 'Confirma tu contraseña para cambiar la de esta cuenta.'); if (r !== canceled) { password.value = ''; announce('Contraseña cambiada. La persona deberá cambiarla al entrar.'); } } catch (e) { fail(e); } finally { save.disabled = false; } };
+}
 function dataPanel(panel, ctx, getUser, onSaved) {
   const u = getUser();
   const s = surface('Datos de la persona', panel);
-  if (!ctx.canEdit || u.managed_by) {
+  if (!ctx.canEdit) {
     s.append(el('p', u.managed_by ? `Los datos laborales los gestiona ${u.managed_by}: cámbialos allá y llegarán solos. El acceso y el plan sí se editan aquí.`
       : 'Tu cuenta puede ver estos datos, pero no editarlos (se necesita el permiso para editar personas).', 'notice'));
     const site = ctx.org.find(o => o.id === u.site_id);
@@ -2161,7 +2178,14 @@ function dataPanel(panel, ctx, getUser, onSaved) {
   const id = identityFields(basic, ctx, u);
   const work = el('fieldset', undefined, 'perm-group'); work.append(el('legend', 'Ubicación laboral')); form.append(work);
   const labor = laborFields(work, ctx, u);
-  const status = el('select'); status.append(new Option('Activa', 'active'), new Option('Inactiva (retirada)', 'inactive')); status.value = u.status; labeled(work, 'Estado', status);
+  const status = el('select'); ['contratado', 'retirado', 'licencia', 'vacaciones', 'incapacidad'].forEach(v => status.append(new Option(v[0].toUpperCase() + v.slice(1), v))); status.value = u.employment_status || (u.status === 'inactive' ? 'retirado' : 'contratado'); labeled(work, 'Estado laboral', status);
+  const domains = { display_name: 'personas', email: 'personas', document: 'personas', employment_status: 'personas', status: 'personas', company_id: 'empresas', firm_id: 'firmas', site_id: 'sedes', area_id: 'areas', position_id: 'cargos', schedule_id: 'horarios', reports_to_user_id: 'jerarquia' };
+  const owned = new Map((u.source_owners || []).map(o => [o.domain, o]));
+  const fields = { display_name: id.name, email: id.email, document: id.doc, reports_to_user_id: id.boss, employment_status: status, ...labor.fields };
+  for (const [key, field] of Object.entries(fields)) { const source = owned.get(domains[key]); if (source) { field.disabled = true; field.parentElement.append(el('small', `Gestionado por ${source.name}`, 'help')); } }
+  const refreshSources = [...new Map((u.source_owners || []).filter(o => Object.values(domains).includes(o.domain)).map(o => [o.source_id, o])).values()];
+  for (const source of refreshSources.filter(() => ctx.isSuper || ctx.me?.permissions?.some(p => p.code === 'usuarios.editar' && p.scopes.includes('tenant')))) { const b = el('button', `Actualizar desde ${source.name}`); b.type = 'button'; s.append(b); b.onclick = async () => { b.disabled = true; try { const r = await api('POST', `/users/${u.id}/refresh-source`, { body: { source_id: source.source_id } }); if (r.status === 'applied') { const saved = await api('GET', `/users/${u.id}`); onSaved(saved); panel.replaceChildren(); dataPanel(panel, ctx, getUser, onSaved); } else await noticeBox({ title: 'Actualización desde origen', message: r.status === 'simulated' ? 'La fuente está en simulación: no se aplicaron cambios.' : 'La actualización no se aplicó. Revisa la sincronización en Integraciones.' }); } catch (e) { fail(e); } finally { b.disabled = false; } }; }
+  personPassword(s, ctx, u).catch(fail);
   const foot = blockFooter(form, 'Guardar datos');
   let baseline = formValues(form);
   form.addEventListener('submit', async ev => {
@@ -2170,9 +2194,11 @@ function dataPanel(panel, ctx, getUser, onSaved) {
     if (!basicData.display_name) { foot.fail('Escribe el nombre.'); id.name.focus(); return; }
     const missing = labor.missing();
     if (missing.length) { foot.fail(`Falta ${missing.join(', ')}: elígela${ctx.canUnits ? ' o créala con «+ Nueva …»' : ''}.`); return; }
-    if (status.value === 'inactive' && cur.status === 'active' && !await confirmBox({ title: 'Retirar persona', message: `¿Marcar a ${cur.display_name} como inactiva? Sus equipos quedan revocados y dejan de reportar.`, details: ['Si solo quieres que no entre al panel, desactiva su cuenta en Cuentas del panel: eso no revoca sus equipos.'], okText: 'Marcar inactiva y guardar', danger: true })) return;
+    if (status.value === 'retirado' && cur.status === 'active' && !await confirmBox({ title: 'Retirar persona', message: `¿Marcar a ${cur.display_name} como inactiva? Sus equipos quedan revocados y dejan de reportar.`, okText: 'Retirar y guardar', danger: true })) return;
     const payload = { ...basicData, ...labor.read() };
-    if (status.value !== cur.status) payload.status = status.value;
+    payload.employment_status = status.value;
+    if (cur.status === 'inactive' && status.value !== 'retirado') payload.status = 'active';
+    for (const key of Object.keys(payload)) if (owned.has(domains[key])) delete payload[key];
     foot.busy(true);
     try {
       const saved = await api('PATCH', `/users/${cur.id}`, { body: payload, ifMatch: cur.version });
@@ -2515,10 +2541,19 @@ function openScheduleEditor(x, { onSaved, note = null } = {}) {
 }
 async function schedulesPage() {
   const [list0, users] = await Promise.all([allPages('/schedules'), optional(allPages('/users'))]);
+  let settings = await api('GET', '/schedules/settings'); const access = await loadAccess();
   let list = list0;
   const people = id => (users || []).filter(u => u.schedule_id === id && u.status === 'active').length;
   const render = () => {
     $('page-content').replaceChildren();
+    const config = surface('Margen de puntualidad y horario predeterminado');
+    const form = el('form', undefined, 'toolbar'); config.append(form);
+    const margin = labeled(form, 'Margen de puntualidad (minutos)', el('input')); margin.type = 'number'; margin.min = 0; margin.max = 180; margin.required = true; margin.value = settings.punctuality_margin_minutes;
+    const schedule = labeled(form, 'Horario predeterminado de empresa', el('select')); schedule.append(new Option('Sin predeterminado', '')); list.filter(s => !s.placeholder).forEach(s => schedule.append(new Option(s.name, s.id))); schedule.value = settings.default_schedule_id || '';
+    config.append(el('p', 'Las personas sin horario propio usan este horario. Cambiar estos ajustes recalcula los últimos 30 días; los días anteriores conservan su margen de puntualidad.', 'help'));
+    const save = el('button', 'Guardar ajustes', 'primary'); save.type = 'submit'; form.append(save);
+    const editable = access?.platform || access?.permissions?.some(p => p.code === 'horarios.editar' && p.scopes.includes('tenant')); save.hidden = !editable; margin.disabled = schedule.disabled = !editable;
+    form.onsubmit = async e => { e.preventDefault(); if (!form.reportValidity()) return; save.disabled = true; try { settings = await api('PUT', '/schedules/settings', { body: { punctuality_margin_minutes: Number(margin.value), default_schedule_id: schedule.value || null } }); announce('Ajustes guardados. Últimos 30 días en cola para recalcular.'); } catch (e) { fail(e); } finally { save.disabled = false; } };
     const s = surface('Horarios de la empresa');
     s.append(el('p', 'La jornada de cada persona: con ella se calcula la puntualidad, el tiempo esperado y qué actividad es laboral, almuerzo o fuera de horario. Un día puede tener horas propias (por ejemplo, sábado medio día).', 'help'));
     if (!list.length) { empty(s, 'Aún no hay horarios', 'Crea el primero con "Crear horario".'); return; }
@@ -3413,6 +3448,7 @@ async function plansPage() {
 // Todas las acciones auditables (operaciones del contrato y eventos automaticos), en palabras. auditAction() tiene
 // un respaldo que traduce verbo + objeto, para que una accion nueva nunca salga en ingles tecnico.
 const AUDIT_ACTIONS = {
+  putScheduleSettings: 'Cambió el margen de puntualidad y horario predeterminado', refreshUserSource: 'Actualizó una persona desde su origen', setUserPortalAccess: 'Cambió el acceso al Portal',
   reviewDualJobAlert: 'Marcar alerta revisada',
   setTenantUnlockPin: 'Cambió el PIN de desbloqueo local',
   revealTenantUnlockPin: 'Consultó el PIN de desbloqueo local',
@@ -3555,6 +3591,9 @@ async function logsPage() {
 // ---- Salud del servidor ---------------------------------------------------------------------------------------------
 async function healthPage() {
   const h = await api('GET', '/tenants/server-health');
+  const calculation = surface('Estado del cálculo');
+  calculation.append(el('p', `Estado: ${{ ok: 'Correcto', running: 'En curso', failed: 'Falló', never: 'Sin ejecución' }[h.cron_status] || h.cron_status} · Última ejecución: ${when(h.cron_last_run)}`));
+  if (h.cron_last_error) calculation.append(el('p', h.cron_last_error, 'error-message'));
   const age = v => v ? (Date.now() - Date.parse(v)) / 60000 : Infinity;
   const checksList = [
     ['Cálculo de productividad', h.cron_status === 'ok' && age(h.cron_last_success) < 30, h.cron_last_success ? `Último cálculo correcto: ${when(h.cron_last_success)}` : 'Nunca se ha ejecutado', 'Corre cada 10 minutos. Si se detiene, los reportes dejan de actualizarse.'],
@@ -4157,7 +4196,7 @@ async function start() {
   if ($('platform-group')) $('platform-group').hidden = !session.is_platform_admin;
   // Una cuenta de empresa siempre trabaja en su empresa. Superadmin: Cuentas, Empresas y Planes son globales (empresa duena);
   // las pantallas de una empresa usan la elegida en el selector (por defecto la primera empresa cliente).
-  const globalPage = ['accounts', 'tenants', 'plans'].includes(page);
+  const globalPage = ['tenants', 'plans'].includes(page);
   try {
     if (session.is_platform_admin) {
       companies = sortCompanies(await allPages('/tenants', PLATFORM_TENANT));

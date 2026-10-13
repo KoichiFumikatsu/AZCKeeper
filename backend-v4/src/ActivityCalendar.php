@@ -4,6 +4,10 @@ namespace Keeper;
 
 final class ActivityCalendar
 {
+    public static function scheduledStart(string $assignment='a'): string
+    {
+        return "IF(EXISTS(SELECT 1 FROM tenants t LEFT JOIN schedules s ON s.tenant_id=t.tenant_id AND s.id=$assignment.schedule_id WHERE t.tenant_id=$assignment.tenant_id AND t.default_schedule_id IS NOT NULL AND (s.placeholder=TRUE OR s.id IS NULL)),c.start_local,COALESCE(f.scheduled_start,c.start_local))";
+    }
     public static function expected(string $assignment='a', string $calendar='c'): string
     {
         // Festivo: del calendario efectivo de la persona (el suyo, el del pais de su sede o el por defecto); los festivos
@@ -16,14 +20,14 @@ final class ActivityCalendar
     {
         $db->run('DROP TEMPORARY TABLE IF EXISTS activity_calendar');
         $db->run('CREATE TEMPORARY TABLE activity_calendar (schedule_id BINARY(16),day DATE,timezone VARCHAR(64),starts_at DATETIME(6),ends_at DATETIME(6),work_start DATETIME(6),expected_seconds INT,utc_offset INT,start_local TIME,PRIMARY KEY(schedule_id,day)) ENGINE=InnoDB');
-        $schedules=$db->run('SELECT s.id,s.timezone,s.start_local,s.end_local FROM schedules s WHERE s.tenant_id=?',[$tenant])->fetchAll();
+        $schedules=$db->run('SELECT s.id,COALESCE(d.id,s.id) effective_id,COALESCE(d.timezone,s.timezone) timezone,COALESCE(d.start_local,s.start_local) start_local,COALESCE(d.end_local,s.end_local) end_local FROM schedules s JOIN tenants t ON t.tenant_id=s.tenant_id LEFT JOIN schedules d ON d.tenant_id=t.tenant_id AND d.id=t.default_schedule_id AND s.placeholder=TRUE WHERE s.tenant_id=?',[$tenant])->fetchAll();
         $days=[];
         foreach ($db->run('SELECT schedule_id,weekday,start_local,end_local FROM schedule_days WHERE tenant_id=?',[$tenant])->fetchAll() as $d) { $days[$d['schedule_id']][(int)$d['weekday']]=$d; }
         foreach ($schedules as $s) {
             $zone=new \DateTimeZone($s['timezone']);
             for ($day=new \DateTimeImmutable($from,$zone); $day->format('Y-m-d')<$to; $day=$day->modify('+1 day')) {
                 // Un dia con franja propia (p. ej. sabado medio dia) usa la suya; los demas, la del horario.
-                $own=$days[$s['id']][(int)$day->format('N')]??null;
+                $own=$days[$s['effective_id']][(int)$day->format('N')]??null;
                 $startLocal=$own['start_local']??$s['start_local']; $endLocal=$own['end_local']??$s['end_local'];
                 $start=new \DateTimeImmutable($day->format('Y-m-d').' '.$startLocal,$zone);
                 $end=new \DateTimeImmutable($day->format('Y-m-d').' '.$endLocal,$zone);
@@ -41,11 +45,12 @@ final class ActivityCalendar
             self::create($db,$tenant,$day,(new \DateTimeImmutable($day))->modify('+1 day')->format('Y-m-d'));
             try {
                 $expected=self::expected('a');
-                $db->run("UPDATE day_summary d JOIN user_assignments a ON a.tenant_id=d.tenant_id AND a.id=d.user_assignment_id JOIN activity_calendar c ON c.schedule_id=a.schedule_id AND c.day=d.day
+                $start=self::scheduledStart();
+                $db->run("UPDATE day_summary d JOIN user_assignments a ON a.tenant_id=d.tenant_id AND a.id=d.user_assignment_id JOIN activity_calendar c ON c.schedule_id=COALESCE(a.schedule_id,(SELECT default_schedule_id FROM tenants WHERE tenant_id=a.tenant_id)) AND c.day=d.day
                     SET d.expected_seconds=$expected,d.coverage_percent=IF($expected=0,0,LEAST(100,100*(d.active_seconds+d.idle_seconds+COALESCE(d.locked_seconds,0))/NULLIF($expected,0))),
                     d.late_seconds=IF($expected=0 OR d.first_activity IS NULL,NULL,GREATEST(0,TIMESTAMPDIFF(SECOND,c.work_start,d.first_activity))) WHERE d.tenant_id=? AND d.day=?",[$tenant,$day]);
-                $db->run("UPDATE focus_daily f JOIN user_assignments a ON a.tenant_id=f.tenant_id AND a.id=f.user_assignment_id JOIN activity_calendar c ON c.schedule_id=a.schedule_id AND c.day=f.day
-                    SET f.punctuality_minutes=IF($expected=0 OR f.first_activity_time IS NULL,NULL,TIMESTAMPDIFF(MINUTE,TIMESTAMP(f.day,f.first_activity_time),TIMESTAMP(f.day,COALESCE(f.scheduled_start,c.start_local)))) WHERE f.tenant_id=? AND f.day=?",[$tenant,$day]);
+                $db->run("UPDATE focus_daily f JOIN user_assignments a ON a.tenant_id=f.tenant_id AND a.id=f.user_assignment_id JOIN activity_calendar c ON c.schedule_id=COALESCE(a.schedule_id,(SELECT default_schedule_id FROM tenants WHERE tenant_id=a.tenant_id)) AND c.day=f.day
+                    SET f.scheduled_start=$start,f.punctuality_minutes=IF($expected=0 OR f.first_activity_time IS NULL,NULL,TIMESTAMPDIFF(MINUTE,TIMESTAMP(f.day,f.first_activity_time),TIMESTAMP(f.day,$start))) WHERE f.tenant_id=? AND f.day=?",[$tenant,$day]);
             } finally { $db->run('DROP TEMPORARY TABLE IF EXISTS activity_calendar'); }
         }
     }

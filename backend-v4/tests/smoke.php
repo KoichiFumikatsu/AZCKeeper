@@ -5,6 +5,7 @@ require __DIR__ . '/regressions.php';
 require __DIR__ . '/policy-compiler.php';
 require __DIR__ . '/admin.php';
 require __DIR__ . '/k3-dashboard.php';
+require __DIR__ . '/panel-architecture.php';
 require __DIR__ . '/k3-updates.php';
 require __DIR__ . '/admin-review.php';
 require __DIR__ . '/external.php';
@@ -405,6 +406,7 @@ try {
     policyCompilerTests($db);
     adminTests($db);
     k3DashboardTests($db);
+    panelArchitectureTests($db);
     externalTests($db);
     externalAuthTests($db);
     activityMigrationTests($db);

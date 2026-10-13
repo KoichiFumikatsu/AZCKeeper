@@ -43,7 +43,7 @@ final class OperationsApi
             return AdminApi::response(['version'=>'v4','calculation_version'=>ProductivityWorker::VERSION,'database_version'=>$this->db->one('SELECT VERSION() v')['v'],
                 'pending_rollup_days'=>$count('rollup_days','dirty=TRUE'),'pending_commands'=>$count('device_command',"status IN ('pending','delivered','running')"),
                 'pending_policy_compiles'=>$count('admin_policy_recompiles','1=1'),'cron_last_run'=>isset($cron['last_run'])?Util::time($cron['last_run']):null,
-                'cron_last_success'=>isset($cron['last_success'])?Util::time($cron['last_success']):null,'cron_status'=>$cron['status']??'never',
+                'cron_last_success'=>isset($cron['last_success'])?Util::time($cron['last_success']):null,'cron_status'=>$cron['status']??'never','cron_last_error'=>$cron['last_error']??null,
                 'last_sync'=>($t=$last('devices','last_seen_at'))?Util::time($t):null,'last_ingest'=>($t=$last('episode_ingest_keys','received_at'))?Util::time($t):null]);
         }
         if ($op==='putPanelSettings') {

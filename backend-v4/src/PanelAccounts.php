@@ -19,7 +19,7 @@ final class PanelAccounts
             'listPanelAccounts' => $this->list(),
             'createPanelAccount' => $this->create($b),
             'patchPanelAccount' => $this->patch($this->find($id), $b),
-            'resetPanelAccountPassword' => $this->reset($this->find($id)),
+            'resetPanelAccountPassword' => $this->reset($this->find($id), $b),
             default => throw new ApiError(404, 'resource_not_found'),
         };
     }
@@ -159,13 +159,13 @@ final class PanelAccounts
         return AdminApi::response($this->dto($this->find($a['id'])));
     }
 
-    private function reset(array $a): array
+    private function reset(array $a, ?object $b): array
     {
         $this->reauth();
         $this->notGroup($a);
         $self = $a['id'] === $this->c['admin_id'] && $a['tenant_id'] === $this->c['admin_tenant_id'];
         if (!$a['is_platform_admin'] && !$self) { $this->mayTake(AccessGrants::forUser($this->db, $a['tenant_id'], $a['user_id']), $a['user_id']); }
-        $temporary = self::temporaryPassword();
+        $temporary = $b->password ?? self::temporaryPassword();
         $this->db->run('UPDATE admin_accounts SET password_hash=?,must_change_password=TRUE WHERE tenant_id=? AND id=?', [password_hash($temporary, PASSWORD_DEFAULT), $a['tenant_id'], $a['id']]);
         $this->revokeSessions($a);
         (new Audit($this->db))->record($this->c, $this->r, 'resetPanelAccountPassword', 'admin_account', $a['id'], ['password']);

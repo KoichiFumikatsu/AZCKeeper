@@ -7,20 +7,20 @@ if (!isset($page)) { http_response_code(404); exit; }
 $surface ??= 'portal';
 $current = ['member' => 'users', 'device' => 'devices'][$page] ?? $page;
 $portal = [
-    'Principal' => [['home', 'Inicio', '/'], ['onboarding', 'Puesta en marcha', '/puesta-en-marcha.php', false], ['sites', 'Sedes', '/sedes.php', false], ['users', 'Personas', '/usuarios.php'],
-        ['devices', 'Equipos', '/equipos.php'], ['reports', 'Productividad', '/reportes.php'], ['intake', 'Registrar equipos nuevos', '/alta.php']],
-    'Organización' => [['organization', 'Unidades (firmas, sedes, áreas, cargos)', '/organizacion.php', false], ['schedules', 'Horarios', '/horarios.php', false],
+    'Principal' => [['home', 'Inicio', '/'], ['users', 'Personas', '/usuarios.php'], ['devices', 'Equipos', '/equipos.php'], ['reports', 'Productividad', '/reportes.php']],
+    'Administración' => [['schedules', 'Horarios', '/horarios.php', false],
         ['holidays', 'Festivos', '/festivos.php', false], ['absences', 'Ausencias', '/ausencias.php', false], ['doors', 'Puertas', '/puertas.php', false],
-        ['assignments', 'Asignación de equipos', '/asignaciones.php', false]],
-    'Control' => [['policies', 'Reglas de los equipos', '/reglas.php', false], ['classification', 'Clasificación de apps', '/clasificacion.php', false],
+        ['policies', 'Reglas de apps y sitios', '/reglas.php', false], ['classification', 'Clasificación', '/clasificacion.php', false],
+        ['organization', 'Organización: firmas, sedes, áreas y cargos', '/organizacion.php', false], ['sites', 'Sedes', '/sedes.php', false],
+        ['roles', 'Roles y visibilidad de módulos', '/roles.php', false], ['accounts', 'Administradores', '/cuentas.php', false],
+        ['intake', 'Registrar equipos nuevos', '/alta.php'], ['assignments', 'Asignación de equipos', '/asignaciones.php', false],
         ['suspicious-apps', 'Apps sospechosas', '/apps-sospechosas.php', false], ['dual-job', 'Doble empleo', '/doble-empleo.php'],
-        ['coverage', 'Cobertura de instalación', '/cobertura.php']],
-    'Accesos' => [['accounts', 'Cuentas del panel', '/cuentas.php', false], ['roles', 'Roles y permisos', '/roles.php', false], ['sources', 'Fuentes de datos', '/fuentes.php', false]],
-    'Registro y ajustes' => [['audit', 'Auditoría', '/auditoria.php', false], ['client-logs', 'Logs de los equipos', '/logs.php', false], ['panel-settings', 'Ajustes', '/ajustes.php', false]],
+        ['coverage', 'Cobertura de instalación', '/cobertura.php'], ['onboarding', 'Puesta en marcha', '/puesta-en-marcha.php', false],
+        ['audit', 'Auditoría', '/auditoria.php', false], ['client-logs', 'Logs de los equipos', '/logs.php', false], ['panel-settings', 'Ajustes', '/ajustes.php', false]],
 ];
 $platform = [['platform-home', 'Resumen de plataforma', '/admin/'], ['tenants', 'Empresas', '/empresas.php', false],
-    ['plans', 'Planes y paquetes', '/planes.php', false],
-    ['releases', 'Versiones del agente', '/admin/releases.php'], ['server-health', 'Salud del servidor', '/admin/salud.php', false]];
+    ['plans', 'Funciones y planes', '/planes.php', false], ['sources', 'Integraciones', '/fuentes.php', false],
+    ['releases', 'Versiones y mudanzas', '/admin/releases.php'], ['server-health', 'Salud del servidor', '/admin/salud.php', false]];
 if ($surface === 'admin' && $current === 'home') { $current = 'platform-home'; }
 $h = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 require_once __DIR__ . '/brand.php';
@@ -36,10 +36,11 @@ $link = static function (array $l, bool $probeSurface) use ($current, $h): strin
 <?php foreach ($portal as $heading => $links): ?>
     <section class="nav-group"><p class="nav-heading"><?= $h($heading) ?></p>
 <?php foreach ($links as $l) { echo $link($l, $surface === 'portal'); } ?>
+<?php if ($heading === 'Principal'): ?>
+      <div id="group-group" hidden><?= $link(['group', 'Tablero del grupo', '/grupo.php', false], false) ?></div>
+<?php endif; ?>
     </section>
 <?php endforeach; ?>
-    <section class="nav-group" id="group-group" hidden><p class="nav-heading">Grupo empresarial</p>
-<?= $link(['group', 'Tablero del grupo', '/grupo.php', false], false) ?>    </section>
     <section class="nav-group" id="platform-group"<?= $surface === 'admin' ? '' : ' hidden' ?>><p class="nav-heading">Plataforma</p>
 <?php foreach ($platform as $l) { echo $link($l, $surface === 'admin'); } ?>
     </section>

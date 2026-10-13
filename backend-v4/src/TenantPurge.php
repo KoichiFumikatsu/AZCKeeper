@@ -26,7 +26,7 @@ final class TenantPurge
         if (!$t || $t['deleted_at'] !== null) { throw new ApiError(404, 'resource_not_found'); }
         if ($tenant === Util::bin(AdminAuth::PLATFORM)) { throw new ApiError(409, 'invalid_transition', [], 'platform_cannot_delete'); }
         if ($t['archived_at'] === null) { throw new ApiError(409, 'invalid_transition', [], 'archive_first'); }
-        $this->db->run("UPDATE tenants SET deleted_at=UTC_TIMESTAMP(6),status='suspended',auth_version=auth_version+1,version=version+1 WHERE tenant_id=?", [$tenant]);
+        $this->db->run("UPDATE tenants SET default_schedule_id=NULL,deleted_at=UTC_TIMESTAMP(6),status='suspended',auth_version=auth_version+1,version=version+1 WHERE tenant_id=?", [$tenant]);
         // Identidades: las de la empresa y las de sus cuentas en otras empresas quedan desvinculadas (la auditoria sigue).
         $this->db->run('UPDATE principals SET detached=TRUE,admin_id=NULL,admin_tenant_id=NULL,device_id=NULL,integration_id=NULL WHERE tenant_id=? OR admin_tenant_id=?', [$tenant, $tenant]);
         $this->db->run('DELETE FROM access_grants WHERE admin_tenant_id=? OR tenant_id=?', [$tenant, $tenant]);

@@ -94,7 +94,7 @@ final class Request
             try { $validator->named('OAuthRequest', (object) $values); }
             catch (ApiError) { throw new OAuthError(400, 'invalid_request'); }
             $this->body = (object) $values;
-        } elseif (isset($this->operation['requestBody'])) {
+        } elseif (isset($this->operation['requestBody']) && ($this->raw!=='' || ($this->operation['requestBody']['required']??false))) {
             if (!preg_match('~^application/json(?:\s*;\s*charset=utf-8)?$~iD', $headers['content-type'] ?? '')) { throw new ApiError(415, 'unsupported_media_type'); }
             try { $body = json_decode($this->raw, false, 32, JSON_THROW_ON_ERROR); }
             catch (\JsonException) { throw new ApiError(400, 'invalid_json'); }

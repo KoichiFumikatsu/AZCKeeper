@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 const { handler, tenant, uid, device, person, unknown, writes } = require('./k3-panel-fixture.cjs').createFixture();
-const destination = path.resolve(__dirname, '../../docs/design/2026-10-13-capturas-k3');
+const destination = path.resolve(__dirname, '../../docs/design/2026-10-13-capturas-arquitectura');
 
 (async () => {
   fs.mkdirSync(destination, { recursive: true });
@@ -19,16 +19,19 @@ const destination = path.resolve(__dirname, '../../docs/design/2026-10-13-captur
   await page.route('**/v1/**', handler);
 
   try {
-    const screens = (process.env.KEEPER_K3_SCREENS || 'inicio,personas,ficha,productividad,equipos,equipo,versiones,doble,cobertura').split(',');
+    const screens = (process.env.KEEPER_K3_SCREENS || 'inicio,personas,ficha,ventanas,linea,controles,editar,horarios,administradores,salud,productividad,equipos,equipo,versiones,doble,cobertura').split(',');
     for (const screen of screens) {
       const routes = { inicio: '/', personas: '/usuarios.php', ficha: `/miembro.php?id=${uid}&tab=actividad`, productividad: '/reportes.php', equipos: '/equipos.php', equipo: `/equipo.php?id=${device}`, versiones: '/admin/releases.php', doble: '/doble-empleo.php', cobertura: '/cobertura.php' };
+      Object.assign(routes, { ventanas: routes.ficha, linea: routes.ficha, controles: routes.ficha, editar: `/miembro.php?id=${uid}&tab=datos`, horarios: '/horarios.php', administradores: '/cuentas.php', salud: '/admin/salud.php' });
       await page.goto(`http://127.0.0.1:8780${routes[screen]}`);
-      if (screen === 'inicio') { await page.getByRole('heading', { name: 'Personal activo ahora' }).waitFor(); await page.getByRole('heading', { name: 'Aplicaciones más usadas' }).waitFor(); assert.equal(await page.getByText('AZC-ANA', { exact: true }).count(), 1); }
+      if (screen === 'inicio') { await page.getByRole('heading', { name: 'Personal activo ahora' }).waitFor(); await page.getByRole('heading', { name: 'Problemas reportados' }).waitFor(); }
       else {
         const headings = { personas: 'Tu personal activo', ficha: 'Resumen del mes', productividad: 'Ranking individual', equipos: 'Versiones instaladas', equipo: 'Actualizaciones', versiones: 'Publicar versión por anillo' };
+        Object.assign(headings, { ventanas: 'Resumen del mes', linea: 'Resumen del mes', controles: 'Resumen del mes', editar: 'Datos de la persona', horarios: 'Margen de puntualidad y horario predeterminado', administradores: 'Acceso al Portal', salud: 'Estado del cálculo' });
         if (headings[screen]) await page.getByRole('heading', { name: headings[screen], exact: true }).waitFor();
         else await page.getByRole('cell', { name: person.display_name, exact: true }).waitFor();
       }
+      if (['ventanas', 'linea', 'controles'].includes(screen)) { await page.locator(`#tab-${screen}`).click(); if (screen === 'ventanas') await page.getByLabel('Ordenar ventanas').selectOption('sessions'); }
       if (screen === 'personas') { await page.getByRole('columnheader', { name: 'Primer ingreso hoy' }).waitFor(); await page.getByRole('columnheader', { name: 'Focus /100' }).waitFor(); }
       if (screen === 'productividad') { await page.getByRole('heading', { name: 'Tendencia de 8 semanas' }).waitFor(); await page.getByLabel('Ordenar por').selectOption('area'); }
       if (screen === 'equipos') {

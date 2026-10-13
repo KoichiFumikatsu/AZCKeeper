@@ -24,10 +24,10 @@ final class ProductivityWorker
             try { $this->calculate($row['tenant_id'],$row['day']); $done++; }
             finally { $this->db->run('SELECT RELEASE_LOCK(?)',[$lock]); }
         }
-            foreach ($tenants as $t) { $this->db->run("UPDATE productivity_cron_status SET status='ok',last_success=UTC_TIMESTAMP(6) WHERE tenant_id=?",[$t]); }
+            foreach ($tenants as $t) { $this->db->run("UPDATE productivity_cron_status SET status='ok',last_success=UTC_TIMESTAMP(6),last_error=NULL WHERE tenant_id=?",[$t]); }
             return ['days'=>$done,'elapsed_seconds'=>round(microtime(true)-$start,3),'calculation_version'=>self::VERSION];
         } catch (\Throwable $e) {
-            foreach ($tenants as $t) { $this->db->run("UPDATE productivity_cron_status SET status='failed' WHERE tenant_id=?",[$t]); }
+            foreach ($tenants as $t) { $this->db->run("UPDATE productivity_cron_status SET status='failed',last_error=? WHERE tenant_id=?",[mb_substr($e->getMessage(),0,1000),$t]); }
             throw $e;
         }
     }
@@ -55,7 +55,7 @@ final class ProductivityWorker
                       TIMESTAMPDIFF(MICROSECOND,e.started_at,GREATEST(e.started_at,c.starts_at)) a,
                       TIMESTAMPDIFF(MICROSECOND,e.started_at,LEAST(e.ended_at,c.ends_at)) b
                     FROM episodes e FORCE INDEX (episode_rollup_day) JOIN user_assignments u ON u.tenant_id=e.tenant_id AND u.id=e.user_assignment_id
-                    JOIN activity_calendar c ON c.schedule_id=u.schedule_id
+                    JOIN activity_calendar c ON c.schedule_id=COALESCE(u.schedule_id,(SELECT default_schedule_id FROM tenants WHERE tenant_id=u.tenant_id))
                     LEFT JOIN app_classification_overrides op ON op.tenant_id=e.tenant_id AND op.position_id=u.position_id AND op.process_name=IF(e.site IS NULL,e.process_name,CONCAT('site:',e.site))
                     LEFT JOIN app_classification_overrides oa ON oa.tenant_id=e.tenant_id AND oa.area_id=u.area_id AND oa.process_name=IF(e.site IS NULL,e.process_name,CONCAT('site:',e.site))
                     LEFT JOIN app_classification kt ON kt.tenant_id=e.tenant_id AND kt.process_name=IF(e.site IS NULL,e.process_name,CONCAT('site:',e.site))
@@ -102,7 +102,7 @@ final class ProductivityWorker
                     IF($expected=0 OR COALESCE(s.first_at,e.first_at) IS NULL,NULL,GREATEST(0,TIMESTAMPDIFF(SECOND,c.work_start,COALESCE(s.first_at,e.first_at)))),
                     s.work_active,s.work_idle,s.lunch_active,s.lunch_idle,s.after_active,s.after_idle,s.samples,s.utc_offset,s.simulated,s.remote,s.locked,s.work_locked,s.lunch_locked,s.after_locked,
                     e.active,e.unproductive,e.unclassified,COALESCE(fb.blocks,0)
-                    FROM user_assignments u JOIN activity_calendar c ON c.schedule_id=u.schedule_id
+                    FROM user_assignments u JOIN activity_calendar c ON c.schedule_id=COALESCE(u.schedule_id,(SELECT default_schedule_id FROM tenants WHERE tenant_id=u.tenant_id))
                     LEFT JOIN (SELECT user_id,SUM(focus_seconds) blocks FROM activity_focus GROUP BY user_id) fb ON fb.user_id=u.user_id
                     LEFT JOIN (SELECT user_id,SUM(active) active,SUM(idle) idle,SUM(calls) calls,SUM(IF(category='productive',active,0)) productive,
                       SUM(IF(category='unproductive',active,0)) unproductive,SUM(IF(category='unclassified',active,0)) unclassified,
@@ -131,7 +131,7 @@ final class ProductivityWorker
                     SELECT d.tenant_id,d.day,d.user_id,d.user_assignment_id,COALESCE(f.focus_seconds,0),100*COALESCE(f.focus_seconds,0)/NULLIF(d.productive_seconds,0),COALESCE(f.context_switches,0),COALESCE(f.deep_work_seconds,0),COALESCE(f.distraction_seconds,0),?,UTC_TIMESTAMP(6),?,
                       TIME(d.first_activity+INTERVAL c.utc_offset SECOND),c.start_local,IF(d.expected_seconds=0,NULL,TIMESTAMPDIFF(MINUTE,d.first_activity,c.work_start)),
                       100*d.productive_seconds/NULLIF(d.window_active_seconds,0),NULL,COALESCE(f.deep_work_sessions,0),COALESCE(f.longest_focus_streak_seconds,0)
-                    FROM day_summary d JOIN user_assignments u ON u.tenant_id=d.tenant_id AND u.id=d.user_assignment_id JOIN activity_calendar c ON c.schedule_id=u.schedule_id
+                    FROM day_summary d JOIN user_assignments u ON u.tenant_id=d.tenant_id AND u.id=d.user_assignment_id JOIN activity_calendar c ON c.schedule_id=COALESCE(u.schedule_id,(SELECT default_schedule_id FROM tenants WHERE tenant_id=u.tenant_id))
                     LEFT JOIN (SELECT user_id,SUM(focus_seconds) focus_seconds,SUM(context_switches) context_switches,SUM(deep_work_seconds) deep_work_seconds,SUM(distraction_seconds) distraction_seconds,
                       SUM(deep_work_sessions) deep_work_sessions,MAX(longest_focus_streak_seconds) longest_focus_streak_seconds FROM activity_focus GROUP BY user_id) f ON f.user_id=d.user_id WHERE d.tenant_id=? AND d.day=?
                     AND NOT EXISTS (SELECT 1 FROM focus_daily old WHERE old.tenant_id=d.tenant_id AND old.day=d.day AND old.user_assignment_id=d.user_assignment_id)',[self::VERSION,$through,$tenant,$day]);
@@ -147,7 +147,7 @@ final class ProductivityWorker
     private function constancy(string $tenant,string $day): void
     {
         $occupied=[];
-        $rows=$this->db->run('SELECT s.user_assignment_id,s.first_at,s.last_at,c.work_start,c.expected_seconds FROM activity_segments s JOIN user_assignments u ON u.tenant_id=? AND u.id=s.user_assignment_id JOIN activity_calendar c ON c.schedule_id=u.schedule_id WHERE s.active>0',[$tenant]);
+        $rows=$this->db->run('SELECT s.user_assignment_id,s.first_at,s.last_at,c.work_start,c.expected_seconds FROM activity_segments s JOIN user_assignments u ON u.tenant_id=? AND u.id=s.user_assignment_id JOIN activity_calendar c ON c.schedule_id=COALESCE(u.schedule_id,(SELECT default_schedule_id FROM tenants WHERE tenant_id=u.tenant_id)) WHERE s.active>0',[$tenant]);
         foreach ($rows as $r) {
             $start=strtotime($r['work_start'].' UTC'); $end=$start+(int)$r['expected_seconds'];
             $a=max($start,strtotime($r['first_at'].' UTC')); $b=min($end,strtotime($r['last_at'].' UTC'));
