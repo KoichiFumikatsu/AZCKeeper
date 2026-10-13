@@ -34,6 +34,7 @@ require __DIR__ . '/ops.php';
 require __DIR__ . '/group-structure.php';
 require __DIR__ . '/features.php';
 require __DIR__ . '/plans.php';
+require __DIR__ . '/plan-commands.php';
 require __DIR__ . '/access.php';
 require __DIR__ . '/batch-users.php';
 require __DIR__ . '/onboarding.php';
@@ -447,6 +448,7 @@ try {
     captureFlagsTests($db);
     agentUpgradeRecompileTests($db);
     featureExternalAndCommandTests($db);
+    planCommandTests($db);
     accessMigrationTests($db);
     accessScopeTests($db);
     accessEvaluationTests($db);

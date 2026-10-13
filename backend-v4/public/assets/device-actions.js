@@ -25,6 +25,7 @@ const remoteActions = [
 ];
 const wipeAction = { type: 'wipe', label: 'Borrado remoto', permission: 'equipos.borrar', feature: 'borrado', agent: '4.0.0', reason: 'Borrado remoto por robo o pérdida', verb: 'Borrar',
   effect: 'Se borran los archivos de todas las personas del equipo (Documentos, Escritorio, Descargas, correo y configuración de sus cuentas de Windows) y se sobrescribe el espacio libre para que no se puedan recuperar. Se conservan Windows, Keeper y la cuenta de IT. Solo funciona si el equipo se enciende y se conecta: no protege un disco que ya sacaron del equipo.' };
+const PLAN_REASON = 'No incluido en el plan de esta persona';
 const featureNames = { comandos: 'Comandos remotos', borrado: 'Borrado remoto' };
 export const commandTypes = { lock: 'Bloquear', unlock: 'Desbloquear', restart: 'Reiniciar', shutdown: 'Apagar', wipe: 'Borrado remoto', refresh_policy: 'Aplicar reglas', rename_computer: 'Cambiar nombre', harden: 'Endurecer', unharden: 'Revertir endurecimiento' };
 export const commandStates = { pending: ['Pendiente', 'info'], delivered: ['Entregado', 'info'], running: ['En curso', 'warn'], succeeded: ['Ejecutado', 'good'], failed: ['Falló', 'bad'], expired: ['Vencido', 'warn'], cancelled: ['Cancelado', ''] };
@@ -42,11 +43,14 @@ export function remoteAvailability(action, access, d) {
   if (access && !access.platform && !access.permissions.some(p => p.code === action.permission)) return null;
   if (access && !access.platform && action.feature && !(access.features || []).includes(action.feature)) return null;
   if (access?.platform && action.feature && !(access.features || []).includes(action.feature)) return { reason: `El cliente no tiene contratada la función «${featureNames[action.feature]}».` };
+  // Plan del dueño del equipo (GET /devices/{id} → allowed_commands): sin la función, deshabilitada con el motivo.
+  if (Array.isArray(d.allowed_commands) && !d.allowed_commands.includes(action.type)) return { reason: PLAN_REASON };
   if (d.status !== 'active') return { reason: 'El equipo no está activo: no recibe órdenes.' };
   if (versionBelow(d.agent_version, action.agent)) return { reason: `El agente de este equipo (${d.agent_version || 'sin versión'}) no ejecuta esta orden: actualízalo a ${action.agent} o posterior.` };
   return {};
 }
 export function commandError(error, type, notice = 0) {
+  if (error.code === 'feature_not_in_plan') return new Error(`${PLAN_REASON}.`);
   if (error.code === 'invalid_transition') return new Error('El equipo no está activo: no se le pueden enviar órdenes.');
   if (error.code === 'agent_too_old' && notice > 0) return new Error(`El agente de este equipo es anterior a ${NOTICE_AGENT} y no puede mostrar el aviso. Actualízalo o envía la orden con «Inmediato».`);
   if (error.code === 'agent_too_old') return new Error('El agente de este equipo es muy antiguo para esta orden: actualízalo primero.');

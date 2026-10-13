@@ -28,7 +28,8 @@ final class Application
             elseif (str_starts_with($r->route, '/auth/')) { $response = $auth->admin()->handle($r); }
             elseif (!str_starts_with($r->route, '/client/')) {
                 $context = null; $admin = null;
-                $response = $db->transaction(function () use ($db, $auth, $r, &$context, &$admin): array {
+                // function (no fn): $context y $admin deben llegar por referencia al codigo de despues.
+                $response = $this->afterRollback($db, function () use ($db, $auth, $r, &$context, &$admin): array { return $db->transaction(function () use ($db, $auth, $r, &$context, &$admin): array {
                     $context = $auth->admin()->context($r);
                     $admin = new AdminApi($db, $context, $r, $this->validator);
                     $handler = fn () => $admin->dispatch();
@@ -36,7 +37,7 @@ final class Application
                     $result=$idempotent ? (new Idempotency($db))->execute($context, $r, $handler) : $handler();
                     if ($r->method!=='GET') { AdminApi::validatePending($db,$context['tenant_id'],$admin->recompileScope()); }
                     return $result;
-                });
+                }); });
                 try { AdminApi::compilePending($db, $context['tenant_id'], $admin?->recompileScope()); }
                 catch (\Throwable $e) { if (isset($response['stream'])) { fclose($response['stream']['handle']); } if (isset($response['undelivered'])) { $this->undelivered($response['undelivered'], $id); } throw $e; }
             }
@@ -91,6 +92,18 @@ final class Application
     {
         try { $fn(); error_log('keeper request=' . $id . ' installer_undelivered key_revoked'); }
         catch (\Throwable $e) { error_log('keeper request=' . $id . ' installer_undelivered revoke_failed=' . get_class($e)); }
+    }
+    // Lo que una denegacion debe dejar guardado aunque la peticion haga rollback (auditoria, revocaciones). Nunca tapa el error.
+    private function afterRollback(Database $db, callable $fn): array
+    {
+        try { return $fn(); }
+        catch (ApiError $e) {
+            if ($e->afterRollback !== null) {
+                try { $db->transaction($e->afterRollback); }
+                catch (\Throwable $x) { error_log('keeper after_rollback_failed=' . get_class($x)); }
+            }
+            throw $e;
+        }
     }
     private function ok(mixed $body, int $status = 200, array $headers = []): array { return ['status' => $status, 'json' => Util::json($body), 'headers' => $headers]; }
     private function dispatch(Database $db, Auth $auth, array $c, Request $r): array

@@ -6839,7 +6839,9 @@ paths:
       operationId: createDeviceCommand
       summary: Encolar acción remota
       description: lock=equipos.bloquear; unlock=equipos.desbloquear; restart=equipos.reiniciar; shutdown=equipos.apagar;
-        wipe=equipos.borrar; refresh_policy=reglas.aplicar. Wipe exige reauth <5 min y confirmation=hostname. 202
+        wipe=equipos.borrar; refresh_policy=reglas.aplicar. Wipe exige reauth <5 min y confirmation=hostname. Además el
+        plan efectivo del dueño del equipo debe incluir la función (comandos para lock/unlock/restart/shutdown, borrado para
+        wipe; sin dueño activo, la del cliente); si no, 403 feature_not_in_plan con la función en detail, auditado. 202
         no confirma ejecución. Autorización de acción/objeto obligatoria además de CSRF; registrar auditoría.
       security:
       - adminSession: []
@@ -18729,6 +18731,22 @@ components:
           - type: string
             maxLength: 500
           - type: 'null'
+        allowed_commands:
+          description: Órdenes remotas que el plan del dueño del equipo permite (comandos = lock, unlock, restart, shutdown;
+            borrado = wipe). refresh_policy y rename_computer no dependen del plan. Sin dueño activo decide la función del
+            cliente. No incluye el permiso de quien consulta, que se exige aparte.
+          type: array
+          maxItems: 7
+          items:
+            type: string
+            enum:
+            - lock
+            - unlock
+            - restart
+            - shutdown
+            - wipe
+            - refresh_policy
+            - rename_computer
     LegacyK3Status:
       type: object
       additionalProperties: false

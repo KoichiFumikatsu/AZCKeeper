@@ -26,7 +26,35 @@ final class AdminApi
         $this->access=new AdminAccess($db,$c,$permission,$r->operation['operationId']);
         if ($permission==='roles.gestionar') { $this->access->rolesGate(); }
         if (in_array($r->operation['operationId'],['createDeviceCommand','createHardeningCommand','assignDevice'],true)) { $this->authorizedDevice=$this->row('devices',Util::bin($r->resourceId)); $this->deviceUser=$this->access->user($this->authorizedDevice['user_id']); }
+        // El plan del DUEÑO del equipo gobierna las ordenes remotas (encargo 4): sin la funcion, 403 feature_not_in_plan auditado.
+        if ($r->operation['operationId']==='createDeviceCommand' && !in_array($r->body->type,$this->allowedCommands($this->authorizedDevice),true)) {
+            $feature=self::COMMAND_FEATURES[$r->body->type]; $device=$this->authorizedDevice['id'];
+            $e=new ApiError(403,'feature_not_in_plan',[],$feature);
+            $e->afterRollback=function () use ($db,$c,$r,$device,$feature): void {
+                $c['principal_id']=(new AdminAuth($db,new RateLimiter()))->principal($c);
+                (new Audit($db))->record($c,$r,'createDeviceCommand','device',$device,['type'],'denied',"feature_not_in_plan:$feature");
+            };
+            throw $e;
+        }
         if ($r->operation['operationId']==='deployRelease') { $this->access->requireFull(); }
+    }
+    /** Funcion del plan que exige cada orden remota; las que no aparecen (refresh_policy, rename_computer) no dependen del plan. */
+    public const COMMAND_FEATURES=['lock'=>'comandos','unlock'=>'comandos','restart'=>'comandos','shutdown'=>'comandos','wipe'=>'borrado'];
+    private const COMMAND_TYPES=['lock','unlock','restart','shutdown','wipe','refresh_policy','rename_computer'];
+    private array $deviceFunctions=[];
+    /**
+     * Ordenes que el plan permite para este equipo: las funciones del plan efectivo de su dueño (PersonPlans::functions);
+     * sin dueño activo (persona retirada sin reasignar el equipo), las funciones del cliente (Features).
+     */
+    private function allowedCommands(array $d): array
+    {
+        $key=bin2hex((string)$d['user_id']);
+        if (!isset($this->deviceFunctions[$key])) {
+            $owner=$this->db->one('SELECT status FROM users WHERE tenant_id=? AND id=?',[$this->tenant,$d['user_id']]);
+            $this->deviceFunctions[$key]=($owner['status']??null)==='active' ? PersonPlans::functions($this->db,$this->tenant,$d['user_id']) : Features::enabled($this->db,$this->tenant);
+        }
+        $functions=$this->deviceFunctions[$key];
+        return array_values(array_filter(self::COMMAND_TYPES,fn($t)=>!isset(self::COMMAND_FEATURES[$t]) || in_array(self::COMMAND_FEATURES[$t],$functions,true)));
     }
     public static function response(mixed $body, int $status=200, array $headers=[]): array { return ['status'=>$status,'json'=>Util::json($body),'headers'=>$headers]; }
     // $devices: null = todo el tenant; lista (ids binarios) = solo esos equipos (ver recompileScope()).
@@ -626,7 +654,9 @@ final class AdminApi
         $specs=$r['specs']===null?null:json_decode($r['specs'],true); $out['smart_app_control']=is_array($specs)&&in_array($specs['smart_app_control']??null,['off','on','evaluation','unknown'],true)?$specs['smart_app_control']:null;
         // K3 residual segun el inventario del agente: {running,autostart,installed} con bool o null (desconocido); null si nunca lo reporto.
         $k3=is_array($specs)&&is_array($specs['legacy_k3']??null)?$specs['legacy_k3']:null; $out['legacy_k3']=$k3===null?null:['running'=>is_bool($k3['running']??null)?$k3['running']:null,'autostart'=>is_bool($k3['autostart']??null)?$k3['autostart']:null,'installed'=>is_bool($k3['installed']??null)?$k3['installed']:null];
-        $out+=['last_seen_at'=>$r['last_seen_at']===null?null:Util::time($r['last_seen_at']),'ram_bytes'=>(int)$r['ram_bytes'],'capabilities'=>json_decode($r['capabilities']),'policy_version'=>$r['policy_version']===null?null:(int)$r['policy_version'],'version'=>(int)$r['version']]; return $out;
+        $out+=['last_seen_at'=>$r['last_seen_at']===null?null:Util::time($r['last_seen_at']),'ram_bytes'=>(int)$r['ram_bytes'],'capabilities'=>json_decode($r['capabilities']),'policy_version'=>$r['policy_version']===null?null:(int)$r['policy_version'],'version'=>(int)$r['version']];
+        // Ordenes que el plan de su dueño permite: el panel deshabilita las demas sin un intento fallido.
+        $out['allowed_commands']=$this->allowedCommands($r); return $out;
     }
     private function revokeDevice(string $id): void
     {
