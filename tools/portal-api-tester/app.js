@@ -31,6 +31,8 @@ const TESTS = [
   ['Sesión', 'Sin token', 'GET', () => '/me', '401: ninguna ruta de datos responde sin token', expect(401), { run: c => c.raw('GET', '/me', undefined, { auth: false }), noSession: true }],
   ['Sesión', 'Token inventado', 'GET', () => '/me', '401 session_expired', expect(401, 'session_expired'), { run: c => c.raw('GET', '/me', undefined, { token: 'token-falso-de-prueba-000000000000000000000' }), noSession: true }],
   ['Quién soy', 'Quién soy', 'GET', () => '/me', '200 con persona, rol, alcance, empresa y marca', ok200(r => { state.me = r.body?.user?.id || r.body?.id || state.me; return { ok: true, note: r.body?.display_name || r.body?.user?.display_name || '' }; })],
+  ['Quién soy', 'Empresas', 'GET', () => '/tenants?limit=100', '200; superadmin: todas (elige una arriba); persona: la suya, o 403 si no tiene permiso de ver empresas',
+    r => r.status === 403 ? { ok: true, note: 'sin permiso de ver empresas: correcto' } : ok200(list)(r)],
   ['Quién soy', 'Permisos y menú', 'GET', () => '/me/access', '200 con permisos y alcance', ok200()],
   ['Inicio', 'Indicadores', 'GET', () => `/dashboard?${q()}`, '200 con indicadores del período', ok200()],
   ['Inicio', 'Problemas reportados', 'GET', () => '/dashboard/problems', '200 con lista de problemas en tu alcance', ok200(list)],
@@ -74,6 +76,7 @@ for (const [g, name, method, path, expectText, check, opts = {}] of TESTS) {
   row.btn.onclick = () => run(row);
   rows.push(row);
 }
+$('tenant').addEventListener('change', () => { if (client) client.tenant = $('tenant').value; state.tenant = $('tenant').value; refreshPaths(); updateSession(); });
 const refreshPaths = () => rows.forEach(r => { try { r.p.textContent = r.path(); } catch { r.p.textContent = ''; } });
 refreshPaths(); ['from', 'to', 'day', 'user', 'device'].forEach(id => $(id).addEventListener('change', refreshPaths));
 
@@ -109,8 +112,18 @@ $('login').onclick = async () => {
   const r = await client.login(creds.email, creds.password);
   $('password').value = '';
   if (r.status === 0) { $('cors-hint').hidden = false; $('session').textContent = 'No se pudo conectar (red o CORS).'; return; }
-  if (!r.ok) { creds = null; $('session').textContent = `No se inició sesión: ${r.status} ${r.body?.code || ''}${r.headers['retry-after'] ? ` · espera ${r.headers['retry-after']} s` : ''}`; return; }
+  if (!r.ok) {
+    creds = null;
+    const locked = r.body?.detail === 'account_locked' ? ' · cuenta bloqueada 15 min por 10 contraseñas fallidas' : '';
+    $('session').textContent = `No se inició sesión: ${r.status} ${r.body?.code || ''}${locked}${r.headers['retry-after'] ? ` · espera ${r.headers['retry-after']} s` : ''}`; return;
+  }
   state.tenant = r.body.user.tenant_id; state.me = r.body.user.id;
+  $('tenant-box').hidden = !r.body.user.platform;
+  if (r.body.user.platform) {
+    // Superadmin: no tiene empresa propia; elige una de GET /tenants y la manda en X-Tenant-ID.
+    const t = await client.all('/tenants?limit=100');
+    if (t.ok && t.body.data.length) { fill($('tenant'), t.body.data, x => x.name); client.tenant = state.tenant = $('tenant').value; }
+  }
   if (r.body.user.must_change_password) $('session').textContent = 'Contraseña temporal: cámbiala en el panel antes de probar.';
   refreshPaths(); updateSession();
 };

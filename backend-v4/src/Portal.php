@@ -12,6 +12,10 @@ namespace Keeper;
  * (users.portal_login_enabled, 0059). Los tokens se guardan con hash (portal_tokens, 0060) y se validan en cada
  * peticion contra la cuenta: cambiar la contrasena, desactivar a la persona, apagar el interruptor o subir la
  * auth_version de la cuenta los invalida. CORS solo para los origenes de portal_origins (los gestiona superadmin).
+ *
+ * Superadmin de plataforma (decision 2026-10-14): tambien entra, sin persona ni interruptor; ve lo mismo que en el
+ * panel, de la empresa que elija con X-Tenant-ID (lista en GET /tenants). Sin X-Tenant-ID trabaja sobre la plataforma.
+ * Bloqueo: 10 contrasenas fallidas seguidas para un correo (en 15 min) lo bloquean 15 min, exista o no la cuenta.
  */
 final class Portal
 {
@@ -19,6 +23,8 @@ final class Portal
     public const ACCESS_TTL = 900;
     /** Vida maxima de una sesion (familia de tokens) desde el login, como la sesion absoluta del panel (8 h). */
     public const SESSION_TTL = 28800;
+    public const LOCK_FAILURES = 10;
+    public const LOCK_SECONDS = 900;
     /**
      * Lista blanca (metodo + plantilla del contrato). Lecturas de Inicio, Personas, ficha, ventanas, linea de tiempo,
      * productividad, puntualidad, ausencias, equipos y horario; escrituras solo propias: registrar ausencia (solo para
@@ -28,7 +34,7 @@ final class Portal
         'GET /me', 'GET /me/access', 'GET /dashboard', 'GET /dashboard/problems',
         'GET /users', 'GET /users/{id}', 'GET /users/{id}/activity', 'GET /users/{id}/windows', 'GET /users/{id}/timeline',
         'GET /reports/people', 'GET /reports/presence', 'GET /reports/productivity', 'GET /reports/apps',
-        'GET /absences', 'POST /absences', 'GET /tenants/{id}/devices', 'GET /devices/{id}', 'GET /schedules',
+        'GET /absences', 'POST /absences', 'GET /tenants/{id}/devices', 'GET /devices/{id}', 'GET /schedules', 'GET /tenants',
     ];
     /** Sesion propia del Portal: en el contrato con su ruta completa. */
     public const SESSION = ['POST /portal/v1/login', 'POST /portal/v1/refresh', 'POST /portal/v1/logout', 'POST /portal/v1/password'];
@@ -47,7 +53,7 @@ final class Portal
     {
         $headers = ['Vary' => 'Origin'];
         if ($origin === '' || strlen($origin) > 255 || !$db->one('SELECT id FROM portal_origins WHERE origin=?', [$origin])) { return $headers; }
-        return $headers + ['Access-Control-Allow-Origin' => $origin, 'Access-Control-Allow-Methods' => 'GET, POST', 'Access-Control-Allow-Headers' => 'Authorization, Content-Type',
+        return $headers + ['Access-Control-Allow-Origin' => $origin, 'Access-Control-Allow-Methods' => 'GET, POST', 'Access-Control-Allow-Headers' => 'Authorization, Content-Type, X-Tenant-ID',
             'Access-Control-Expose-Headers' => 'X-Request-ID, ETag, Retry-After, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset', 'Access-Control-Max-Age' => '600'];
     }
 
@@ -83,15 +89,16 @@ final class Portal
         return $this->db->one("SELECT p.*,a.active account_active,a.auth_version account_version,a.is_platform_admin,a.must_change_password,a.email,a.password_hash,
                 u.status user_status,u.panel_login_enabled,u.portal_login_enabled,u.display_name,t.status tenant_status,t.deleted_at,t.archived_at
             FROM portal_tokens p JOIN admin_accounts a ON a.tenant_id=p.tenant_id AND a.id=p.admin_id
-            JOIN users u ON u.tenant_id=p.tenant_id AND u.id=p.user_id AND u.id=a.user_id JOIN tenants t ON t.tenant_id=p.tenant_id
+            LEFT JOIN users u ON u.tenant_id=p.tenant_id AND u.id=p.user_id AND u.id=a.user_id JOIN tenants t ON t.tenant_id=p.tenant_id
             WHERE p.token_hash=? AND p.kind=?" . ($lock ? ' FOR UPDATE' : ''), [hash('sha256', $token, true), $kind]);
     }
 
-    /** La cuenta sigue pudiendo entrar al Portal con este token (misma version, persona activa, interruptor encendido). */
+    /** La cuenta sigue pudiendo entrar al Portal con este token (misma version; persona activa con interruptor, o superadmin). */
     private static function valid(array $s): bool
     {
-        return (bool) $s['account_active'] && !$s['is_platform_admin'] && (int) $s['auth_version'] === (int) $s['account_version']
-            && $s['user_status'] === 'active' && $s['panel_login_enabled'] && $s['portal_login_enabled']
+        $person = $s['is_platform_admin'] ? $s['user_id'] === null
+            : $s['user_id'] !== null && $s['user_status'] === 'active' && $s['panel_login_enabled'] && $s['portal_login_enabled'];
+        return (bool) $s['account_active'] && $person && (int) $s['auth_version'] === (int) $s['account_version']
             && $s['tenant_status'] === 'active' && $s['deleted_at'] === null && $s['archived_at'] === null;
     }
 
@@ -108,15 +115,21 @@ final class Portal
         $s = $this->token(self::bearer($r), 'access');
         if (!$s || $s['revoked_at'] !== null || strtotime($s['expires_at'] . ' UTC') <= time() || !self::valid($s)) { throw new ApiError(401, 'session_expired'); }
         if ($s['must_change_password']) { throw new ApiError(403, 'password_change_required'); }
-        // El token es de una empresa: otra en la ruta o en X-Tenant-ID no existe para el Portal.
-        $tenant = $s['tenant_id'];
-        if (str_starts_with($r->route, '/tenants/{id}') && Util::bin($r->resourceId) !== $tenant) { throw new ApiError(404, 'resource_not_found'); }
-        if ($r->header('x-tenant-id') !== '' && Util::bin($r->header('x-tenant-id')) !== $tenant) { throw new ApiError(404, 'resource_not_found'); }
-        // Escrituras del Portal: solo para la propia persona, aunque su rol permita mas.
-        if ($r->operation['operationId'] === 'createAbsence' && Util::bin($r->body->user_id) !== $s['user_id']) { throw new ApiError(403, 'permission_denied', [], 'portal_self_only'); }
+        $platform = (bool) $s['is_platform_admin'];
+        $routeTenant = str_starts_with($r->route, '/tenants/{id}') ? Util::bin($r->resourceId) : null;
+        $headerTenant = $r->header('x-tenant-id') !== '' ? Util::bin($r->header('x-tenant-id')) : null;
+        if ($routeTenant !== null && $headerTenant !== null && $routeTenant !== $headerTenant) { throw new ApiError(404, 'resource_not_found'); }
+        // Persona: el token es de su empresa; otra en la ruta o en X-Tenant-ID no existe. Superadmin: la que elija.
+        $tenant = $platform ? ($routeTenant ?? $headerTenant ?? $s['tenant_id']) : $s['tenant_id'];
+        if (!$platform && ($routeTenant ?? $headerTenant ?? $tenant) !== $tenant) { throw new ApiError(404, 'resource_not_found'); }
+        // Escrituras del Portal: solo para la propia persona, aunque su rol permita mas (superadmin no tiene persona).
+        if ($r->operation['operationId'] === 'createAbsence' && ($s['user_id'] === null || Util::bin($r->body->user_id) !== $s['user_id'])) { throw new ApiError(403, 'permission_denied', [], 'portal_self_only'); }
         $t = $this->db->one('SELECT * FROM tenants WHERE tenant_id=?' . ($r->method === 'GET' ? '' : ' FOR UPDATE'), [$tenant]);
-        $this->limiter->take([['admin', bin2hex($tenant . $s['admin_id']), Config::number('ADMIN_RATE', 120), Config::number('ADMIN_BURST', 30)], ['tenant', 'admin:' . bin2hex($tenant), Config::number('ADMIN_TENANT_RATE', 600), Config::number('ADMIN_TENANT_BURST', 100)]]);
-        $c = ['tenant_id' => $tenant, 'admin_tenant_id' => $tenant, 'admin_id' => $s['admin_id'], 'user_id' => $s['user_id'], 'group_id' => null, 'platform' => false, 'actor_type' => 'admin',
+        // Empresa eliminada (o inexistente): no existe. Archivada o inactiva solo la alcanza superadmin, como en el panel.
+        if (!$t || $t['deleted_at'] !== null) { throw new ApiError(404, 'resource_not_found'); }
+        if ($t['archived_at'] !== null && $r->method !== 'GET') { throw new ApiError(409, 'invalid_transition', [], 'tenant_archived'); }
+        $this->limiter->take([['admin', bin2hex($s['tenant_id'] . $s['admin_id']), Config::number('ADMIN_RATE', 120), Config::number('ADMIN_BURST', 30)], ['tenant', 'admin:' . bin2hex($tenant), Config::number('ADMIN_TENANT_RATE', 600), Config::number('ADMIN_TENANT_BURST', 100)]]);
+        $c = ['tenant_id' => $tenant, 'admin_tenant_id' => $s['tenant_id'], 'admin_id' => $s['admin_id'], 'user_id' => $platform ? null : $s['user_id'], 'group_id' => null, 'platform' => $platform, 'actor_type' => 'admin',
             'timezone' => $t['timezone'], 'gate' => (bool) $t['rbac_self_management'], 'auth_revision' => (int) $t['auth_version'], 'session_id' => $s['family_id'], 'reauthenticated_at' => null, 'channel' => 'portal'];
         $c['principal_id'] = (new AdminAuth($this->db, $this->limiter))->principal($c);
         return $c;
@@ -141,23 +154,44 @@ final class Portal
             ['bootstrap', 'portal-auth:' . hash('sha256', self::ip($r) . '|' . strtolower($r->body->email)), Config::number('PORTAL_LOGIN_RATE', 5), Config::number('PORTAL_LOGIN_BURST', 5)],
             ['bootstrap', 'portal-auth-ip:' . hash('sha256', self::ip($r)), Config::number('PORTAL_IP_RATE', 60), Config::number('PORTAL_IP_BURST', 100)],
         ]);
+        // Bloqueo por correo: mientras dure, ni la contrasena correcta entra (se responde igual exista o no la cuenta).
+        $emailHash = hash('sha256', strtolower($r->body->email), true);
+        $lock = $this->db->one('SELECT TIMESTAMPDIFF(SECOND,UTC_TIMESTAMP(6),locked_until) wait FROM portal_login_lockouts WHERE tenant_id=? AND email_hash=? AND locked_until>UTC_TIMESTAMP(6)', [Util::bin(AdminAuth::PLATFORM), $emailHash]);
+        if ($lock) { throw new ApiError(429, 'rate_limited', ['Retry-After' => (string) max(1, (int) $lock['wait'] + 1)], 'account_locked'); }
         $accounts = $this->db->run("SELECT a.*,u.portal_login_enabled,u.display_name FROM admin_accounts a JOIN tenants t ON t.tenant_id=a.tenant_id
-            JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.user_id
-            WHERE a.email=? AND a.active=TRUE AND a.is_platform_admin=FALSE AND t.status='active' AND t.deleted_at IS NULL AND t.archived_at IS NULL
-              AND u.status='active' AND u.panel_login_enabled=TRUE LIMIT 2 FOR UPDATE", [$r->body->email])->fetchAll();
+            LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.user_id
+            WHERE a.email=? AND a.active=TRUE AND t.status='active' AND t.deleted_at IS NULL AND t.archived_at IS NULL
+              AND (a.is_platform_admin=TRUE OR (u.status='active' AND u.panel_login_enabled=TRUE)) LIMIT 2 FOR UPDATE", [$r->body->email])->fetchAll();
         $valid = password_verify($r->body->password, $accounts[0]['password_hash'] ?? self::DUMMY_HASH);
-        if (count($accounts) !== 1 || !$valid) { throw new ApiError(401, 'invalid_credentials'); }
+        if (count($accounts) !== 1 || !$valid) {
+            $e = new ApiError(401, 'invalid_credentials');
+            $e->afterRollback = fn () => $this->failed($emailHash);
+            throw $e;
+        }
         $a = $accounts[0];
-        if (!$a['portal_login_enabled']) { throw new ApiError(403, 'portal_not_enabled'); }
+        $this->db->run('DELETE FROM portal_login_lockouts WHERE tenant_id=? AND email_hash=?', [Util::bin(AdminAuth::PLATFORM), $emailHash]);
+        if (!$a['is_platform_admin'] && !$a['portal_login_enabled']) { throw new ApiError(403, 'portal_not_enabled'); }
         $this->db->run('DELETE FROM portal_tokens WHERE tenant_id=? AND admin_id=? AND expires_at<UTC_TIMESTAMP(6)-INTERVAL 1 DAY', [$a['tenant_id'], $a['id']]);
         $this->db->run('UPDATE admin_accounts SET last_login_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?', [$a['tenant_id'], $a['id']]);
         $family = Util::bin(Util::uuid());
         (new Audit($this->db))->record($this->auditContext($a['tenant_id'], $a['id']), $r, 'portal.login', 'portal_session', $family, ['session']);
-        return AdminApi::response($this->issue($a['tenant_id'], $a['id'], $a['user_id'], (int) $a['auth_version'], $family, null), 200, ['Cache-Control' => 'no-store']);
+        return AdminApi::response($this->issue($a['tenant_id'], $a['id'], $a['is_platform_admin'] ? null : $a['user_id'], (int) $a['auth_version'], $family, null), 200, ['Cache-Control' => 'no-store']);
+    }
+
+    /** Suma un fallo al correo (en su propia transaccion, tras el rollback del 401); al llegar a LOCK_FAILURES lo bloquea. */
+    private function failed(string $emailHash): void
+    {
+        $p = Util::bin(AdminAuth::PLATFORM);
+        // Ventana vencida sin bloqueo, o bloqueo ya cumplido: se empieza de cero.
+        $this->db->run('DELETE FROM portal_login_lockouts WHERE tenant_id=? AND email_hash=? AND ((locked_until IS NULL AND window_started_at<UTC_TIMESTAMP(6)-INTERVAL ? SECOND) OR locked_until<=UTC_TIMESTAMP(6))', [$p, $emailHash, self::LOCK_SECONDS]);
+        $this->db->run('INSERT INTO portal_login_lockouts (tenant_id,email_hash,failures,window_started_at) VALUES (?,?,1,UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE failures=failures+1', [$p, $emailHash]);
+        $this->db->run('UPDATE portal_login_lockouts SET locked_until=UTC_TIMESTAMP(6)+INTERVAL ? SECOND WHERE tenant_id=? AND email_hash=? AND failures>=? AND locked_until IS NULL', [self::LOCK_SECONDS, $p, $emailHash, self::LOCK_FAILURES]);
+        // Limpieza oportunista de filas viejas de otros correos.
+        $this->db->run('DELETE FROM portal_login_lockouts WHERE tenant_id=? AND window_started_at<UTC_TIMESTAMP(6)-INTERVAL 1 DAY AND (locked_until IS NULL OR locked_until<UTC_TIMESTAMP(6)) LIMIT 100', [$p]);
     }
 
     /** Par nuevo de la familia: access de 15 min y refresh hasta el fin de la sesion (8 h desde el login). */
-    private function issue(string $tenant, string $admin, string $user, int $version, string $family, ?string $sessionEnd): array
+    private function issue(string $tenant, string $admin, ?string $user, int $version, string $family, ?string $sessionEnd): array
     {
         $now = $this->db->one('SELECT UTC_TIMESTAMP(6) now')['now'];
         $sessionEnd ??= gmdate('Y-m-d H:i:s', strtotime($now . ' UTC') + self::SESSION_TTL) . substr($now, 19);
@@ -169,10 +203,12 @@ final class Portal
             $this->db->run('INSERT INTO portal_tokens (tenant_id,id,family_id,kind,token_hash,admin_id,user_id,auth_version,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
                 [$tenant, Util::bin(Util::uuid()), $family, $kind, hash('sha256', $tokens[$kind], true), $admin, $user, $version, $now, $end]);
         }
-        $u = $this->db->one('SELECT u.display_name,a.email,a.must_change_password FROM users u JOIN admin_accounts a ON a.tenant_id=u.tenant_id AND a.user_id=u.id AND a.id=? WHERE u.tenant_id=? AND u.id=?', [$admin, $tenant, $user]);
+        $u = $this->db->one('SELECT u.display_name,a.email,a.must_change_password,a.is_platform_admin FROM admin_accounts a LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=? WHERE a.tenant_id=? AND a.id=?', [$user, $tenant, $admin]);
+        $platform = (bool) $u['is_platform_admin'];
         return ['access_token' => $tokens['access'], 'token_type' => 'Bearer', 'expires_in' => strtotime($accessEnd . ' UTC') - strtotime($now . ' UTC'),
             'refresh_token' => $tokens['refresh'], 'refresh_expires_at' => Util::time($sessionEnd),
-            'user' => ['id' => Util::id($user), 'admin_id' => Util::id($admin), 'tenant_id' => Util::id($tenant), 'display_name' => $u['display_name'], 'email' => $u['email'], 'must_change_password' => (bool) $u['must_change_password']]];
+            'user' => ['id' => $user === null ? null : Util::id($user), 'admin_id' => Util::id($admin), 'tenant_id' => $platform ? null : Util::id($tenant), 'platform' => $platform,
+                'display_name' => $u['display_name'], 'email' => $u['email'], 'must_change_password' => (bool) $u['must_change_password']]];
     }
 
     private function refresh(Request $r): array

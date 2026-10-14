@@ -9,6 +9,7 @@ export class KeeperPortalClient {
     this.access = null;      // access_token: 15 min. NO guardarlo en localStorage ni en cookies.
     this.refreshToken = null; // refresh_token: un solo uso. Guardar SIEMPRE el último recibido.
     this.user = null;
+    this.tenant = null;      // solo superadmin (user.platform): empresa elegida, viaja en X-Tenant-ID.
     this.refreshing = null;  // promesa compartida: varios pedidos que vencen a la vez esperan UNA renovación.
     this.onLog = () => {};   // gancho para la página de prueba (pedido/respuesta).
   }
@@ -32,7 +33,7 @@ export class KeeperPortalClient {
   }
   async logout() {
     const r = await this.raw('POST', '/logout');
-    this.access = null; this.refreshToken = null; this.user = null;
+    this.access = null; this.refreshToken = null; this.user = null; this.tenant = null;
     return r;
   }
   async changePassword(current_password, new_password) {
@@ -70,6 +71,8 @@ export class KeeperPortalClient {
     const headers = { Accept: 'application/json' };
     const bearer = token ?? (auth ? this.access : null);
     if (bearer) headers.Authorization = `Bearer ${bearer}`;
+    // Superadmin: la empresa que eligió. Una persona no lo necesita (su empresa la da el token).
+    if (auth && this.tenant) headers['X-Tenant-ID'] = this.tenant;
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     const url = this.base + path, started = performance.now();
     const request = { method, url, headers: { ...headers, ...(bearer ? { Authorization: 'Bearer ' + bearer.slice(0, 6) + '…' } : {}) }, body: body && { ...body, ...(body.password ? { password: '••••' } : {}), ...(body.current_password ? { current_password: '••••', new_password: '••••' } : {}), ...(body.refresh_token ? { refresh_token: body.refresh_token.slice(0, 6) + '…' } : {}) } };

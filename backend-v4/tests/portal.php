@@ -22,11 +22,13 @@ function portalRequest(string $method, string $path, mixed $body = null, ?string
     return [$status, $json, $received, $response];
 }
 
-/** Repone el cupo de intentos de login del Portal de un correo (las pruebas entran muchas veces seguidas). */
+/** Repone el cupo de intentos de login del Portal de un correo y de la IP local (las pruebas entran muchas veces seguidas). */
 function portalResetQuota(string $email): void
 {
-    $key = hash('sha256', 'bootstrap:portal-auth:' . hash('sha256', '127.0.0.1|' . strtolower($email)));
-    @unlink(Config::get('RATE_DIR') . '/' . substr($key, 0, 2) . '/' . $key . '.json');
+    foreach (['portal-auth:' . hash('sha256', '127.0.0.1|' . strtolower($email)), 'portal-auth-ip:' . hash('sha256', '127.0.0.1')] as $identity) {
+        $key = hash('sha256', 'bootstrap:' . $identity);
+        @unlink(Config::get('RATE_DIR') . '/' . substr($key, 0, 2) . '/' . $key . '.json');
+    }
 }
 function portalLogin(string $email, string $password): array
 {
@@ -104,6 +106,29 @@ function portalTests(Database $db): void
     check(adminRequest($team, 'GET', '/schedules')[0] === 403, 'panel schedules unchanged (scope all)');
     $allS = expect(portalLogin($all['email'], $all['password']), 200, 'all login');
     check(count(expect(portalRequest('GET', '/schedules', null, $allS['access_token']), 200, 'all schedules')['data']) >= 1, 'scope all lists schedules');
+    // Empresas: con el mismo permiso que en el panel (empresas.ver); estas personas no lo tienen.
+    check(portalRequest('GET', '/tenants', null, $allS['access_token'])[0] === adminRequest($all, 'GET', '/tenants')[0], 'person lists companies like in the panel');
+
+    // Superadmin de plataforma (decision 2026-10-14): entra sin persona ni interruptor y ve lo del panel de la empresa elegida.
+    $platform = sharedPlatform($db);
+    $sp = expect(portalLogin($platform['email'], $platform['password']), 200, 'superadmin portal login');
+    check($sp['user']['platform'] === true && $sp['user']['id'] === null && $sp['user']['tenant_id'] === null, 'superadmin login has no person nor company');
+    $spt = $sp['access_token']; $in = ['x-tenant-id' => $tid];
+    check(in_array($tid, array_column(expect(portalRequest('GET', '/tenants?limit=100', null, $spt), 200, 'superadmin tenants')['data'], 'id'), true), 'superadmin lists companies');
+    $spMe = expect(portalRequest('GET', '/me', null, $spt, $in), 200, 'superadmin me');
+    check($spMe['platform'] === true && $spMe['user_id'] === null && $spMe['tenant']['id'] === $tid && in_array('usuarios.ver', $spMe['permissions'], true), 'superadmin me in the chosen company');
+    $spUsers = expect(portalRequest('GET', '/users?limit=100', null, $spt, $in), 200, 'superadmin users');
+    check($ids($spUsers) === $ids(expect(portalRequest('GET', '/users?limit=100', null, $allS['access_token']), 200, 'all users')), 'superadmin sees the whole company');
+    check(portalRequest('GET', '/tenants/' . $tid . '/devices', null, $spt)[0] === 200, 'superadmin company devices by route');
+    check(portalRequest('GET', '/tenants/' . $tid . '/devices', null, $spt, ['x-tenant-id' => Util::id($foreign['tenant_id'])])[0] === 404, 'route and header must agree');
+    check(portalRequest('GET', '/users', null, $spt, ['x-tenant-id' => Util::id($foreign['tenant_id'])])[0] === 200, 'superadmin reaches any company');
+    check(portalRequest('GET', '/users', null, $spt, ['x-tenant-id' => Util::uuid()])[0] === 404, 'unknown company 404');
+    $spAbs = portalRequest('POST', '/absences', ['kind' => 'permiso', 'starts_at' => '2026-09-15T13:00:00Z', 'ends_at' => '2026-09-15T15:00:00Z', 'all_day' => false, 'user_id' => Util::id($o['coord2']['id'])], $spt, $in);
+    check($spAbs[0] === 403 && $spAbs[1]['detail'] === 'portal_self_only', 'superadmin cannot register absences in the portal');
+    check(portalRequest('GET', '/policies', null, $spt, $in)[0] === 404, 'superadmin still limited to the portal whitelist');
+    $spR = expect(portalRequest('POST', '/refresh', ['refresh_token' => $sp['refresh_token']]), 200, 'superadmin refresh');
+    check(portalRequest('GET', '/me', null, $spR['access_token'], $in)[0] === 200, 'superadmin refreshed token works');
+    check(portalRequest('POST', '/logout', null, $spR['access_token'])[0] === 204, 'superadmin logout');
 
     // Lista blanca: lo demas es 404, incluso con token valido; el panel no atiende rutas del Portal.
     foreach ([['GET', '/policies'], ['GET', '/roles'], ['GET', '/audit'], ['POST', '/devices/' . $devices['data'][0]['id'] . '/commands'], ['GET', '/auth/csrf'], ['PATCH', '/users/' . Util::id($o['coord2']['id'])], ['GET', '/client/policy']] as [$m, $p]) {
@@ -174,8 +199,23 @@ function portalTests(Database $db): void
     $last = end($statuses);
     check($last[0] === 429 && isset($last[2]['retry-after']), 'repeated failed logins are temporarily blocked');
 
+    // Bloqueo: 10 contrasenas fallidas seguidas para un correo lo bloquean 15 min, aun con la contrasena correcta.
+    $fail = function (string $email, int $n): void { for ($i = 0; $i < $n; $i++) { portalLogin($email, 'wrong-lock-' . $i); } };
+    $fail($all['email'], 9);
+    check(portalLogin($all['email'], $all['password'])[0] === 200, 'nine failures do not lock; a good login resets the count');
+    check(!$db->one('SELECT 1 x FROM portal_login_lockouts WHERE email_hash=?', [hash('sha256', strtolower($all['email']), true)]), 'good login clears the failures');
+    $fail($all['email'], 10);
+    $locked = portalLogin($all['email'], $all['password']);
+    check($locked[0] === 429 && $locked[1]['detail'] === 'account_locked' && (int) $locked[2]['retry-after'] > 800, 'ten failures lock the account for 15 minutes');
+    $ghost = Util::uuid() . '@example.test';
+    $fail($ghost, 10);
+    $ghostLocked = portalLogin($ghost, 'whatever');
+    check($ghostLocked[0] === 429 && $ghostLocked[1]['detail'] === 'account_locked', 'unknown emails lock the same (no account enumeration)');
+    $db->run('UPDATE portal_login_lockouts SET locked_until=UTC_TIMESTAMP(6)-INTERVAL 1 SECOND WHERE email_hash=?', [hash('sha256', strtolower($all['email']), true)]);
+    check(portalLogin($all['email'], $all['password'])[0] === 200, 'the lock expires');
+    $db->run('UPDATE portal_login_lockouts SET window_started_at=UTC_TIMESTAMP(6)-INTERVAL 20 MINUTE WHERE email_hash=?', [hash('sha256', strtolower($ghost), true)]);
+
     // CORS: solo origenes autorizados por superadmin, exactos; nunca en /v1.
-    $platform = sharedPlatform($db);
     $origin = 'https://portal-' . substr(Util::uuid(), 0, 8) . '.example.test';
     check(adminRequest($platform, 'POST', '/admin/portal-origins', ['origin' => 'https://*.example.test'])[0] === 422, 'wildcard origins rejected');
     check(adminRequest($platform, 'POST', '/admin/portal-origins', ['origin' => 'http://evil.example.test'])[0] === 422, 'plain http origins rejected');

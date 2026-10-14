@@ -67,7 +67,7 @@ paths:
       - auth
       operationId: portalLogin
       summary: Iniciar sesión en el Portal
-      description: Correo y contraseña de la cuenta del panel. Exige cuenta activa y el interruptor «Puede entrar al Portal» (403 portal_not_enabled). Límite por IP y correo (429 con Retry-After). access_token de 15 min y refresh_token hasta 8 h desde el login.
+      description: Correo y contraseña de la cuenta del panel. Exige cuenta activa y el interruptor «Puede entrar al Portal» (403 portal_not_enabled); el superadmin de plataforma entra sin persona ni interruptor (user.platform=true). Límite por IP y correo (429 con Retry-After); 10 contraseñas fallidas seguidas para un correo lo bloquean 15 min (429 rate_limited, detail account_locked, Retry-After), exista o no la cuenta. access_token de 15 min y refresh_token hasta 8 h desde el login.
       security: []
       x-tenant-boundary: Tenant y persona del token.
       x-resources:
@@ -2477,8 +2477,9 @@ paths:
       - admin
       operationId: listTenants
       summary: Listar empresas autorizadas
-      description: Listar empresas autorizadas
+      description: Listar empresas autorizadas. En el Portal, el superadmin la usa para elegir la empresa (X-Tenant-ID).
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Plataforma lista todas; tenant admin solo su empresa.
       x-resources:
@@ -18108,22 +18109,34 @@ components:
           - id
           - admin_id
           - tenant_id
+          - platform
           - display_name
           - email
           - must_change_password
           properties:
             id:
-              type: string
-              format: uuid
+              anyOf:
+              - type: string
+                format: uuid
+              - type: 'null'
+              description: Persona de la cuenta; null para el superadmin de plataforma.
             admin_id:
               type: string
               format: uuid
             tenant_id:
-              type: string
-              format: uuid
+              anyOf:
+              - type: string
+                format: uuid
+              - type: 'null'
+              description: Empresa del token; null para el superadmin (elige la empresa con X-Tenant-ID, lista en GET /tenants).
+            platform:
+              type: boolean
+              description: Superadmin de plataforma.
             display_name:
-              type: string
-              maxLength: 200
+              anyOf:
+              - type: string
+                maxLength: 200
+              - type: 'null'
             email:
               type: string
               maxLength: 254
@@ -23078,7 +23091,8 @@ components:
       description: Token de persona del Portal (POST /portal/v1/login). Las operaciones con portalBearer se sirven también
         bajo /portal/v1/<ruta> con el mismo contrato y el mismo alcance que el panel; el resto responde 404 en /portal/v1.
         access_token 15 min; refresh de un solo uso; sesión de 8 h. Sin cookies ni CSRF. X-Tenant-ID es opcional (la
-        empresa la da el token; otra empresa responde 404). CORS solo para las direcciones
+        empresa la da el token; otra empresa responde 404). El superadmin de plataforma elige la empresa con X-Tenant-ID
+        (GET /tenants las lista) y ve lo mismo que en el panel; no registra ausencias. CORS solo para las direcciones
         autorizadas por superadmin (/admin/portal-origins); nunca en /v1.
     adminSession:
       type: apiKey

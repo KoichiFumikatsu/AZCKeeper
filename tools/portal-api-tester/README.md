@@ -8,7 +8,8 @@ Doble clic en `probar-api-portal.bat` (o en el acceso del Escritorio). Arranca u
 Requisito una sola vez: en Keeper → **Plataforma → Portal: direcciones autorizadas**, agregar `http://127.0.0.1:8790`. Sin eso el navegador bloquea las respuestas (aviso de CORS en la página).
 
 ## Usarla
-1. Servidor (por defecto devkeep), correo y contraseña de una persona con cuenta de panel y el interruptor **Puede entrar al Portal** encendido.
+1. Servidor (por defecto devkeep), correo y contraseña de una persona con cuenta de panel y el interruptor **Puede entrar al Portal** encendido. El superadmin de plataforma también entra: aparece el selector **Empresa** y cada pedido lleva `X-Tenant-ID`.
+   Ojo: 10 contraseñas fallidas seguidas bloquean ese correo 15 minutos, aquí y en el Portal de Lovable.
 2. **Probar todas**. Verde = funciona como debe; rojo = falla o un caso que debía rechazarse fue aceptado (hueco).
 3. Las pruebas que escriben (crear una ausencia real) o cierran la sesión están apagadas por defecto: se activan con sus casillas.
 

@@ -56,6 +56,7 @@
       <label>Desde <input id="from" type="date"></label>
       <label>Hasta (excluida) <input id="to" type="date"></label>
       <label>Día (línea de tiempo) <input id="day" type="date"></label>
+      <label id="tenant-box" hidden>Empresa (superadmin) <select id="tenant"></select></label>
       <label>Persona <select id="user"><option value="">(se llena tras «Quién soy» y «Personas»)</option></select></label>
       <label>Equipo <select id="device"><option value="">(se llena tras «Equipos»)</option></select></label>
     </div>
@@ -82,6 +83,8 @@
       <li>Ante <code>429</code>, esperar <code>Retry-After</code>. No reintentar el login en bucle.</li>
       <li>Error de CORS = falta autorizar la dirección en Keeper. No intentar saltarlo con proxies.</li>
       <li>Incluir <code>X-Request-ID</code> al reportar cualquier error.</li>
+      <li>Superadmin (<code>user.platform = true</code>): no tiene persona ni empresa propia. Mostrar un selector con <code>GET /tenants</code> y mandar la elegida en <code>X-Tenant-ID</code> en cada pedido.</li>
+      <li>429 con <code>detail: account_locked</code>: 10 contraseñas fallidas seguidas bloquean ese correo 15 min. Mostrar el tiempo de <code>Retry-After</code>; no reintentar.</li>
     </ul>
   </section>
 </main>
