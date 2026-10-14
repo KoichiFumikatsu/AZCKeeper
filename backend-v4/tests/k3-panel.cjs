@@ -57,6 +57,11 @@ const destination = path.resolve(__dirname, '../../docs/design/2026-10-13-captur
           assert.ok(box && box.x >= 0 && box.x + box.width <= 1366, `${action} visible a 1366 px`);
         }
       }
+      if (screen === 'equipo') {
+        const control = page.locator('th span[title="WebEnforcer"]'); await control.waitFor();
+        assert.equal(await control.textContent(), 'Bloqueo web', 'el control se muestra con nombre legible y el técnico queda como tooltip');
+        assert.equal(await page.getByRole('rowheader', { name: 'WebEnforcer', exact: true }).count(), 0);
+      }
       if (screen === 'productividad') { await page.getByRole('heading', { name: 'Tendencia de 8 semanas' }).waitFor(); await page.getByLabel('Ordenar por').selectOption('area'); }
       if (screen === 'equipos') {
         await page.getByLabel('Seleccionar AZC-ANA', { exact: true }).check();

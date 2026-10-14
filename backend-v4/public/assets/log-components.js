@@ -1,0 +1,3 @@
+// Nombre legible de cada parte del agente: lo usan Logs de los equipos (k3.js) y Controles de la ficha del equipo (app.js).
+export const LOG_COMPONENTS = { ActivityTracker: 'Medición de actividad', WebEnforcer: 'Bloqueo web', UsbEnforcer: 'USB', InstallEnforcer: 'Instalaciones', DownloadEnforcer: 'Descargas',
+  DeviceLock: 'Bloqueo de equipo', UpdateManager: 'Actualizaciones', LocalAccountHardening: 'Cuentas de Windows', RestorePoint: 'Puntos de restauración', AgentDiagnostics: 'Diagnóstico', Presence: 'Presencia', SmartAppControl: 'Smart App Control', LegacyK3: 'Keeper 3 (K3)', ServerRelocation: 'Cambio de servidor' };

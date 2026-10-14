@@ -11,6 +11,7 @@ import { wireDialog } from './dialogs.js';
 import { onboardingBanner, returnBand } from './onboarding.js';
 import { mountRelocations } from './relocations.js';
 import { fleet, deviceUpdates, releaseDeployments } from './fleet.js';
+import { LOG_COMPONENTS } from './log-components.js';
 
 const page = document.body.dataset.page;
 const surface = document.body.dataset.surface;
@@ -494,7 +495,7 @@ async function controlsSection(d) {
   try {
     const report = await get(`/devices/${d.id}/security`);
     controls.append(node('p', `Último reporte del agente: ${dateTime(report.observed_at)}${report.observed_at ? ` (${ago(report.observed_at)})` : ''}. Es el estado que declara el agente, no una verificación independiente.`, 'help'));
-    const columns = [['Control', 'control_id'], ['Estado', r => badge(controlStates[r.state] || r.state, controlTones[r.state] || '')], ['Detalle', r => r.error_code || '—'], ['Observado', r => dateTime(r.observed_at)]];
+    const columns = [['Control', r => { const name = node('span', LOG_COMPONENTS[r.control_id] || r.control_id); name.title = r.control_id; return name; }], ['Estado', r => badge(controlStates[r.state] || r.state, controlTones[r.state] || '')], ['Detalle', r => r.error_code || '—'], ['Observado', r => dateTime(r.observed_at)]];
     const failing = report.controls.filter(c => c.state !== 'applied');
     if (failing.length) controls.append(node('p', `${failing.length} de ${report.controls.length} controles no están aplicados. Aparecen primero.`, 'error-message'));
     else if (report.controls.length) controls.append(node('p', 'Todos los controles reportados están aplicados.', 'help'));

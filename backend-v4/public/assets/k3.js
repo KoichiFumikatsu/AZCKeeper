@@ -6,6 +6,7 @@ import { scopeSummary, sameAccess, scopeConditions, scopeChips, SCOPE_RULE, TEAM
 import { wireDialog, confirmBox, noticeBox, feedback } from './dialogs.js';
 import { coordinator, connectionLabel, connectionState, periodControls } from './coordinator.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings, withReauth, canceled } from './hardening-settings.js';
+import { LOG_COMPONENTS } from './log-components.js';
 import { onboardingPage, returnBand, AUDIT_LABELS as ONBOARDING_AUDIT } from './onboarding.js';
 import { canConfigureUnlockPin, mountUnlockPin } from './unlock-pin.js';
 import { canConfigureWindowsSecurity, mountWindowsSecurity } from './windows-security.js';
@@ -1052,12 +1053,15 @@ async function accounts() {
   const create = (preset, personId = null) => {
     const { dialog, body, ok, show } = dialogShell('Crear cuenta del panel');
     // La empresa decide el tipo: la duena da superadmin; cualquier otra, una cuenta de esa empresa ligada a una persona.
-    const company = el('select');
+    const company = el('select'); let superWarn = null;
     if (platform) {
+      // Por defecto, el cliente del contexto (el elegido arriba); la opción superadmin va al final y avisa su alcance.
+      const clients = companies.filter(c => c.id !== PLATFORM_TENANT && c.status === 'active');
+      clients.forEach(c => company.append(new Option(c.branding?.display_name || c.name, c.id)));
       company.append(new Option(`${ownerName()} (dueña) · superadmin de todo`, PLATFORM_TENANT));
-      companies.filter(c => c.id !== PLATFORM_TENANT && c.status === 'active').forEach(c => company.append(new Option(c.branding?.display_name || c.name, c.id)));
-      company.value = companies.some(c => c.id === preset) ? preset : PLATFORM_TENANT;
+      company.value = companies.some(c => c.id === preset) ? preset : clients.some(c => c.id === tenant) ? tenant : clients[0]?.id || PLATFORM_TENANT;
       labeled(body, '¿De qué empresa es la cuenta?', company);
+      superWarn = el('p', 'Esta cuenta verá y cambiará todos los clientes.', 'notice'); superWarn.id = 'account-super-warning'; body.append(superWarn);
     } else { company.append(new Option('', session.tenant_id)); company.value = session.tenant_id; }
     const email = labeled(body, 'Correo para entrar', el('input')); email.type = 'email'; email.maxLength = 254; email.autocomplete = 'off';
     const ownerBox = el('div'); body.append(ownerBox);
@@ -1092,6 +1096,7 @@ async function accounts() {
     };
     const sync = () => {
       const owner = company.value === PLATFORM_TENANT; ownerBox.hidden = !owner; companyBox.hidden = owner;
+      if (superWarn) superWarn.hidden = !owner;
       if (!owner) drawCompany(company.value).catch(e => { companyBox.replaceChildren(); show(e); });
     };
     company.addEventListener('change', sync); sync();
@@ -3525,8 +3530,6 @@ const LOG_CODES = {
   package_verified: 'Versión nueva descargada y verificada', update_applying: 'Instalando versión nueva', first_login: 'Primer inicio de sesión del día',
   restore_point_created: 'Punto de restauración creado', failed: 'Falló', unsupported_rule: 'El equipo no soporta una regla', conflicting_rules: 'Reglas en conflicto',
 };
-const LOG_COMPONENTS = { ActivityTracker: 'Medición de actividad', WebEnforcer: 'Bloqueo web', UsbEnforcer: 'USB', InstallEnforcer: 'Instalaciones', DownloadEnforcer: 'Descargas',
-  DeviceLock: 'Bloqueo de equipo', UpdateManager: 'Actualizaciones', LocalAccountHardening: 'Cuentas de Windows', RestorePoint: 'Puntos de restauración', AgentDiagnostics: 'Diagnóstico', Presence: 'Presencia', SmartAppControl: 'Smart App Control', LegacyK3: 'Keeper 3 (K3)', ServerRelocation: 'Cambio de servidor' };
 async function logsPage() {
   const devices = (await optional(allPages(`/tenants/${tenant}/devices`))) || [];
   const day = o => new Date(Date.now() + o * 864e5).toISOString().slice(0, 10);
@@ -4197,12 +4200,19 @@ async function openRoleEditor(role, { company = null, permissions = null, onSave
   if (note) body.append(el('p', note, 'help'));
   const name = labeled(body, 'Nombre del rol', el('input')); name.maxLength = 120; name.value = role?.name || ''; ok.textContent = role ? 'Guardar rol' : 'Crear rol';
   body.append(el('h3', 'Permisos'));
-  const groups = new Map(); catalog.forEach(p => { if (!groups.has(p.resource)) groups.set(p.resource, []); groups.get(p.resource).push(p); });
+  // Un superadmin que crea un rol para un cliente ve los permisos de plataforma aparte, plegados.
+  const split = !!readSession()?.is_platform_admin && catalog.some(p => p.platform_only);
+  const groupsOf = list => { const g = new Map(); list.forEach(p => { if (!g.has(p.resource)) g.set(p.resource, []); g.get(p.resource).push(p); }); return [...g.entries()].sort((a, b) => (moduleNames[a[0]] || a[0]).localeCompare(moduleNames[b[0]] || b[0], 'es')); };
   const all = [];
-  [...groups.entries()].sort((a, b) => (moduleNames[a[0]] || a[0]).localeCompare(moduleNames[b[0]] || b[0], 'es')).forEach(([resource, perms]) => {
-    const fs = el('fieldset', undefined, 'perm-group'); fs.append(el('legend', moduleNames[resource] || resource)); body.append(fs);
+  const drawGroups = (parent, list) => groupsOf(list).forEach(([resource, perms]) => {
+    const fs = el('fieldset', undefined, 'perm-group'); fs.append(el('legend', moduleNames[resource] || resource)); parent.append(fs);
     all.push(...checks(fs, perms.map(p => [p.code, p.label, p.platform_only ? 'Solo plataforma' : null]), role?.permissions || []));
   });
+  drawGroups(body, split ? catalog.filter(p => !p.platform_only) : catalog);
+  if (split) {
+    const platformBox = el('details', undefined, 'more-options'); platformBox.id = 'role-platform-perms'; platformBox.append(el('summary', 'Permisos solo de plataforma')); platformBox.open = catalog.some(p => p.platform_only && role?.permissions?.includes(p.code));
+    body.append(platformBox); drawGroups(platformBox, catalog.filter(p => p.platform_only));
+  }
   const active = el('input'); active.type = 'checkbox'; active.checked = role ? role.active : true;
   const al = el('label', undefined, 'check'); al.append(active, ' Rol activo'); body.append(al);
   const auto = el('input'); auto.type = 'checkbox'; auto.checked = !!role?.assignable_by_rule;
