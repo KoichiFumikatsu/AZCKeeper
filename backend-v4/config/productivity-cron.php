@@ -2,10 +2,11 @@
 declare(strict_types=1);
 if (PHP_SAPI!=='cli') { http_response_code(404); exit; }
 require __DIR__.'/bootstrap.php';
-use Keeper\{Database,ProductivityWorker,Util,Validator};
+use Keeper\{CronRun,Database,ProductivityWorker,Util,Validator};
+$db=null;
 try {
     $options=getopt('',['tenant:','max-days:','budget-seconds:','from:','to:']);
-    $db=new Database(); $tenant=$options['tenant']??null;
+    $db=new Database(); CronRun::start($db,'productivity'); $tenant=$options['tenant']??null;
     if ($tenant!==null) { (new Validator())->check(['type'=>'string','format'=>'uuid'],$tenant); }
     if (isset($options['from']) || isset($options['to'])) {
         if ($tenant===null || !isset($options['from'],$options['to'])) { throw new InvalidArgumentException('Replay requires tenant, from and to'); }
@@ -18,5 +19,11 @@ try {
     }
     // Finalize only already-current checkpoints after the late-arrival window closes.
     $db->run('UPDATE rollup_days r JOIN retention_settings s ON s.tenant_id=r.tenant_id SET r.finalized_at=UTC_TIMESTAMP(6) WHERE r.dirty=FALSE AND r.calculated_revision=r.input_revision AND r.calculation_version=? AND r.finalized_at IS NULL AND r.day<UTC_DATE()-INTERVAL (s.late_arrival_days+2) DAY'.($tenant===null?'':' AND r.tenant_id=?'),$tenant===null?[ProductivityWorker::VERSION]:[ProductivityWorker::VERSION,Util::bin($tenant)]);
-    echo Util::json((new ProductivityWorker($db))->run($tenant,(int)($options['max-days']??5),(int)($options['budget-seconds']??20))).PHP_EOL;
-} catch (Throwable $e) { fwrite(STDERR,'productivity_failed: '.get_class($e).PHP_EOL); exit(1); }
+    $result=(new ProductivityWorker($db))->run($tenant,(int)($options['max-days']??5),(int)($options['budget-seconds']??20));
+    CronRun::ok($db,'productivity');
+    echo Util::json($result).PHP_EOL;
+} catch (Throwable $e) {
+    // Clase y mensaje (sin valores literales) quedan en Salud del servidor; la clase sola no alcanzaba para diagnosticar.
+    try { CronRun::fail($db??new Database(),'productivity',$e); } catch (Throwable) {}
+    fwrite(STDERR,'productivity_failed: '.get_class($e).': '.CronRun::clean($e->getMessage()).PHP_EOL); exit(1);
+}

@@ -17735,6 +17735,7 @@ components:
       - last_sync
       - last_ingest
       - calculation_version
+      - jobs
       properties:
         version:
           type: string
@@ -17786,6 +17787,54 @@ components:
           - type: string
             maxLength: 1000
           - type: 'null'
+        jobs:
+          type: array
+          description: Última corrida de cada trabajo programado (cálculo de productividad, retención). status stale = lleva más de stale_after_minutes sin terminar bien; failed = la última corrida falló.
+          items:
+            type: object
+            additionalProperties: false
+            required: [job, label, schedule, stale_after_minutes, status, last_started_at, last_finished_at, last_success_at, error_class, error_message]
+            properties:
+              job:
+                type: string
+                enum: [productivity, retention]
+              label:
+                type: string
+                maxLength: 80
+              schedule:
+                type: string
+                maxLength: 40
+              stale_after_minutes:
+                type: integer
+                minimum: 1
+              status:
+                type: string
+                enum: [ok, failed, stale, running, never]
+              last_started_at:
+                anyOf:
+                - type: string
+                  format: date-time
+                - type: 'null'
+              last_finished_at:
+                anyOf:
+                - type: string
+                  format: date-time
+                - type: 'null'
+              last_success_at:
+                anyOf:
+                - type: string
+                  format: date-time
+                - type: 'null'
+              error_class:
+                anyOf:
+                - type: string
+                  maxLength: 120
+                - type: 'null'
+              error_message:
+                anyOf:
+                - type: string
+                  maxLength: 500
+                - type: 'null'
     HolidayList:
       type: object
       additionalProperties: false

@@ -52,6 +52,7 @@ function panelArchitectureTests(Database $db): void
     check($user['status']==='inactive' && $db->one('SELECT status FROM devices WHERE tenant_id=? AND id=?',[$t,$device])['status']==='revoked','retirement revokes device');
     $presence=expect(adminRequest($a,'GET','/reports/presence'),200,'today excludes retired'); check(!in_array($uid,array_column($presence['data'],'user_id'),true),'retired people not counted in current arrivals');
     $health=expect(adminRequest($a,'GET','/tenants/server-health'),200,'calculation status'); check(array_key_exists('cron_last_error',$health),'health exposes last error');
+    check(array_column($health['jobs'],'job')===['productivity','retention'] && isset($health['jobs'][0]['status'],$health['jobs'][1]['stale_after_minutes']),'health exposes scheduled jobs');
     $db->run("UPDATE schedules SET timezone='Invalid/Fixture' WHERE tenant_id=? AND id=?",[$t,$u['schedule_id']]);
     try { (new ProductivityWorker($db))->run(Util::id($t),1,5); check(false,'invalid timezone must fail calculation'); } catch (Exception) {}
     $health=expect(adminRequest($a,'GET','/tenants/server-health'),200,'failed calculation status');

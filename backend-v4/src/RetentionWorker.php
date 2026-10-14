@@ -104,7 +104,7 @@ final class RetentionWorker
             }
         } catch (\Throwable $e) {
             $complete = false;
-            $error = substr(get_class($e) . ($e instanceof \PDOException ? ' ' . ($e->errorInfo[0] ?? $e->getCode()) . '/' . ($e->errorInfo[1] ?? '') : ''), 0, 200);
+            $error = mb_substr(get_class($e) . ($e instanceof \PDOException ? ' ' . ($e->errorInfo[0] ?? $e->getCode()) . '/' . ($e->errorInfo[1] ?? '') : '') . ': ' . CronRun::clean($e->getMessage()), 0, 200);
         }
         $sum = fn (string $kind) => array_sum(array_map(fn ($t) => $rows[$t[1]] ?? 0, array_filter(self::targets($cut), fn ($t) => $t[0] === $kind)));
         $result = ['tenant_id' => Util::id($tenant), 'mode' => $mode, 'raw_before' => $cut['raw_before'], 'aggregate_before' => $cut['aggregate_before'],

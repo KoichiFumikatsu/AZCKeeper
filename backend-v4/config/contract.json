@@ -1,5 +1,5 @@
 {
-  "source_sha256": "4eea5e278a87062b71b3a407bebd66cbe979a0e70ff1eb66213525282ca8343c",
+  "source_sha256": "5fbb03f0a075eae8c8ced54dd397f6cf55efb3be49cc298cf30d5216c7f96d86",
   "paths": {
     "/me": {
       "get": {
@@ -32772,7 +32772,8 @@
         "cron_status",
         "last_sync",
         "last_ingest",
-        "calculation_version"
+        "calculation_version",
+        "jobs"
       ],
       "properties": {
         "version": {
@@ -32862,6 +32863,112 @@
               "type": "null"
             }
           ]
+        },
+        "jobs": {
+          "type": "array",
+          "description": "Última corrida de cada trabajo programado (cálculo de productividad, retención). status stale = lleva más de stale_after_minutes sin terminar bien; failed = la última corrida falló.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "job",
+              "label",
+              "schedule",
+              "stale_after_minutes",
+              "status",
+              "last_started_at",
+              "last_finished_at",
+              "last_success_at",
+              "error_class",
+              "error_message"
+            ],
+            "properties": {
+              "job": {
+                "type": "string",
+                "enum": [
+                  "productivity",
+                  "retention"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "schedule": {
+                "type": "string",
+                "maxLength": 40
+              },
+              "stale_after_minutes": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ok",
+                  "failed",
+                  "stale",
+                  "running",
+                  "never"
+                ]
+              },
+              "last_started_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "last_finished_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "last_success_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "error_class": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "error_message": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
         }
       }
     },

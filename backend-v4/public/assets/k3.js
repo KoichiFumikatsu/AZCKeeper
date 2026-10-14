@@ -3559,6 +3559,28 @@ async function logsPage() {
 // ---- Salud del servidor ---------------------------------------------------------------------------------------------
 async function healthPage() {
   const h = await api('GET', '/tenants/server-health');
+  // Trabajos programados: si alguno falló o está atrasado el aviso va primero, antes de cualquier otra cosa.
+  const jobStates = { ok: ['Bien', 'good'], running: ['En curso', 'info'], failed: ['Falló', 'bad'], stale: ['Atrasado', 'bad'], never: ['Sin correr', 'bad'] };
+  const bogota = v => v ? new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Bogota' }).format(new Date(v)) + ' (hora de Bogotá)' : 'Nunca';
+  const jobs = h.jobs || [], jobProblems = jobs.filter(j => ['failed', 'stale', 'never'].includes(j.status));
+  const jobLine = j => j.status === 'failed' ? `${j.label}: falló` : j.status === 'never' ? `${j.label}: aún no se ha ejecutado` : `${j.label}: sin ejecutarse bien hace más de ${j.stale_after_minutes >= 120 ? Math.round(j.stale_after_minutes / 60) + ' horas' : j.stale_after_minutes + ' minutos'}`;
+  if (jobProblems.length) {
+    const alert = el('div', undefined, 'error-text'); alert.setAttribute('role', 'alert');
+    alert.append(el('strong', jobProblems.length === 1 ? 'Un trabajo programado necesita atención' : `${jobProblems.length} trabajos programados necesitan atención`));
+    for (const j of jobProblems) alert.append(el('p', jobLine(j) + (j.error_message ? ` · ${j.error_message}` : '')));
+    $('page-content').append(alert);
+  }
+  if (jobs.length) {
+    const js = surface('Trabajos programados');
+    const jg = el('div', undefined, 'three'); js.append(jg);
+    for (const j of jobs) {
+      const [text, tone] = jobStates[j.status] || [j.status, 'warn'];
+      const card = surface(j.label, jg); card.append(badge(text, tone), el('p', `Última corrida: ${bogota(j.last_started_at)}`));
+      if (j.last_success_at && j.status !== 'ok') card.append(el('p', `Último éxito: ${bogota(j.last_success_at)}`));
+      if (j.status === 'failed') card.append(el('p', `${j.error_class || 'Error'}${j.error_message ? `: ${j.error_message}` : ''}`, 'error-message'));
+      card.append(el('p', `Corre ${j.schedule}. Se marca atrasado si pasa más de ${j.stale_after_minutes >= 120 ? Math.round(j.stale_after_minutes / 60) + ' horas' : j.stale_after_minutes + ' minutos'} sin terminar bien.`, 'help'));
+    }
+  }
   const calculation = surface('Estado del cálculo');
   calculation.append(el('p', `Estado: ${{ ok: 'Correcto', running: 'En curso', failed: 'Falló', never: 'Sin ejecución' }[h.cron_status] || h.cron_status} · Última ejecución: ${when(h.cron_last_run)}`));
   if (h.cron_last_error) calculation.append(el('p', h.cron_last_error, 'error-message'));

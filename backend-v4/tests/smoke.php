@@ -40,6 +40,7 @@ require __DIR__ . '/access.php';
 require __DIR__ . '/batch-users.php';
 require __DIR__ . '/onboarding.php';
 require __DIR__ . '/retention.php';
+require __DIR__ . '/cron-runs.php';
 
 use Keeper\{Config, Database, Util, Validator};
 
@@ -460,6 +461,7 @@ try {
     batchUsersTests($db);
     onboardingTests($db);
     retentionTests($db);
+    cronRunsTests($db);
     // Al final y con el cupo de prelogin repuesto: sus 4 logins de fixture lo agotaban para panelAccountsTests.
     windowsSecurityTests($db);
     relocationTests($db);

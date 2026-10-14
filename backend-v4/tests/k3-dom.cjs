@@ -39,7 +39,7 @@ async function open(route, entry) {
     [`/miembro.php?id=${fixture.uid}`, 'k3.js', 'Resumen del mes'], ['/reportes.php', 'app.js', 'Ranking individual'],
     ['/equipos.php', 'app.js', 'Versiones instaladas'], [`/equipo.php?id=${fixture.device}`, 'app.js', 'Actualizaciones'],
     ['/admin/releases.php', 'app.js', 'Publicar versión por anillo'], ['/doble-empleo.php', 'app.js', 'Marcar revisada'], ['/cobertura.php', 'app.js', 'Ana Torres'],
-    ['/horarios.php', 'k3.js', 'Margen de puntualidad'], ['/cuentas.php', 'k3.js', 'Acceso al Portal'], ['/admin/salud.php', 'k3.js', 'Fallo sintético del cálculo'],
+    ['/horarios.php', 'k3.js', 'Margen de puntualidad'], ['/cuentas.php', 'k3.js', 'Acceso al Portal'], ['/admin/salud.php', 'k3.js', 'Fallo sintético del cálculo'], ['/admin/salud.php', 'k3.js', 'Fallo sintético de trabajo programado'],
     [`/miembro.php?id=${fixture.uid}&tab=datos`, 'k3.js', 'Estado laboral'],
   ];
   for (const [route, entry, expected] of screens) {
