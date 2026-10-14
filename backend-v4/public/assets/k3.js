@@ -1056,10 +1056,13 @@ async function accounts() {
     const company = el('select'); let superWarn = null;
     if (platform) {
       // Por defecto, el cliente del contexto (el elegido arriba); la opción superadmin va al final y avisa su alcance.
+      // Sin cliente en el contexto no se adivina: hay que elegirlo (elegir el primero crearía la cuenta en un cliente ajeno sin notarlo).
       const clients = companies.filter(c => c.id !== PLATFORM_TENANT && c.status === 'active');
+      const initial = companies.some(c => c.id === preset) ? preset : clients.some(c => c.id === tenant) ? tenant : clients.length ? '' : PLATFORM_TENANT;
+      if (initial === '') { const pick = new Option('Elige el cliente…', ''); pick.disabled = true; company.append(pick); }
       clients.forEach(c => company.append(new Option(c.branding?.display_name || c.name, c.id)));
       company.append(new Option(`${ownerName()} (dueña) · superadmin de todo`, PLATFORM_TENANT));
-      company.value = companies.some(c => c.id === preset) ? preset : clients.some(c => c.id === tenant) ? tenant : clients[0]?.id || PLATFORM_TENANT;
+      company.value = initial;
       labeled(body, '¿De qué empresa es la cuenta?', company);
       superWarn = el('p', 'Esta cuenta verá y cambiará todos los clientes.', 'notice'); superWarn.id = 'account-super-warning'; body.append(superWarn);
     } else { company.append(new Option('', session.tenant_id)); company.value = session.tenant_id; }
@@ -1097,6 +1100,7 @@ async function accounts() {
     const sync = () => {
       const owner = company.value === PLATFORM_TENANT; ownerBox.hidden = !owner; companyBox.hidden = owner;
       if (superWarn) superWarn.hidden = !owner;
+      if (!owner && !company.value) { companyBox.replaceChildren(); return; }
       if (!owner) drawCompany(company.value).catch(e => { companyBox.replaceChildren(); show(e); });
     };
     company.addEventListener('change', sync); sync();
@@ -1105,6 +1109,7 @@ async function accounts() {
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
       const owner = company.value === PLATFORM_TENANT;
+      if (!company.value) { show('Elige de qué cliente es la cuenta.'); return; }
       if (!email.value.includes('@')) { show('Escribe un correo válido.'); return; }
       if (!owner && !person?.value) { show('Elige a qué persona pertenece la cuenta.'); return; }
       if (owner && !display.value.trim()) { show('Escribe el nombre de la cuenta.'); return; }
