@@ -184,3 +184,16 @@ details.nav-group>summary.nav-heading:hover{background:var(--hover);color:var(--
 #platform-group{background:var(--p-50);border-radius:8px;padding:0 4px 4px}
 #platform-group+.nav-group{border-top:0;margin-top:10px}
 .settings-security{margin:8px 0 24px}.settings-security>h2{margin-bottom:6px}.settings-security>.help{margin-bottom:16px}
+
+/* Ficha del cliente (G1) y asistente «Dar de alta un cliente» (G2). */
+.inline-form .dialog-body{max-width:860px}.inline-form .dialog-footer{justify-content:start}
+.client-state{align-items:center;margin-bottom:18px}.client-facts{margin-top:4px}
+.client-advanced{margin-top:8px;border-top:1px solid var(--line);padding-top:8px}.client-advanced .danger-zone{margin-top:8px}
+.client-steps .badge{margin-left:4px}
+.wizard-steps{display:flex;flex-wrap:wrap;gap:6px 16px;list-style:none;margin:0 0 8px;padding:0 0 12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
+.wizard-steps li{display:flex;align-items:center;gap:6px}
+.wizard-num{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;border:1px solid var(--control);font-weight:600;font-size:11px}
+.wizard-steps li.done .wizard-num{background:var(--p-50);border-color:var(--p-200);color:var(--accent)}
+.wizard-steps li[aria-current=step]{color:var(--ink);font-weight:600}.wizard-steps li[aria-current=step] .wizard-num{background:var(--accent);border-color:var(--accent);color:var(--white)}
+.wizard-progress{margin:0 0 4px}.wizard-review dd{font-weight:500}.wizard-next{margin-top:8px}
+.client-open{margin:12px 0 16px}

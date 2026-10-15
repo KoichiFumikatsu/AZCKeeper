@@ -8,6 +8,7 @@ import { coordinator, connectionLabel, connectionState, periodControls } from '.
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings, withReauth, canceled } from './hardening-settings.js';
 import { LOG_COMPONENTS } from './log-components.js';
 import { onboardingPage, returnBand, AUDIT_LABELS as ONBOARDING_AUDIT } from './onboarding.js';
+import { evaluate as evaluateOnboarding, count as countSteps, nextPending as nextPendingStep, STATUS as ONBOARDING_STATUS } from './onboarding-state.js';
 import { canConfigureUnlockPin, mountUnlockPin } from './unlock-pin.js';
 import { canConfigureWindowsSecurity, mountWindowsSecurity } from './windows-security.js';
 
@@ -1180,19 +1181,40 @@ function featureChecks(catalog, parent, selected, { personOnly = false } = {}) {
   return boxes;
 }
 let showArchived = false;
+// Ficha del cliente (G1, docs/design/2026-10-14-superadmin-por-tareas.md §2.2): pestañas con los mismos formularios que
+// antes eran diálogos sueltos de la tabla. La URL lleva cliente y pestaña (empresas.php?cliente=<id>&pestana=<clave>)
+// para recargarla o compartirla. La lista de Clientes sigue siendo el índice.
+const CLIENT_TABS = [['resumen', 'Resumen'], ['marca', 'Datos y marca'], ['funciones', 'Funciones y plan'], ['administradores', 'Administradores'], ['equipos', 'Equipos e instalación'], ['puesta', 'Puesta en marcha']];
+const clientHref = (id, tab = null) => `/empresas.php?cliente=${encodeURIComponent(id)}${tab ? `&pestana=${tab}` : ''}`;
+const clientName = c => c.branding?.display_name || c.name;
+// Formulario de una pestaña: el mismo contrato que dialogShell ({ form, body, ok, cancel, show }), pintado en la página.
+function formShell(parent, title) {
+  const form = el('form', undefined, 'surface inline-form'); form.noValidate = true;
+  const head = el('div', undefined, 'section-head'); head.append(el('h2', title)); form.append(head);
+  const body = el('div', undefined, 'dialog-body'); form.append(body);
+  const error = el('p', '', 'error-text'); error.hidden = true; error.setAttribute('role', 'alert');
+  const footer = el('div', undefined, 'dialog-footer'); const cancel = el('button', 'Descartar cambios'); cancel.type = 'button'; const ok = el('button', 'Guardar', 'primary'); ok.type = 'submit';
+  footer.append(cancel, ok); form.append(error, footer); parent.append(form);
+  const show = (e, field) => { error.textContent = typeof e === 'string' ? e : errorMessage(e); error.hidden = false; field?.focus?.(); };
+  return { form, body, ok, cancel, show };
+}
+const validZone = zone => { try { new Intl.DateTimeFormat('en', { timeZone: zone }); return !!zone; } catch { return false; } };
+const DOCUMENT_RE = /^[0-9A-Za-z .-]{3,40}$/;
 async function tenantsPage() {
   const catalog = (await api('GET', '/features', { tenant: PLATFORM_TENANT })).data;
   const packages = (await api('GET', '/feature-packages', { tenant: PLATFORM_TENANT })).data;
   let personPlans = (await api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).data;
+  const planName = id => personPlans.find(x => x.id === id)?.name || null;
   // «Mostrar clientes archivados» se recuerda como el resto del estado de la tabla (M2).
   const archivedKey = tableKey('Empresas:archivadas');
   if (!showArchived && readTableState(archivedKey).show === true) { showArchived = true; companies = sortCompanies(await allPages('/tenants?include_archived=true', PLATFORM_TENANT)); }
+  const action = $('page-action');
   const render = () => {
     $('page-content').replaceChildren();
     const s = surface('Clientes');
     if (!companies.some(c => c.id !== PLATFORM_TENANT && !c.archived)) s.append(el('p', 'Aún no hay clientes activos. Da de alta el primero con "Dar de alta un cliente" (arriba a la derecha); las demás pantallas (Personas, Estructura del cliente, Equipos…) trabajan sobre un cliente y se habilitan cuando exista.', 'notice'));
     s.append(el('p', `${ownerName()} es la empresa dueña de Keeper: su nombre y logo son los del producto (login y barra lateral). Los demás son clientes; cada uno con su marca, sus personas, equipos y cuentas.`, 'help'));
-    const plansLink = el('p', 'En "Funciones" de cada cliente eliges lo que compró y el plan por defecto de sus personas. Los paquetes y los planes por persona se crean en ', 'help');
+    const plansLink = el('p', 'Haz clic en un cliente para abrir su ficha: datos y marca, lo que compró y el plan por defecto de sus personas, sus administradores, equipos y puesta en marcha. Los paquetes y los planes por persona se crean en ', 'help');
     const pa = el('a', 'Qué vendemos'); pa.href = '/planes.php'; plansLink.append(pa, '.'); s.append(plansLink);
     // Archivadas: ocultas por defecto en todo el panel y de solo lectura (nadie las modifica hasta desarchivarlas).
     const toggle = el('label', undefined, 'check'); const box = el('input'); box.type = 'checkbox'; box.checked = showArchived;
@@ -1200,25 +1222,13 @@ async function tenantsPage() {
     box.addEventListener('change', async () => { showArchived = box.checked; writeTableState(archivedKey, { show: showArchived }); try { await reload(); } catch (e) { fail(e); } });
     renderTree();
     table(s, 'Clientes', [
-      ['Cliente', c => { const d = el('div', undefined, 'company-cell'); const t = el('div'); t.append(el('strong', c.branding?.display_name || c.name), el('small', c.name)); d.append(logoImage(c), t); return d; }],
+      ['Cliente', c => { const d = el('div', undefined, 'company-cell'); const t = el('div'); const a = el('a', clientName(c)); a.href = clientHref(c.id); const st = el('strong'); st.append(a); t.append(st, el('small', c.name)); d.append(logoImage(c), t); return d; }],
       ['Tipo', c => badge(c.id === PLATFORM_TENANT ? 'Dueña de la plataforma' : 'Cliente', c.id === PLATFORM_TENANT ? 'info' : '')],
       ['Grupo empresarial', c => c.id === PLATFORM_TENANT ? '—' : groupOf(c.id)?.name || 'Independiente'],
       ['Estado', c => c.archived ? badge('Archivada', '') : badge(c.status === 'active' ? 'Activa' : 'Suspendida', c.status === 'active' ? 'good' : 'bad')],
       ['Zona horaria', c => c.timezone],
       ['Roles propios', c => c.id === PLATFORM_TENANT ? '—' : c.rbac_self_management ? 'Los gestiona el cliente' : 'Los gestiona la plataforma'],
-      ['Acciones', c => {
-        const box = el('div', undefined, 'actions no-margin');
-        if (c.archived) {
-          const u = el('button', 'Desarchivar', 'link-button'); u.type = 'button'; u.addEventListener('click', () => archive(c, false));
-          const d = el('button', 'Eliminar definitivamente', 'link-button danger'); d.type = 'button'; d.addEventListener('click', () => purge(c));
-          box.append(u, d); return box;
-        }
-        const b = el('button', 'Editar y marca', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(c)); box.append(b);
-        const a = el('a', 'Ver cuentas', 'link-button'); a.href = c.id === PLATFORM_TENANT ? '/cuentas.php' : `/cuentas.php?empresa=${encodeURIComponent(c.id)}`; box.append(a);
-        if (c.id !== PLATFORM_TENANT) { const fb = el('button', 'Funciones', 'link-button'); fb.type = 'button'; fb.addEventListener('click', () => featuresEditor(c)); box.append(fb); }
-        if (c.id !== PLATFORM_TENANT) { const x = el('button', 'Archivar', 'link-button'); x.type = 'button'; x.addEventListener('click', () => archive(c, true)); box.append(x); }
-        return box;
-      }]], companies, { search: c => [c.name, c.branding?.display_name] });
+      ['Acciones', c => { const a = el('a', 'Abrir ficha', 'link-button'); a.href = clientHref(c.id); a.setAttribute('aria-label', `Abrir la ficha de ${clientName(c)}`); return a; }]], companies, { search: c => [c.name, c.branding?.display_name] });
     renderGroups();
   };
   let groups = (await optional(api('GET', '/company-groups', { tenant: PLATFORM_TENANT })))?.data || [];
@@ -1227,8 +1237,8 @@ async function tenantsPage() {
   // internas (AZC Legal, BilingueLaw...) se editan en Organizacion de esa empresa.
   const renderTree = () => {
     const t = surface('Estructura');
-    t.append(el('p', 'Quién va debajo de quién. Para mover un cliente a otro grupo (o dejarlo independiente) usa "Editar y marca". Las empresas internas de cada cliente (por ejemplo AZC Legal o BilingueLaw dentro de Grupo AZC) se editan en Estructura del cliente, eligiendo ese cliente arriba.', 'help'));
-    const label = c => { const li = el('li'); li.append(el('strong', c.branding?.display_name || c.name)); if (c.archived) li.append(' ', badge('Archivada', '')); else if (c.status !== 'active') li.append(' ', badge('Suspendida', 'bad')); return li; };
+    t.append(el('p', 'Quién va debajo de quién. Para mover un cliente a otro grupo (o dejarlo independiente) abre su ficha → «Datos y marca». Las empresas internas de cada cliente (por ejemplo AZC Legal o BilingueLaw dentro de Grupo AZC) se editan en Estructura del cliente, eligiendo ese cliente arriba.', 'help'));
+    const label = c => { const li = el('li'); const a = el('a', clientName(c)); a.href = clientHref(c.id); const st = el('strong'); st.append(a); li.append(st); if (c.archived) li.append(' ', badge('Archivada', '')); else if (c.status !== 'active') li.append(' ', badge('Suspendida', 'bad')); return li; };
     const root = el('ul', undefined, 'tree'); const owner = companies.find(c => c.id === PLATFORM_TENANT);
     const top = owner ? label(owner) : el('li', 'Plataforma'); if (owner) top.append(' ', badge('Dueña de la plataforma', 'info'));
     const level = el('ul'); top.append(level); root.append(top);
@@ -1286,14 +1296,11 @@ async function tenantsPage() {
     dialog.showModal();
   };
   // Funciones contratadas del cliente: paquete de origen + ajustes de la venta (docs/architecture/v4-clientes-funciones-accesos.md).
-  const featuresEditor = async c => {
+  // Pestaña «Funciones y plan» de la ficha (antes, el diálogo «Funciones»): el plan por defecto va arriba (§2.4).
+  const featuresEditor = async (c, parent, after) => {
     const current = await api('GET', `/tenants/${c.id}/features`, { tenant: c.id });
-    const { dialog, body, ok, show } = dialogShell(`Funciones de ${c.branding?.display_name || c.name}`);
-    dialog.classList.add('wide-dialog');
+    const { form, body, ok, cancel, show } = formShell(parent, 'Funciones y plan');
     body.append(el('p', 'Lo que el cliente compró. Lo que no esté marcado desaparece de su panel y la API lo rechaza; apagar no borra datos. El núcleo (organización, horarios, personas, equipos) siempre está incluido.', 'help'));
-    const pkg = el('select'); pkg.append(new Option('Sin paquete (a medida)', '')); packages.forEach(p => pkg.append(new Option(p.name, p.id))); pkg.value = current.package_id || '';
-    labeled(body, 'Paquete de origen', pkg, 'Al elegir un paquete se marcan sus funciones; después puedes ajustar las de esta venta.');
-    const boxes = featureChecks(catalog, body, current.features);
     const defPlan = el('select'); defPlan.append(new Option('Sin plan (sus equipos no reciben controles)', '')); personPlans.filter(x => x.active || x.id === current.default_plan_id).forEach(x => defPlan.append(new Option(x.active ? x.name : `${x.name} (inactivo)`, x.id)));
     defPlan.value = current.default_plan_id || '';
     labeled(body, 'Plan por defecto de sus personas', defPlan, 'Las personas sin plan propio usan este. Los planes se crean en Qué vendemos.');
@@ -1305,17 +1312,21 @@ async function tenantsPage() {
       const parts = (u.data || []).filter(x => x.people > 0).map(x => `${x.people} en ${x.name || 'Sin plan'}`);
       usage.textContent = parts.length ? `Planes en uso: ${parts.join(' · ')}` : 'Planes en uso: aún no hay personas.';
     }).catch(() => { usage.hidden = true; });
+    const pkg = el('select'); pkg.append(new Option('Sin paquete (a medida)', '')); packages.forEach(p => pkg.append(new Option(p.name, p.id))); pkg.value = current.package_id || '';
+    labeled(body, 'Paquete con que se vendió', pkg, 'Al elegir un paquete se marcan sus funciones; después puedes ajustar las de esta venta.');
+    const boxes = featureChecks(catalog, body, current.features);
     pkg.addEventListener('change', () => { const p = packages.find(x => x.id === pkg.value); if (p) { boxes.forEach(b => { b.checked = p.features.includes(b.value); }); boxes.refreshReview(); } });
-    dialog.querySelector('form').addEventListener('submit', async ev => {
+    ok.textContent = 'Guardar funciones y plan';
+    cancel.addEventListener('click', () => after(null));
+    form.addEventListener('submit', async ev => {
       ev.preventDefault(); ok.disabled = true;
-      try { await api('PUT', `/tenants/${c.id}/features`, { tenant: c.id, body: { package_id: pkg.value || null, features: boxes.filter(b => b.checked).map(b => b.value), ...((defPlan.value || null) === (current.default_plan_id || null) ? {} : { default_plan_id: defPlan.value || null }) } }); personPlans = (await api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done(); }
+      try { await api('PUT', `/tenants/${c.id}/features`, { tenant: c.id, body: { package_id: pkg.value || null, features: boxes.filter(b => b.checked).map(b => b.value), ...((defPlan.value || null) === (current.default_plan_id || null) ? {} : { default_plan_id: defPlan.value || null }) } }); personPlans = (await api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).data; await after('Funciones y plan guardados.'); }
       catch (e) { show(e.problem?.detail === 'unknown_plan' ? 'Ese plan está inactivo; actívalo o elige otro.' : e); ok.disabled = false; }
     });
-    dialog.showModal();
   };
   const reload = async () => { companies = sortCompanies(await allPages(showArchived ? '/tenants?include_archived=true' : '/tenants', PLATFORM_TENANT)); render(); done(); };
   // Eliminar una empresa archivada: se borra todo lo suyo salvo la auditoria. Pide contrasena y el nombre exacto.
-  const purge = c => {
+  const purge = (c, after = reload) => {
     const { dialog, body, ok, show } = dialogShell(`Eliminar ${c.branding?.display_name || c.name}`);
     body.append(el('p', 'Se borran definitivamente sus personas, equipos, actividad, organización, horarios, festivos, reglas, planes y cuentas del panel. No se puede deshacer. Solo se conserva su auditoría (quién hizo qué), que no se muestra en el panel.', 'notice'));
     const password = labeled(body, 'Tu contraseña', el('input')); password.type = 'password'; password.autocomplete = 'current-password';
@@ -1330,7 +1341,7 @@ async function tenantsPage() {
       try {
         await reauth(password.value);
         await api('POST', `/tenants/${c.id}/purge`, { tenant: c.id, body: { confirm_name: c.name, accept_hardening_loss: !!accept?.checked } });
-        dialog.close(); await reload();
+        dialog.close(); await after();
       } catch (e) {
         const n = (e.problem?.detail || '').match(/^hardened_devices:(\d+)$/)?.[1];
         if (n && !accept) {
@@ -1342,7 +1353,7 @@ async function tenantsPage() {
     });
     dialog.showModal();
   };
-  const archive = (c, on) => {
+  const archive = (c, on, after = reload) => {
     const name = c.branding?.display_name || c.name;
     const { dialog, body, ok, show } = dialogShell(on ? `Archivar ${name}` : `Desarchivar ${name}`);
     body.append(el('p', on
@@ -1353,14 +1364,15 @@ async function tenantsPage() {
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault(); if (confirmName.value.trim() !== c.name) { show('El nombre no coincide.'); return; }
       ok.disabled = true;
-      try { await api('PATCH', `/tenants/${c.id}`, { tenant: c.id, body: { archived: on }, ifMatch: c.version }); dialog.close(); await reload(); }
+      try { await api('PATCH', `/tenants/${c.id}`, { tenant: c.id, body: { archived: on }, ifMatch: c.version }); dialog.close(); await after(); }
       catch (e) { show(e.status === 412 ? 'Alguien más la modificó: recarga la página.' : e); ok.disabled = false; }
     });
     dialog.showModal();
   };
-  const editor = c => {
+  // Pestaña «Datos y marca» (antes, el diálogo «Editar y marca»). La empresa dueña edita aquí la marca del producto.
+  const editor = (c, parent, after) => {
     const owner = c.id === PLATFORM_TENANT; const brand = c.branding || {};
-    const { dialog, body, ok, show } = dialogShell(owner ? `Marca del producto (${c.name})` : `Editar ${c.branding?.display_name || c.name}`);
+    const { form, body, ok, cancel, show } = formShell(parent, owner ? `Marca del producto (${c.name})` : 'Datos y marca');
     if (owner) body.append(el('p', 'Esta es la empresa dueña: lo que cambies aquí (nombre visible y logo) se ve en el login y en la barra lateral de todas las cuentas.'));
     const name = labeled(body, 'Nombre interno', el('input')); name.maxLength = 120; name.value = c.name;
     const display = labeled(body, owner ? 'Nombre del producto' : 'Nombre visible (marca)', el('input')); display.maxLength = 100; display.value = brand.display_name || c.name;
@@ -1384,7 +1396,9 @@ async function tenantsPage() {
       group = el('select'); group.append(new Option('Ninguno (cliente independiente)', '')); groups.forEach(g => group.append(new Option(g.name, g.id)));
       group.value = groupOf(c.id)?.id || ''; labeled(body, 'Pertenece al grupo empresarial', group, 'Las cuentas de grupo (por ejemplo la del presidente) entran a todos los clientes de su grupo. Sacarlo de un grupo les quita ese acceso.');
     }
-    dialog.querySelector('form').addEventListener('submit', async ev => {
+    ok.textContent = 'Guardar datos y marca';
+    cancel.addEventListener('click', () => after(null));
+    form.addEventListener('submit', async ev => {
       ev.preventDefault();
       const f = file.files[0];
       if (!name.value.trim() || !display.value.trim()) { show('Escribe el nombre interno y el visible.'); return; }
@@ -1403,72 +1417,302 @@ async function tenantsPage() {
           if (group.value) { const g = (await api('GET', '/company-groups', { tenant: PLATFORM_TENANT })).data.find(x => x.id === group.value); await move(g, [...g.tenant_ids, c.id]); }
           groups = (await api('GET', '/company-groups', { tenant: PLATFORM_TENANT })).data;
         }
-        dialog.close();
         if (owner) { location.reload(); return; }
-        await reload();
+        await after('Datos y marca guardados.');
       } catch (e) {
         show(e.status === 412 ? 'Alguien más cambió este cliente: recarga la página.' : e.problem?.detail === 'invalid_image' ? 'El archivo no es una imagen válida del tipo indicado.' : e);
         ok.disabled = false;
       }
     });
+  };
+  // ---- Ficha: pestañas de solo lectura y accesos directos --------------------------------------------------------
+  const facts = parent => { const dl = el('dl', undefined, 'facts client-facts'); parent.append(dl); return (k, v) => { const d = el('div'); const dd = el('dd'); if (v instanceof Node) dd.append(v); else dd.textContent = v; d.append(el('dt', k), dd); dl.append(d); return dd; }; };
+  const devicesOf = c => optional(api('GET', `/tenants/${c.id}/devices?limit=100`, { tenant: c.id }));
+  const devicesText = r => !r ? 'Sin dato' : `${r.data.length}${r.next_cursor ? '+' : ''} registrados · ${r.data.filter(online).length} en línea ahora`;
+  const progressOf = c => evaluateOnboarding({ tenant: c.id, apiFn: (m, p) => api(m, p, { tenant: c.id }) });
+  const progressText = r => r.kind !== 'ready' ? 'No disponible' : r.saved?.status === 'closed' ? 'Finalizada' : (({ done: d, total }) => `${d} de ${total} pasos necesarios hechos`)(countSteps(r.steps));
+  const summaryTab = async (c, panel, again, go) => {
+    const owner = c.id === PLATFORM_TENANT;
+    const s = surface('Resumen', panel);
+    const state = el('div', undefined, 'actions no-margin client-state');
+    state.append(c.archived ? badge('Archivado (solo lectura)', '') : badge(c.status === 'active' ? 'Activo' : 'Suspendido: nadie del cliente puede entrar', c.status === 'active' ? 'good' : 'bad'));
+    if (!owner && !c.archived) {
+      // §2.4: el estado se cambia desde el Resumen (también sigue en «Datos y marca»).
+      const toggle = el('button', c.status === 'active' ? 'Suspender' : 'Reactivar', c.status === 'active' ? 'danger' : ''); toggle.type = 'button';
+      toggle.addEventListener('click', async () => {
+        const next = c.status === 'active' ? 'suspended' : 'active';
+        if (next === 'suspended' && !await confirmBox({ title: 'Suspender cliente', message: `¿Suspender ${c.name}? Nadie de ese cliente podrá entrar al panel.`, okText: 'Suspender', danger: true })) return;
+        toggle.disabled = true;
+        try { await api('PATCH', `/tenants/${c.id}`, { tenant: c.id, body: { status: next }, ifMatch: c.version }); await again(next === 'active' ? 'Cliente reactivado.' : 'Cliente suspendido.'); }
+        catch (e) { fail(e.status === 412 ? new Error('Alguien más cambió este cliente: recarga la página.') : e); toggle.disabled = false; }
+      });
+      state.append(toggle);
+    }
+    s.append(state);
+    const fact = facts(s);
+    fact('Zona horaria', c.timezone);
+    if (owner) { fact('Tipo', 'Empresa dueña de Keeper: su nombre y logo son los del producto'); return; }
+    fact('Grupo empresarial', groupOf(c.id)?.name || 'Independiente');
+    const [feat, usage] = await Promise.all([optional(api('GET', `/tenants/${c.id}/features`, { tenant: c.id })), optional(api('GET', `/tenants/${c.id}/plan-usage`, { tenant: c.id }))]);
+    fact('Paquete con que se vendió', feat ? feat.package_name || packages.find(p => p.id === feat.package_id)?.name || 'Sin paquete (a medida)' : 'Sin dato');
+    fact('Funciones contratadas', feat ? `${feat.features.length} de ${catalog.length} del catálogo` : 'Sin dato');
+    fact('Plan por defecto de sus personas', feat ? planName(feat.default_plan_id) || 'Sin plan (sus equipos no reciben controles)' : 'Sin dato');
+    const inUse = (usage?.data || []).filter(x => x.people > 0);
+    fact('Planes en uso', usage ? inUse.map(x => `${x.people} en ${x.name || 'Sin plan'}`).join(' · ') || 'Aún no hay personas' : 'Sin dato');
+    fact('Personas', usage ? String(inUse.reduce((t, x) => t + x.people, 0)) : 'Sin dato');
+    const devices = fact('Equipos', 'Consultando…');
+    const progress = fact('Puesta en marcha', 'Calculando…');
+    devicesOf(c).then(r => { devices.textContent = devicesText(r); }).catch(() => { devices.textContent = 'Sin dato'; });
+    if (c.archived) progress.textContent = 'No aplica (archivado)';
+    else progressOf(c).then(r => { progress.textContent = progressText(r); }).catch(() => { progress.textContent = 'No disponible'; });
+    if (!c.archived) {
+      const next = el('div', undefined, 'actions');
+      [['marca', 'Editar datos y marca'], ['funciones', 'Revisar funciones y plan'], ['administradores', 'Ver administradores']].forEach(([k, t]) => { const b = el('button', t, 'link-button'); b.type = 'button'; b.addEventListener('click', () => go(k)); next.append(b); });
+      s.append(next);
+    }
+  };
+  const adminsTab = async (c, panel) => {
+    const owner = c.id === PLATFORM_TENANT;
+    const s = surface(owner ? 'Superadministradores' : 'Administradores', panel);
+    s.append(el('p', owner ? 'Las cuentas de la empresa dueña son superadmin: administran todos los clientes.' : 'Cuentas del panel de este cliente. Cada una pertenece a una persona y ve lo que permita su acceso: un rol y un alcance.', 'help'));
+    const all = (await api('GET', '/panel-accounts', { tenant: PLATFORM_TENANT })).data;
+    const rows = all.filter(a => owner ? a.kind === 'platform' : a.kind === 'company' && a.tenant_id === c.id);
+    const links = el('div', undefined, 'actions no-margin');
+    const manage = el('a', 'Gestionar en Administradores', 'button'); manage.href = owner ? '/cuentas.php' : `/cuentas.php?empresa=${encodeURIComponent(c.id)}`; links.append(manage);
+    if (!owner && !c.archived) {
+      const add = el('a', 'Crear cuenta', 'link-button'); add.href = `/cuentas.php?empresa=${encodeURIComponent(c.id)}&crear=1`; links.append(add);
+      links.append(clientLink('Crear la persona primero (Personas)', c.id, '/usuarios.php'));
+    }
+    s.append(links);
+    if (!rows.length) { s.append(el('p', owner ? 'No hay superadministradores.' : 'Aún no tiene administradores: crea la persona y luego su cuenta, o usa el asistente «Dar de alta un cliente» para un cliente nuevo.', 'notice spaced')); return; }
+    table(s, 'Cuentas del panel', [['Cuenta', a => { const d = el('div'); d.append(el('strong', a.user_name || a.display_name || a.email), el('small', a.email)); return d; }],
+      ['Acceso', a => a.kind === 'platform' ? 'Superadmin · todo, en todos los clientes' : a.access ? scopeSummary(a.access.role_name, a.access.scope, new Map()) : 'Sin acceso: no verá nada'],
+      ['Estado', a => !a.active ? badge('Desactivada', 'bad') : a.must_change_password ? badge('Debe cambiar la contraseña', 'warn') : badge('Activa', 'good')],
+      ['Último ingreso', a => when(a.last_login_at)]], rows, { stateKey: 'Ficha:cuentas' });
+  };
+  const devicesTab = async (c, panel) => {
+    const s = surface('Equipos e instalación', panel);
+    s.append(el('p', `Estas pantallas trabajan sobre un cliente: cada enlace deja elegido a ${clientName(c)} arriba.`, 'help'));
+    const fact = facts(s); const count = fact('Equipos', 'Consultando…');
+    devicesOf(c).then(r => { count.textContent = devicesText(r); }).catch(() => { count.textContent = 'Sin dato'; });
+    const links = el('div', undefined, 'actions');
+    if (!c.archived) links.append(clientLink('Registrar equipos nuevos', c.id, '/alta.php', 'button primary'));
+    links.append(clientLink('Ver equipos', c.id, '/equipos.php', 'button'), clientLink('Cobertura de instalación', c.id, '/cobertura.php', 'link-button'), clientLink('Asignación de equipos', c.id, '/asignaciones.php', 'link-button'));
+    s.append(links);
+  };
+  const onboardingTab = async (c, panel) => {
+    const s = surface('Puesta en marcha', panel);
+    const line = el('p', 'Calculando el avance…', 'help'); line.setAttribute('role', 'status'); s.append(line);
+    const open = el('div', undefined, 'actions client-open'); open.append(clientLink('Abrir Puesta en marcha', c.id, '/puesta-en-marcha.php', 'button primary')); s.append(open);
+    let r; try { r = await progressOf(c); } catch (e) { line.textContent = `No se pudo calcular el avance: ${errorMessage(e)}`; return; }
+    if (r.kind !== 'ready') { line.textContent = 'No disponible para este cliente.'; return; }
+    const next = nextPendingStep(r.steps);
+    line.textContent = `${progressText(r)}.${next ? ` Siguiente: paso ${next.n} · ${next.title}.` : ''}`;
+    const ol = el('ol', undefined, 'next-steps client-steps');
+    r.steps.forEach(st => { const li = el('li'); const [text, tone] = ONBOARDING_STATUS[st.status] || ONBOARDING_STATUS.pending; li.append(el('strong', st.title), ' ', badge(text, tone)); if (st.summary) li.append(el('small', st.summary)); ol.append(li); });
+    s.append(ol);
+  };
+  const advanced = c => {
+    const adv = el('details', undefined, 'more-options client-advanced'); adv.id = 'client-advanced';
+    adv.append(el('summary', 'Avanzado: archivar o eliminar el cliente'));
+    const zone = el('div', undefined, 'danger-zone'); adv.append(zone);
+    const button = (text, fn, cls = '') => { const b = el('button', text, cls); b.type = 'button'; b.addEventListener('click', fn); return b; };
+    if (!c.archived) {
+      zone.append(el('h3', 'Archivar el cliente'), el('p', 'Lo suspende (sus equipos y cuentas dejan de entrar), lo saca de su grupo empresarial y lo oculta de listas y selectores. Sus datos se conservan y se puede desarchivar.'),
+        button('Archivar cliente', () => archive(c, true, () => openClient(c.id, 'resumen', 'Cliente archivado.')), 'danger'));
+    } else {
+      zone.append(el('h3', 'Desarchivar o eliminar'), el('p', 'Desarchivar lo devuelve a las listas (sigue suspendido). Eliminar borra definitivamente sus datos; solo queda su auditoría.'));
+      const row = el('div', undefined, 'actions no-margin');
+      row.append(button('Desarchivar', () => archive(c, false, () => openClient(c.id, 'resumen', 'Cliente desarchivado.'))), button('Eliminar definitivamente', () => purge(c, async () => { location.assign('/empresas.php'); }), 'danger'));
+      zone.append(row);
+    }
+    const g = el('p', 'Los grupos empresariales se crean y editan en ', 'help'); const gl = el('a', 'la lista de Clientes'); gl.href = '/empresas.php'; g.append(gl, '.'); zone.append(g);
+    return adv;
+  };
+  const clientHeader = (title, c = null) => {
+    const h1 = document.querySelector('.page-head h1'); h1.replaceChildren(title);
+    if (c) h1.append(' ', c.archived ? badge('Archivado', '') : c.id === PLATFORM_TENANT ? badge('Dueña de la plataforma', 'info') : badge(c.status === 'active' ? 'Activo' : 'Suspendido', c.status === 'active' ? 'good' : 'bad'));
+    document.querySelector('.page-head p').textContent = !c ? '' : c.id === PLATFORM_TENANT ? 'Ficha de la empresa dueña de Keeper: su marca es la del producto.' : `Ficha del cliente · ${c.name}`;
+    const crumbs = document.querySelector('.breadcrumb'); const list = el('a', 'Clientes'); list.href = '/empresas.php';
+    crumbs.replaceChildren(crumbs.firstElementChild, el('span', '/'), list, el('span', '/'), el('span', title));
+    document.title = `${title} · ${document.title.split(' · ').slice(1).join(' · ') || 'Keeper'}`;
+  };
+  const openClient = async (id, tab = null, note = null) => {
+    action.hidden = true;
+    let c;
+    try { c = await api('GET', `/tenants/${id}`, { tenant: id }); }
+    catch (e) {
+      if (![403, 404].includes(e.status)) throw e;
+      clientHeader('Cliente no encontrado'); $('page-content').replaceChildren();
+      empty($('page-content'), 'Cliente no encontrado', 'No existe o fue eliminado. Vuelve a la lista de Clientes.'); done(); return;
+    }
+    const owner = c.id === PLATFORM_TENANT; const name = clientName(c);
+    clientHeader(name, c);
+    const content = $('page-content'); content.replaceChildren();
+    if (c.archived) content.append(el('p', 'Cliente archivado: es de solo lectura. Para cambiarlo, desarchívalo en «Avanzado» (al final de la ficha).', 'notice'));
+    const keys = owner ? ['resumen', 'marca', 'administradores'] : c.archived ? ['resumen', 'administradores', 'equipos'] : CLIENT_TABS.map(([k]) => k);
+    const tabs = CLIENT_TABS.filter(([k]) => keys.includes(k));
+    const drawn = new Set(); let ts = null;
+    const draw = key => {
+      if (!ts || drawn.has(key)) return;
+      drawn.add(key); const panel = ts.panels[key];
+      const again = n => openClient(c.id, key, n);
+      const run = { resumen: () => summaryTab(c, panel, again, k => ts.choose(k, true)), marca: () => editor(c, panel, again), funciones: () => featuresEditor(c, panel, again),
+        administradores: () => adminsTab(c, panel), equipos: () => devicesTab(c, panel), puesta: () => onboardingTab(c, panel) }[key];
+      Promise.resolve().then(run).catch(e => { panel.append(el('p', e instanceof Error && !e.status ? e.message : errorMessage(e), 'error-text')); });
+    };
+    ts = tabSet(content, { id: 'cliente', label: `Ficha de ${name}`, tabs, initial: keys.includes(tab) ? tab : 'resumen',
+      onChange: key => { history.replaceState(null, '', clientHref(c.id, key)); draw(key); } });
+    const current = keys.find(k => !ts.panels[k].hidden);
+    history.replaceState(null, '', clientHref(c.id, current)); draw(current);
+    if (!owner) content.append(advanced(c));
+    if (note) announce(note); else done();
+  };
+  // ---- Asistente «Dar de alta un cliente» (G2): 5 pasos y un solo POST /tenants/provision (todo o nada) -------------
+  const wizard = async () => {
+    const listed = (await optional(api('GET', '/roles/templates', { tenant: PLATFORM_TENANT })))?.data || [];
+    const templates = listed.some(t => t.seed_key === 'corporativo') ? listed : [{ seed_key: 'corporativo', name: 'Corporativo' }, ...listed];
+    const { dialog, form, body, ok, cancel, show } = dialogShell('Dar de alta un cliente');
+    dialog.classList.add('wide-dialog', 'client-wizard');
+    const STEPS = ['Datos', 'Qué compra', 'Primer administrador', 'Revisar y crear', 'Listo'];
+    const bar = el('ol', undefined, 'wizard-steps'); bar.setAttribute('aria-label', 'Pasos del alta');
+    const marks = STEPS.map((t, i) => { const li = el('li'); li.append(el('span', String(i + 1), 'wizard-num'), el('span', t)); bar.append(li); return li; });
+    form.querySelector('h2').after(bar);
+    const progress = el('p', '', 'help wizard-progress'); progress.setAttribute('aria-live', 'polite'); bar.after(progress);
+    const panes = STEPS.map(() => { const p = el('div', undefined, 'wizard-pane'); body.append(p); return p; });
+    const back = el('button', 'Anterior'); back.type = 'button'; ok.before(back);
+    // 1) Datos
+    const [p1, p2, p3, p4, p5] = panes;
+    p1.append(el('p', 'Cómo se llama y dónde está. El país queda en su primera sede: de él salen los festivos de sus personas.'));
+    const name = labeled(p1, 'Nombre del cliente', el('input')); name.maxLength = 100; name.autocomplete = 'off';
+    const zoneRow = el('div', undefined, 'form-grid'); p1.append(zoneRow);
+    const tz = labeled(zoneRow, 'Zona horaria', el('input')); tz.maxLength = 64; tz.value = 'America/Bogota';
+    const country = labeled(zoneRow, 'País', countrySelect('CO', 'Elige el país…'));
+    p1.append(el('p', 'Zona horaria en formato de la lista IANA, por ejemplo America/Bogota o America/Tegucigalpa.', 'help'));
+    const siteName = labeled(p1, 'Primera sede', el('input'), 'Aquí queda su primer administrador. Se renombra o se agregan más en Estructura del cliente.'); siteName.maxLength = 120; siteName.value = 'Sede principal';
+    // 2) Qué compra
+    p2.append(el('p', 'El paquete marca sus funciones; puedes ajustarlas para esta venta. El plan por defecto decide qué reciben sus personas sin plan propio.'));
+    const pkg = el('select'); pkg.append(new Option('Sin paquete (solo el núcleo)', '')); packages.forEach(p => pkg.append(new Option(p.name, p.id)));
+    labeled(p2, 'Paquete', pkg);
+    const activePlans = personPlans.filter(x => x.active);
+    const defPlan = el('select'); defPlan.append(new Option('Sin plan (sus equipos no reciben controles)', '')); activePlans.forEach(x => defPlan.append(new Option(x.name, x.id)));
+    defPlan.value = activePlans.find(x => x.name === 'Completo')?.id || '';
+    labeled(p2, 'Plan por defecto de sus personas', defPlan, 'Solo entrega las funciones que el cliente compró.');
+    const planWarn = el('p', 'Sin plan por defecto, sus equipos no reciben reglas de funciones vendibles (web, USB, descargas, instalaciones) hasta que se asigne un plan.', 'notice'); p2.append(planWarn);
+    const syncPlan = () => { planWarn.hidden = !!defPlan.value; }; defPlan.addEventListener('change', syncPlan); syncPlan();
+    const featBox = el('div'); p2.append(featBox);
+    const boxes = featureChecks(catalog, featBox, []);
+    pkg.addEventListener('change', () => { const p = packages.find(x => x.id === pkg.value); boxes.forEach(b => { b.checked = !!p && p.features.includes(b.value); }); boxes.refreshReview(); });
+    // 3) Primer administrador (Q4: «Corporativo» con alcance «Todo el cliente», editable)
+    p3.append(el('p', 'La persona que administrará el cliente. Se crea como persona del cliente con su cuenta del panel y su acceso, en un solo paso.'));
+    const adminName = labeled(p3, 'Nombre completo', el('input')); adminName.maxLength = 160; adminName.autocomplete = 'off';
+    const idRow = el('div', undefined, 'form-grid'); p3.append(idRow);
+    const doc = labeled(idRow, 'Documento o cédula (opcional)', el('input')); doc.maxLength = 40; doc.autocomplete = 'off';
+    const email = labeled(idRow, 'Correo para entrar al panel', el('input')); email.type = 'email'; email.maxLength = 254; email.autocomplete = 'off';
+    const accessRow = el('div', undefined, 'form-grid'); p3.append(accessRow);
+    const role = el('select'); templates.forEach(t => role.append(new Option(t.name, t.seed_key))); role.value = templates.some(t => t.seed_key === 'corporativo') ? 'corporativo' : templates[0].seed_key;
+    labeled(accessRow, 'Rol (qué puede hacer)', role);
+    const kind = el('select'); [['all', 'Todo el cliente'], ['team', TEAM_LABEL], ['self', 'Solo lo propio']].forEach(([v, t]) => kind.append(new Option(t, v))); kind.value = 'all';
+    labeled(accessRow, 'Alcance (qué datos ve)', kind);
+    const accessNote = el('p', '', 'help'); accessNote.setAttribute('aria-live', 'polite'); p3.append(accessNote);
+    const syncAccess = () => { accessNote.textContent = role.value === 'corporativo' && kind.value === 'all' ? 'Por defecto: «Corporativo» con alcance «Todo el cliente». Puedes cambiarlo ahora o después en Administradores.' : `Elegiste: ${scopeSummary(role.selectedOptions[0]?.textContent, { kind: kind.value }, new Map())}. El valor por defecto es «Corporativo» con alcance «Todo el cliente».`; };
+    role.addEventListener('change', syncAccess); kind.addEventListener('change', syncAccess); syncAccess();
+    p3.append(el('p', 'Su área y su cargo quedan «Sin área» y «Sin cargo» hasta que los cambies en su ficha. La contraseña temporal se muestra al final, una sola vez.', 'help'));
+    // 4) Revisar y crear
+    const review = el('dl', undefined, 'facts one wizard-review'); p4.append(el('p', 'Revisa antes de crear. Se crea todo junto: si algo falla, no queda nada a medias.'), review);
+    const pw = labeled(p4, 'Tu contraseña (confirmación)', el('input'), 'Crear la cuenta del administrador pide confirmar tu identidad.'); pw.type = 'password'; pw.autocomplete = 'current-password';
+    const featureNames = () => boxes.filter(b => b.checked).map(b => catalog.find(f => f.code === b.value)?.name || b.value);
+    const fillReview = () => {
+      review.replaceChildren();
+      const row = (k, v) => { const d = el('div'); d.append(el('dt', k), el('dd', v)); review.append(d); };
+      row('Cliente', `${name.value.trim()} · ${tz.value.trim()} · ${countryName(country.value)}`);
+      row('Primera sede', siteName.value.trim() || 'Sede principal');
+      row('Paquete', pkg.selectedOptions[0].textContent);
+      const fs = featureNames(); row('Funciones', fs.length ? `${fs.length}: ${fs.join(', ')}` : 'Solo el núcleo');
+      row('Plan por defecto de sus personas', defPlan.selectedOptions[0].textContent);
+      row('Primer administrador', `${adminName.value.trim()}${doc.value.trim() ? ` · documento ${doc.value.trim()}` : ''} · ${email.value.trim()}`);
+      row('Acceso', scopeSummary(role.selectedOptions[0].textContent, { kind: kind.value }, new Map()));
+    };
+    let step = 0; let created = null;
+    const go = (n, focus = true) => {
+      step = n;
+      panes.forEach((p, i) => { p.hidden = i !== n; });
+      marks.forEach((li, i) => { li.classList.toggle('done', i < n); if (i === n) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current'); });
+      progress.textContent = `Paso ${n + 1} de ${STEPS.length}: ${STEPS[n]}`;
+      back.hidden = n === 0 || n === 4; cancel.hidden = n === 4;
+      ok.textContent = n === 3 ? 'Crear cliente' : n === 4 ? 'Cerrar' : 'Siguiente';
+      ok.classList.toggle('primary', true); ok.disabled = false;
+      form.querySelector('.error-text').hidden = true;
+      if (n === 3) fillReview();
+      if (focus) (panes[n].querySelector('input:not([type=checkbox]), select') || ok).focus();
+    };
+    const taken = v => companies.some(c => fold(c.name) === fold(v) || fold(clientName(c)) === fold(v));
+    const problem = n => {
+      if (n === 0) {
+        if (!name.value.trim()) return ['Escribe el nombre del cliente.', name];
+        if (taken(name.value)) return ['Ya existe un cliente con ese nombre. Ábrelo desde la lista o usa otro nombre.', name];
+        if (!validZone(tz.value.trim())) return ['Esa zona horaria no existe. Ejemplo: America/Bogota.', tz];
+        if (!country.value) return ['Elige el país del cliente.', country];
+      }
+      if (n === 2) {
+        if (!adminName.value.trim()) return ['Escribe el nombre del administrador.', adminName];
+        if (doc.value.trim() && !DOCUMENT_RE.test(doc.value.trim())) return ['El documento lleva de 3 a 40 letras o números (puede tener puntos, espacios o guiones).', doc];
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim())) return ['Escribe un correo válido para entrar al panel.', email];
+      }
+      if (n === 3 && !pw.value) return ['Escribe tu contraseña para confirmar.', pw];
+      return null;
+    };
+    back.addEventListener('click', () => go(step - 1));
+    dialog.addEventListener('close', () => { if (created) reload().catch(fail); });
+    const finish = r => {
+      created = r;
+      p5.replaceChildren();
+      const head = el('div', undefined, 'notice'); head.setAttribute('role', 'status');
+      head.append(el('strong', `${clientName(r.tenant)} quedó dado de alta.`), el('p', `Primer administrador: ${r.user.display_name} (${r.account.email}) · ${scopeSummary(r.account.access?.role_name, r.account.access?.scope, new Map())}.`));
+      p5.append(head);
+      p5.append(el('p', `Entrégale esta contraseña temporal a ${r.user.display_name}. Solo se muestra ahora: al entrar deberá cambiarla.`));
+      p5.append(el('pre', r.temporary_password, 'secret'));
+      const copy = el('button', 'Copiar contraseña'); copy.type = 'button'; copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(r.temporary_password); copy.textContent = 'Copiada'; } catch { copy.textContent = 'Selecciónala y cópiala'; } });
+      p5.append(copy, el('p', `Correo para entrar: ${r.account.email}`, 'help'));
+      p5.append(el('h3', 'Siguientes pasos'));
+      const links = el('div', undefined, 'actions wizard-next');
+      const fichaLink = el('a', 'Abrir la ficha del cliente', 'button'); fichaLink.href = clientHref(r.tenant.id);
+      links.append(clientLink('Seguir en Puesta en marcha', r.tenant.id, '/puesta-en-marcha.php', 'button primary'), fichaLink, clientLink('Registrar equipos nuevos', r.tenant.id, '/alta.php', 'button'));
+      p5.append(links);
+      go(4, false); copy.focus();
+    };
+    form.addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (step === 4) { dialog.close(); return; }
+      const p = problem(step); if (p) { show(p[0], p[1]); return; }
+      if (step < 3) { go(step + 1); return; }
+      ok.disabled = true; back.disabled = true;
+      try {
+        await reauth(pw.value);
+        const r = await api('POST', '/tenants/provision', { tenant: PLATFORM_TENANT, body: {
+          name: name.value.trim(), timezone: tz.value.trim(), country_code: country.value || null, site_name: siteName.value.trim() || 'Sede principal',
+          package_id: pkg.value || null, features: boxes.filter(b => b.checked).map(b => b.value), default_plan_id: defPlan.value || null,
+          admin: { display_name: adminName.value.trim(), email: email.value.trim(), document: doc.value.trim() || null, role: role.value, scope_kind: kind.value } } });
+        pw.value = ''; back.disabled = false; finish(r);
+      } catch (e) {
+        back.disabled = false; ok.disabled = false;
+        const detail = e.problem?.detail;
+        if (e.code === 'invalid_credentials') { show('Tu contraseña no es correcta.', pw); return; }
+        if (detail === 'tenant_name_taken') { go(0); show('Ya existe un cliente con ese nombre. Usa otro nombre.', name); return; }
+        if (detail === 'email_in_use') { go(2); show('Ese correo ya tiene una cuenta del panel. Usa otro correo.', email); return; }
+        if (detail === 'document_in_use') { go(2); show('Ese documento ya está registrado.', doc); return; }
+        if (detail === 'unknown_plan') { go(1); show('Ese plan está inactivo; elige otro.', defPlan); return; }
+        show(e.status === 422 ? `Revisa los datos: ${errorMessage(e)}` : e);
+      }
+    });
+    go(0, false);
     dialog.showModal();
   };
-  const action = $('page-action'); action.textContent = 'Dar de alta un cliente'; action.hidden = false;
-  action.addEventListener('click', () => {
-    const { dialog, body, ok, show } = dialogShell('Dar de alta un cliente');
-    body.append(el('p', 'Después de darlo de alta: revisa sus funciones y su plan, configura su estructura, crea a su administrador como persona, luego su cuenta del panel y por último prepara la instalación de sus equipos.'));
-    const name = labeled(body, 'Nombre del cliente', el('input')); name.maxLength = 100;
-    const tz = labeled(body, 'Zona horaria', el('input'), 'Ejemplo: America/Bogota'); tz.maxLength = 64; tz.value = 'America/Bogota';
-    const pkg = el('select'); pkg.append(new Option('Sin paquete (solo el núcleo)', '')); packages.forEach(p => pkg.append(new Option(p.name, p.id)));
-    labeled(body, 'Paquete', pkg, 'Define las funciones que compra. Se pueden ajustar después en "Funciones".');
-    // R7: el plan por defecto se elige aquí. La API ya deja «Completo» al crear; si se elige otro se guarda en seguida.
-    const activePlans = personPlans.filter(x => x.active);
-    const fullPlan = activePlans.find(x => x.name === 'Completo');
-    const defPlan = el('select'); defPlan.append(new Option('Sin plan (sus equipos no reciben controles)', '')); activePlans.forEach(x => defPlan.append(new Option(x.name, x.id)));
-    defPlan.value = fullPlan?.id || '';
-    labeled(body, 'Plan por defecto de sus personas', defPlan, 'Las personas sin plan propio usan este. Solo entrega las funciones que el cliente compró.');
-    ok.textContent = 'Dar de alta';
-    dialog.querySelector('form').addEventListener('submit', async ev => {
-      ev.preventDefault();
-      if (!name.value.trim()) { show('Escribe el nombre del cliente.'); return; }
-      ok.disabled = true;
-      let created;
-      try {
-        created = await api('POST', '/tenants', { tenant: PLATFORM_TENANT, body: { name: name.value.trim(), timezone: tz.value.trim(), package_id: pkg.value || null,
-          branding: { display_name: name.value.trim(), logo_url: `${location.origin}/branding.svg`, primary_color: '#3C4082', accent_color: '#5A61B3' } } });
-      } catch (e) { show(e.status === 422 ? 'Revisa el nombre y la zona horaria (ejemplo: America/Bogota).' : e); ok.disabled = false; return; }
-      let planProblem = null;
-      try {
-        const current = await api('GET', `/tenants/${created.id}/features`, { tenant: created.id });
-        if ((current.default_plan_id || '') !== defPlan.value) await api('PUT', `/tenants/${created.id}/features`, { tenant: created.id, body: { package_id: current.package_id, features: current.features, default_plan_id: defPlan.value || null } });
-      } catch (e) { planProblem = errorMessage(e); }
-      dialog.close(); await reload(); nextSteps(created, () => featuresEditor(companies.find(x => x.id === created.id) || created), planProblem);
-    });
-    dialog.showModal();
-  });
-  render();
-}
-// Recorrido tras dar de alta un cliente: la cuenta pertenece a una persona, así que la persona va antes que la cuenta.
-function nextSteps(created, reviewFeatures, planProblem = null) {
-  const { dialog, body, ok, cancel } = dialogShell(`${created.branding?.display_name || created.name} quedó dado de alta`);
-  if (planProblem) body.append(el('p', `El cliente se creó, pero no se pudo guardar el plan por defecto: ${planProblem} Revísalo en «Revisar funciones y plan».`, 'error-text'));
-  // Puesta en marcha (fase 4): el recorrido guiado del cliente recién creado, ya elegido en el selector.
-  const guide = el('p', undefined, 'next-steps-guide');
-  guide.append(clientLink('Configurar este cliente', created.id, '/puesta-en-marcha.php', 'button primary'), el('small', 'Abre Puesta en marcha: ocho pasos hasta comprobar su primer equipo.', 'help'));
-  body.append(guide);
-  body.append(el('p', 'O, directamente, en este orden:'));
-  const ol = el('ol', undefined, 'next-steps'); body.append(ol);
-  const step = (text, note, link) => { const li = el('li'); li.append(el('strong', text), ' · ', link); if (note) li.append(el('small', note)); ol.append(li); };
-  const review = el('button', 'Revisar funciones y plan', 'link-button'); review.type = 'button';
-  review.addEventListener('click', () => { dialog.close(); reviewFeatures(); });
-  step('Revisar funciones y plan', 'Lo que compró y el plan por defecto de sus personas.', review);
-  step('Configurar la estructura', 'Sedes (con su país), áreas y cargos.', clientLink('Abrir Estructura del cliente', created.id, '/organizacion.php'));
-  step('Crear al administrador como persona', 'Toda cuenta de un cliente pertenece a una persona.', clientLink('Abrir Personas', created.id, '/usuarios.php'));
-  const acc = el('a', 'Crear cuenta', 'link-button'); acc.href = `/cuentas.php?empresa=${encodeURIComponent(created.id)}&crear=1`;
-  step('Crear su cuenta del panel', 'Requiere la persona del paso anterior.', acc);
-  step('Preparar la instalación', 'Registrar los equipos de sus personas.', clientLink('Abrir Registrar equipos nuevos', created.id, '/alta.php'));
-  cancel.hidden = true; ok.textContent = 'Cerrar'; ok.type = 'button'; ok.addEventListener('click', () => dialog.close());
-  dialog.showModal();
+  action.textContent = 'Dar de alta un cliente'; action.hidden = false;
+  action.addEventListener('click', () => { wizard().catch(fail); });
+  const params = new URLSearchParams(location.search);
+  if (isUuid(params.get('cliente'))) await openClient(params.get('cliente').toLowerCase(), params.get('pestana'));
+  else render();
 }
 const sortCompanies = list => [...list].sort((a, b) => (b.id === PLATFORM_TENANT) - (a.id === PLATFORM_TENANT) || (a.branding?.display_name || a.name).localeCompare(b.branding?.display_name || b.name, 'es'));
 
@@ -3477,7 +3721,7 @@ const AUDIT_ACTIONS = {
   createPolicy: 'Creó una regla de equipos', patchPolicy: 'Editó una regla de equipos', createTier: 'Creó un plan', patchTier: 'Editó un plan',
   createSuspiciousApp: 'Agregó una app a vigilar', putSuspiciousApp: 'Editó una app vigilada', deleteSuspiciousApp: 'Dejó de vigilar una app', putInstallCoverage: 'Editó la cobertura de una persona',
   putAppClassification: 'Clasificó una aplicación', createAppClassificationOverride: 'Creó una excepción de clasificación', deleteAppClassificationOverride: 'Quitó una excepción de clasificación', createAppSite: 'Agregó un sitio reconocible',
-  createTenant: 'Dio de alta un cliente', createFeaturePackage: 'Creó un paquete de funciones', patchFeaturePackage: 'Editó un paquete de funciones', createPersonPlan: 'Creó un plan por persona', patchPersonPlan: 'Editó un plan por persona', setUserPlan: 'Cambió el plan de una persona', putTenantFeatures: 'Cambió las funciones contratadas de un cliente',patchTenant: 'Editó un cliente', purgeTenant: 'Eliminó un cliente definitivamente', uploadTenantLogo: 'Cambió el logo del cliente', putPanelSettings: 'Cambió los ajustes del panel',
+  createTenant: 'Dio de alta un cliente', provisionTenant: 'Dio de alta un cliente con su primer administrador (asistente)', createFeaturePackage: 'Creó un paquete de funciones', patchFeaturePackage: 'Editó un paquete de funciones', createPersonPlan: 'Creó un plan por persona', patchPersonPlan: 'Editó un plan por persona', setUserPlan: 'Cambió el plan de una persona', putTenantFeatures: 'Cambió las funciones contratadas de un cliente',patchTenant: 'Editó un cliente', purgeTenant: 'Eliminó un cliente definitivamente', uploadTenantLogo: 'Cambió el logo del cliente', putPanelSettings: 'Cambió los ajustes del panel',
   createCompanyGroup: 'Creó un grupo empresarial', patchCompanyGroup: 'Editó un grupo empresarial', deleteCompanyGroup: 'Eliminó un grupo empresarial',
   createDataSource: 'Conectó una fuente de datos', patchDataSource: 'Editó una fuente de datos', putDataDomains: 'Cambió quién manda en cada dato', runDataSource: 'Sincronizó una fuente',
   approveSyncRun: 'Aprobó una sincronización bloqueada', resolveSyncItem: 'Resolvió un pendiente de sincronización',
