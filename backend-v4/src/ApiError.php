@@ -6,6 +6,8 @@ final class ApiError extends \RuntimeException
 {
     /** Se ejecuta en su propia transaccion despues del rollback de la peticion (p. ej. auditar una denegacion). */
     public ?\Closure $afterRollback = null;
+    /** 422 del cuerpo de la peticion: ['pointer' => ruta JSON, 'rule' => regla] del Validator (nunca el valor). Lo pone Request. */
+    public ?array $bodyFailure = null;
     /** $extra: campos adicionales del Problem declarados en el contrato (p. ej. relocation en 409 device_relocated). */
     /** $errors: Problem.errors (pointer, code, message), p. ej. que persona y que rol causaron un 403 de delegacion. */
     public function __construct(public readonly int $status, public readonly string $errorCode, public readonly array $headers = [], public readonly ?string $detail = null, public readonly array $errors = [], public readonly array $extra = [])

@@ -218,6 +218,22 @@ try {
     $ack = expect(request('POST', '/client/episodes:batch', $batch, $key, $bearer, Util::uuid()), 200, 'event dedupe')['acks'][0]; check($ack['status'] === 'duplicate', 'ledger dedupe');
     $sync['episodes'] = [$episode];
     $s = expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'cross-route dedupe'); check($s['episode_acks'][0]['status'] === 'duplicate', 'sync does not duplicate'); unset($sync['episodes']);
+    // 4.0.25 (ACT-0033): el 422 del sync dice que elemento, campo y regla (Problem.errors[0]) para que el agente aparte solo
+    // ese elemento y envie el resto; nunca el valor. El agente de esta prueba es 4.0.0: el campo extra no le cambia nada.
+    $poison = $episode; $poison['event_id'] = Util::uuid(); $poison['window_title'] = str_repeat('Z', 1025);
+    $sync['episodes'] = [$episode, $poison];
+    $p = expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 422, 'poison episode rejects the sync');
+    check(($p['code'] ?? null) === 'validation_failed' && count($p['errors'] ?? []) === 1, '422 lists one error');
+    check(($p['errors'][0]['pointer'] ?? null) === '/episodes/1/window_title' && ($p['errors'][0]['code'] ?? null) === 'length', '422 error names element, field and rule');
+    check(!str_contains(json_encode($p), 'ZZZZ'), '422 never echoes the rejected value');
+    $sync['episodes'] = [$episode];
+    expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'remaining element goes through after the agent sets the bad one aside'); unset($sync['episodes']);
+    $sync['policy_version'] = '1';
+    $p = expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 422, 'envelope field rejected');
+    check(($p['errors'][0]['pointer'] ?? null) === '/policy_version', 'envelope 422 points to the envelope field');
+    $sync['policy_version'] = 1;
+    $p = expect(request('POST', '/client/sync', $sync, $key, $bearer), 422, 'missing idempotency still 422');
+    check(!isset($p['errors']), 'header 422 carries no body pointer');
     $conflict = $episode; $conflict['process_name'] = 'other.exe';
     $ack = expect(request('POST', '/client/episodes:batch', ['episodes' => [$conflict]], $key, $bearer, Util::uuid()), 200, 'event hash conflict')['acks'][0]; check($ack['code'] === 'event_conflict', 'same UUID different body rejected');
     expect(request('POST', '/client/episodes:batch', ['episodes' => [$episode, $episode]], $key, $bearer, Util::uuid()), 422, 'duplicate UUID envelope rejected');

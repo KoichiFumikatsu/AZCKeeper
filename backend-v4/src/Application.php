@@ -78,16 +78,25 @@ final class Application
             $this->send($e->status, Util::json(['error'=>$e->errorCode]), $id, ['Cache-Control'=>'no-store', 'Pragma'=>'no-cache'] + ($e->status === 401 ? ['WWW-Authenticate'=>'Basic realm="keeper-oauth"'] : []));
         } catch (ApiError $e) {
             // Un 422 del agente bloquea su cola entera (reintenta el mismo envio): registrar campo y regla, nunca valores.
+            // Desde 4.0.25 el agente lee Problem.errors[0] (pointer + regla) para apartar solo ese elemento y enviar el resto.
+            // Va a todas las versiones: ningun agente lee el cuerpo de un 422 (solo el de un 409 device_relocated), y el
+            // cuerpo se valida antes de autenticar, cuando aun no se sabe la version del agente.
+            $errors = $e->errors;
             if ($e->status === 422 && str_starts_with(explode('?', $_SERVER['REQUEST_URI'] ?? '')[0], '/v1/client/')) {
-                $where = $e->errorCode === 'validation_failed' && isset($this->validator) ? ($this->validator->lastFailure ?? []) : [];
+                $where = $e->errorCode === 'validation_failed' ? ($e->bodyFailure ?? []) : [];
                 error_log('keeper client_rejected request=' . $id . ' route=' . explode('?', $_SERVER['REQUEST_URI'] ?? '')[0] . ' code=' . $e->errorCode
                     . (isset($where['pointer']) ? ' pointer=' . $where['pointer'] . ' rule=' . $where['rule'] : ''));
+                if (isset($where['pointer']) && count($errors) < 50) {
+                    $rule = mb_substr($where['rule'], 0, 80, 'UTF-8');
+                    $errors[] = ['pointer' => mb_substr($where['pointer'], 0, 160, 'UTF-8'), 'code' => $rule,
+                        'message' => mb_substr('El campo no cumple la regla ' . $rule . ' del contrato (el valor no se incluye).', 0, 200, 'UTF-8')];
+                }
             }
             if (explode('?',$_SERVER['REQUEST_URI']??'')[0]==='/v1/oauth/token' && in_array($e->status,[400,401],true)) {
                 $this->send($e->status,Util::json(['error'=>$e->status===401?'invalid_client':'invalid_request']),$id,$e->status===401?['WWW-Authenticate'=>'Basic realm="keeper-oauth"']:[]);
                 return;
             }
-            $this->send($e->status, Util::json(['type' => 'about:blank', 'title' => $e->errorCode, 'status' => $e->status, 'code' => $e->errorCode, 'request_id' => $id] + ($e->detail===null?[]:['detail'=>$e->detail]) + ($e->errors===[]?[]:['errors'=>$e->errors]) + $e->extra), $id, $e->headers, true);
+            $this->send($e->status, Util::json(['type' => 'about:blank', 'title' => $e->errorCode, 'status' => $e->status, 'code' => $e->errorCode, 'request_id' => $id] + ($e->detail===null?[]:['detail'=>$e->detail]) + ($errors===[]?[]:['errors'=>$errors]) + $e->extra), $id, $e->headers, true);
         } catch (\Throwable $e) {
             $status = $e instanceof \PDOException ? 503 : 500;
             // Exception messages may contain secrets; log only class, correlation ID and numeric driver metadata.

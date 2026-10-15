@@ -1,5 +1,5 @@
 {
-  "source_sha256": "c138080a7d5c6149d86a70efaba8273a76493bf67d141b541b9e28c39825da53",
+  "source_sha256": "fe3b7419327aabf26ef7e39df67e8f585e50b849ca14f4f9a860aa0733e901a7",
   "paths": {
     "/me": {
       "get": {
@@ -31478,6 +31478,7 @@
         },
         "errors": {
           "type": "array",
+          "description": "En 422 validation_failed de /v1/client/* (agente 4.0.25+ lo usa para apartar solo el elemento malo), un elemento con pointer JSON del campo del cuerpo (p. ej. /episodes/10/window_title) y code = regla incumplida (length, pattern, type, enum, required:<campo>...). Nunca lleva el valor rechazado.",
           "items": {
             "type": "object",
             "additionalProperties": false,

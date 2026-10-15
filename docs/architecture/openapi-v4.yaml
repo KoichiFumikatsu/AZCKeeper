@@ -18398,6 +18398,7 @@ components:
           description: Solo con code=device_relocated (409). JWS de la mudanza que el agente debe aplicar.
         errors:
           type: array
+          description: En 422 validation_failed de /v1/client/* (agente 4.0.25+ lo usa para apartar solo el elemento malo), un elemento con pointer JSON del campo del cuerpo (p. ej. /episodes/10/window_title) y code = regla incumplida (length, pattern, type, enum, required:<campo>...). Nunca lleva el valor rechazado.
           items:
             type: object
             additionalProperties: false

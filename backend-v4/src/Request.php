@@ -106,7 +106,10 @@ final class Request
             if (!preg_match('~^application/json(?:\s*;\s*charset=utf-8)?$~iD', $headers['content-type'] ?? '')) { throw new ApiError(415, 'unsupported_media_type'); }
             try { $body = json_decode($this->raw, false, 32, JSON_THROW_ON_ERROR); }
             catch (\JsonException) { throw new ApiError(400, 'invalid_json'); }
-            $validator->check($this->operation['requestBody']['content']['application/json']['schema'], $body);
+            // Campo y regla del rechazo (Validator::$lastFailure del ultimo fail, el que escapa): solo del cuerpo, no de
+            // cabeceras ni query, para que el agente aparte el elemento que apunta (Application, rutas /v1/client/*).
+            try { $validator->check($this->operation['requestBody']['content']['application/json']['schema'], $body); }
+            catch (ApiError $e) { $e->bodyFailure = $validator->lastFailure; throw $e; }
             $this->body = $body;
         } else { $this->body = null; }
         foreach ($this->operation['parameters'] ?? [] as $param) {
