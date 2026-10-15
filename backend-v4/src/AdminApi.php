@@ -171,6 +171,7 @@ final class AdminApi
             'getAdminDashboard','getAppsReport','getPresenceReport','getUserActivity','getUserPolicies','getPeopleReport'=>(new ActivityReports($this->db,$this->c,$this->access))->dispatch($op,$id),
             'issueMigrationAuthorization','validateMigrationAuthorization','getEscrowKey','persistDeviceEscrow','verifyDeviceEscrow','recoverDeviceEscrow','getDeviceMigration','setDeviceMigration'=>(new MigrationApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listTenants','createTenant','getTenant','patchTenant','setRbacGate'=>$this->tenants($op,$b), 'uploadTenantLogo'=>$this->tenantLogo($b),
+            'provisionTenant'=>$this->provisionTenant($b), 'listRoleTemplates'=>$this->roleTemplates(),
             'listOrganization','createOrgUnit','getOrgUnit','patchOrgUnit','deleteOrgUnit'=>$this->organization($op,$id,$b),
             'listSchedules','createSchedule','getSchedule','putSchedule'=>$this->schedules($op,$id,$b),
             'listUsers','createUser','getUser','patchUser'=>$this->users($op,$id,$b),
@@ -232,21 +233,15 @@ final class AdminApi
             // Plan por defecto Completo: las funciones reales se limitan a las que el cliente compro (tenant_features), asi que no regala nada.
             $full=$this->db->one('SELECT id FROM person_plans WHERE tenant_id=0x00000000000040008000000000000001 AND name=? AND active=TRUE',[PersonPlans::FULL_PLAN]);
             if ($full) { $this->db->run('UPDATE tenants SET default_plan_tenant_id=0x00000000000040008000000000000001,default_plan_id=? WHERE tenant_id=?',[$full['id'],$id]); }
-            // Funciones del cliente nuevo: las de su paquete (sin paquete, solo el nucleo).
-            if (isset($b->package_id)) {
-                $pkg=Util::bin($b->package_id);
-                $codes=array_column($this->db->run('SELECT feature_code FROM feature_package_items WHERE tenant_id=? AND package_id=?',[Util::bin(AdminAuth::PLATFORM),$pkg])->fetchAll(),'feature_code');
+            // Funciones del cliente nuevo: las de su paquete (sin paquete, solo el nucleo). El alta completa (provisionTenant)
+            // pasa ademas los ajustes de la venta en `features` (no es parte de TenantCreate): asi los roles base nacen con ellas.
+            if (isset($b->package_id) || isset($b->features)) {
+                $pkg=isset($b->package_id)?Util::bin($b->package_id):null;
+                $codes=$b->features??array_column($this->db->run('SELECT feature_code FROM feature_package_items WHERE tenant_id=? AND package_id=?',[Util::bin(AdminAuth::PLATFORM),$pkg])->fetchAll(),'feature_code');
                 (new FeatureAdmin($this->db,$this->c,$this->r))->apply($id,$pkg,$codes);
             }
             // Roles base del cliente nuevo (§4): las plantillas ofrecidas, solo con permisos de sus funciones (o del nucleo).
-            foreach ($this->db->run('SELECT * FROM role_templates WHERE platform_only=FALSE AND offered=TRUE ORDER BY seed_key')->fetchAll() as $template) {
-                $role=Util::bin(Util::uuid());
-                $this->db->run("INSERT INTO roles (tenant_id,id,name,seed_key,seed_version) VALUES (?,?,?,?,?)",[$id,$role,$template['name'],$template['seed_key'],$template['version']]);
-                foreach (array_column($this->db->run('SELECT permission_code FROM role_template_permissions WHERE seed_key=?',[$template['seed_key']])->fetchAll(),'permission_code') as $code) {
-                    $f=Features::forOperation('',$code);
-                    if ($f===null || Features::has($this->db,$id,$f)) { $this->db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)',[$id,$role,$code]); }
-                }
-            }
+            foreach ($this->db->run('SELECT * FROM role_templates WHERE platform_only=FALSE AND offered=TRUE ORDER BY seed_key')->fetchAll() as $template) { $this->seedRole($id,$template); }
         } else { $id=$this->tenant; $row=$this->row('tenants',$id,'tenant_id'); if ($op==='getTenant') { return $this->result($this->tenantDto($row)); } $this->match($row); }
         if ($op==='setRbacGate') {
             // Q3 (2026-10-15): una sola llave. Activar o revocar la autogestion es encender o apagar la funcion vendible
@@ -296,6 +291,67 @@ final class AdminApi
         $this->db->run('UPDATE tenants SET version=version+1 WHERE tenant_id=?',[$this->tenant]);
         $this->audit('tenant',$this->tenant,['branding.logo_url']);
         return $this->result($this->tenantDto($this->row('tenants',$this->tenant,'tenant_id')));
+    }
+    /** Rol base de un cliente desde su plantilla: solo con permisos de funciones que el cliente compro (o del nucleo). */
+    private function seedRole(string $tenant,array $template): string
+    {
+        $role=Util::bin(Util::uuid());
+        $this->db->run("INSERT INTO roles (tenant_id,id,name,seed_key,seed_version) VALUES (?,?,?,?,?)",[$tenant,$role,$template['name'],$template['seed_key'],$template['version']]);
+        foreach (array_column($this->db->run('SELECT permission_code FROM role_template_permissions WHERE seed_key=?',[$template['seed_key']])->fetchAll(),'permission_code') as $code) {
+            $f=Features::forOperation('',$code);
+            if ($f===null || Features::has($this->db,$tenant,$f)) { $this->db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)',[$tenant,$role,$code]); }
+        }
+        return $role;
+    }
+    /** Plantillas de rol que recibe un cliente nuevo (asistente de alta: rol del primer administrador). */
+    private function roleTemplates(): array
+    {
+        $rows=$this->db->run('SELECT seed_key,name FROM role_templates WHERE platform_only=FALSE AND offered=TRUE ORDER BY name')->fetchAll();
+        return self::response(['data'=>array_map(static fn($t)=>['seed_key'=>$t['seed_key'],'name'=>$t['name']],$rows)]);
+    }
+    /**
+     * Alta completa de un cliente (asistente «Dar de alta un cliente»), todo en la transaccion de la peticion: si un paso
+     * falla no queda nada. Cada paso pasa por el mismo codigo y deja la misma auditoria que su operacion suelta
+     * (createTenant, putTenantFeatures, createOrgUnit, createUser, createPanelAccount); ademas queda provisionTenant en la
+     * auditoria de la plataforma. Exige reautenticacion reciente, como crear una cuenta del panel.
+     */
+    private function provisionTenant(object $b): array
+    {
+        $this->reauth(); $this->access->requireFull();
+        $platform=$this->c; $name=trim($b->name);
+        if ($name==='') { throw new ApiError(422,'validation_failed'); }
+        // Idempotencia razonable: el nombre identifica al cliente (repetir el envio no crea un segundo cliente).
+        if ($this->db->one('SELECT tenant_id FROM tenants WHERE deleted_at IS NULL AND TRIM(name)=?',[$name])) { throw new ApiError(409,'invalid_transition',[],'tenant_name_taken'); }
+        $step=function (string $op,string $permission,callable $run) {
+            $this->auditOp=$op; $this->access=new AdminAccess($this->db,$this->c,$permission,$op);
+            try { return $run(); } finally { $this->auditOp=null; }
+        };
+        $step('createTenant','empresas.gestionar',fn()=>$this->tenants('createTenant',(object)['name'=>$name,'timezone'=>$b->timezone,'package_id'=>$b->package_id,'features'=>$b->features,
+            'branding'=>(object)['display_name'=>mb_substr($name,0,100),'logo_url'=>rtrim(Config::get('ORIGIN'),'/').'/branding.svg','primary_color'=>'#3C4082','accent_color'=>'#5A61B3']]));
+        $tenant=$this->tenant;
+        // Plan por defecto: createTenant deja «Completo»; si se eligio otro (o ninguno) se guarda como en Funciones del cliente.
+        if (($this->db->one('SELECT default_plan_id FROM tenants WHERE tenant_id=?',[$tenant])['default_plan_id']??null)!==($b->default_plan_id===null?null:Util::bin($b->default_plan_id))) {
+            (new FeatureAdmin($this->db,$this->c,$this->r))->dispatch('putTenantFeatures',null,(object)['package_id'=>$b->package_id,'features'=>$b->features,'default_plan_id'=>$b->default_plan_id]);
+        }
+        // Rol del primer administrador (Q4: «Corporativo» por defecto). Si su plantilla no se ofrece a clientes nuevos, se siembra igual.
+        $role=$this->db->one('SELECT id FROM roles WHERE tenant_id=? AND seed_key=?',[$tenant,$b->admin->role])['id']??null;
+        if ($role===null && $b->admin->role==='corporativo') {
+            $template=$this->db->one("SELECT * FROM role_templates WHERE seed_key='corporativo' AND platform_only=FALSE");
+            if (!$template) { throw new ApiError(409,'invalid_transition',[],'role_template_missing'); }
+            $role=$this->seedRole($tenant,$template);
+        }
+        if ($role===null) { throw new ApiError(422,'validation_failed',[],'unknown_role'); }
+        // Primera sede (con el pais del cliente): toda persona activa tiene sede. Area y cargo quedan «Sin área» / «Sin cargo».
+        $site=$step('createOrgUnit','organizacion.editar',fn()=>json_decode($this->organization('createOrgUnit',null,(object)['kind'=>'site','name'=>trim($b->site_name??'')?:'Sede principal','parent_id'=>null,'active'=>true,'country_code'=>$b->country_code,'city'=>null])['json'],true));
+        $user=$step('createUser','usuarios.crear',fn()=>json_decode($this->users('createUser',null,(object)['display_name'=>trim($b->admin->display_name),'email'=>strtolower(trim($b->admin->email)),'document'=>$b->admin->document,
+            'site_id'=>$site['id'],'area_id'=>Util::id(Placeholders::unit($this->db,$tenant,'area')),'position_id'=>Util::id(Placeholders::unit($this->db,$tenant,'position'))])['json'],true));
+        $this->access=new AdminAccess($this->db,$this->c,'usuarios.editar','createPanelAccount');
+        $account=json_decode((new PanelAccounts($this->db,$this->c,$this->access,$this->r))->dispatch('createPanelAccount',null,(object)['kind'=>'company','email'=>$b->admin->email,'display_name'=>null,'user_id'=>$user['id'],
+            'access'=>(object)['role_id'=>Util::id($role),'scope'=>(object)['kind'=>$b->admin->scope_kind,'company_ids'=>[],'cities'=>[],'site_ids'=>[],'area_ids'=>[]]]])['json'],true);
+        (new Audit($this->db))->record($platform,$this->r,'provisionTenant','tenant',$tenant,['name','timezone','package_id','features','default_plan_id','site','admin']);
+        $user=$this->userDto($this->row('users',Util::bin($user['id'])));
+        return self::response(['tenant'=>$this->tenantDto($this->row('tenants',$tenant,'tenant_id')),'features'=>(new FeatureAdmin($this->db,$this->c,$this->r))->tenantDto($tenant),'site_id'=>$site['id'],
+            'user'=>$user,'account'=>$account['account'],'temporary_password'=>$account['temporary_password']],201,['Cache-Control'=>'no-store']);
     }
     /** Eliminar unidad: bloqueada si algo la usa hoy; si solo la menciona el historial, queda como eliminada. */
     private function deleteOrgUnit(array $old): array

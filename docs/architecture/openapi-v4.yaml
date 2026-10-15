@@ -3791,6 +3791,52 @@ paths:
               $ref: '#/components/schemas/PolicyInput'
       x-permission: reglas.editar
       x-max-body-bytes: 65536
+  /roles/templates:
+    get:
+      tags:
+      - admin
+      operationId: listRoleTemplates
+      summary: Plantillas de rol de un cliente nuevo
+      description: Roles base que recibe un cliente nuevo (asistente de alta, rol del primer administrador). Solo plataforma.
+      security:
+      - adminSession: []
+      x-tenant-boundary: Solo plataforma autenticada.
+      x-resources:
+      - Role
+      responses:
+        '200':
+          description: Plantillas ofrecidas
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleTemplateList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      x-permission: roles.ver
+      x-platform-only: true
   /roles:
     get:
       tags:
@@ -6350,6 +6396,79 @@ paths:
           type: string
           format: date
       x-permission: operacion.logs
+  /tenants/provision:
+    post:
+      tags:
+      - admin
+      operationId: provisionTenant
+      summary: Dar de alta un cliente completo
+      description: 'Asistente «Dar de alta un cliente»: crea en UNA transacción el cliente (con su paquete, funciones y
+        plan por defecto), su primera sede, la persona del primer administrador, su cuenta del panel y su acceso (rol
+        por plantilla, por defecto «Corporativo», y alcance, por defecto todo el cliente). Si un paso falla no queda
+        nada creado. Cada paso deja la auditoría de su operación suelta (createTenant, putTenantFeatures, createOrgUnit,
+        createUser, createPanelAccount) y además provisionTenant en la auditoría de la plataforma. Requiere
+        reautenticación reciente. 409 tenant_name_taken si ya existe un cliente con ese nombre; 409 email_in_use si el
+        correo ya tiene cuenta. La contraseña temporal se devuelve UNA vez.'
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Solo plataforma autenticada.
+      x-resources:
+      - Tenant
+      - PanelAccount
+      responses:
+        '201':
+          description: Cliente dado de alta con su primer administrador
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+            Cache-Control:
+              schema:
+                const: no-store
+              description: No almacenar secretos/sesiones.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantProvisionResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantProvision'
+      x-permission: empresas.gestionar
+      x-platform-only: true
+      x-max-body-bytes: 16384
   /tenants/server-health:
     get:
       tags:
@@ -18380,6 +18499,140 @@ components:
           - type: string
             format: uuid
           - type: 'null'
+    TenantProvision:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - timezone
+      - country_code
+      - package_id
+      - features
+      - default_plan_id
+      - admin
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        timezone:
+          type: string
+          maxLength: 64
+        country_code:
+          anyOf:
+          - type: string
+            pattern: ^[A-Z]{2}$
+          - type: 'null'
+          description: País del cliente; queda en su primera sede (de él sale el calendario de festivos).
+        site_name:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Nombre de la primera sede. Por defecto «Sede principal».
+        package_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+        features:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            maxLength: 64
+          description: Funciones que compra (las del paquete más los ajustes de la venta).
+        default_plan_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: Plan por defecto de sus personas. Null = sin plan.
+        admin:
+          $ref: '#/components/schemas/TenantProvisionAdmin'
+    TenantProvisionAdmin:
+      type: object
+      additionalProperties: false
+      required:
+      - display_name
+      - email
+      - document
+      - role
+      - scope_kind
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        document:
+          anyOf:
+          - type: string
+            minLength: 3
+            maxLength: 40
+            pattern: ^[0-9A-Za-z .\-]+$
+          - type: 'null'
+          description: Cédula o documento (se guarda sin puntos, espacios ni guiones).
+        role:
+          type: string
+          pattern: ^[a-z_]{1,40}$
+          description: Plantilla de rol (seed_key). Por defecto corporativo.
+        scope_kind:
+          type: string
+          enum:
+          - all
+          - team
+          - self
+          description: Alcance. Por defecto all (todo el cliente).
+    TenantProvisionResult:
+      type: object
+      additionalProperties: false
+      required:
+      - tenant
+      - features
+      - site_id
+      - user
+      - account
+      - temporary_password
+      properties:
+        tenant:
+          $ref: '#/components/schemas/Tenant'
+        features:
+          $ref: '#/components/schemas/TenantFeatures'
+        site_id:
+          type: string
+          format: uuid
+        user:
+          $ref: '#/components/schemas/User'
+        account:
+          $ref: '#/components/schemas/PanelAccount'
+        temporary_password:
+          type: string
+          maxLength: 64
+    RoleTemplateList:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      properties:
+        data:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - seed_key
+            - name
+            properties:
+              seed_key:
+                type: string
+                maxLength: 64
+              name:
+                type: string
+                maxLength: 120
     TenantPurge:
       type: object
       additionalProperties: false
