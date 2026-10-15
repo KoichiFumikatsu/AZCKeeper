@@ -20144,8 +20144,8 @@ components:
           maxLength: 160
         window_title:
           type: string
-          maxLength: 512
-          description: Se ingiere solo si política lo permite; se omite en GET salvo permiso adicional e include_titles=true.
+          maxLength: 1024
+          description: Se ingiere solo si política lo permite; se omite en GET salvo permiso adicional e include_titles=true. Mismo tope que el agente (SessionProtocol, 1024); un título más largo rechazaba el sync entero y frenaba la cola del equipo.
         active_seconds:
           type: integer
           minimum: 0
