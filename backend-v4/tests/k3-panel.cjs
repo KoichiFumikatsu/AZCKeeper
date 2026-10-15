@@ -31,6 +31,13 @@ const destination = path.resolve(__dirname, '../../docs/design/2026-10-13-captur
         if (headings[screen]) await page.getByRole('heading', { name: headings[screen], exact: true }).waitFor();
         else await page.getByRole('cell', { name: person.display_name, exact: true }).waitFor();
       }
+      // Menú por tareas (2026-10-15): la entrada marcada se llama igual que el título; Plataforma es el primer grupo.
+      if (!['ficha', 'ventanas', 'linea', 'controles', 'editar', 'equipo'].includes(screen)) {
+        const h1 = (await page.locator('main h1').first().textContent()).trim();
+        assert.deepEqual(await page.locator('#navigation a[aria-current="page"] .nav-label').allTextContents(), [h1], `${screen}: menú = título`);
+      }
+      assert.equal(await page.locator('#navigation > details.nav-group').first().getAttribute('id'), 'platform-group', `${screen}: Plataforma antes del bloque del cliente`);
+      assert.ok(await page.locator('#platform-group').isVisible(), `${screen}: Plataforma visible para superadmin`);
       if (screen === 'ventanas') await page.getByLabel('Ordenar ventanas').selectOption('sessions');
       if (screen === 'linea') await page.locator('#panel-linea tbody tr').first().waitFor();
       if (screen === 'controles') {

@@ -45,5 +45,5 @@ if ($routes[$path] !== 'index.php') {
     require __DIR__ . '/' . $routes[$path];
     return;
 }
-$page = 'home'; $title = 'Panel del coordinador'; $surface = 'portal';
+$page = 'home'; $title = 'Inicio'; $surface = 'portal';
 require __DIR__ . '/partials/layout.php';

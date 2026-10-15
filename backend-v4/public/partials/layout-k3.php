@@ -33,8 +33,8 @@ require_once __DIR__ . '/brand.php';
 <?php $surface = 'portal'; require __DIR__ . '/sidebar.php'; ?>
 <header class="topbar">
   <button class="icon-button mobile-menu" id="open-menu" type="button" aria-controls="sidebar" aria-expanded="false" aria-label="Abrir menú">☰</button>
-  <div class="tenant"><strong id="tenant-name">Empresa</strong><small>Administración de empresa</small></div>
-  <label class="tenant-picker" id="tenant-control" hidden>Empresa<select id="tenant-select"></select></label>
+  <div class="tenant"><strong id="tenant-name">Cliente</strong><small>Administración del cliente</small></div>
+  <label class="tenant-picker" id="tenant-control" hidden>Cliente<select id="tenant-select"></select></label>
   <div class="top-meta"><span class="help time" id="now"></span></div>
 </header>
 <main id="main" tabindex="-1">

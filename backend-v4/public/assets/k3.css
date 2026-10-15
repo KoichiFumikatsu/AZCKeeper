@@ -175,3 +175,12 @@ dialog>form>h2{margin-bottom:14px}
 .fleet-versions meter::-webkit-meter-bar{background:var(--p-100);border:0;border-radius:8px}
 .fleet-versions meter::-webkit-meter-optimum-value{background:var(--accent)}
 .fleet-versions meter::-moz-meter-bar{background:var(--accent)}
+
+/* Menú por tareas: grupos plegables (Plataforma arriba). El grupo cerrado deja solo su encabezado. */
+details.nav-group{margin:4px 0}
+details.nav-group>summary.nav-heading{list-style:none;border-radius:8px}
+details.nav-group>summary.nav-heading::-webkit-details-marker{display:none}
+details.nav-group>summary.nav-heading:hover{background:var(--hover);color:var(--ink)}
+#platform-group{background:var(--p-50);border-radius:8px;padding:0 4px 4px}
+#platform-group+.nav-group{border-top:0;margin-top:10px}
+.settings-security{margin:8px 0 24px}.settings-security>h2{margin-bottom:6px}.settings-security>.help{margin-bottom:16px}

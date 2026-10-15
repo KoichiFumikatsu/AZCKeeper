@@ -217,7 +217,7 @@ export async function evaluate({ tenant, apiFn = realApi }) {
     else s2.summary = `Crea ${listY(localMissing.map(k => UNIT_NAME[k]))} para registrar a la primera persona.${missing.length > localMissing.length ? ' El resto lo trae AZC One.' : ''}`;
     const allOne = ['site', 'area', 'position'].every(k => fromOne(k));
     if (allOne || (missing.length && !localMissing.length)) { s2.action = reviewOne(2, '/organizacion.php', 'organization'); s2.secondary = [sourcesLink(2)]; }
-    else s2.action = link(missing.length ? 'Completar Organización' : 'Revisar Organización', at('/organizacion.php', 2), 'organization');
+    else s2.action = link(missing.length ? 'Completar Estructura del cliente' : 'Revisar Estructura del cliente', at('/organizacion.php', 2), 'organization');
     if (!orgP.data.complete) { s2.warnings.push(FAILURE_TEXT.partial); if (missing.length) { s2.status = 'unavailable'; s2.failure = { kind: 'partial' }; } }
   }
 
@@ -265,7 +265,7 @@ export async function evaluate({ tenant, apiFn = realApi }) {
     const excluded = (readyPeople || []).length - monitored.length;
     s4.lines.push(`Personas activas: ${activeUsers.length}${peopleOwner ? ` · las trae ${peopleOwner}` : ''}.`);
     if (readyPeople) s4.lines.push(`Con sede, área y cargo válidos: ${readyPeople.length}${excluded ? ` (${excluded} excluidas de monitoreo)` : ''}.`);
-    else s4.lines.push('No se pudo comprobar sede, área y cargo: Organización no está disponible.');
+    else s4.lines.push('No se pudo comprobar sede, área y cargo: Estructura del cliente no está disponible.');
     if (plansP.ok) {
       const own = activeUsers.filter(u => u.plan_id).length;
       s4.lines.push(plansP.data.default_plan_id ? `Plan: heredado del cliente${own ? ` · ${own} con plan propio` : ''}.` : own ? `${own} personas con plan propio; sin plan predeterminado.` : 'Sin plan: las personas solo reciben el núcleo.');

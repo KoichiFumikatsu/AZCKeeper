@@ -2,7 +2,7 @@ import { api, errorMessage, PLATFORM_TENANT } from './api.js';
 import { confirmBox } from './dialogs.js';
 import { withReauth, canceled } from './hardening-settings.js';
 
-// Releases → Mudanzas de servidor (agente 4.0.24+). Registrar una orden firmada (tools/sign-relocation.ps1) y activar o
+// Versiones del agente → Avanzado: Mudanzas de servidor (agente 4.0.24+). Registrar una orden firmada (tools/sign-relocation.ps1) y activar o
 // quitar el modo mudado. Solo plataforma; registrar y cambiar el modo piden la contraseña del panel (reauth < 5 min).
 const el = (tag, text, className) => { const node = document.createElement(tag); if (text) node.textContent = text; if (className) node.className = className; return node; };
 const reauthText = 'Para cambiar a qué servidor van los equipos, confirma la contraseña con la que entras al panel.';

@@ -89,11 +89,11 @@ export function deviceUpdates(root, device, tenant, platform) {
 export async function releaseDeployments(root, allPages) {
   const [releases, companies] = await Promise.all([allPages('/releases', PLATFORM_TENANT), allPages('/tenants', PLATFORM_TENANT)]);
   const box = section(root, 'Publicar versión por anillo');
-  box.append(el('p', 'Publica una versión registrada en Pruebas. Después selecciona la misma versión y Automáticas para ampliarla al resto de la empresa. Los equipos pausados quedan excluidos.', 'help'));
-  if (!releases.length || !companies.some(c => c.id !== PLATFORM_TENANT)) { box.append(el('p', 'Se necesita una versión registrada y una empresa cliente.', 'empty-state')); return; }
+  box.append(el('p', 'Publica una versión registrada en Pruebas. Después selecciona la misma versión y Automáticas para ampliarla al resto del cliente. Los equipos pausados quedan excluidos.', 'help'));
+  if (!releases.length || !companies.some(c => c.id !== PLATFORM_TENANT)) { box.append(el('p', 'Se necesita una versión registrada y un cliente.', 'empty-state')); return; }
   const form = el('form', undefined, 'toolbar');
   const release = field(form, 'Versión registrada', select(releases.map(r => [r.id, `${r.version} · ${r.architecture}`])));
-  const company = field(form, 'Empresa', select(companies.filter(c => c.id !== PLATFORM_TENANT).map(c => [c.id, c.name])));
+  const company = field(form, 'Cliente', select(companies.filter(c => c.id !== PLATFORM_TENANT).map(c => [c.id, c.name])));
   const ring = field(form, 'Publicar para', select([['pruebas', 'Primero (pruebas)'], ['stable', 'Automáticas']]));
   const percentage = field(form, 'Porcentaje de equipos del anillo', el('input')); percentage.type = 'number'; percentage.min = 1; percentage.max = 100; percentage.value = 100; percentage.required = true;
   const submit = el('button', 'Publicar para este anillo', 'primary'); submit.type = 'submit'; form.append(submit); const status = el('p'); status.setAttribute('role', 'status'); box.append(form, status);

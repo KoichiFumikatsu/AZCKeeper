@@ -17,7 +17,7 @@ const page = document.body.dataset.page;
 const surface = document.body.dataset.surface;
 const $ = id => document.getElementById(id);
 const number = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 2 });
-const labels = { active: 'Activo', inactive: 'Inactivo', suspended: 'Suspendido', revoked: 'Revocado', decommissioned: 'Retirado', tenant: 'Empresa', site: 'Sede', area: 'Área', user: 'Usuario', device: 'Equipo', self: 'Propio usuario', scheduled: 'Programada', cancelled: 'Cancelada', allowed: 'Permitido', denied: 'Denegado', failed: 'Fallido', admin: 'Administrador', system: 'Sistema', integration: 'Integración' };
+const labels = { active: 'Activo', inactive: 'Inactivo', suspended: 'Suspendido', revoked: 'Revocado', decommissioned: 'Retirado', tenant: 'Cliente', site: 'Sede', area: 'Área', user: 'Usuario', device: 'Equipo', self: 'Propio usuario', scheduled: 'Programada', cancelled: 'Cancelada', allowed: 'Permitido', denied: 'Denegado', failed: 'Fallido', admin: 'Administrador', system: 'Sistema', integration: 'Integración' };
 const label = value => labels[value] || value;
 const dateTime = value => value ? new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : 'Sin registro';
 function node(tag, text, className) {
@@ -120,9 +120,9 @@ const resources = {
   devices: { title: 'Equipos', path: () => `/tenants/${tenant}/devices`, prepare: loadUserNames, columns: [['Equipo', r => { const a = node('a', r.hostname); a.href = `/equipo.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Estado', r => label(r.status)], ['Persona', r => personLink(r.user_id)], ['Sistema operativo', 'os_edition'], ['Agente', 'agent_version'], ['Última conexión', r => dateTime(r.last_seen_at)], ['K3 abierto', r => r.legacy_k3?.running === true ? badge('Sí', 'bad') : r.legacy_k3?.running === false ? 'No' : null]], empty: 'Aún no hay equipos enrolados en tu alcance.' },
   users: { title: 'Usuarios', path: () => '/users', columns: [['Nombre', r => { const a = node('a', r.display_name); a.href = `/miembro.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Correo', 'email'], ['Estado', r => label(r.status)], ['Cuenta del panel', r => r.panel_login_enabled ? 'Habilitada' : 'Sin cuenta'], ['Acceso al panel', r => r.access?.role_name || 'Sin acceso al panel']], empty: 'Aún no hay usuarios en tu alcance.' },
   policies: { title: 'Reglas', path: () => '/policies', columns: [['Política', 'name'], ['Destino', r => label(r.target_type)], ['ID del destino', 'target_id'], ['Estado', r => r.enabled ? 'Habilitada' : 'Inactiva'], ['Reglas', r => r.rules.length], ['Versión', 'version']], empty: 'Aún no hay políticas configuradas en esta empresa.' },
-  tenants: { title: 'Tenants', path: () => '/tenants', columns: [['Empresa', 'name'], ['ID', 'id'], ['Estado', r => label(r.status)], ['Zona horaria', 'timezone'], ['Autogestión de roles', r => r.rbac_self_management ? 'Habilitada' : 'Inactiva']], empty: 'No hay tenants accesibles.' },
+  tenants: { title: 'Clientes', path: () => '/tenants', columns: [['Cliente', 'name'], ['ID', 'id'], ['Estado', r => label(r.status)], ['Zona horaria', 'timezone'], ['Autogestión de roles', r => r.rbac_self_management ? 'Habilitada' : 'Inactiva']], empty: 'No hay clientes accesibles.' },
   roles: { title: 'Roles de la empresa', path: () => '/roles', columns: [['Rol', 'name'], ['Permisos', r => r.permissions.join(', ') || 'Sin permisos'], ['Estado', r => r.active ? 'Activo' : 'Inactivo']], empty: 'Aún no hay roles configurados en esta empresa.' },
-  releases: { title: 'Releases de plataforma', path: () => '/releases', columns: [['Versión', 'version'], ['Canal', 'channel'], ['Arquitectura', 'architecture'], ['Agente mínimo', 'min_agent_version'], ['Tamaño (MiB)', r => number.format(r.size_bytes / 1048576)], ['Publicación', r => dateTime(r.published_at)]], empty: 'Aún no hay releases publicados.' },
+  releases: { title: 'Versiones registradas', path: () => '/releases', columns: [['Versión', 'version'], ['Canal', 'channel'], ['Arquitectura', 'architecture'], ['Agente mínimo', 'min_agent_version'], ['Tamaño (MiB)', r => number.format(r.size_bytes / 1048576)], ['Publicación', r => dateTime(r.published_at)]], empty: 'Aún no hay versiones registradas.' },
   audit: { title: 'Auditoría de la empresa', path: () => query('/audit', dateRange()), columns: [['Fecha', r => dateTime(r.at)], ['Acción', 'action'], ['Actor', r => `${label(r.actor_type)} · ${r.actor_id}`], ['Recurso', r => `${r.resource_type} · ${r.resource_id}`], ['Resultado', r => label(r.outcome)], ['Campos', r => r.changed_fields.join(', ')], ['Solicitud', 'request_id']], empty: 'No hay eventos de auditoría en este período.' },
 };
 function get(path, context = tenant) {
@@ -314,7 +314,7 @@ async function metric(grid, title, task) {
 }
 async function dashboard() {
   const platform = surface === 'admin';
-  $('content').append(node('p', platform ? 'Totales de los tenants accesibles, incluido el tenant reservado de plataforma.' : 'Datos de tu empresa dentro del alcance de tus permisos.', 'help'));
+  $('content').append(node('p', platform ? 'Totales de todos los clientes, incluida la empresa dueña de Keeper.' : 'Datos de tu cliente dentro del alcance de tus permisos.', 'help'));
   const grid = node('dl', undefined, 'kpi-grid'); $('content').append(grid);
   const count = async path => (await allPages(path)).length;
   const total = async name => {
@@ -323,12 +323,12 @@ async function dashboard() {
     return result;
   };
   const tasks = platform ? [
-    ['Tenants accesibles', async () => tenants.length], ['Equipos enrolados', () => total('devices')],
-    ['Usuarios', () => total('users')], ['Roles configurados', () => total('roles')],
+    ['Clientes', async () => tenants.filter(t => t.id !== PLATFORM_TENANT).length], ['Equipos registrados', () => total('devices')],
+    ['Personas', () => total('users')], ['Roles configurados', () => total('roles')],
     ['Permisos del catálogo', () => count('/permissions')],
-    ['Releases publicados', () => count('/releases')],
+    ['Versiones del agente registradas', () => count('/releases')],
   ] : [
-    ['Equipos enrolados', () => count(`/tenants/${tenant}/devices`)], ['Usuarios', () => count('/users')], ['Políticas', () => count('/policies')],
+    ['Equipos registrados', () => count(`/tenants/${tenant}/devices`)], ['Personas', () => count('/users')], ['Reglas', () => count('/policies')],
   ];
   const results = await Promise.allSettled(tasks.map(([title, task]) => metric(grid, title, task)));
   results.forEach(result => { if (result.status === 'rejected') appendError($('content'), result.reason); });
@@ -785,7 +785,7 @@ async function context() {
     applyBranding(company);
   } catch (error) {
     timezone = 'UTC';
-    showError($('page-error'), new Error(`No se pudo consultar la identidad de la empresa. ${errorMessage(error)}`));
+    showError($('page-error'), new Error(`No se pudo consultar la identidad del cliente. ${errorMessage(error)}`));
   }
   if ($('from') && !$('from').value) { $('from').value = shiftDay(today(), -29); $('to').value = inclusiveDates() ? today() : shiftDay(today(), 1); }
   return true;
@@ -819,8 +819,13 @@ async function load() {
     else if (page === 'devices') await fleet({ root: $('content'), tenant, allPages, platform: session.is_platform_admin });
     else if (page === 'reports') await reports();
     else await listing(page);
-    // Releases (plataforma): mudanzas de servidor firmadas, agente 4.0.24+.
-    if (page === 'releases' && surface === 'admin') { await releaseDeployments($('content'), allPages); await mountRelocations($('content')); }
+    // Versiones del agente (plataforma). Mudanzas de servidor firmadas (agente 4.0.24+) en «Avanzado», plegado (Q5, 2026-10-15).
+    if (page === 'releases' && surface === 'admin') {
+      await releaseDeployments($('content'), allPages);
+      const advanced = node('details', undefined, 'more-options advanced-relocations'); advanced.id = 'advanced-relocations';
+      advanced.append(node('summary', 'Avanzado: Mudanzas de servidor')); $('content').append(advanced);
+      await mountRelocations(advanced);
+    }
     // Las pantallas del coordinador fechan en la zona de la empresa; las demás, en la del navegador. Se dice cuál.
     const companyZone = surface === 'portal' && ['home', 'users', 'reports', 'policies'].includes(page);
     const zoneText = companyZone ? `Fechas y horas en la zona horaria de la empresa (${timezone})` : 'Fechas de eventos en la zona horaria del navegador';

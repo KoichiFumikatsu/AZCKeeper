@@ -59,5 +59,29 @@ function panelArchitectureTests(Database $db): void
     check($health['cron_status']==='failed' && str_contains($health['cron_last_error'],'Invalid/Fixture') && mb_strlen($health['cron_last_error'])<=1000,'calculation persists bounded error');
     $db->run("UPDATE schedules SET timezone='America/Bogota' WHERE tenant_id=? AND id=?",[$t,$u['schedule_id']]);
     $problems=expect(adminRequest($a,'GET','/dashboard/problems'),200,'platform sees calculation failure'); check(in_array('calculation_failed',array_column($problems['data'],'kind'),true),'calculation problem actionable');
+    panelMenuChecks();
     echo 'PASS panel architecture ('.($GLOBALS['checks']-$before)." assertions)\n";
+}
+
+// Menú por tareas (docs/design/2026-10-14-superadmin-por-tareas.md, lote rápido 2026-10-15): cada entrada del menú se
+// llama igual que el título de su página, Plataforma va antes que el bloque del cliente y la casilla de Q3 no vuelve.
+function panelMenuChecks(): void
+{
+    $public = dirname(__DIR__) . '/public';
+    $sidebar = file_get_contents("$public/partials/sidebar.php");
+    preg_match_all("/\['([a-z-]+)', '([^']+)', '(\/[^']*)'/", $sidebar, $links, PREG_SET_ORDER);
+    check(count($links) >= 31, 'menu links parsed (' . count($links) . ')');
+    foreach ($links as [, $key, $text, $url]) {
+        $file = $url === '/' ? 'index.php' : ($url === '/admin/' ? 'admin/index.php' : ltrim($url, '/'));
+        $source = is_file("$public/$file") ? file_get_contents("$public/$file") : '';
+        $title = preg_match_all('/\$title = \'([^\']+)\'/', $source, $m) ? end($m[1]) : null;
+        check($title === $text, "menu $key «{$text}» = page title «" . ($title ?? 'none') . '»');
+    }
+    $texts = array_column($links, 2);
+    check(count($texts) === count(array_unique($texts)), 'menu entries have distinct names');
+    $platform = strpos($sidebar, 'id="platform-group"'); $client = strpos($sidebar, '<?php foreach ($portal as');
+    check($platform !== false && $client !== false && $platform < $client, 'Plataforma is rendered before the client block');
+    check(str_contains($sidebar, '<details class="nav-group" id="platform-group"'), 'Plataforma is collapsible');
+    $k3 = file_get_contents("$public/assets/k3.js");
+    check(!str_contains($k3, 'gestiona sus propios roles y cuentas') && !str_contains($k3, '/rbac-gate'), 'Q3: no second self-management checkbox in the panel');
 }

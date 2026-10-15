@@ -54,7 +54,7 @@ require_once __DIR__ . '/brand.php';
 <?php require __DIR__ . '/sidebar.php'; ?>
 <header class="topbar">
   <button class="icon-button mobile-menu" id="open-menu" type="button" aria-controls="sidebar" aria-expanded="false" aria-label="Abrir menú">☰</button>
-  <div class="tenant" id="tenant-brand"><strong id="tenant-name"><?= $surface === 'admin' ? 'Panel Keeper' : 'Empresa' ?></strong><small><?= $surface === 'admin' ? 'Administración de plataforma' : 'Administración de empresa' ?></small><img id="tenant-logo" class="tenant-logo" alt="" hidden></div>
+  <div class="tenant" id="tenant-brand"><strong id="tenant-name"><?= $surface === 'admin' ? 'Panel Keeper' : 'Cliente' ?></strong><small><?= $surface === 'admin' ? 'Administración de plataforma' : 'Administración del cliente' ?></small><img id="tenant-logo" class="tenant-logo" alt="" hidden></div>
   <div class="top-meta"><button id="refresh" type="button">Actualizar</button></div>
 </header>
 <main id="main" tabindex="-1">
@@ -63,7 +63,7 @@ require_once __DIR__ . '/brand.php';
   <p id="page-status" class="help" role="status">Verificando acceso…</p>
   <p id="page-error" class="error-message" role="alert" hidden></p>
   <div id="workspace" hidden>
-    <div id="tenant-control" class="toolbar" hidden><label for="tenant-select">Empresa<select id="tenant-select"></select></label></div>
+    <div id="tenant-control" class="toolbar" hidden><label for="tenant-select">Cliente<select id="tenant-select"></select></label></div>
     <?php if ($page === 'reports'): ?>
     <form id="date-form" class="toolbar report-form" data-inclusive="true" aria-describedby="date-help">
       <label for="from">Desde<input id="from" name="from" type="date" required></label>

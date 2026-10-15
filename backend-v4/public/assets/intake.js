@@ -154,7 +154,7 @@ async function protection(tenant) {
 }
 function protectionNotice(parent, state) {
   if (state.kind === 'na') return;
-  const settingsLink = text => { const a = el('a', text); a.href = '/ajustes.php'; return a; };
+  const settingsLink = (text, hash = '') => { const a = el('a', text); a.href = '/ajustes.php' + hash; return a; };
   if (state.kind === 'denied') { parent.append(el('p', 'No se pudo revisar el modo de endurecimiento ni la cuenta de IT: tu cuenta no tiene permiso para verlos.', 'help')); return; }
   if (state.kind === 'error') { parent.append(alertText(`No se pudo revisar el endurecimiento antes de instalar: ${message(state.error)}`)); return; }
   const s = state.settings;
@@ -163,13 +163,13 @@ function protectionNotice(parent, state) {
     n.append(el('strong', 'Endurecimiento automático activo'),
       el('p', `Al instalar Keeper, cada equipo se endurece solo: sus cuentas administradoras pasan a usuario estándar y solo la cuenta de IT${s.configured ? ` (${s.admin_name})` : ''} conserva la administración. Para el primer equipo se recomienda «desde el panel».`));
     if (!s.configured) n.append(el('p', 'Además la cuenta de IT no tiene contraseña: configúrala antes de instalar.'));
-    const p = el('p'); p.append(settingsLink('Revisar en Ajustes › Seguridad de cuentas de Windows')); n.append(p);
+    const p = el('p'); p.append(settingsLink('Revisar en Ajustes del cliente › Seguridad de los equipos', '#seguridad-de-los-equipos')); n.append(p);
     parent.append(n); return;
   }
   if (!s.configured) {
     const n = el('div', undefined, 'notice install-warning'); n.setAttribute('role', 'note');
     n.append(el('strong', 'Cuenta de IT sin configurar'), el('p', 'Puedes instalar y monitorear, pero no endurecer equipos hasta definir la cuenta de IT y su contraseña.'));
-    const p = el('p'); p.append(settingsLink('Configurarla en Ajustes')); n.append(p);
+    const p = el('p'); p.append(settingsLink('Configurarla en Ajustes del cliente')); n.append(p);
     parent.append(n); return;
   }
   parent.append(el('p', `Endurecimiento: desde el panel, equipo por equipo · cuenta de IT ${s.admin_name} configurada.`, 'help install-protection'));

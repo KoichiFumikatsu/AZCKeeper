@@ -150,7 +150,7 @@ export async function coordinator(ctx) {
     const box = el('div'); const id = `filter-${key}`; const lbl = el('label', title); lbl.htmlFor = id; const select = el('select'); select.id = id; select.name = key; const any = el('option', 'Todos'); any.value = ''; select.append(any);
     records.forEach(r => { const o = el('option', r[textField]); o.value = r.id; select.append(o); }); box.append(lbl, select); parent.append(box); return select;
   }
-  // Filtros del grupo: empresa del grupo y pais (si existen), luego sede y area. Sin filtro = todo el grupo.
+  // Filtros del grupo: empresa interna y pais (si existen), luego sede y area. Sin filtro = todo el grupo.
   function orgFilters(parent, org, kinds = ['area', 'site']) {
     if (!org.data) return {};
     const out = {};
@@ -173,7 +173,7 @@ export async function coordinator(ctx) {
     const sites = units.filter(o => o.kind === 'site'), areas = units.filter(o => o.kind === 'area');
     const companies = units.filter(o => o.kind === 'company' && o.active);
     const records = {};
-    if (companies.length) { records.company_id = companies; controls.company_id = selector(parent, 'Empresa del grupo', 'company', companies); }
+    if (companies.length) { records.company_id = companies; controls.company_id = selector(parent, 'Empresa interna', 'company', companies); }
     const countries = [...new Set(sites.filter(o => o.country_code).map(o => o.country_code))].sort();
     if (countries.length) { records.country = countries.map(c => ({ id: c, name: COUNTRY_NAMES[c] || c })); controls.country = selector(parent, 'País', 'country', records.country); }
     const cities = [...new Set(sites.filter(o => o.city).map(o => o.city))].sort((a, b) => a.localeCompare(b, 'es'));
@@ -206,7 +206,7 @@ export async function coordinator(ctx) {
       fill('user_id', u => placed(u) && (!v('area_id') || u.area_id === v('area_id')), 'display_name');
     }
     function describe() {
-      const names = { company_id: 'Empresa del grupo', country: 'País', city: 'Ciudad', site_id: 'Sede', area_id: 'Área', user_id: 'Persona' };
+      const names = { company_id: 'Empresa interna', country: 'País', city: 'Ciudad', site_id: 'Sede', area_id: 'Área', user_id: 'Persona' };
       return Object.entries(controls).filter(([, c]) => c.value).map(([k, c]) => `${names[k]}: ${c.selectedOptions[0]?.textContent || c.value}`);
     }
     return { controls, narrow, describe };

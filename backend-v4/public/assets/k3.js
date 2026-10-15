@@ -18,7 +18,7 @@ const page = document.body.dataset.page;
 const el = (tag, text, className) => { const n = document.createElement(tag); if (text !== undefined && text !== null) n.textContent = text; if (className) n.className = className; return n; };
 const when = v => v ? new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(v)) : 'Sin registro';
 const pct = v => v === null || v === undefined || Number.isNaN(v) ? 'Sin dato' : `${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1 }).format(v)} %`;
-const kinds = { firm: 'Firma', company: 'Empresa del grupo', site: 'Sede', area: 'Área', position: 'Cargo' };
+const kinds = { firm: 'Firma', company: 'Empresa interna', site: 'Sede', area: 'Área', position: 'Cargo' };
 // Paises de las sedes (las remotas son "Remoto - <pais>"): de ahi sale el calendario de festivos de cada persona.
 const COUNTRIES = [['CO', 'Colombia'], ['US', 'Estados Unidos'], ['HN', 'Honduras'], ['MX', 'México'], ['PE', 'Perú'], ['EC', 'Ecuador'], ['PA', 'Panamá'], ['CR', 'Costa Rica'], ['GT', 'Guatemala'], ['SV', 'El Salvador'], ['ES', 'España'], ['DO', 'República Dominicana'], ['NI', 'Nicaragua'], ['VE', 'Venezuela'], ['BO', 'Bolivia'], ['CL', 'Chile'], ['AR', 'Argentina'], ['UY', 'Uruguay'], ['PY', 'Paraguay'], ['BR', 'Brasil'], ['PR', 'Puerto Rico'], ['CA', 'Canadá']];
 const countryName = code => code ? (COUNTRIES.find(([c]) => c === code)?.[1] || code) : '—';
@@ -225,18 +225,18 @@ async function sites() {
 }
 
 // Organización: una pestaña por tipo, activas por defecto y "+ Nueva …" con el tipo de la pestaña (revisión UX ORG-1/3/4/5).
-// Firmas solo aparece mientras existan: no se migran a empresas del grupo. La pestaña elegida se recuerda por cliente.
+// Firmas solo aparece mientras existan: no se migran a empresas internas. La pestaña elegida se recuerda por cliente.
 const ORG_TABS = [
-  { kind: 'company', label: 'Empresas del grupo', create: '+ Nueva empresa', title: 'Nueva empresa del grupo', submit: 'Crear empresa', plural: 'empresas del grupo',
-    help: 'Las empresas que emplean a las personas (AZC Legal, BilingueLaw…). Pueden compartir sedes. En Inicio y Reportes, sin filtro se ve todo el grupo; con filtro, solo una empresa, un país o una sede.' },
+  { kind: 'company', label: 'Empresas internas', create: '+ Nueva empresa interna', title: 'Nueva empresa interna', submit: 'Crear empresa interna', plural: 'empresas internas',
+    help: 'Las empresas que emplean a las personas (AZC Legal, BilingueLaw…). Pueden compartir sedes. En Inicio y Reportes, sin filtro se ve todo el cliente; con filtro, solo una empresa interna, un país o una sede.' },
   { kind: 'site', label: 'Sedes', create: '+ Nueva sede', title: 'Nueva sede', submit: 'Crear sede', plural: 'sedes',
-    help: 'Las sedes pueden ser compartidas por varias empresas del grupo. El país de la sede define el calendario automático de festivos de sus personas.' },
+    help: 'Las sedes pueden ser compartidas por varias empresas internas. El país de la sede define el calendario automático de festivos de sus personas.' },
   { kind: 'area', label: 'Áreas', create: '+ Nueva área', title: 'Nueva área', submit: 'Crear área', plural: 'áreas',
     help: 'Las personas apuntan a la unidad, no a su nombre: si renombras un área, todas las personas de esa área la ven con el nombre nuevo.' },
   { kind: 'position', label: 'Cargos', create: '+ Nuevo cargo', title: 'Nuevo cargo', submit: 'Crear cargo', plural: 'cargos',
     help: 'Las personas apuntan al cargo, no a su nombre: si renombras un cargo, todas las personas con ese cargo lo ven con el nombre nuevo.' },
   { kind: 'firm', label: 'Firmas', create: null, plural: 'firmas',
-    help: 'Firmas registradas antes de las empresas del grupo. Se conservan mientras existan; para una unidad nueva que emplea personas usa Empresas del grupo.' },
+    help: 'Firmas registradas antes de las empresas internas. Se conservan mientras existan; para una unidad nueva que emplea personas usa Empresas internas.' },
 ];
 const orgFold = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('es').trim();
 const NO_COUNTRY = '-';
@@ -325,7 +325,7 @@ function orgParentPicker(parent, { org, kind, value = '', excludeId = null, help
   box.addEventListener('focusout', e => { if (!box.contains(e.relatedTarget)) close(); });
   return { input, get value() { return selected; } };
 }
-// Diálogo «Nueva sede/área/cargo/empresa del grupo» con el tipo fijo: lo usan Organización y el alta y la ficha de
+// Diálogo «Nueva sede/área/cargo/empresa interna» con el tipo fijo: lo usan Organización y el alta y la ficha de
 // personas («+ Nueva área» sin salir del formulario). onCreated recibe la unidad que devolvió la API.
 // Si el tipo lo administra una fuente externa (p. ej. AZC One), crearlo aquí lo rechaza la API (managed_by_source):
 // se avisa antes de llenar el formulario. Sin permiso para ver las fuentes se abre el formulario y decide la API.
@@ -468,7 +468,7 @@ async function organization() {
     const clear = el('button', 'Limpiar filtros'); clear.type = 'button'; clear.id = 'org-clear'; bar.append(clear);
     s.append(bar);
     const wrap = el('div', undefined, 'table-wrap'); wrap.tabIndex = 0; s.append(wrap);
-    if (sites) s.append(el('p', 'Cada sede aparece una sola vez, aunque la compartan varias empresas del grupo. «Sin ubicación»: sedes sin país.', 'help'));
+    if (sites) s.append(el('p', 'Cada sede aparece una sola vez, aunque la compartan varias empresas internas. «Sin ubicación»: sedes sin país.', 'help'));
     s.append(el('p', users ? '«Personas activas»: personas activas con esta unidad que tu cuenta puede ver. Desactivar o eliminar revisa además personas inactivas y otros usos.'
       : 'Tu cuenta no puede consultar Personas: el número de personas no está disponible (no significa que la unidad esté libre).', 'help'));
     search.addEventListener('input', () => { state.term = search.value; renderTable(); });
@@ -862,7 +862,7 @@ function clientLink(text, tenantId, href, className = 'link-button') {
 // Empresas visibles para la plataforma (la duena primero). Se carga en start() solo para superadmin.
 let companies = [];
 const ownerName = () => companies.find(c => c.id === PLATFORM_TENANT)?.branding?.display_name || 'AZC Keeper';
-const companyName = id => { const c = companies.find(x => x.id === id); return c ? (c.branding?.display_name || c.name) : 'Empresa'; };
+const companyName = id => { const c = companies.find(x => x.id === id); return c ? (c.branding?.display_name || c.name) : 'Cliente'; };
 
 async function accounts() {
   const portalPeople = await optional(allPages('/users'));
@@ -988,7 +988,7 @@ async function accounts() {
     const g = groupOf(home); if (!g) return null;
     const box = el('fieldset', undefined, 'perm-group'); box.append(el('legend', `Grupo empresarial: ${g.name}`)); parent.append(box);
     const on = el('input'); on.type = 'checkbox'; on.checked = !!current?.group_id;
-    const ol = el('label', undefined, 'check'); ol.append(on, ' Cuenta de grupo: entra también a otras empresas del grupo'); box.append(ol);
+    const ol = el('label', undefined, 'check'); ol.append(on, ' Cuenta de grupo: entra también a otros clientes del grupo'); box.append(ol);
     box.append(el('p', 'Para dueños y directivos. No es superadmin: solo ve las empresas y lo que le des aquí.', 'help'));
     const inner = el('div'); box.append(inner);
     const picks = [];
@@ -1045,7 +1045,7 @@ async function accounts() {
       if (sameAccess(ed.read(), a.access)) { dialog.close(); return; }
       ok.disabled = true;
       try { await api('PATCH', `/panel-accounts/${a.id}`, { tenant: a.tenant_id, body: { active: a.active, access: ed.read() } }); dialog.close(); await refresh(); announce(`Acceso de ${a.user_name || a.email} guardado.`); }
-      catch (e) { show(e.code === 'tenant_rbac_disabled' ? 'La empresa no tiene habilitada la gestión de sus propios roles: pídesela a la plataforma.' : e); ok.disabled = false; }
+      catch (e) { show(e.code === 'tenant_rbac_disabled' ? 'Este cliente no tiene la función «El cliente gestiona sus roles y cuentas»: pídesela a la plataforma.' : e); ok.disabled = false; }
     });
     dialog.showModal();
   };
@@ -1127,7 +1127,7 @@ async function accounts() {
       } catch (e) {
         const detail = e.problem?.detail;
         show(e.code === 'invalid_credentials' ? 'Tu contraseña no es correcta.' : detail === 'email_in_use' ? 'Ese correo ya tiene una cuenta.' : detail === 'person_has_account' ? 'Esa persona ya tiene cuenta.'
-          : e.code === 'tenant_rbac_disabled' ? 'La empresa no tiene habilitada la gestión de sus propios roles.' : e);
+          : e.code === 'tenant_rbac_disabled' ? 'Este cliente no tiene la función «El cliente gestiona sus roles y cuentas».' : e);
         ok.disabled = false;
       }
     });
@@ -1141,7 +1141,7 @@ async function accounts() {
   if (params.get('crear') === '1' && (only || (!platform && presetPerson))) create(only, presetPerson);
 }
 
-// ---- Empresas (solo plataforma) ---------------------------------------------------------------------------------
+// ---- Clientes (solo plataforma) ---------------------------------------------------------------------------------
 const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const fileBase64 = file => new Promise((resolve, reject) => {
   const reader = new FileReader(); reader.onerror = () => reject(new Error('No se pudo leer el archivo.'));
@@ -1184,28 +1184,28 @@ async function tenantsPage() {
   const catalog = (await api('GET', '/features', { tenant: PLATFORM_TENANT })).data;
   const packages = (await api('GET', '/feature-packages', { tenant: PLATFORM_TENANT })).data;
   let personPlans = (await api('GET', '/person-plans', { tenant: PLATFORM_TENANT })).data;
-  // «Mostrar empresas archivadas» se recuerda como el resto del estado de la tabla (M2).
+  // «Mostrar clientes archivados» se recuerda como el resto del estado de la tabla (M2).
   const archivedKey = tableKey('Empresas:archivadas');
   if (!showArchived && readTableState(archivedKey).show === true) { showArchived = true; companies = sortCompanies(await allPages('/tenants?include_archived=true', PLATFORM_TENANT)); }
   const render = () => {
     $('page-content').replaceChildren();
-    const s = surface('Empresas');
-    if (!companies.some(c => c.id !== PLATFORM_TENANT && !c.archived)) s.append(el('p', 'Aún no hay empresas cliente activas. Crea la primera con "Crear empresa" (arriba a la derecha); las demás pantallas (Personas, Organización, Equipos…) trabajan sobre una empresa cliente y se habilitan cuando exista.', 'notice'));
-    s.append(el('p', `${ownerName()} es la empresa dueña de Keeper: su nombre y logo son los del producto (login y barra lateral). Las demás son empresas cliente; cada una con su marca, sus personas, equipos y cuentas.`, 'help'));
-    const plansLink = el('p', 'En "Funciones" de cada empresa eliges lo que compró y el plan por defecto de sus personas. Los paquetes y los planes por persona se crean en ', 'help');
-    const pa = el('a', 'Administrar planes y paquetes'); pa.href = '/planes.php'; plansLink.append(pa, '.'); s.append(plansLink);
+    const s = surface('Clientes');
+    if (!companies.some(c => c.id !== PLATFORM_TENANT && !c.archived)) s.append(el('p', 'Aún no hay clientes activos. Da de alta el primero con "Dar de alta un cliente" (arriba a la derecha); las demás pantallas (Personas, Estructura del cliente, Equipos…) trabajan sobre un cliente y se habilitan cuando exista.', 'notice'));
+    s.append(el('p', `${ownerName()} es la empresa dueña de Keeper: su nombre y logo son los del producto (login y barra lateral). Los demás son clientes; cada uno con su marca, sus personas, equipos y cuentas.`, 'help'));
+    const plansLink = el('p', 'En "Funciones" de cada cliente eliges lo que compró y el plan por defecto de sus personas. Los paquetes y los planes por persona se crean en ', 'help');
+    const pa = el('a', 'Qué vendemos'); pa.href = '/planes.php'; plansLink.append(pa, '.'); s.append(plansLink);
     // Archivadas: ocultas por defecto en todo el panel y de solo lectura (nadie las modifica hasta desarchivarlas).
     const toggle = el('label', undefined, 'check'); const box = el('input'); box.type = 'checkbox'; box.checked = showArchived;
-    toggle.append(box, ' Mostrar empresas archivadas'); s.append(toggle);
+    toggle.append(box, ' Mostrar clientes archivados'); s.append(toggle);
     box.addEventListener('change', async () => { showArchived = box.checked; writeTableState(archivedKey, { show: showArchived }); try { await reload(); } catch (e) { fail(e); } });
     renderTree();
-    table(s, 'Empresas', [
-      ['Empresa', c => { const d = el('div', undefined, 'company-cell'); const t = el('div'); t.append(el('strong', c.branding?.display_name || c.name), el('small', c.name)); d.append(logoImage(c), t); return d; }],
+    table(s, 'Clientes', [
+      ['Cliente', c => { const d = el('div', undefined, 'company-cell'); const t = el('div'); t.append(el('strong', c.branding?.display_name || c.name), el('small', c.name)); d.append(logoImage(c), t); return d; }],
       ['Tipo', c => badge(c.id === PLATFORM_TENANT ? 'Dueña de la plataforma' : 'Cliente', c.id === PLATFORM_TENANT ? 'info' : '')],
       ['Grupo empresarial', c => c.id === PLATFORM_TENANT ? '—' : groupOf(c.id)?.name || 'Independiente'],
       ['Estado', c => c.archived ? badge('Archivada', '') : badge(c.status === 'active' ? 'Activa' : 'Suspendida', c.status === 'active' ? 'good' : 'bad')],
       ['Zona horaria', c => c.timezone],
-      ['Roles propios', c => c.id === PLATFORM_TENANT ? '—' : c.rbac_self_management ? 'Los gestiona la empresa' : 'Los gestiona la plataforma'],
+      ['Roles propios', c => c.id === PLATFORM_TENANT ? '—' : c.rbac_self_management ? 'Los gestiona el cliente' : 'Los gestiona la plataforma'],
       ['Acciones', c => {
         const box = el('div', undefined, 'actions no-margin');
         if (c.archived) {
@@ -1227,7 +1227,7 @@ async function tenantsPage() {
   // internas (AZC Legal, BilingueLaw...) se editan en Organizacion de esa empresa.
   const renderTree = () => {
     const t = surface('Estructura');
-    t.append(el('p', 'Quién va debajo de quién. Para mover una empresa a otro grupo (o dejarla independiente) usa "Editar y marca". Las empresas internas de cada una (por ejemplo AZC Legal o BilingueLaw dentro de Grupo AZC) se editan en Organización, eligiendo esa empresa arriba.', 'help'));
+    t.append(el('p', 'Quién va debajo de quién. Para mover un cliente a otro grupo (o dejarlo independiente) usa "Editar y marca". Las empresas internas de cada cliente (por ejemplo AZC Legal o BilingueLaw dentro de Grupo AZC) se editan en Estructura del cliente, eligiendo ese cliente arriba.', 'help'));
     const label = c => { const li = el('li'); li.append(el('strong', c.branding?.display_name || c.name)); if (c.archived) li.append(' ', badge('Archivada', '')); else if (c.status !== 'active') li.append(' ', badge('Suspendida', 'bad')); return li; };
     const root = el('ul', undefined, 'tree'); const owner = companies.find(c => c.id === PLATFORM_TENANT);
     const top = owner ? label(owner) : el('li', 'Plataforma'); if (owner) top.append(' ', badge('Dueña de la plataforma', 'info'));
@@ -1236,25 +1236,25 @@ async function tenantsPage() {
     for (const g of groups) {
       const li = el('li'); li.append(el('strong', g.name), ' ', badge('Grupo empresarial', 'info'));
       const members = clients.filter(c => g.tenant_ids.includes(c.id)); const ul = el('ul');
-      if (members.length) members.forEach(c => ul.append(label(c))); else ul.append(el('li', 'Sin empresas todavía', 'help'));
+      if (members.length) members.forEach(c => ul.append(label(c))); else ul.append(el('li', 'Sin clientes todavía', 'help'));
       li.append(ul); level.append(li);
     }
     const alone = clients.filter(c => !groupOf(c.id));
-    if (alone.length) { const li = el('li'); li.append(el('strong', 'Empresas independientes')); const ul = el('ul'); alone.forEach(c => ul.append(label(c))); li.append(ul); level.append(li); }
+    if (alone.length) { const li = el('li'); li.append(el('strong', 'Clientes independientes')); const ul = el('ul'); alone.forEach(c => ul.append(label(c))); li.append(ul); level.append(li); }
     t.append(root);
   };
   const renderGroups = () => {
     const g = surface('Grupos empresariales');
-    g.append(el('p', 'Empresas de un mismo dueño. Una cuenta de grupo (por ejemplo, la del presidente) entra a todas las del grupo con un solo usuario; se configura en Cuentas del panel.', 'help'));
+    g.append(el('p', 'Clientes de un mismo dueño. Una cuenta de grupo (por ejemplo, la del presidente) entra a todos los del grupo con un solo usuario; se configura en Administradores.', 'help'));
     const add = el('button', 'Crear grupo'); add.type = 'button'; add.addEventListener('click', () => groupEditor(null)); g.append(add);
     if (!groups.length) { g.append(el('p', 'Aún no hay grupos.', 'help')); return; }
-    table(g, 'Grupos', [['Grupo', x => x.name], ['Empresas', x => x.tenant_ids.map(companyName).join(', ')],
+    table(g, 'Grupos', [['Grupo', x => x.name], ['Clientes', x => x.tenant_ids.map(companyName).join(', ')],
       ['', x => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => groupEditor(x)); return b; }]], groups);
   };
   const groupEditor = x => {
     const { dialog, body, ok, show } = dialogShell(x ? `Editar ${x.name}` : 'Crear grupo empresarial');
     const nm = labeled(body, 'Nombre del grupo', el('input')); nm.maxLength = 120; nm.value = x?.name || '';
-    body.append(el('p', 'Empresas del grupo (una empresa solo puede estar en un grupo). Sacar una empresa quita el acceso que las cuentas del grupo tenían allí.', 'help'));
+    body.append(el('p', 'Clientes del grupo (un cliente solo puede estar en un grupo). Sacar un cliente quita el acceso que las cuentas del grupo tenían allí.', 'help'));
     const taken = new Map(groups.filter(g => g.id !== x?.id).flatMap(g => g.tenant_ids.map(t => [t, g.name])));
     const items = companies.filter(c => c.id !== PLATFORM_TENANT).map(c => [c.id, c.branding?.display_name || c.name, taken.has(c.id) ? `Ya está en ${taken.get(c.id)}` : null]);
     const boxes = checks(body, items, x?.tenant_ids || []);
@@ -1263,7 +1263,7 @@ async function tenantsPage() {
       // Eliminar: sus empresas quedan independientes; con cuentas de grupo atadas se rechaza (reasignarlas en Cuentas).
       const del = el('button', 'Eliminar grupo'); del.type = 'button'; ok.before(del);
       del.addEventListener('click', async () => {
-        if (!await confirmBox({ title: 'Eliminar grupo', message: `¿Eliminar el grupo "${x.name}"? Sus empresas no se borran: quedan independientes.`, okText: 'Eliminar grupo', danger: true })) return;
+        if (!await confirmBox({ title: 'Eliminar grupo', message: `¿Eliminar el grupo "${x.name}"? Sus clientes no se borran: quedan independientes.`, okText: 'Eliminar grupo', danger: true })) return;
         del.disabled = ok.disabled = true;
         try { await api('DELETE', `/company-groups/${x.id}`, { tenant: PLATFORM_TENANT, ifMatch: x.version }); groups = (await api('GET', '/company-groups', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done(); }
         catch (e) {
@@ -1281,7 +1281,7 @@ async function tenantsPage() {
       try {
         if (x) await api('PATCH', `/company-groups/${x.id}`, { tenant: PLATFORM_TENANT, body: payload, ifMatch: x.version }); else await api('POST', '/company-groups', { tenant: PLATFORM_TENANT, body: payload });
         groups = (await api('GET', '/company-groups', { tenant: PLATFORM_TENANT })).data; dialog.close(); render(); done();
-      } catch (e) { show(e.problem?.detail === 'company_in_other_group' ? 'Una de las empresas ya está en otro grupo.' : e); ok.disabled = false; }
+      } catch (e) { show(e.problem?.detail === 'company_in_other_group' ? 'Uno de los clientes ya está en otro grupo.' : e); ok.disabled = false; }
     });
     dialog.showModal();
   };
@@ -1296,7 +1296,7 @@ async function tenantsPage() {
     const boxes = featureChecks(catalog, body, current.features);
     const defPlan = el('select'); defPlan.append(new Option('Sin plan (sus equipos no reciben controles)', '')); personPlans.filter(x => x.active || x.id === current.default_plan_id).forEach(x => defPlan.append(new Option(x.active ? x.name : `${x.name} (inactivo)`, x.id)));
     defPlan.value = current.default_plan_id || '';
-    labeled(body, 'Plan por defecto de sus personas', defPlan, 'Las personas sin plan propio usan este. Los planes se crean en Planes y paquetes.');
+    labeled(body, 'Plan por defecto de sus personas', defPlan, 'Las personas sin plan propio usan este. Los planes se crean en Qué vendemos.');
     const usage = el('p', undefined, 'help'); body.append(usage);
     const warn = el('p', 'Sin plan por defecto, los equipos de este cliente no reciben reglas de funciones vendibles (web, USB, descargas, instalaciones) hasta que se asigne un plan.', 'notice'); body.append(warn);
     const syncWarn = () => { warn.hidden = !!defPlan.value; };
@@ -1319,7 +1319,7 @@ async function tenantsPage() {
     const { dialog, body, ok, show } = dialogShell(`Eliminar ${c.branding?.display_name || c.name}`);
     body.append(el('p', 'Se borran definitivamente sus personas, equipos, actividad, organización, horarios, festivos, reglas, planes y cuentas del panel. No se puede deshacer. Solo se conserva su auditoría (quién hizo qué), que no se muestra en el panel.', 'notice'));
     const password = labeled(body, 'Tu contraseña', el('input')); password.type = 'password'; password.autocomplete = 'current-password';
-    const confirmName = labeled(body, `Escribe el nombre exacto de la empresa: ${c.name}`, el('input'));
+    const confirmName = labeled(body, `Escribe el nombre exacto del cliente: ${c.name}`, el('input'));
     let accept = null;
     ok.textContent = 'Eliminar definitivamente';
     dialog.querySelector('form').addEventListener('submit', async ev => {
@@ -1334,7 +1334,7 @@ async function tenantsPage() {
       } catch (e) {
         const n = (e.problem?.detail || '').match(/^hardened_devices:(\d+)$/)?.[1];
         if (n && !accept) {
-          [accept] = checks(body, [['ok', `Acepto perder la clave de administrador local de ${n} equipo(s) endurecido(s) de esta empresa`]]);
+          [accept] = checks(body, [['ok', `Acepto perder la clave de administrador local de ${n} equipo(s) endurecido(s) de este cliente`]]);
           show(`Tiene ${n} equipo(s) endurecido(s): su administrador local usa una clave que se perderá. Marca la casilla para continuar.`);
         } else show(e.status === 401 ? 'La contraseña no es correcta.' : e);
         ok.disabled = false;
@@ -1346,10 +1346,10 @@ async function tenantsPage() {
     const name = c.branding?.display_name || c.name;
     const { dialog, body, ok, show } = dialogShell(on ? `Archivar ${name}` : `Desarchivar ${name}`);
     body.append(el('p', on
-      ? 'La empresa queda suspendida: sus equipos dejan de conectarse y sus cuentas del panel dejan de entrar. Sale de su grupo empresarial, se oculta de las listas y selectores y nadie puede modificarla hasta desarchivarla. Sus datos se conservan.'
+      ? 'El cliente queda suspendido: sus equipos dejan de conectarse y sus cuentas del panel dejan de entrar. Sale de su grupo empresarial, se oculta de las listas y selectores y nadie puede modificarlo hasta desarchivarlo. Sus datos se conservan.'
       : 'Vuelve a verse en las listas y se puede editar. Sigue suspendida: actívala después en "Editar y marca" si quieres que sus equipos y cuentas vuelvan a entrar, y agrégala de nuevo a su grupo si hace falta.', 'help'));
-    const confirmName = labeled(body, `Escribe el nombre de la empresa para confirmar: ${c.name}`, el('input'));
-    ok.textContent = on ? 'Archivar empresa' : 'Desarchivar';
+    const confirmName = labeled(body, `Escribe el nombre del cliente para confirmar: ${c.name}`, el('input'));
+    ok.textContent = on ? 'Archivar cliente' : 'Desarchivar';
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault(); if (confirmName.value.trim() !== c.name) { show('El nombre no coincide.'); return; }
       ok.disabled = true;
@@ -1375,28 +1375,27 @@ async function tenantsPage() {
     const primary = labeled(colors, 'Color principal', el('input')); primary.type = 'color'; primary.value = /^#[0-9a-f]{6}$/i.test(brand.primary_color) ? brand.primary_color : '#3C4082';
     const accent = labeled(colors, 'Color de acento', el('input')); accent.type = 'color'; accent.value = /^#[0-9a-f]{6}$/i.test(brand.accent_color) ? brand.accent_color : '#5A61B3';
     const tz = labeled(body, 'Zona horaria', el('input'), 'Ejemplo: America/Bogota'); tz.maxLength = 64; tz.value = c.timezone;
-    let status = null, gate = null, group = null;
+    let status = null, group = null;
     if (!owner) {
-      status = el('select'); status.append(new Option('Activa', 'active'), new Option('Suspendida (nadie de la empresa puede entrar)', 'suspended')); status.value = c.status;
+      status = el('select'); status.append(new Option('Activa', 'active'), new Option('Suspendida (nadie del cliente puede entrar)', 'suspended')); status.value = c.status;
       labeled(body, 'Estado', status);
-      gate = el('input'); gate.type = 'checkbox'; gate.checked = c.rbac_self_management;
-      const gl = el('label', undefined, 'check'); gl.append(gate, ' La empresa gestiona sus propios roles y cuentas'); body.append(gl);
-      group = el('select'); group.append(new Option('Ninguno (empresa independiente)', '')); groups.forEach(g => group.append(new Option(g.name, g.id)));
-      group.value = groupOf(c.id)?.id || ''; labeled(body, 'Pertenece al grupo empresarial', group, 'Las cuentas de grupo (por ejemplo la del presidente) entran a todas las empresas de su grupo. Sacarla de un grupo les quita ese acceso.');
+      // Q3 (Koichi, 2026-10-15): quién gestiona roles y cuentas lo decide solo la función vendible «El cliente gestiona sus
+      // roles y cuentas» (autogestion_accesos), en Funciones. Aquí ya no hay una segunda casilla.
+      group = el('select'); group.append(new Option('Ninguno (cliente independiente)', '')); groups.forEach(g => group.append(new Option(g.name, g.id)));
+      group.value = groupOf(c.id)?.id || ''; labeled(body, 'Pertenece al grupo empresarial', group, 'Las cuentas de grupo (por ejemplo la del presidente) entran a todos los clientes de su grupo. Sacarlo de un grupo les quita ese acceso.');
     }
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
       const f = file.files[0];
       if (!name.value.trim() || !display.value.trim()) { show('Escribe el nombre interno y el visible.'); return; }
       if (f && (!LOGO_TYPES.includes(f.type) || f.size > 512 * 1024)) { show('El logo debe ser PNG, JPG o WebP de máximo 512 KB.'); return; }
-      if (status?.value === 'suspended' && c.status !== 'suspended' && !await confirmBox({ title: 'Suspender cliente', message: `¿Suspender ${c.name}? Nadie de esa empresa podrá entrar al panel.`, okText: 'Suspender y guardar', danger: true })) return;
+      if (status?.value === 'suspended' && c.status !== 'suspended' && !await confirmBox({ title: 'Suspender cliente', message: `¿Suspender ${c.name}? Nadie de ese cliente podrá entrar al panel.`, okText: 'Suspender y guardar', danger: true })) return;
       ok.disabled = true;
       try {
         const patch = { name: name.value.trim(), timezone: tz.value.trim(), branding: { display_name: display.value.trim(), logo_url: brand.logo_url || `${location.origin}/branding.svg`, primary_color: primary.value.toUpperCase(), accent_color: accent.value.toUpperCase() } };
         if (status && status.value !== c.status) patch.status = status.value;
         let saved = await api('PATCH', `/tenants/${c.id}`, { tenant: c.id, body: patch, ifMatch: c.version });
         if (f) saved = await api('POST', `/tenants/${c.id}/logo`, { tenant: c.id, body: { content_type: f.type, data: await fileBase64(f) }, ifMatch: saved.version });
-        if (gate && gate.checked !== c.rbac_self_management) await api('PATCH', `/tenants/${c.id}/rbac-gate`, { tenant: c.id, body: { enabled: gate.checked, reason: gate.checked ? 'Activada desde la ficha de la empresa' : 'Revocada desde la ficha de la empresa' }, ifMatch: saved.version });
         const from = groupOf(c.id)?.id || '';
         if (group && group.value !== from) {
           const move = async (g, ids) => api('PATCH', `/company-groups/${g.id}`, { tenant: PLATFORM_TENANT, body: { name: g.name, tenant_ids: ids }, ifMatch: g.version });
@@ -1408,38 +1407,51 @@ async function tenantsPage() {
         if (owner) { location.reload(); return; }
         await reload();
       } catch (e) {
-        show(e.status === 412 ? 'Alguien más cambió esta empresa: recarga la página.' : e.problem?.detail === 'invalid_image' ? 'El archivo no es una imagen válida del tipo indicado.' : e);
+        show(e.status === 412 ? 'Alguien más cambió este cliente: recarga la página.' : e.problem?.detail === 'invalid_image' ? 'El archivo no es una imagen válida del tipo indicado.' : e);
         ok.disabled = false;
       }
     });
     dialog.showModal();
   };
-  const action = $('page-action'); action.textContent = 'Crear empresa'; action.hidden = false;
+  const action = $('page-action'); action.textContent = 'Dar de alta un cliente'; action.hidden = false;
   action.addEventListener('click', () => {
-    const { dialog, body, ok, show } = dialogShell('Crear empresa');
-    body.append(el('p', 'Después de crearla: configura su organización, crea a su administrador como persona, luego su cuenta del panel y por último prepara la instalación de sus equipos.'));
-    const name = labeled(body, 'Nombre de la empresa', el('input')); name.maxLength = 100;
+    const { dialog, body, ok, show } = dialogShell('Dar de alta un cliente');
+    body.append(el('p', 'Después de darlo de alta: revisa sus funciones y su plan, configura su estructura, crea a su administrador como persona, luego su cuenta del panel y por último prepara la instalación de sus equipos.'));
+    const name = labeled(body, 'Nombre del cliente', el('input')); name.maxLength = 100;
     const tz = labeled(body, 'Zona horaria', el('input'), 'Ejemplo: America/Bogota'); tz.maxLength = 64; tz.value = 'America/Bogota';
     const pkg = el('select'); pkg.append(new Option('Sin paquete (solo el núcleo)', '')); packages.forEach(p => pkg.append(new Option(p.name, p.id)));
     labeled(body, 'Paquete', pkg, 'Define las funciones que compra. Se pueden ajustar después en "Funciones".');
-    ok.textContent = 'Crear empresa';
+    // R7: el plan por defecto se elige aquí. La API ya deja «Completo» al crear; si se elige otro se guarda en seguida.
+    const activePlans = personPlans.filter(x => x.active);
+    const fullPlan = activePlans.find(x => x.name === 'Completo');
+    const defPlan = el('select'); defPlan.append(new Option('Sin plan (sus equipos no reciben controles)', '')); activePlans.forEach(x => defPlan.append(new Option(x.name, x.id)));
+    defPlan.value = fullPlan?.id || '';
+    labeled(body, 'Plan por defecto de sus personas', defPlan, 'Las personas sin plan propio usan este. Solo entrega las funciones que el cliente compró.');
+    ok.textContent = 'Dar de alta';
     dialog.querySelector('form').addEventListener('submit', async ev => {
       ev.preventDefault();
-      if (!name.value.trim()) { show('Escribe el nombre de la empresa.'); return; }
+      if (!name.value.trim()) { show('Escribe el nombre del cliente.'); return; }
       ok.disabled = true;
+      let created;
       try {
-        const created = await api('POST', '/tenants', { tenant: PLATFORM_TENANT, body: { name: name.value.trim(), timezone: tz.value.trim(), package_id: pkg.value || null,
+        created = await api('POST', '/tenants', { tenant: PLATFORM_TENANT, body: { name: name.value.trim(), timezone: tz.value.trim(), package_id: pkg.value || null,
           branding: { display_name: name.value.trim(), logo_url: `${location.origin}/branding.svg`, primary_color: '#3C4082', accent_color: '#5A61B3' } } });
-        dialog.close(); await reload(); nextSteps(created);
-      } catch (e) { show(e.status === 422 ? 'Revisa el nombre y la zona horaria (ejemplo: America/Bogota).' : e); ok.disabled = false; }
+      } catch (e) { show(e.status === 422 ? 'Revisa el nombre y la zona horaria (ejemplo: America/Bogota).' : e); ok.disabled = false; return; }
+      let planProblem = null;
+      try {
+        const current = await api('GET', `/tenants/${created.id}/features`, { tenant: created.id });
+        if ((current.default_plan_id || '') !== defPlan.value) await api('PUT', `/tenants/${created.id}/features`, { tenant: created.id, body: { package_id: current.package_id, features: current.features, default_plan_id: defPlan.value || null } });
+      } catch (e) { planProblem = errorMessage(e); }
+      dialog.close(); await reload(); nextSteps(created, () => featuresEditor(companies.find(x => x.id === created.id) || created), planProblem);
     });
     dialog.showModal();
   });
   render();
 }
-// Recorrido tras crear un cliente: la cuenta pertenece a una persona, así que la persona va antes que la cuenta.
-function nextSteps(created) {
-  const { dialog, body, ok, cancel } = dialogShell(`${created.branding?.display_name || created.name} quedó creada`);
+// Recorrido tras dar de alta un cliente: la cuenta pertenece a una persona, así que la persona va antes que la cuenta.
+function nextSteps(created, reviewFeatures, planProblem = null) {
+  const { dialog, body, ok, cancel } = dialogShell(`${created.branding?.display_name || created.name} quedó dado de alta`);
+  if (planProblem) body.append(el('p', `El cliente se creó, pero no se pudo guardar el plan por defecto: ${planProblem} Revísalo en «Revisar funciones y plan».`, 'error-text'));
   // Puesta en marcha (fase 4): el recorrido guiado del cliente recién creado, ya elegido en el selector.
   const guide = el('p', undefined, 'next-steps-guide');
   guide.append(clientLink('Configurar este cliente', created.id, '/puesta-en-marcha.php', 'button primary'), el('small', 'Abre Puesta en marcha: ocho pasos hasta comprobar su primer equipo.', 'help'));
@@ -1447,11 +1459,14 @@ function nextSteps(created) {
   body.append(el('p', 'O, directamente, en este orden:'));
   const ol = el('ol', undefined, 'next-steps'); body.append(ol);
   const step = (text, note, link) => { const li = el('li'); li.append(el('strong', text), ' · ', link); if (note) li.append(el('small', note)); ol.append(li); };
-  step('Configurar la organización', 'Sedes (con su país), áreas y cargos.', clientLink('Abrir Organización', created.id, '/organizacion.php'));
-  step('Crear al administrador como persona', 'Toda cuenta de empresa pertenece a una persona.', clientLink('Abrir Personas', created.id, '/usuarios.php'));
+  const review = el('button', 'Revisar funciones y plan', 'link-button'); review.type = 'button';
+  review.addEventListener('click', () => { dialog.close(); reviewFeatures(); });
+  step('Revisar funciones y plan', 'Lo que compró y el plan por defecto de sus personas.', review);
+  step('Configurar la estructura', 'Sedes (con su país), áreas y cargos.', clientLink('Abrir Estructura del cliente', created.id, '/organizacion.php'));
+  step('Crear al administrador como persona', 'Toda cuenta de un cliente pertenece a una persona.', clientLink('Abrir Personas', created.id, '/usuarios.php'));
   const acc = el('a', 'Crear cuenta', 'link-button'); acc.href = `/cuentas.php?empresa=${encodeURIComponent(created.id)}&crear=1`;
   step('Crear su cuenta del panel', 'Requiere la persona del paso anterior.', acc);
-  step('Preparar la instalación', 'Registrar los equipos de sus personas.', clientLink('Abrir Registrar equipos', created.id, '/alta.php'));
+  step('Preparar la instalación', 'Registrar los equipos de sus personas.', clientLink('Abrir Registrar equipos nuevos', created.id, '/alta.php'));
   cancel.hidden = true; ok.textContent = 'Cerrar'; ok.type = 'button'; ok.addEventListener('click', () => dialog.close());
   dialog.showModal();
 }
@@ -1596,7 +1611,7 @@ async function people() {
   const CSV_COLUMNS = [['nombre', 'Obligatorio.'], ['cedula', 'Documento de identificación. Si ya existe en el cliente, la fila se omite (no se actualiza).'],
     ['correo', 'Opcional.'], ['firma', 'Legado, opcional: solo si el cliente todavía usa firmas.'],
     ['sede', 'Nombre de la sede. Si hay dos con el mismo nombre, escribe su ruta: «Padre › Sede».'], ['area', 'Nombre del área (o su ruta).'], ['cargo', 'Nombre del cargo (o su ruta).'],
-    ['horario', 'Nombre del horario. Vacío: el horario sugerido, que conviene revisar.'], ['empresa', 'Empresa del grupo, opcional. Vacío: sin empresa (todo el grupo).']];
+    ['horario', 'Nombre del horario. Vacío: el horario sugerido, que conviene revisar.'], ['empresa', 'Empresa interna, opcional. Vacío: sin empresa interna (todo el cliente).']];
   const template = () => {
     const ex = k => fallback(k)?.name || units(k)[0]?.name || '';
     const csv = `${CSV_COLUMNS.map(([c]) => c).join(';')}\r\n` + `Ana María Pérez;1234567890;ana.perez@empresa.com;${ex('firm')};${ex('site')};${ex('area')};${ex('position')};${defaultSchedule()?.name || ''};${units('company')[0]?.name || ''}\r\n`;
@@ -1773,7 +1788,7 @@ async function people() {
     const unitItems = kind => units(kind).map(o => [o.id, o.name]);
     const shownText = s => s.selectedOptions[0]?.textContent || '—';
     if (batchFields.data) {
-      for (const [kind, label, first] of [['company', 'Empresa del grupo', ['', 'Sin empresa (todo el grupo)']], ['site', 'Sede', ['', 'Elige la sede…']], ['area', 'Área', ['', 'Elige el área…']], ['position', 'Cargo', ['', 'Elige el cargo…']]]) {
+      for (const [kind, label, first] of [['company', 'Empresa interna', ['', 'Sin empresa interna (todo el cliente)']], ['site', 'Sede', ['', 'Elige la sede…']], ['area', 'Área', ['', 'Elige el área…']], ['position', 'Cargo', ['', 'Elige el cargo…']]]) {
         const s = select(unitItems(kind), first);
         add(`${kind}_id`, label, s, { domain: { company: 'empresas', site: 'sedes', area: 'areas', position: 'cargos' }[kind], text: () => shownText(s),
           read: out => { if (kind !== 'company' && !s.value) return `Elige ${label.toLowerCase()}.`; out.changes[`${kind}_id`] = s.value || null; return null; } });
@@ -1885,7 +1900,7 @@ async function people() {
 // Las pestañas antiguas se traducen a la navegación actual; cada formulario conserva su guardado independiente.
 const PERSON_TABS = [['resumen', 'Resumen'], ['ventanas', 'Ventanas'], ['linea', 'Línea de tiempo'], ['controles', 'Equipo y controles'], ['presencia', 'Presencia'], ['politicas', 'Reglas'], ['datos', 'Datos y acceso']];
 const PERSON_ALIASES = { acceso: 'datos', equipos: 'controles', actividad: 'resumen' };
-const UNIT_EMPTY = { company: 'Aún no hay empresas del grupo (es opcional).', site: 'Aún no hay sedes: crea la primera para asignarla a personas.', area: 'Aún no hay áreas: crea la primera para asignarla a personas.', position: 'Aún no hay cargos: crea el primero para asignarlo a personas.' };
+const UNIT_EMPTY = { company: 'Aún no hay empresas internas (es opcional).', site: 'Aún no hay sedes: crea la primera para asignarla a personas.', area: 'Aún no hay áreas: crea la primera para asignarla a personas.', position: 'Aún no hay cargos: crea el primero para asignarlo a personas.' };
 const clock = () => new Intl.DateTimeFormat('es-CO', { timeStyle: 'short' }).format(new Date()).replace(/\.$/, '');
 // Guardado fallido de una persona, en español (conflictos, validaciones y §7 de v4-clientes-funciones-accesos.md).
 function personError(e) {
@@ -1945,7 +1960,7 @@ async function personContext() {
   };
   return ctx;
 }
-// Selector de una unidad (sede, área, cargo, empresa del grupo) con «+ Nueva …» si la cuenta puede crearla: el
+// Selector de una unidad (sede, área, cargo, empresa interna) con «+ Nueva …» si la cuenta puede crearla: el
 // catálogo vacío se anticipa con su mensaje y la unidad creada queda elegida sin salir del formulario.
 function unitField(parent, ctx, kind, label, value, { optionalText = null, onCreated } = {}) {
   const wrap = el('div', undefined, 'unit-field'); parent.append(wrap);
@@ -1988,14 +2003,14 @@ function identityFields(parent, ctx, u, extras = parent) {
   return { name, doc, email, boss, mon,
     read: () => ({ display_name: name.value.trim(), document: doc.value.trim() || null, email: email.value.trim() || null, reports_to_user_id: boss.value || null, monitoring_override: mon.value }) };
 }
-// Ubicación laboral: empresa del grupo, sede, área, cargo (y firma si existen), horario y festivos.
+// Ubicación laboral: empresa interna, sede, área, cargo (y firma si existen), horario y festivos.
 function laborFields(parent, ctx, u, extras = parent) {
   const grid = el('div', undefined, 'form-grid'); parent.append(grid);
   const fallback = kind => { const list = ctx.units(kind); return list.length === 1 ? list[0] : list.find(o => fold(o.name).startsWith('sin ')) || null; };
   const pick = kind => u ? u[`${kind}_id`] : fallback(kind)?.id;
-  const company = unitField(grid, ctx, 'company', 'Empresa del grupo', u?.company_id, { optionalText: 'Sin empresa (todo el grupo)' });
+  const company = unitField(grid, ctx, 'company', 'Empresa interna', u?.company_id, { optionalText: 'Sin empresa interna (todo el cliente)' });
   const selects = { site: unitField(grid, ctx, 'site', 'Sede', pick('site')), area: unitField(grid, ctx, 'area', 'Área', pick('area')), position: unitField(grid, ctx, 'position', 'Cargo', pick('position')) };
-  // Firmas: solo mientras existan (no se crean nuevas; las reemplazan las empresas del grupo).
+  // Firmas: solo mientras existan (no se crean nuevas; las reemplazan las empresas internas).
   if (ctx.units('firm').length || u?.firm_id) selects.firm = unitField(grid, ctx, 'firm', 'Firma', pick('firm'), { optionalText: 'Sin firma (se asigna después)' });
   const sched = el('select');
   const fillSchedules = v => {
@@ -2167,7 +2182,7 @@ function dataPanel(panel, ctx, getUser, onSaved) {
       : 'Tu cuenta puede ver estos datos, pero no editarlos (se necesita el permiso para editar personas).', 'notice'));
     const site = ctx.org.find(o => o.id === u.site_id);
     const dl = el('dl', undefined, 'details');
-    [['Nombre', u.display_name], ['Cédula', u.document || '—'], ['Correo', u.email || '—'], ['Empresa del grupo', ctx.unitName(u.company_id) || 'Sin empresa (todo el grupo)'],
+    [['Nombre', u.display_name], ['Cédula', u.document || '—'], ['Correo', u.email || '—'], ['Empresa interna', ctx.unitName(u.company_id) || 'Sin empresa interna (todo el cliente)'],
       ['Sede', site ? `${site.name} · ${placeOf(site)}` : '—'], ['Área', ctx.unitName(u.area_id) || '—'], ['Cargo', ctx.unitName(u.position_id) || '—'],
       ['Jefe', ctx.users.find(x => x.id === u.reports_to_user_id)?.display_name || (u.reports_to_user_id ? 'Fuera de tu alcance' : 'Nadie')],
       ['Horario', ctx.schedules.find(x => x.id === u.schedule_id)?.name || (u.schedule_id ? 'No disponible' : 'Sin horario')],
@@ -2545,7 +2560,7 @@ async function schedulesPage() {
 }
 
 // ---- Fuentes de datos -------------------------------------------------------------------------------------------
-const DOMAIN_LABELS = { empresas: 'Empresas del grupo', firmas: 'Firmas', sedes: 'Sedes', areas: 'Áreas', cargos: 'Cargos', horarios: 'Horarios', festivos: 'Festivos', personas: 'Personas',
+const DOMAIN_LABELS = { empresas: 'Empresas internas', firmas: 'Firmas', sedes: 'Sedes', areas: 'Áreas', cargos: 'Cargos', horarios: 'Horarios', festivos: 'Festivos', personas: 'Personas',
   jerarquia: 'Jerarquía (a quién reporta)', ausencias: 'Ausencias de RR. HH.' };
 const RUN_STATUS = { applied: ['Aplicada', 'good'], simulated: ['Simulación', 'info'], blocked: ['Bloqueada: requiere aprobación', 'warn'], failed: ['Falló', 'bad'], running: ['En curso', ''] };
 const BLOCK_REASONS = { too_many_deactivations: 'Iba a retirar a más personas de las permitidas de una sola vez.', list_too_small: 'La fuente devolvió muy pocas personas (o ninguna): parece una lista incompleta.', too_many_creations: 'Iba a crear a más personas de las permitidas de una sola vez (p. ej. la primera carga): revisa las altas y apruébala.', too_many_org_changes: 'Iba a cambiar la empresa, firma, sede, área, cargo u horario de demasiadas personas (o a dejarlas «Sin …»).', domains_changed: 'La fuente acaba de recibir dominios nuevos: su primera vuelta real espera aprobación.' };
@@ -3210,7 +3225,7 @@ async function policiesPage() {
 
 // ---- Planes y paquetes (solo plataforma) ----------------------------------------------------------------------------
 // Catálogo de funciones, paquetes (plantillas para vender) y planes por persona (docs/architecture/v4-clientes-funciones-accesos.md
-// §2-3). Las funciones de cada cliente y su plan por defecto se eligen en Empresas → Funciones.
+// §2-3). Las funciones de cada cliente y su plan por defecto se eligen en Clientes → Funciones.
 // Pestañas (revisión UX M7): el trabajo frecuente (planes y paquetes) va primero y la explicación queda en su pestaña.
 const PLAN_TABS = [['como', 'Cómo funciona'], ['funciones', 'Funciones'], ['paquetes', 'Paquetes'], ['planes', 'Planes por persona']];
 const PLAN_TAB_KEY = 'keeper.plans.tab';
@@ -3278,9 +3293,9 @@ async function plansPage() {
     ['Funciones (catálogo)', 'Paquete', 'Funciones del cliente', 'Plan de cada persona', 'Lo que recibe la persona'].forEach((t, i) => { if (i) chain.append('→'); chain.append(el('span', t)); });
     s.append(chain);
     const ul = el('ul');
-    ['Funciones: todo lo que Keeper sabe hacer. Unas son por persona (se aplican a cada persona) y otras del cliente (valen para toda la empresa).',
+    ['Funciones: todo lo que Keeper sabe hacer. Unas son por persona (se aplican a cada persona) y otras del cliente (valen para todo el cliente).',
       'Paquete: una plantilla para vender. Al dar de alta o editar un cliente marca sus funciones de una vez; cambiar un paquete no cambia a los clientes que ya lo usan.',
-      'Funciones del cliente: lo que compró (paquete + ajustes de la venta). Se eligen en Empresas → Funciones.',
+      'Funciones del cliente: lo que compró (paquete + ajustes de la venta). Se eligen en Clientes → Funciones.',
       'Plan de cada persona: qué funciones de persona recibe. Cada cliente tiene un plan por defecto; una persona puede tener uno propio (en su ficha de Personas).',
       'Lo que recibe la persona = funciones del cliente ∩ su plan. Si el cliente no compró una función, ningún plan la da.']
       .forEach(t => ul.append(el('li', t, 'help')));
@@ -3454,7 +3469,7 @@ const AUDIT_ACTIONS = {
   createCheckIn: 'Se registró una entrada', externalCheckInsBatch: 'El sistema de puertas envió entradas',
   createUser: 'Creó una persona', patchUser: 'Editó una persona', batchUpdateUsers: 'Editó personas en lote',setUserAccess: 'Cambió el acceso de una persona', setSubscription: 'Cambió el plan de una persona',
   createPanelAccount: 'Creó una cuenta del panel', patchPanelAccount: 'Cambió una cuenta del panel', resetPanelAccountPassword: 'Restableció una contraseña',
-  createRole: 'Creó un rol', patchRole: 'Editó un rol', patchPermission: 'Editó un permiso', setRbacGate: 'Cambió quién gestiona los roles de la empresa',
+  createRole: 'Creó un rol', patchRole: 'Editó un rol', patchPermission: 'Editó un permiso', setRbacGate: 'Cambió quién gestiona los roles del cliente',
   createRoleRule: 'Creó una asignación automática', patchRoleRule: 'Editó una asignación automática', putMonitoringExclusions: 'Cambió los cargos que no se monitorean',
   createOrgUnit: 'Creó una unidad', patchOrgUnit: 'Editó una unidad', deleteOrgUnit: 'Eliminó una unidad', createSchedule: 'Creó un horario', putSchedule: 'Editó un horario',
   createHoliday: 'Agregó un festivo', createHolidayCalendar: 'Creó un calendario de festivos', putHolidayCalendar: 'Editó un calendario de festivos', assignHolidayCalendar: 'Asignó un calendario de festivos a personas', putHoliday: 'Editó un festivo', deleteHoliday: 'Quitó un festivo', createHolidaySociety: 'Creó una sociedad', putHolidaySociety: 'Editó una sociedad', deleteHolidaySociety: 'Quitó una sociedad',
@@ -3462,7 +3477,7 @@ const AUDIT_ACTIONS = {
   createPolicy: 'Creó una regla de equipos', patchPolicy: 'Editó una regla de equipos', createTier: 'Creó un plan', patchTier: 'Editó un plan',
   createSuspiciousApp: 'Agregó una app a vigilar', putSuspiciousApp: 'Editó una app vigilada', deleteSuspiciousApp: 'Dejó de vigilar una app', putInstallCoverage: 'Editó la cobertura de una persona',
   putAppClassification: 'Clasificó una aplicación', createAppClassificationOverride: 'Creó una excepción de clasificación', deleteAppClassificationOverride: 'Quitó una excepción de clasificación', createAppSite: 'Agregó un sitio reconocible',
-  createTenant: 'Creó una empresa', createFeaturePackage: 'Creó un paquete de funciones', patchFeaturePackage: 'Editó un paquete de funciones', createPersonPlan: 'Creó un plan por persona', patchPersonPlan: 'Editó un plan por persona', setUserPlan: 'Cambió el plan de una persona', putTenantFeatures: 'Cambió las funciones contratadas de un cliente',patchTenant: 'Editó una empresa', purgeTenant: 'Eliminó una empresa definitivamente', uploadTenantLogo: 'Cambió el logo de la empresa', putPanelSettings: 'Cambió los ajustes del panel',
+  createTenant: 'Dio de alta un cliente', createFeaturePackage: 'Creó un paquete de funciones', patchFeaturePackage: 'Editó un paquete de funciones', createPersonPlan: 'Creó un plan por persona', patchPersonPlan: 'Editó un plan por persona', setUserPlan: 'Cambió el plan de una persona', putTenantFeatures: 'Cambió las funciones contratadas de un cliente',patchTenant: 'Editó un cliente', purgeTenant: 'Eliminó un cliente definitivamente', uploadTenantLogo: 'Cambió el logo del cliente', putPanelSettings: 'Cambió los ajustes del panel',
   createCompanyGroup: 'Creó un grupo empresarial', patchCompanyGroup: 'Editó un grupo empresarial', deleteCompanyGroup: 'Eliminó un grupo empresarial',
   createDataSource: 'Conectó una fuente de datos', patchDataSource: 'Editó una fuente de datos', putDataDomains: 'Cambió quién manda en cada dato', runDataSource: 'Sincronizó una fuente',
   approveSyncRun: 'Aprobó una sincronización bloqueada', resolveSyncItem: 'Resolvió un pendiente de sincronización',
@@ -3490,7 +3505,7 @@ const AUDIT_FIELDS = {
   pattern: 'texto a reconocer', app_pattern: 'texto a vigilar', description: 'descripción', day: 'fecha', society_ids: 'sociedades', counts_for_presence: 'cuenta para presencia', source_ref: 'referencia',
   base_url: 'dirección', company: 'empresa en la fuente', token: 'clave', mode: 'modo', interval_minutes: 'frecuencia', domains: 'dominios', approve: 'decisión', rows: 'filas', parent_id: 'depende de',
   note: 'nota', starts_at: 'desde', ends_at: 'hasta', all_day: 'día completo', install_coverage_heartbeat_days: 'días sin conexión', raw_days: 'retención del detalle', aggregate_months: 'retención de resúmenes',
-  log_days: 'retención de registros', retention_enforce: 'aplicar la retención', archived: 'archivada', country_code: 'país', company_id: 'empresa del grupo', holiday_calendar_id: 'calendario de festivos', calendar_id: 'calendario', is_default: 'por defecto', user_ids: 'personas', tenant_ids: 'empresas', position_ids: 'cargos', condition_kind: 'condición', confirm_sensitive: 'confirmación', assignable_by_rule: 'asignable por regla',
+  log_days: 'retención de registros', retention_enforce: 'aplicar la retención', archived: 'archivada', country_code: 'país', company_id: 'empresa interna', holiday_calendar_id: 'calendario de festivos', calendar_id: 'calendario', is_default: 'por defecto', user_ids: 'personas', tenant_ids: 'clientes', position_ids: 'cargos', condition_kind: 'condición', confirm_sensitive: 'confirmación', assignable_by_rule: 'asignable por regla',
   shared_password: 'contraseña compartida', admin_name: 'usuario administrador', action: 'acción', reason: 'motivo', ring: 'anillo', percentage: 'porcentaje', version: 'versión',
   sequence: 'secuencia', from_base: 'servidor de origen', to_base: 'servidor de destino', tenants: 'empresas', exclude_devices: 'equipos excluidos', enforced_at: 'modo mudado',
 };
@@ -3677,7 +3692,7 @@ function retentionRunText(run) {
 }
 async function settingsPage() {
   const cfg = await api('GET', '/tenants/panel-settings');
-  const s = surface('Ajustes de la empresa');
+  const s = surface('Conservación de datos y avisos');
   const form = el('form'); form.noValidate = true; s.append(form);
   // Revisión UX AJU-1: el aviso de Cobertura y la conservación de datos se ven por separado; reducir un plazo de
   // conservación no se guarda sin ver antes el efecto (Antes → Después).
@@ -3764,12 +3779,24 @@ async function settingsPage() {
     }
     finally { save.disabled = false; }
   });
-  // Cuenta de IT para endurecer equipos: ajuste de toda la empresa (permiso de endurecimiento con alcance empresa y
-  // funcion contratada). Sin el, la seccion no aparece.
-  if (canConfigureHardening(await loadHardeningAccess())) {
-    const settings = await loadHardeningSettings(tenant);
-    if (settings) {
-      const hs = surface('Seguridad de cuentas de Windows');
+  // R8: las tres tarjetas de Windows van bajo un encabezado «Seguridad de los equipos» (decisión Q6: será entrada propia
+  // del cliente; la pantalla Resumen de protección es otra tarea). Cada tarjeta aparece solo si la cuenta puede usarla.
+  const platform = !!readSession()?.is_platform_admin;
+  const access = await loadAccess();
+  // Cuenta de IT para endurecer equipos: ajuste de todo el cliente (permiso de endurecimiento con alcance cliente y
+  // funcion contratada). Sin el, la tarjeta no aparece.
+  const hardening = canConfigureHardening(await loadHardeningAccess()) ? await loadHardeningSettings(tenant) : null;
+  const withPin = canConfigureUnlockPin(access), withSac = canConfigureWindowsSecurity(access);
+  if (hardening || withPin || withSac) {
+    const security = el('section', undefined, 'settings-security'); security.id = 'seguridad-de-los-equipos';
+    security.setAttribute('aria-labelledby', 'seguridad-de-los-equipos-title');
+    const title = el('h2', 'Seguridad de los equipos'); title.id = 'seguridad-de-los-equipos-title';
+    security.append(title, el('p', 'Lo que Keeper deja configurado en Windows en todos los equipos de este cliente: la cuenta de administrador de IT, el PIN para desbloquear sin conexión y Smart App Control.', 'help'));
+    $('page-content').append(security);
+    const card = text => { const c = surface(text, security); const h = c.querySelector('h2'); h.replaceWith(el('h3', h.textContent)); return c; };
+    if (hardening) {
+      const settings = hardening;
+      const hs = card('Seguridad de cuentas de Windows');
       const state = el('p'); hs.append(badge(settings.configured ? 'Configurada' : 'Sin configurar', settings.configured ? 'good' : 'warn'), state);
       state.textContent = hardeningSummary(settings);
       hs.append(el('p', 'La cuenta de IT es la administradora que queda en cada equipo endurecido. Sin su contraseña no se puede endurecer ningún equipo.', 'help'));
@@ -3778,16 +3805,14 @@ async function settingsPage() {
       open.addEventListener('click', () => openHardeningSettings(tenant, { onSaved: saved => { state.textContent = hardeningSummary(saved); hs.querySelector('.badge').replaceWith(badge('Configurada', 'good')); open.textContent = 'Cambiar cuenta de IT'; open.className = ''; hmsg.textContent = 'Guardado.'; done(); } }));
       const actions = el('div', undefined, 'actions'); actions.append(open); hs.append(actions, hmsg);
     }
+    if (withPin) await mountUnlockPin(card('PIN de desbloqueo local'), tenant);
+    if (withSac) await mountWindowsSecurity(card('Smart App Control'), tenant);
   }
   // Atajos según el acceso de la cuenta (misma regla que el menú, nav-access.js): no se ofrece lo que daría «Sin permiso».
-  // Empresas (marca) y Planes son de la plataforma. Si el acceso no se pudo leer se muestran y decide la API.
-  const platform = !!readSession()?.is_platform_admin;
-  const access = await loadAccess();
-  if (canConfigureUnlockPin(access)) await mountUnlockPin(surface('PIN de desbloqueo local'), tenant);
-  if (canConfigureWindowsSecurity(access)) await mountWindowsSecurity(surface('Smart App Control'), tenant);
+  // Clientes (marca) y Qué vendemos son de la plataforma. Si el acceso no se pudo leer se muestran y decide la API.
   const shortcuts = [['Horarios', '/horarios.php', 'schedules'], ['Festivos', '/festivos.php', 'holidays'], ['Clasificación de apps', '/clasificacion.php', 'classification'],
     ['Fuentes de datos (AZC One)', '/fuentes.php', 'sources']].filter(([, , key]) => !access || allowed(access, key));
-  if (platform) { shortcuts.unshift(['Marca, logo y colores', '/empresas.php']); shortcuts.push(['Planes y paquetes', '/planes.php']); }
+  if (platform) { shortcuts.unshift(['Marca, logo y colores (Clientes)', '/empresas.php']); shortcuts.push(['Qué vendemos', '/planes.php']); }
   // Puesta en marcha: solo para quien puede verla (misma regla que el menú); sin acceso legible no se ofrece.
   if (access && canSeeOnboarding(access)) shortcuts.push(['Revisar configuración inicial', '/puesta-en-marcha.php']);
   const more = surface('Otros ajustes');
@@ -4232,7 +4257,7 @@ async function openRoleEditor(role, { company = null, permissions = null, onSave
       dialog.close(); onSaved?.(saved);
     } catch (e) {
       // errorMessage ya traduce delegation_exceeds_own_access, scope_denied y feature_not_contracted (§7).
-      show(e.code === 'tenant_rbac_disabled' ? 'La empresa no tiene habilitada la gestión de sus propios roles: pídesela a la plataforma.' : e);
+      show(e.code === 'tenant_rbac_disabled' ? 'Este cliente no tiene la función «El cliente gestiona sus roles y cuentas»: pídesela a la plataforma.' : e);
       ok.disabled = false;
     }
   });
@@ -4251,7 +4276,7 @@ async function start() {
   try {
     if (session.is_platform_admin) {
       companies = sortCompanies(await allPages('/tenants', PLATFORM_TENANT));
-      // Sin empresas cliente, las pantallas de empresa caerian en la de plataforma (y se crearian personas ahi): a Empresas.
+      // Sin clientes, las pantallas de cliente caerian en la de plataforma (y se crearian personas ahi): a Clientes.
       if (!globalPage && !companies.some(c => c.id !== PLATFORM_TENANT)) { location.replace('/empresas.php?sin-empresas=1'); return; }
       let selected = null; try { selected = sessionStorage.getItem('keeper.presentation.tenant'); } catch { /* sin almacenamiento */ }
       tenant = globalPage ? PLATFORM_TENANT : (companies.some(c => c.id === selected) ? selected : companies.find(c => c.id !== PLATFORM_TENANT)?.id || PLATFORM_TENANT);
@@ -4274,7 +4299,7 @@ async function start() {
     } else tenant = session.tenant_id;
     if ($('group-group')) $('group-group').hidden = !(session.group?.tenants?.length > 1);
   } catch (e) { fail(e); return; }
-  if (!isUuid(tenant)) { fail(new Error('La sesión no tiene una empresa válida: vuelve a iniciar sesión.')); return; }
+  if (!isUuid(tenant)) { fail(new Error('La sesión no tiene un cliente válido: vuelve a iniciar sesión.')); return; }
   setTenant(tenant);
   applyNavAccess(); // menu segun los permisos de la cuenta en esta empresa
   returnBand(); // llegó desde un paso de Puesta en marcha (?pm=N): «Volver al progreso»
