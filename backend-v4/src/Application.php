@@ -77,6 +77,12 @@ final class Application
         } catch (OAuthError $e) {
             $this->send($e->status, Util::json(['error'=>$e->errorCode]), $id, ['Cache-Control'=>'no-store', 'Pragma'=>'no-cache'] + ($e->status === 401 ? ['WWW-Authenticate'=>'Basic realm="keeper-oauth"'] : []));
         } catch (ApiError $e) {
+            // Un 422 del agente bloquea su cola entera (reintenta el mismo envio): registrar campo y regla, nunca valores.
+            if ($e->status === 422 && str_starts_with(explode('?', $_SERVER['REQUEST_URI'] ?? '')[0], '/v1/client/')) {
+                $where = $e->errorCode === 'validation_failed' && isset($this->validator) ? ($this->validator->lastFailure ?? []) : [];
+                error_log('keeper client_rejected request=' . $id . ' route=' . explode('?', $_SERVER['REQUEST_URI'] ?? '')[0] . ' code=' . $e->errorCode
+                    . (isset($where['pointer']) ? ' pointer=' . $where['pointer'] . ' rule=' . $where['rule'] : ''));
+            }
             if (explode('?',$_SERVER['REQUEST_URI']??'')[0]==='/v1/oauth/token' && in_array($e->status,[400,401],true)) {
                 $this->send($e->status,Util::json(['error'=>$e->status===401?'invalid_client':'invalid_request']),$id,$e->status===401?['WWW-Authenticate'=>'Basic realm="keeper-oauth"']:[]);
                 return;
