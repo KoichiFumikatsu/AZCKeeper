@@ -45,7 +45,7 @@ final class AdminAuth
         // Empresa archivada: solo lectura para superadmin; lo unico que se le puede hacer es desarchivarla o eliminarla.
         if ($t['archived_at'] !== null && $r->method !== 'GET' && !($r->method === 'PATCH' && $r->route === '/tenants/{id}') && $r->route !== '/tenants/{id}/purge') { throw new ApiError(409, 'invalid_transition', [], 'tenant_archived'); }
         $this->limiter->take([['admin', bin2hex($s['tenant_id'] . $s['admin_id']), Config::number('ADMIN_RATE',120), Config::number('ADMIN_BURST',30)], ['tenant', 'admin:' . bin2hex($tenant), Config::number('ADMIN_TENANT_RATE',600), Config::number('ADMIN_TENANT_BURST',100)]]);
-        $c = ['tenant_id' => $tenant, 'admin_tenant_id' => $s['tenant_id'], 'admin_id' => $s['admin_id'], 'user_id' => $foreign ? null : $s['user_id'], 'group_id' => $s['group_id'], 'platform' => (bool) $s['is_platform_admin'], 'actor_type' => 'admin', 'timezone' => $t['timezone'], 'gate' => (bool) $t['rbac_self_management'], 'auth_revision' => (int) $t['auth_version'], 'session_id' => $s['id'], 'reauthenticated_at' => $s['reauthenticated_at']];
+        $c = ['tenant_id' => $tenant, 'admin_tenant_id' => $s['tenant_id'], 'admin_id' => $s['admin_id'], 'user_id' => $foreign ? null : $s['user_id'], 'group_id' => $s['group_id'], 'platform' => (bool) $s['is_platform_admin'], 'actor_type' => 'admin', 'timezone' => $t['timezone'], 'auth_revision' => (int) $t['auth_version'], 'session_id' => $s['id'], 'reauthenticated_at' => $s['reauthenticated_at']];
         $c['principal_id'] = $this->principal($c);
         return $c;
     }

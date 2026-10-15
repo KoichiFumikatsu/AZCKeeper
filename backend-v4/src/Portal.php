@@ -130,7 +130,7 @@ final class Portal
         if ($t['archived_at'] !== null && $r->method !== 'GET') { throw new ApiError(409, 'invalid_transition', [], 'tenant_archived'); }
         $this->limiter->take([['admin', bin2hex($s['tenant_id'] . $s['admin_id']), Config::number('ADMIN_RATE', 120), Config::number('ADMIN_BURST', 30)], ['tenant', 'admin:' . bin2hex($tenant), Config::number('ADMIN_TENANT_RATE', 600), Config::number('ADMIN_TENANT_BURST', 100)]]);
         $c = ['tenant_id' => $tenant, 'admin_tenant_id' => $s['tenant_id'], 'admin_id' => $s['admin_id'], 'user_id' => $platform ? null : $s['user_id'], 'group_id' => null, 'platform' => $platform, 'actor_type' => 'admin',
-            'timezone' => $t['timezone'], 'gate' => (bool) $t['rbac_self_management'], 'auth_revision' => (int) $t['auth_version'], 'session_id' => $s['family_id'], 'reauthenticated_at' => null, 'channel' => 'portal'];
+            'timezone' => $t['timezone'], 'auth_revision' => (int) $t['auth_version'], 'session_id' => $s['family_id'], 'reauthenticated_at' => null, 'channel' => 'portal'];
         $c['principal_id'] = (new AdminAuth($this->db, $this->limiter))->principal($c);
         return $c;
     }

@@ -6764,8 +6764,9 @@ paths:
       - admin
       operationId: setRbacGate
       summary: Activar o revocar autonomía RBAC
-      description: Activar o revocar autonomía RBAC Autorización de acción/objeto obligatoria además de CSRF; registrar
-        auditoría.
+      description: Activar o revocar autonomía RBAC. Desde 2026-10-15 (decisión Q3) enciende o apaga la función vendible
+        autogestion_accesos del cliente, que es la única llave de la autogestión de roles y cuentas; rbac_self_management
+        queda como espejo. Autorización de acción/objeto obligatoria además de CSRF; registrar auditoría.
       security:
       - adminSession: []
         csrfToken: []
@@ -18351,6 +18352,8 @@ components:
         rbac_self_management:
           type: boolean
           default: false
+          description: Solo lectura. Verdadero si el cliente tiene la función autogestion_accesos (gestiona sus roles y
+            cuentas); se cambia con las funciones del cliente o con setRbacGate.
         branding:
           $ref: '#/components/schemas/Branding'
         version:

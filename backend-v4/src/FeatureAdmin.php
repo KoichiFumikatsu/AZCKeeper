@@ -118,7 +118,8 @@ final class FeatureAdmin
     {
         $codes = $this->valid($features);
         if ($package !== null && !$this->db->one('SELECT id FROM feature_packages WHERE tenant_id=? AND id=?', [$this->platform, $package])) { throw new ApiError(422, 'validation_failed', [], 'unknown_package'); }
-        $this->db->run('UPDATE tenants SET feature_package_tenant_id=?,feature_package_id=?,auth_version=auth_version+1,version=version+1 WHERE tenant_id=?', [$package === null ? null : $this->platform, $package, $tenant]);
+        // rbac_self_management: espejo de autogestion_accesos (Q3, 0063); la autorizacion lee la funcion.
+        $this->db->run('UPDATE tenants SET feature_package_tenant_id=?,feature_package_id=?,rbac_self_management=?,auth_version=auth_version+1,version=version+1 WHERE tenant_id=?', [$package === null ? null : $this->platform, $package, (int) in_array('autogestion_accesos', $codes, true), $tenant]);
         $this->db->run('DELETE FROM tenant_features WHERE tenant_id=?', [$tenant]);
         foreach ($codes as $code) { $this->db->run('INSERT INTO tenant_features (tenant_id,feature_code) VALUES (?,?)', [$tenant, $code]); }
     }

@@ -70,7 +70,8 @@ try {
     verify(countRows($pdo, "SELECT COUNT(*) FROM role_templates WHERE seed_key IN ('gerencia','coordinacion') AND name IN ('Gerente','Coordinador')") === 2, 'templates renamed');
     verify(countRows($pdo, "SELECT COUNT(*) FROM access_grants WHERE tenant_id = 0x00000000000040008000000000000002 AND user_id = 0x10000000000040008000000000000007
         AND role_id = 0x1000000000004000800000000000006b AND scope_kind = 'self' AND source = 'default'") === 1, 'demo collaborator migrated to one default access');
-    verify(countRows($pdo, 'SELECT COUNT(*) FROM tenants WHERE rbac_self_management <> 0') === 0, 'RBAC gate defaults OFF');
+    // 0063 (Q3): la autogestion de roles es la funcion autogestion_accesos; rbac_self_management es su espejo.
+    verify(countRows($pdo, "SELECT COUNT(*) FROM tenants t WHERE t.rbac_self_management <> EXISTS (SELECT 1 FROM tenant_features f WHERE f.tenant_id = t.tenant_id AND f.feature_code = 'autogestion_accesos')") === 0, 'RBAC gate mirrors autogestion_accesos');
     // 0049: tiers, suscripciones y el RBAC viejo congelado por 0043 ya no existen.
     verify(countRows($pdo, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()
         AND table_name IN ('tier','tier_module','subscriptions','user_roles','admin_account_roles','role_area_scopes','role_site_scopes')") === 0, 'legacy tier and RBAC tables dropped');

@@ -33,9 +33,13 @@ final class AdminAccess
     public function scope(): AccessScope { return $this->scope; }
     public function full(): bool { return $this->scope->kind === 'all'; }
     public function requireFull(): void { if (!$this->full()) { throw new ApiError(403, 'permission_denied', [], 'scope_denied'); } }
+    /**
+     * El cliente gestiona sus roles y accesos solo si compro la funcion autogestion_accesos (decision Q3 de Koichi,
+     * 2026-10-15: una sola llave). tenants.rbac_self_management queda como espejo de esa funcion (0063), no se lee aqui.
+     */
     public function rolesGate(): void
     {
-        if (!$this->c['platform'] && !$this->c['gate']) { throw new ApiError(403, 'tenant_rbac_disabled'); }
+        if (!$this->c['platform'] && !Features::has($this->db, $this->c['tenant_id'], 'autogestion_accesos')) { throw new ApiError(403, 'tenant_rbac_disabled'); }
     }
 
     /** Condicion SQL de las personas del alcance sobre $alias (users, o user_assignments con $userKey='user_id'). */

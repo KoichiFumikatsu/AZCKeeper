@@ -207,7 +207,7 @@ final class AdminApi
         $brand??=['display_name'=>$row['name'],'logo_url'=>null,'primary_color'=>'#3C4082','accent_color'=>'#5A61B3'];
         $brand['display_name']=mb_substr($brand['display_name'],0,100);
         $brand['logo_url']??=rtrim(Config::get('ORIGIN'),'/').'/branding.svg';
-        return ['id'=>Util::id($row['tenant_id']),'name'=>$row['name'],'status'=>$row['status'],'timezone'=>$row['timezone'],'rbac_self_management'=>(bool)$row['rbac_self_management'],'branding'=>$brand,'version'=>(int)$row['version'],'archived'=>$row['archived_at']!==null];
+        return ['id'=>Util::id($row['tenant_id']),'name'=>$row['name'],'status'=>$row['status'],'timezone'=>$row['timezone'],'rbac_self_management'=>Features::has($this->db,$row['tenant_id'],'autogestion_accesos'),'branding'=>$brand,'version'=>(int)$row['version'],'archived'=>$row['archived_at']!==null];
     }
     private function tenants(string $op,?object $b): array
     {
@@ -248,7 +248,13 @@ final class AdminApi
                 }
             }
         } else { $id=$this->tenant; $row=$this->row('tenants',$id,'tenant_id'); if ($op==='getTenant') { return $this->result($this->tenantDto($row)); } $this->match($row); }
-        if ($op==='setRbacGate') { $this->db->run('UPDATE tenants SET rbac_self_management=?,auth_version=auth_version+1,version=version+1 WHERE tenant_id=?',[(int)$b->enabled,$id]); }
+        if ($op==='setRbacGate') {
+            // Q3 (2026-10-15): una sola llave. Activar o revocar la autogestion es encender o apagar la funcion vendible
+            // autogestion_accesos; la columna rbac_self_management queda como espejo (0063).
+            if ($b->enabled) { $this->db->run("INSERT IGNORE INTO tenant_features (tenant_id,feature_code) VALUES (?,'autogestion_accesos')",[$id]); }
+            else { $this->db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='autogestion_accesos'",[$id]); }
+            $this->db->run('UPDATE tenants SET rbac_self_management=?,auth_version=auth_version+1,version=version+1 WHERE tenant_id=?',[(int)$b->enabled,$id]);
+        }
         elseif ($op!=='createTenant') {
             if (isset($b->status) && !$this->c['platform']) { throw new ApiError(403,'permission_denied'); }
             if (isset($b->archived)) {

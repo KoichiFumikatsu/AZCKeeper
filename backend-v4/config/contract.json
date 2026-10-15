@@ -1,5 +1,5 @@
 {
-  "source_sha256": "5fbb03f0a075eae8c8ced54dd397f6cf55efb3be49cc298cf30d5216c7f96d86",
+  "source_sha256": "b2f9b58217a668c0a928cc2eabbca10298705da2a01e9fe48772ed7cba037a50",
   "paths": {
     "/me": {
       "get": {
@@ -10127,7 +10127,7 @@
         ],
         "operationId": "setRbacGate",
         "summary": "Activar o revocar autonomía RBAC",
-        "description": "Activar o revocar autonomía RBAC Autorización de acción/objeto obligatoria además de CSRF; registrar auditoría.",
+        "description": "Activar o revocar autonomía RBAC. Desde 2026-10-15 (decisión Q3) enciende o apaga la función vendible autogestion_accesos del cliente, que es la única llave de la autogestión de roles y cuentas; rbac_self_management queda como espejo. Autorización de acción/objeto obligatoria además de CSRF; registrar auditoría.",
         "security": [
           {
             "adminSession": [],
@@ -33815,7 +33815,8 @@
         },
         "rbac_self_management": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Solo lectura. Verdadero si el cliente tiene la función autogestion_accesos (gestiona sus roles y cuentas); se cambia con las funciones del cliente o con setRbacGate."
         },
         "branding": {
           "$ref": "#/components/schemas/Branding"

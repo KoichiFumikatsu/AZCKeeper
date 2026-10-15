@@ -81,10 +81,13 @@ function adminTests(Database $db): void
     expect(adminRequest($other,'GET','/users/'.$uid),404,'reverse foreign user ID');
     expect(adminRequest($admin,'GET','/users',null,['x-tenant-id'=>'']),422,'selector required');
     $roleBody=['name'=>'Read only','permissions'=>['usuarios.ver'],'active'=>true];
+    // Q3 (2026-10-15): la autogestion es la funcion autogestion_accesos (el cliente de prueba trae todas); sin ella, 403.
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='autogestion_accesos'",[$tenant]);
     expect(adminRequest($delegate,'POST','/roles',$roleBody),403,'company gate off');
     $t=expect(adminRequest($platformTenant,'GET','/tenants/'.$tid),200,'tenant read');
     expect(adminRequest($admin,'PATCH','/tenants/'.$tid.'/rbac-gate',['enabled'=>true,'reason'=>'Forbidden'],['if-match'=>'"'.$t['version'].'"']),403,'only platform changes gate');
     $t=expect(adminRequest($platformTenant,'PATCH','/tenants/'.$tid.'/rbac-gate',['enabled'=>true,'reason'=>'Test delegation'],['if-match'=>'"'.$t['version'].'"']),200,'enable gate');
+    check($t['rbac_self_management'] && \Keeper\Features::has($db,$tenant,'autogestion_accesos') && (int)$db->one('SELECT rbac_self_management g FROM tenants WHERE tenant_id=?',[$tenant])['g']===1,'gate on = sellable function on, column mirrors it');
     expect(adminRequest($reader,'POST','/roles',$roleBody),403,'gate on still requires meta permission');
     $role=expect(adminRequest($delegate,'POST','/roles',$roleBody),201,'delegated creation');
     expect(adminRequest($scoped,'POST','/roles',$roleBody),403,'scoped delegate cannot create roles');
@@ -278,6 +281,7 @@ function adminTests(Database $db): void
     $t=expect(adminRequest($platformTenant,'GET','/tenants/'.$tid),200,'latest gate version');
     expect(adminRequest($platformTenant,'PATCH','/tenants/'.$tid.'/rbac-gate',['enabled'=>false,'reason'=>'Revoke'],['if-match'=>'"'.$t['version'].'"']),200,'disable gate');
     expect(adminRequest($delegate,'POST','/roles',array_replace($roleBody,['name'=>'After revoked gate'])),403,'gate revocation immediate');
+    check(!\Keeper\Features::has($db,$tenant,'autogestion_accesos') && !expect(adminRequest($platformTenant,'GET','/tenants/'.$tid),200,'tenant after revoke')['rbac_self_management'],'gate off = sellable function off');
     $db->run('UPDATE admin_sessions SET idle_expires_at=UTC_TIMESTAMP(6)-INTERVAL 1 SECOND,last_seen_at=UTC_TIMESTAMP(6)-INTERVAL 2 SECOND WHERE tenant_id=? AND admin_id=?',[$delegate['tenant'],$delegate['id']]);
     expect(adminRequest($delegate,'GET','/roles'),401,'idle session expiration');
     $db->run('UPDATE admin_sessions SET created_at=UTC_TIMESTAMP(6)-INTERVAL 8 HOUR-INTERVAL 1 MINUTE,expires_at=UTC_TIMESTAMP(6)-INTERVAL 1 MINUTE,last_seen_at=UTC_TIMESTAMP(6)-INTERVAL 2 MINUTE,idle_expires_at=UTC_TIMESTAMP(6)-INTERVAL 1 MINUTE WHERE tenant_id=? AND admin_id=?',[$scoped['tenant'],$scoped['id']]);
