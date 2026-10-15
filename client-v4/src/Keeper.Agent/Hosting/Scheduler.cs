@@ -68,7 +68,8 @@ public sealed class Scheduler(ModuleHost host, ISyncCycle? sync, SyncSchedule sc
             {
                 if (ex is TransportException transport) retryAfter = transport.RetryAfter;
                 failureKind = NetworkBackoffPolicy.Classify(ex);
-                log($"sync_failed: {(ex is EnrollmentException ? ex.Message : ex.GetType().Name)}");
+                // TransportException: estado, code del Problem y, en un 422, pointer y regla (nunca el valor).
+                log($"sync_failed: {(ex is EnrollmentException or TransportException ? ex.Message : ex.GetType().Name)}");
             }
             var requests = checked((int)(sync.RequestCount - before));
             var next = schedule.AfterAttempt(success, requests, serverSeconds, retryAfter, failureKind);

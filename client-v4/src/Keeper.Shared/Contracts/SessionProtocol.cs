@@ -35,8 +35,10 @@ public static class SessionProtocol
         {
             if (episode is null) throw new InvalidDataException("null_session_episode");
             var seconds = (episode.EndedAt - episode.StartedAt).TotalSeconds;
-            if (episode.EventId == Guid.Empty || seconds <= 0 || seconds > 300 || episode.ProcessName is not { Length: > 0 and <= 255 } ||
-                episode.WindowTitle?.Length > 1024 || episode.ActiveSeconds < 0 || episode.IdleSeconds < 0 ||
+            // Textos largos (proceso, titulo) no invalidan el lote: el outbox los recorta al contrato (ProtocolText). Antes
+            // un nombre de proceso de 161-255 pasaba aqui y el servidor (maximo 160) rechazaba el sync entero.
+            if (episode.EventId == Guid.Empty || seconds <= 0 || seconds > 300 || episode.ProcessName is not { Length: > 0 } ||
+                episode.ActiveSeconds < 0 || episode.IdleSeconds < 0 ||
                 episode.ActiveSeconds + (double)episode.IdleSeconds > seconds + 1)
                 throw new InvalidDataException("invalid_session_episode");
         }

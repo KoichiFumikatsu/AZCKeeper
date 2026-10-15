@@ -51,6 +51,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         }
         using var key = await DeviceKeyStore.LoadOrCreateAsync(Path.Combine(dataDirectory, "device-key.dpapi"), stoppingToken);
         using var signer = new HttpMessageSigner(key);
+        // outbox.json + outbox.quarantine.json (lo apartado tras un 422) + outbox.isolation.json (busqueda en curso).
         using var outbox = new DurableOutbox(Path.Combine(dataDirectory, "outbox.json"));
         var context = new ModuleContext(outbox, TimeProvider.System, Log, stoppingToken);
         var registry = new WindowsSystemPolicyStore(Environment.GetEnvironmentVariable("KEEPER_ENABLE_HKLM") == "1", Log);
@@ -143,6 +144,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
                     api == root ? ticket : null, new DeviceTokenStore(tokenPath, api.AbsoluteUri + signer.KeyId))
                 {
                     HardeningPassword = hardeningPassword,
+                    Log = Log,
                     OnResponse = async (response, tenant, ct) =>
                     {
                         if (response.UnlockPin is not null) await deviceLock.TryApplyVerifierAsync(response.UnlockPin, tenant, ct);

@@ -10,10 +10,47 @@ using Keeper.Shared.Protocol;
 
 namespace Keeper.Agent.Transport;
 
-public sealed class TransportException(HttpStatusCode status, TimeSpan? retryAfter) : Exception($"HTTP {(int)status}")
+public sealed class TransportException(HttpStatusCode status, TimeSpan? retryAfter, ProblemDetail? problem = null)
+    : Exception($"HTTP {(int)status}{problem?.Describe()}")
 {
     public HttpStatusCode Status { get; } = status;
     public TimeSpan? RetryAfter { get; } = retryAfter;
+    /// <summary>code del Problem y, en un 422 de /v1/client/* (servidor con errors), el pointer y la regla del primer error.</summary>
+    public ProblemDetail? Problem { get; } = problem;
+}
+
+/// <summary>Lo util de un Problem para decidir y registrar (nunca trae el valor rechazado). Textos acotados y sin control.</summary>
+public sealed record ProblemDetail(string? Code, string? Pointer, string? Rule)
+{
+    public string Describe() => $"{(Code is null ? "" : $" {Code}")}{(Pointer is null ? "" : $" pointer={Pointer}")}{(Rule is null ? "" : $" rule={Rule}")}";
+
+    public static ProblemDetail? Parse(byte[] body)
+    {
+        if (body.Length == 0) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(body, new JsonDocumentOptions { MaxDepth = 8 });
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            string? pointer = null, rule = null;
+            if (root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0 &&
+                errors[0] is { ValueKind: JsonValueKind.Object } first)
+            {
+                pointer = Text(first, "pointer");
+                rule = Text(first, "code");
+            }
+            var code = Text(root, "code");
+            return code is null && pointer is null ? null : new ProblemDetail(code, pointer, rule);
+        }
+        catch (JsonException) { return null; }
+    }
+
+    private static string? Text(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String) return null;
+        var text = new string(value.GetString()!.Where(c => !char.IsControl(c) && !char.IsWhiteSpace(c)).Take(160).ToArray());
+        return text.Length == 0 ? null : text;
+    }
 }
 
 public interface ISyncCycle
@@ -29,12 +66,16 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
     DurableOutbox outbox, PolicyCoordinator policy, TimeProvider clock,
     string? enrollmentTicket = null, IDeviceTokenStore? tokenStore = null) : ISyncCycle
 {
+    // 422 del sync: rechazos que se resuelven en el mismo ciclo (apartar el elemento o partir el paquete) antes de
+    // desistir hasta el siguiente con backoff. Cada envio cuenta como peticion (el Scheduler espacia el siguiente ciclo).
+    public const int MaxRejectionsPerCycle = 8;
     private StoredDeviceToken? _token;
     private DateTimeOffset _expiresAt;
     private string? _enrollmentTicket = string.IsNullOrWhiteSpace(enrollmentTicket) ? null : enrollmentTicket;
     private EnrollmentException? _enrollmentError;
     private bool _tokenLoaded;
     public Func<SyncResponse, Guid, CancellationToken, Task>? OnResponse { get; init; }
+    public Action<string>? Log { get; init; }
     public HardeningPasswordModule? HardeningPassword { get; init; }
     // La clave de azcadmin cambia rara vez: se pide en el primer sync del proceso y luego cada 6 h (una rotacion
     // llega en ese plazo o al reiniciar el servicio). Sin clave cargada (409) se reintenta cada 15 min para que
@@ -63,18 +104,31 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
         }
         if (_enrollmentError is not null) throw _enrollmentError;
         if (_token is null || _expiresAt <= clock.GetUtcNow().AddSeconds(60)) await LoginAsync(ct);
-        var batch = await outbox.PrepareAsync(policy.CurrentVersion, ct);
-        var issuedAt = clock.GetUtcNow();
         SyncResponse response;
-        try
+        DateTimeOffset issuedAt;
+        for (var rejections = 1; ; rejections++)
         {
-            response = await PostAsync<SyncResponse>("client/sync", batch.Body, true, batch.IdempotencyKey, null, ct);
-        }
-        catch (TransportException ex) when (ex.Status == HttpStatusCode.Unauthorized)
-        {
-            _token = null;
-            if (tokenStore is not null) await tokenStore.DeleteAsync(ct);
-            throw;
+            var batch = await outbox.PrepareAsync(policy.CurrentVersion, ct);
+            issuedAt = clock.GetUtcNow();
+            try
+            {
+                response = await PostAsync<SyncResponse>("client/sync", batch.Body, true, batch.IdempotencyKey, null, ct);
+                break;
+            }
+            catch (TransportException ex) when (ex.Status == HttpStatusCode.Unauthorized)
+            {
+                _token = null;
+                if (tokenStore is not null) await tokenStore.DeleteAsync(ct);
+                throw;
+            }
+            // Un 422 no se arregla reenviando el mismo paquete (ACT-0033: dos dias reenviandolo cada 15 min con la cola
+            // frenada). Se aparta solo el elemento malo (pointer del servidor) o se parte el paquete hasta dar con el.
+            catch (TransportException ex) when (ex.Status == HttpStatusCode.UnprocessableEntity)
+            {
+                var outcome = await outbox.RejectPendingAsync(ex.Problem?.Pointer, ex.Problem?.Rule, ct);
+                Log?.Invoke($"sync_rejected: {ex.Message}; {outcome.Describe()}");
+                if (outcome.Kind == RejectionKind.Systemic || rejections >= MaxRejectionsPerCycle) throw;
+            }
         }
         if (response.ProtocolVersion != 1 || response.PolicyVersion < 1 || response.NextSyncAfterSeconds is < 120 or > 3600)
             throw new InvalidDataException("invalid_sync_response");
@@ -178,7 +232,7 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         if (response.StatusCode == HttpStatusCode.Conflict)
         {
-            if (await RelocationAsync(response, ct) is { } relocation) throw new DeviceRelocatedException(relocation);
+            if (Relocation(await ErrorBodyAsync(response, ct)) is { } relocation) throw new DeviceRelocatedException(relocation);
             return false;
         }
         if (!response.IsSuccessStatusCode)
@@ -189,7 +243,8 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
                 if (tokenStore is not null) await tokenStore.DeleteAsync(ct);
             }
             var retry = response.Headers.RetryAfter;
-            throw new TransportException(response.StatusCode, retry?.Delta ?? (retry?.Date - clock.GetUtcNow()));
+            throw new TransportException(response.StatusCode, retry?.Delta ?? (retry?.Date - clock.GetUtcNow()),
+                ProblemDetail.Parse(await ErrorBodyAsync(response, ct)));
         }
         const int limit = 16384;
         if (response.Content.Headers.ContentLength > limit) throw new InvalidDataException("response_too_large");
@@ -219,10 +274,11 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
         if (allowNotModified && response.StatusCode == HttpStatusCode.NotModified) return null;
         if (!response.IsSuccessStatusCode)
         {
-            if (response.StatusCode == HttpStatusCode.Conflict && await RelocationAsync(response, ct) is { } relocation)
+            var problem = await ErrorBodyAsync(response, ct);
+            if (response.StatusCode == HttpStatusCode.Conflict && Relocation(problem) is { } relocation)
                 throw new DeviceRelocatedException(relocation);
             var retry = response.Headers.RetryAfter;
-            throw new TransportException(response.StatusCode, retry?.Delta ?? (retry?.Date - clock.GetUtcNow()));
+            throw new TransportException(response.StatusCode, retry?.Delta ?? (retry?.Date - clock.GetUtcNow()), ProblemDetail.Parse(problem));
         }
         if (response.Content.Headers.ContentLength > limit) throw new InvalidDataException("response_too_large");
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
@@ -238,11 +294,11 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
             ?? throw new InvalidDataException("empty_response");
     }
 
-    // 409 device_relocated (servidor de origen en modo mudado): la orden firmada viene en Problem.relocation.
-    private static async Task<string?> RelocationAsync(HttpResponseMessage response, CancellationToken ct)
+    // Cuerpo de una respuesta de error (Problem), acotado: vacio si no cabe o no se pudo leer.
+    private static async Task<byte[]> ErrorBodyAsync(HttpResponseMessage response, CancellationToken ct)
     {
         const int limit = 32 * 1024;
-        if (response.Content.Headers.ContentLength > limit) return null;
+        if (response.Content.Headers.ContentLength > limit) return [];
         try
         {
             await using var stream = await response.Content.ReadAsStreamAsync(ct);
@@ -250,14 +306,24 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
             var length = 0;
             int count;
             while (length <= limit && (count = await stream.ReadAsync(buffer.AsMemory(length), ct)) > 0) length += count;
-            if (length > limit) return null;
-            using var document = JsonDocument.Parse(buffer.AsMemory(0, length));
+            return length > limit ? [] : buffer[..length];
+        }
+        catch (Exception ex) when (ex is IOException or HttpRequestException) { return []; }
+    }
+
+    // 409 device_relocated (servidor de origen en modo mudado): la orden firmada viene en Problem.relocation.
+    private static string? Relocation(byte[] body)
+    {
+        if (body.Length == 0) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(body);
             var root = document.RootElement;
             return root.ValueKind == JsonValueKind.Object && root.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String &&
                 code.GetString() == "device_relocated" && root.TryGetProperty("relocation", out var relocation) && relocation.ValueKind == JsonValueKind.String
                 ? relocation.GetString() : null;
         }
-        catch (Exception ex) when (ex is JsonException or IOException or HttpRequestException) { return null; }
+        catch (JsonException) { return null; }
     }
 
     private static byte[] Serialize<T>(T value) => JsonSerializer.SerializeToUtf8Bytes(value, ProtocolJson.Options);

@@ -95,10 +95,11 @@ public sealed class OutboxTests
     public async Task DiskQuotaFailureKeepsPreviousState()
     {
         using var directory = new TestDirectory();
-        using var outbox = new DurableOutbox(directory.File("outbox.json"), maxBytes: 1500);
+        using var outbox = new DurableOutbox(directory.File("outbox.json"), maxBytes: 1000);
         var episode = Samples.Episode();
         await outbox.EnqueueAsync(episode, default);
         // Un evento que por si solo no cabe se rechaza sin tocar el estado; con presion normal se descarta lo viejo.
+        // (4.0.25: el titulo se recorta a 1024 al encolar, asi que el tope de prueba baja de 1500 a 1000 bytes.)
         await Assert.ThrowsAsync<IOException>(() => outbox.EnqueueAsync(Samples.Episode(new string('x', 3000)), default));
         Assert.Equal(episode.EventId, Assert.Single((await outbox.InspectAsync()).Events).Id);
     }
