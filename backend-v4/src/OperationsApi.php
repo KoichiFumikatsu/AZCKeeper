@@ -33,6 +33,13 @@ final class OperationsApi
             $this->audit('dual_job_alert',$id,$b);
             return AdminApi::response(null,204);
         }
+        // Apps sospechosas: misma marca de revisada que doble empleo (0064), con alcance y auditoria.
+        if ($op==='reviewSuspiciousDetection') {
+            $detection=$this->row('suspicious_app_detections',$id); $this->access->user($detection['user_id']);
+            $this->db->run('UPDATE suspicious_app_detections SET reviewed=TRUE WHERE tenant_id=? AND id=?',[$this->tenant,$id]);
+            $this->audit('suspicious_detection',$id,$b);
+            return AdminApi::response(null,204);
+        }
         if (in_array($op,['listInstallCoverage','putInstallCoverage'],true)) { return $this->coverage($id,$b); }
         if ($op==='listClientLogs') { return $this->logs(); }
         $this->access->requireFull();
@@ -123,12 +130,12 @@ final class OperationsApi
         if ($from>=$to || (new \DateTimeImmutable($from))->diff(new \DateTimeImmutable($to))->days>366) { throw new ApiError(422,'invalid_range'); }
         if (isset($_GET['user_id'])) { $user=Util::bin($_GET['user_id']); $this->access->user($user); $scope.=' AND u.id=?'; $args[]=$user; }
         $table=$op==='listDualJobAlerts'?'dual_job_alerts':'suspicious_app_detections';
-        if ($op==='listDualJobAlerts' && isset($_GET['reviewed'])) { $scope.=' AND s.reviewed=?'; $args[]=(int)$_GET['reviewed']; }
+        if (isset($_GET['reviewed'])) { $scope.=' AND s.reviewed=?'; $args[]=(int)$_GET['reviewed']; }
         if ($op==='listDualJobAlerts' && isset($_GET['severity'])) { $scope.=' AND s.severity=?'; $args[]=$_GET['severity']; }
         return $this->page("SELECT s.*,u.display_name FROM $table s JOIN users u ON u.tenant_id=s.tenant_id AND u.id=s.user_id JOIN retention_settings r ON r.tenant_id=s.tenant_id WHERE s.tenant_id=? AND s.day>=? AND s.day<? AND s.day>=DATE_SUB(UTC_DATE(),INTERVAL r.aggregate_months MONTH) AND $scope ORDER BY s.day DESC,s.id",[$this->tenant,$from,$to,...$args],static function($r) use ($op) {
             $out=['id'=>Util::id($r['id']),'user_id'=>Util::id($r['user_id']),'display_name'=>$r['display_name'],'day'=>$r['day']];
             if ($op==='listDualJobAlerts') { return $out+['alert_type'=>$r['alert_type'],'severity'=>$r['severity'],'evidence'=>$r['evidence']??'{}','reviewed'=>(bool)$r['reviewed'],'notes'=>$r['notes']]; }
-            return $out+['device_id'=>Util::id($r['device_id']),'app_id'=>Util::id($r['app_id']),'process_name'=>$r['process_name'],'active_seconds'=>(int)$r['active_seconds'],'first_activity'=>Util::time($r['first_activity']),'last_activity'=>Util::time($r['last_activity'])];
+            return $out+['device_id'=>Util::id($r['device_id']),'app_id'=>Util::id($r['app_id']),'process_name'=>$r['process_name'],'active_seconds'=>(int)$r['active_seconds'],'first_activity'=>Util::time($r['first_activity']),'last_activity'=>Util::time($r['last_activity']),'reviewed'=>(bool)$r['reviewed']];
         });
     }
     private function coverage(?string $id,?object $b): array

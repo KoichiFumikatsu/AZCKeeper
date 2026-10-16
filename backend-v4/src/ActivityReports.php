@@ -114,6 +114,17 @@ final class ActivityReports
             return AdminApi::response(['user_id'=>Util::id($user),'from'=>$from,'to'=>$to,'data'=>$data,'totals'=>$this->metrics($sums)+self::measured($rows)]);
         } finally { $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_report_data'); $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_calendar'); }
     }
+    /**
+     * Llegadas tarde de hoy (dia de la empresa) en el alcance del acceso: exactamente /reports/presence sin filtros, la
+     * misma regla y el mismo margen de puntualidad (ScheduleSettings). Lo usa el icono de notificaciones (PanelNotifications).
+     */
+    public function lateToday(): int
+    {
+        $saved=$_GET; $_GET=[];
+        try { $report=json_decode($this->dispatch('getPresenceReport',null)['json'],true,64,JSON_THROW_ON_ERROR); }
+        finally { $_GET=$saved; }
+        return count(array_filter($report['data'],static fn($row)=>$row['status']==='tarde'));
+    }
     private function dashboard(array $rows,string $from,string $to): array
     {
         [$scope,$args]=$this->filter();

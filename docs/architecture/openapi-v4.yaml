@@ -4744,16 +4744,21 @@ paths:
       tags:
       - admin
       operationId: listNotifications
-      summary: Leer notificaciones
-      description: Leer notificaciones
+      summary: Notificaciones del panel
+      description: 'Icono de la barra superior. Pendiente de revisar de doble empleo y apps sospechosas (sin revisar,
+        últimos 30 días hasta mañana, en la zona de la empresa) y resumen del día de llegadas tarde y ausencias, solo
+        de las personas del alcance de la cuenta (mismo AdminAccess que el resto del panel) y solo de las funciones
+        que el cliente compró y el rol permite. badge_count = alertas sin revisar + resúmenes del día que esta cuenta
+        aún no vio (persistido por cuenta, no por navegador). El resumen del día se recalcula como mucho cada 5
+        minutos por cuenta; las alertas se cuentan en cada consulta.'
       security:
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
-      - Notification
+      - PanelNotifications
       responses:
         '200':
-          description: Leer notificaciones
+          description: Notificaciones de la cuenta en esta empresa
           headers:
             X-Request-ID:
               $ref: '#/components/headers/X-Request-ID'
@@ -4768,7 +4773,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NotificationPage'
+                $ref: '#/components/schemas/PanelNotifications'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -4787,9 +4792,59 @@ paths:
           $ref: '#/components/responses/Unavailable'
       parameters:
       - $ref: '#/components/parameters/Tenant'
-      - $ref: '#/components/parameters/Cursor'
-      - $ref: '#/components/parameters/Limit'
-      x-permission: notificaciones.ver
+      x-permission: sesion
+  /notifications/seen:
+    post:
+      tags:
+      - admin
+      operationId: markNotificationsSeen
+      summary: Marcar notificaciones vistas
+      description: La cuenta abrió la lista del icono. Guarda la hora y el resumen del día que vio (por cuenta del
+        panel en esta empresa); los resúmenes del día dejan de contar en badge_count hasta que cambien. Las alertas
+        sin revisar siguen contando hasta que alguien las revise. Sin cuerpo; idempotente. Devuelve el estado nuevo.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
+      x-resources:
+      - PanelNotifications
+      responses:
+        '200':
+          description: Estado tras marcar vistas
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PanelNotifications'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      x-permission: sesion
   /ext/v1/dashboard:
     servers:
     - url: /
@@ -6176,7 +6231,65 @@ paths:
         schema:
           type: string
           format: uuid
+      - name: reviewed
+        in: query
+        description: 0 = solo pendientes de revisar, 1 = solo revisadas.
+        schema:
+          type: string
+          enum:
+          - '0'
+          - '1'
       x-permission: cumplimiento.ver
+  /reports/suspicious-apps/{id}:
+    patch:
+      tags:
+      - admin
+      operationId: reviewSuspiciousDetection
+      summary: Marcar detección revisada
+      description: Marca revisada una detección de app sospechosa de una persona del alcance, con auditoría. Repetir la marca es idempotente; el recálculo diario no la devuelve a pendiente.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
+      x-resources:
+      - SuspiciousDetectionList
+      responses:
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '204':
+          description: Detección revisada
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/Tenant'
+      x-permission: cumplimiento.editar
+      x-max-body-bytes: 1024
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - reviewed
+              properties:
+                reviewed:
+                  type: boolean
+                  const: true
   /reports/compliance-signals:
     get:
       tags:
@@ -17626,6 +17739,7 @@ components:
       - active_seconds
       - first_activity
       - last_activity
+      - reviewed
       properties:
         id:
           type: string
@@ -17657,6 +17771,9 @@ components:
         last_activity:
           type: string
           format: date-time
+        reviewed:
+          type: boolean
+          description: Marcada revisada por un administrador (PATCH /reports/suspicious-apps/{id}); el recálculo diario la conserva.
     InstallCoverageInput:
       type: object
       additionalProperties: false
@@ -21310,6 +21427,89 @@ components:
         title:
           type: string
           maxLength: 160
+    PanelNotifications:
+      type: object
+      additionalProperties: false
+      description: Icono de notificaciones del panel. items vacío = estado vacío («Todo al día»).
+      required:
+      - generated_at
+      - day
+      - badge_count
+      - seen_at
+      - available
+      - items
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        day:
+          type: string
+          format: date
+          description: Hoy en la zona horaria de la empresa.
+        badge_count:
+          type: integer
+          minimum: 0
+          description: Alertas sin revisar + resúmenes del día no vistos por esta cuenta.
+        seen_at:
+          description: Última vez que esta cuenta abrió la lista en esta empresa; null = nunca.
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        available:
+          type: array
+          description: Secciones que esta cuenta puede ver (función comprada y permiso del rol).
+          maxItems: 4
+          items:
+            type: string
+            enum:
+            - dual_job
+            - suspicious_apps
+            - late_arrivals
+            - absences
+        items:
+          type: array
+          maxItems: 4
+          items:
+            $ref: '#/components/schemas/PanelNotificationItem'
+    PanelNotificationItem:
+      type: object
+      additionalProperties: false
+      required:
+      - type
+      - group
+      - count
+      - unseen
+      - title
+      - href
+      properties:
+        type:
+          type: string
+          enum:
+          - dual_job
+          - suspicious_apps
+          - late_arrivals
+          - absences
+        group:
+          type: string
+          enum:
+          - alerts
+          - today
+          description: alerts = Alertas (pendientes de revisar); today = Jornada de hoy (resumen del día).
+        count:
+          type: integer
+          minimum: 1
+        unseen:
+          type: boolean
+          description: Cuenta en badge_count (alertas siempre; resumen del día solo si cambió desde la última vez que se abrió).
+        title:
+          type: string
+          maxLength: 160
+        href:
+          type: string
+          maxLength: 300
+          pattern: '^/[a-z0-9-]+[.]php([?][A-Za-z0-9=&_.-]*)?$'
+          description: Pantalla del panel ya filtrada.
     WebhookInput:
       type: object
       additionalProperties: false

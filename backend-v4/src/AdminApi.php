@@ -14,7 +14,8 @@ final class AdminApi
         if (($r->operation['x-platform-only'] ?? false) && !$c['platform']) { throw new ApiError(403,'permission_denied'); }
         $permission=$r->operation['x-permission'];
         // Permisos de la propia cuenta (menu del panel): cualquier sesion valida de la empresa los puede leer.
-        if (in_array($r->operation['operationId'],['getMyAccess','getMe'],true)) { return; }
+        // Icono de notificaciones: cualquier sesion; cada seccion exige alli su permiso, funcion y alcance (PanelNotifications).
+        if (in_array($r->operation['operationId'],['getMyAccess','getMe',...PanelNotifications::OPERATIONS],true)) { return; }
         if ($r->operation['operationId']==='patchDevice' && (property_exists($r->body,'release_ring') || property_exists($r->body,'release_pause_reason')) && !$c['platform']) { throw new ApiError(403,'permission_denied'); }
         if ($r->operation['operationId']==='createDeviceCommand') {
             $permission=match($r->body->type) { 'lock'=>'equipos.bloquear','unlock'=>'equipos.desbloquear','restart'=>'equipos.reiniciar','shutdown'=>'equipos.apagar','wipe'=>'equipos.borrar','refresh_policy'=>'reglas.aplicar','rename_computer'=>'equipos.editar',default=>throw new ApiError(422,'validation_failed') };
@@ -166,7 +167,7 @@ final class AdminApi
             'getTenantWindowsSecurity','setTenantWindowsSecurity'=>(new WindowsSecurity($this->db,$this->c,$this->r))->admin($this->access),
             'getTenantHardening','setTenantHardening','revealTenantHardening','getDeviceHardening','createHardeningCommand'=>(new Hardening($this->db,$this->c,$this->r))->admin($this->access),
             'listHolidays','createHoliday','getHoliday','putHoliday','deleteHoliday','listHolidayCalendars','createHolidayCalendar','getHolidayCalendar','putHolidayCalendar','assignHolidayCalendar','listHolidaySocieties','createHolidaySociety','getHolidaySociety','putHolidaySociety','deleteHolidaySociety',
-            'listSuspiciousApps','createSuspiciousApp','getSuspiciousApp','putSuspiciousApp','deleteSuspiciousApp','reviewDualJobAlert','listDualJobAlerts','listSuspiciousDetections','listComplianceSignals',
+            'listSuspiciousApps','createSuspiciousApp','getSuspiciousApp','putSuspiciousApp','deleteSuspiciousApp','reviewDualJobAlert','reviewSuspiciousDetection','listDualJobAlerts','listSuspiciousDetections','listComplianceSignals',
             'listInstallCoverage','putInstallCoverage','listClientLogs','getServerHealth','getPanelSettings','putPanelSettings'=>(new OperationsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getAdminDashboard','getAppsReport','getPresenceReport','getUserActivity','getUserPolicies','getPeopleReport'=>(new ActivityReports($this->db,$this->c,$this->access))->dispatch($op,$id),
             'issueMigrationAuthorization','validateMigrationAuthorization','getEscrowKey','persistDeviceEscrow','verifyDeviceEscrow','recoverDeviceEscrow','getDeviceMigration','setDeviceMigration'=>(new MigrationApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
@@ -190,6 +191,7 @@ final class AdminApi
             'listDoors','createDoor','patchDoor','getDoorQuarantine'=>(new DoorsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getMyAccess'=>$this->myAccess(), 'getMe'=>$this->me(),
+            'listNotifications','markNotificationsSeen'=>(new PanelNotifications($this->db,$this->c))->dispatch($op),
             'listPortalOrigins','createPortalOrigin','deletePortalOrigin'=>$this->portalOrigins($op,$id,$b),
             'setUserPlan'=>$this->userPlan($id,$b),
             'setUserAccess'=>$this->userAccess($id,$b),

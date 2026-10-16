@@ -18,7 +18,8 @@ final class ComplianceWorker
     public function calculate(string $tenant,string $day): void
     {
         if (!Features::has($this->db,$tenant,'cumplimiento')) { return; }
-        $this->db->run('DELETE FROM suspicious_app_detections WHERE tenant_id=? AND day=?',[$tenant,$day]);
+        // Las detecciones ya revisadas se conservan (0064): recalcular el dia no debe devolverlas a pendientes.
+        $this->db->run('DELETE FROM suspicious_app_detections WHERE tenant_id=? AND day=? AND reviewed=FALSE',[$tenant,$day]);
         $this->db->run("DELETE FROM dual_job_alerts WHERE tenant_id=? AND day=? AND source='worker' AND reviewed=FALSE",[$tenant,$day]);
         // Keep episodes first: MariaDB otherwise repeats a tenant scan for every assignment.
         $rows=$this->db->run("SELECT e.user_id,e.user_assignment_id,e.device_id,k.id app_id,k.category,e.process_name,
@@ -36,7 +37,8 @@ final class ComplianceWorker
         foreach ($rows as $r) {
             if ((int)$r['active_seconds']===0) { continue; }
             $id=self::id($tenant.$day.$r['user_assignment_id'].$r['device_id'].$r['app_id'].$r['process_name']);
-            $this->db->run('INSERT INTO suspicious_app_detections VALUES (?,?,?,?,?,?,?,?,?,?,?)',[$tenant,$id,$r['user_id'],$r['user_assignment_id'],$r['device_id'],$r['app_id'],$day,$r['process_name'],$r['active_seconds'],$r['first_activity'],$r['last_activity']]);
+            $this->db->run('INSERT INTO suspicious_app_detections (tenant_id,id,user_id,user_assignment_id,device_id,app_id,day,process_name,active_seconds,first_activity,last_activity) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                ON DUPLICATE KEY UPDATE active_seconds=VALUES(active_seconds),first_activity=VALUES(first_activity),last_activity=VALUES(last_activity)',[$tenant,$id,$r['user_id'],$r['user_assignment_id'],$r['device_id'],$r['app_id'],$day,$r['process_name'],$r['active_seconds'],$r['first_activity'],$r['last_activity']]);
             $type=$r['category']==='remote_desktop'?'remote_desktop':'foreign_app';
             $signals[bin2hex($r['user_id']).':'.$type]['user']=$r['user_id'];
             $signals[bin2hex($r['user_id']).':'.$type]['type']=$type;
