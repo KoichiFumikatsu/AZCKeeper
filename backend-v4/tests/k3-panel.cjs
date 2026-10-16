@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 const { handler, tenant, uid, device, person, unknown, writes } = require('./k3-panel-fixture.cjs').createFixture();
-const destination = path.resolve(__dirname, '../../docs/design/2026-10-13-capturas-arquitectura');
+// Las capturas van a una carpeta temporal (o KEEPER_SHOTS): escribir en docs/ pisaba la documentacion del 2026-10-13 en cada corrida.
+const destination = process.env.KEEPER_SHOTS || path.join(require('os').tmpdir(), 'keeper-k3-panel-shots');
 
 (async () => {
   fs.mkdirSync(destination, { recursive: true });
