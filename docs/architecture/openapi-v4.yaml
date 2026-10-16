@@ -4746,7 +4746,8 @@ paths:
       operationId: listNotifications
       summary: Notificaciones del panel
       description: 'Icono de la barra superior. Pendiente de revisar de doble empleo y apps sospechosas (sin revisar,
-        últimos 30 días hasta mañana, en la zona de la empresa) y resumen del día de llegadas tarde y ausencias, solo
+        últimos 30 días hasta mañana, en la zona de la empresa) y resumen del día de llegadas tarde, sin conectarse (sin
+        actividad pasada la hora de entrada + margen, con jornada hoy, sin festivo ni ausencia) y ausencias, solo
         de las personas del alcance de la cuenta (mismo AdminAccess que el resto del panel) y solo de las funciones
         que el cliente compró y el rol permite. badge_count = alertas sin revisar + resúmenes del día que esta cuenta
         aún no vio (persistido por cuenta, no por navegador). El resumen del día se recalcula como mucho cada 5
@@ -21459,17 +21460,18 @@ components:
         available:
           type: array
           description: Secciones que esta cuenta puede ver (función comprada y permiso del rol).
-          maxItems: 4
+          maxItems: 5
           items:
             type: string
             enum:
             - dual_job
             - suspicious_apps
             - late_arrivals
+            - not_connected
             - absences
         items:
           type: array
-          maxItems: 4
+          maxItems: 5
           items:
             $ref: '#/components/schemas/PanelNotificationItem'
     PanelNotificationItem:
@@ -21489,6 +21491,7 @@ components:
           - dual_job
           - suspicious_apps
           - late_arrivals
+          - not_connected
           - absences
         group:
           type: string
@@ -23130,6 +23133,7 @@ components:
       - status
       - scheduled_start
       - punctuality_minutes
+      - arrival_deadline_at
       properties:
         user_id:
           type: string
@@ -23175,6 +23179,12 @@ components:
           anyOf:
           - type: integer
             description: 'Convención K3: positivo temprano, negativo tarde; null en festivo o sin hora.'
+          - type: 'null'
+        arrival_deadline_at:
+          description: Hora límite de llegada (entrada del horario + margen de puntualidad de la empresa); null si el día no es laborable. Con estado sin_actividad y esta hora ya pasada, la persona está «sin conectarse».
+          anyOf:
+          - type: string
+            format: date-time
           - type: 'null'
     PresenceReport:
       type: object

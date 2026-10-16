@@ -5,11 +5,12 @@ namespace Keeper;
 /**
  * Icono de notificaciones de la barra superior del panel (docs/design/2026-10-15-encargo-notificaciones.md).
  * Alertas: doble empleo y apps sospechosas sin revisar de los ultimos 30 dias (hasta mañana), en el alcance de la cuenta.
- * Jornada de hoy: resumen del dia (llegadas tarde con la regla de /reports/presence, ausencias registradas), no una por persona.
+ * Jornada de hoy: resumen del dia (llegadas tarde y sin conectarse con la regla de /reports/presence, ausencias registradas),
+ * no una por persona.
  * Cada seccion pasa por el mismo AdminAccess que su pantalla (permiso del rol, funcion comprada, alcance) y, ademas, por la
  * funcion del cliente (tambien para superadmin: lo que el cliente no compro no aparece).
  * badge_count = alertas sin revisar + resumenes del dia que esta cuenta no ha visto. Lo visto se guarda por cuenta del panel
- * en esta empresa (principal), no por navegador. Las llegadas tarde se cachean 5 minutos por cuenta (panel_notification_state):
+ * en esta empresa (principal), no por navegador. Llegadas tarde y sin conectarse se cachean 5 minutos por cuenta (panel_notification_state):
  * el contador se pide en cada pagina y recalcular la puntualidad de ~300 personas en cada una seria caro.
  */
 final class PanelNotifications
@@ -26,9 +27,9 @@ final class PanelNotifications
         $state = $this->db->one('SELECT * FROM panel_notification_state WHERE tenant_id=? AND principal_id=? FOR UPDATE', [$this->tenant, $this->c['principal_id']]) ?: null;
         $data = $this->collect($state);
         if ($op === 'markNotificationsSeen') {
-            $this->db->run('INSERT INTO panel_notification_state (tenant_id,principal_id,seen_at,seen_day,seen_late,seen_absent) VALUES (?,?,UTC_TIMESTAMP(6),?,?,?)
-                ON DUPLICATE KEY UPDATE seen_at=VALUES(seen_at),seen_day=VALUES(seen_day),seen_late=VALUES(seen_late),seen_absent=VALUES(seen_absent)',
-                [$this->tenant, $this->c['principal_id'], $data['day'], $data['late'] ?? 0, $data['absent'] ?? 0]);
+            $this->db->run('INSERT INTO panel_notification_state (tenant_id,principal_id,seen_at,seen_day,seen_late,seen_absent,seen_not_connected) VALUES (?,?,UTC_TIMESTAMP(6),?,?,?,?)
+                ON DUPLICATE KEY UPDATE seen_at=VALUES(seen_at),seen_day=VALUES(seen_day),seen_late=VALUES(seen_late),seen_absent=VALUES(seen_absent),seen_not_connected=VALUES(seen_not_connected)',
+                [$this->tenant, $this->c['principal_id'], $data['day'], $data['late'] ?? 0, $data['absent'] ?? 0, $data['not_connected'] ?? 0]);
             $state = $this->db->one('SELECT * FROM panel_notification_state WHERE tenant_id=? AND principal_id=?', [$this->tenant, $this->c['principal_id']]);
         }
         return AdminApi::response($this->render($data, $state), 200, ['Cache-Control' => 'no-store']);
@@ -40,12 +41,12 @@ final class PanelNotifications
         $today = (new \DateTimeImmutable('now', new \DateTimeZone($this->c['timezone'])))->format('Y-m-d');
         $from = (new \DateTimeImmutable($today))->modify('-' . (self::WINDOW_DAYS - 1) . ' days')->format('Y-m-d');
         $to = (new \DateTimeImmutable($today))->modify('+1 day')->format('Y-m-d');
-        $out = ['day' => $today, 'from' => $from, 'to' => $to, 'dual_job' => null, 'suspicious_apps' => null, 'late' => null, 'absent' => null];
+        $out = ['day' => $today, 'from' => $from, 'to' => $to, 'dual_job' => null, 'suspicious_apps' => null, 'late' => null, 'not_connected' => null, 'absent' => null];
         if ($access = $this->section('cumplimiento', 'cumplimiento.ver', 'listDualJobAlerts')) {
             $out['dual_job'] = $this->pending('dual_job_alerts', $access, $from, $to);
             $out['suspicious_apps'] = $this->pending('suspicious_app_detections', $access, $from, $to);
         }
-        if ($access = $this->section('presencia', 'reportes.ver', 'getPresenceReport')) { $out['late'] = $this->late($access, $state, $today); }
+        if ($access = $this->section('presencia', 'reportes.ver', 'getPresenceReport')) { ['late' => $out['late'], 'not_connected' => $out['not_connected']] = $this->today($access, $state, $today); }
         if ($access = $this->section('ausencias', 'presencia.ver', 'listAbsences')) { $out['absent'] = $this->absent($access, $today, $to); }
         return $out;
     }
@@ -66,18 +67,18 @@ final class PanelNotifications
             WHERE s.tenant_id=? AND s.reviewed=FALSE AND s.day>=? AND s.day<? AND s.day>=DATE_SUB(UTC_DATE(),INTERVAL r.aggregate_months MONTH) AND $scope", [$this->tenant, $from, $to, ...$args])['n'];
     }
 
-    /** Llegadas tarde de hoy: la misma regla que /reports/presence (margen de Horarios), cacheada TTL segundos por cuenta. */
-    private function late(AdminAccess $access, ?array $state, string $today): int
+    /** Llegadas tarde y sin conectarse de hoy: la misma regla que /reports/presence (margen de Horarios), cacheadas TTL segundos por cuenta. */
+    private function today(AdminAccess $access, ?array $state, string $today): array
     {
-        if ($state !== null && $state['digest_day'] === $today && $state['digest_late'] !== null && (int) $state['digest_revision'] === $this->c['auth_revision']
+        if ($state !== null && $state['digest_day'] === $today && $state['digest_late'] !== null && $state['digest_not_connected'] !== null && (int) $state['digest_revision'] === $this->c['auth_revision']
             && $state['digest_at'] !== null && strtotime($state['digest_at'] . ' UTC') > time() - self::TTL) {
-            return (int) $state['digest_late'];
+            return ['late' => (int) $state['digest_late'], 'not_connected' => (int) $state['digest_not_connected']];
         }
-        $late = (new ActivityReports($this->db, $this->c, $access))->lateToday();
-        $this->db->run('INSERT INTO panel_notification_state (tenant_id,principal_id,digest_day,digest_late,digest_revision,digest_at) VALUES (?,?,?,?,?,UTC_TIMESTAMP(6))
-            ON DUPLICATE KEY UPDATE digest_day=VALUES(digest_day),digest_late=VALUES(digest_late),digest_revision=VALUES(digest_revision),digest_at=VALUES(digest_at)',
-            [$this->tenant, $this->c['principal_id'], $today, $late, $this->c['auth_revision']]);
-        return $late;
+        $summary = (new ActivityReports($this->db, $this->c, $access))->todaySummary();
+        $this->db->run('INSERT INTO panel_notification_state (tenant_id,principal_id,digest_day,digest_late,digest_not_connected,digest_revision,digest_at) VALUES (?,?,?,?,?,?,UTC_TIMESTAMP(6))
+            ON DUPLICATE KEY UPDATE digest_day=VALUES(digest_day),digest_late=VALUES(digest_late),digest_not_connected=VALUES(digest_not_connected),digest_revision=VALUES(digest_revision),digest_at=VALUES(digest_at)',
+            [$this->tenant, $this->c['principal_id'], $today, $summary['late'], $summary['not_connected'], $this->c['auth_revision']]);
+        return $summary;
     }
 
     /** Personas del alcance con una ausencia aprobada que toca hoy (dia local de la empresa). Consulta barata: sin cache. */
@@ -115,6 +116,12 @@ final class PanelNotifications
             if ($d['late'] > 0) { $items[] = ['type' => 'late_arrivals', 'group' => 'today', 'count' => $d['late'], 'unseen' => $fresh($d['late'], 'seen_late'),
                 'title' => $plural($d['late'], 'llegada tarde hoy', 'llegadas tarde hoy'),
                 'href' => '/reportes.php?desde=' . $d['day'] . '&hasta=' . $d['day'] . '&pestana=presencia&estado=tarde']; }
+        }
+        if ($d['not_connected'] !== null) {
+            $available[] = 'not_connected';
+            if ($d['not_connected'] > 0) { $items[] = ['type' => 'not_connected', 'group' => 'today', 'count' => $d['not_connected'], 'unseen' => $fresh($d['not_connected'], 'seen_not_connected'),
+                'title' => $d['not_connected'] . ' sin conectarse hoy',
+                'href' => '/reportes.php?desde=' . $d['day'] . '&hasta=' . $d['day'] . '&pestana=presencia&estado=sin_conectarse']; }
         }
         if ($d['absent'] !== null) {
             $available[] = 'absences';

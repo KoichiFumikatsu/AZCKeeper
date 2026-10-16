@@ -12,7 +12,7 @@ const fmt = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1 });
 const numeric = v => typeof v === 'number' && Number.isFinite(v);
 const percent = v => numeric(v) ? `${fmt.format(v)} %` : 'Sin dato';
 const hours = v => numeric(v) ? `${fmt.format(v / 3600)} h` : 'Sin dato';
-const names = { tenant: 'Empresa', global: 'Global', site: 'Sede', area: 'Área', user: 'Persona', device: 'Equipo', active: 'Activo', inactive: 'Inactivo', revoked: 'Revocado', decommissioned: 'Retirado', a_tiempo: 'A tiempo', tarde: 'Tarde', temprano: 'Temprano', actividad_sin_hora: 'Actividad sin hora registrada', sin_actividad: 'Sin actividad', no_laborable: 'No laborable', allow: 'Permitir', deny: 'Denegar', require: 'Exigir', instalado: 'Instalado', enrolado: 'Enrolado', escrow_ok: 'Respaldo verificado', degradado: 'Degradado', pendiente_reinicio: 'Pendiente de reinicio', completo: 'Completo', excepcion: 'Excepción' };
+const names = { tenant: 'Empresa', global: 'Global', site: 'Sede', area: 'Área', user: 'Persona', device: 'Equipo', active: 'Activo', inactive: 'Inactivo', revoked: 'Revocado', decommissioned: 'Retirado', a_tiempo: 'A tiempo', tarde: 'Tarde', temprano: 'Temprano', actividad_sin_hora: 'Actividad sin hora registrada', sin_actividad: 'Sin actividad', sin_conectarse: 'Sin conectarse hoy', no_laborable: 'No laborable', allow: 'Permitir', deny: 'Denegar', require: 'Exigir', instalado: 'Instalado', enrolado: 'Enrolado', escrow_ok: 'Respaldo verificado', degradado: 'Degradado', pendiente_reinicio: 'Pendiente de reinicio', completo: 'Completo', excepcion: 'Excepción' };
 const label = v => names[v] || v || 'Sin dato';
 const link = (text, href) => { const a = el('a', text); a.href = href; return a; };
 const memberLink = u => link(u.display_name, `/miembro.php?id=${encodeURIComponent(u.id || u.user_id)}`);
@@ -438,10 +438,12 @@ export async function coordinator(ctx) {
             const list = rows(await fresh('presence', range, values));
             p.append(el('p', `Los estados salen del horario de cada persona y de su calendario de festivos: un festivo o una ausencia aprobada cuentan como «No laborable». Horas en la zona horaria de la empresa (${ctx.timezone}).`, 'help'));
             // Filtro por estado (p. ej. solo «Tarde» al llegar desde el icono de notificaciones).
-            const bar = el('div', undefined, 'toolbar'); const status = selector(bar, 'Estado', 'presence-status', ['tarde', 'a_tiempo', 'temprano', 'sin_actividad', 'actividad_sin_hora', 'no_laborable'].map(id => ({ id, name: label(id) })));
+            const bar = el('div', undefined, 'toolbar'); const status = selector(bar, 'Estado', 'presence-status', ['tarde', 'sin_conectarse', 'a_tiempo', 'temprano', 'sin_actividad', 'actividad_sin_hora', 'no_laborable'].map(id => ({ id, name: label(id) })));
+            // «Sin conectarse hoy»: sin actividad y ya pasó su hora límite de llegada (entrada + margen; la calcula la API).
+            const matches = (r, v) => v === 'sin_conectarse' ? r.status === 'sin_actividad' && !!r.arrival_deadline_at && Date.parse(r.arrival_deadline_at) <= Date.now() : r.status === v;
             if ([...status.options].some(o => o.value === presenceStatus)) status.value = presenceStatus;
             const view = el('div'); p.append(bar, view);
-            const draw = () => { const shown = status.value ? list.filter(r => r.status === status.value) : list; view.replaceChildren(); pagedTable(view, status.value ? `Presencia diaria · ${label(status.value)}` : 'Presencia diaria', presenceColumns, shown); csvButton(view, `presencia-${from}-${last}`, presenceColumns, shown); };
+            const draw = () => { const shown = status.value ? list.filter(r => matches(r, status.value)) : list; view.replaceChildren(); pagedTable(view, status.value ? `Presencia diaria · ${label(status.value)}` : 'Presencia diaria', presenceColumns, shown); csvButton(view, `presencia-${from}-${last}`, presenceColumns, shown); };
             status.onchange = draw; draw();
           }),
         ]);

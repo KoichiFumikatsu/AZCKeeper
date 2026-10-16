@@ -87,7 +87,7 @@ final class ActivityReports
                 SUM(window_active_seconds) window_active_seconds,SUM(unclassified_seconds) unclassified_seconds,
                 SUM(context_switches) context_switches,SUM(deep_work_seconds) deep_work_seconds,SUM(distraction_seconds) distraction_seconds,
                 MAX(expected_seconds) expected_seconds,MIN(first_activity) first_activity,MAX(last_activity) last_activity,MAX(margin_minutes) margin_minutes,
-                MIN(scheduled_start) scheduled_start,MIN(first_activity_time) first_activity_time,AVG(productivity_pct) productivity_pct,AVG(constancy_pct) constancy_pct,
+                MIN(scheduled_start) scheduled_start,MIN(IF(expected_seconds>0,scheduled_at,NULL)) scheduled_at_utc,MIN(first_activity_time) first_activity_time,AVG(productivity_pct) productivity_pct,AVG(constancy_pct) constancy_pct,
                 SUM(deep_work_sessions) deep_work_sessions,MAX(longest_focus_streak_seconds) longest_focus_streak_seconds,
                 IF(MAX(expected_seconds)=0 OR MIN(first_activity) IS NULL,NULL,TIMESTAMPDIFF(MINUTE,MIN(first_activity),MIN(IF(expected_seconds>0,scheduled_at,NULL)))) punctuality_minutes,
                 TIMESTAMPDIFF(SECOND,MIN(first_activity),MIN(IF(expected_seconds>0,scheduled_at,NULL))) early_seconds,
@@ -115,15 +115,23 @@ final class ActivityReports
         } finally { $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_report_data'); $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_calendar'); }
     }
     /**
-     * Llegadas tarde de hoy (dia de la empresa) en el alcance del acceso: exactamente /reports/presence sin filtros, la
-     * misma regla y el mismo margen de puntualidad (ScheduleSettings). Lo usa el icono de notificaciones (PanelNotifications).
+     * Resumen de hoy (dia de la empresa) en el alcance del acceso: exactamente /reports/presence sin filtros, la misma regla
+     * y el mismo margen de puntualidad (ScheduleSettings). late = estado «tarde»; not_connected = «sin actividad» (jornada
+     * hoy, sin festivo ni ausencia) cuya hora limite de llegada (entrada + margen) ya paso. Lo usa PanelNotifications.
      */
-    public function lateToday(): int
+    public function todaySummary(): array
     {
         $saved=$_GET; $_GET=[];
         try { $report=json_decode($this->dispatch('getPresenceReport',null)['json'],true,64,JSON_THROW_ON_ERROR); }
         finally { $_GET=$saved; }
-        return count(array_filter($report['data'],static fn($row)=>$row['status']==='tarde'));
+        $now=time();
+        return ['late'=>count(array_filter($report['data'],static fn($row)=>$row['status']==='tarde')),
+            'not_connected'=>count(array_filter($report['data'],static fn($row)=>self::notConnected($row,$now)))];
+    }
+    /** Sin conectarse: sin actividad en un dia con jornada y ya paso la hora limite de llegada. */
+    public static function notConnected(array $row,int $now): bool
+    {
+        return $row['status']==='sin_actividad' && $row['arrival_deadline_at']!==null && strtotime($row['arrival_deadline_at'])<=$now;
     }
     private function dashboard(array $rows,string $from,string $to): array
     {
@@ -196,7 +204,10 @@ final class ActivityReports
             'scheduled_start'=>$r['scheduled_start'],'punctuality_minutes'=>$r['punctuality_minutes']===null?null:(int)$r['punctuality_minutes'],
             'status'=>$r['expected_seconds']==0?'no_laborable':($r['first_activity']===null?($r['active_seconds']>0?'actividad_sin_hora':'sin_actividad'):($r['late_seconds']>max(0,$r['margin_minutes'])*60?'tarde':($r['margin_minutes']>=0 && $r['early_seconds']>$r['margin_minutes']*60?'temprano':'a_tiempo')))];
         $period=[]; foreach (self::PERIOD_FIELDS as $field) { $period[$field]=$r[$field]===null?null:(int)$r[$field]; }
-        return $presence ? $out+['user_id'=>Util::id($r['user_id']),'display_name'=>$r['display_name'],'active_seconds'=>(int)$r['active_seconds']] : $out+$this->metrics($r)+$period+[
+        // Hora limite de llegada: entrada del horario + margen de puntualidad (el mismo que decide «tarde»).
+        $deadline=$r['expected_seconds']==0 || ($r['scheduled_at_utc']??null)===null ? null
+            : Util::time((new \DateTimeImmutable($r['scheduled_at_utc'],new \DateTimeZone('UTC')))->modify('+'.(max(0,(int)$r['margin_minutes'])*60).' seconds')->format('Y-m-d H:i:s'));
+        return $presence ? $out+['user_id'=>Util::id($r['user_id']),'display_name'=>$r['display_name'],'active_seconds'=>(int)$r['active_seconds'],'arrival_deadline_at'=>$deadline] : $out+$this->metrics($r)+$period+[
             'expected_seconds'=>(int)$r['expected_seconds'],'first_activity_time'=>$r['first_activity_time'],
             'productivity_pct'=>$r['productivity_pct']===null?null:round((float)$r['productivity_pct'],2),'constancy_pct'=>$r['constancy_pct']===null?null:round((float)$r['constancy_pct'],2),
             'deep_work_sessions'=>(int)$r['deep_work_sessions'],'longest_focus_streak_seconds'=>(int)$r['longest_focus_streak_seconds'],

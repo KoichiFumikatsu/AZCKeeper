@@ -4,7 +4,7 @@ use Keeper\{AccessScope,ActivityCalendar,ComplianceWorker,Database,Util};
 
 // Icono de notificaciones del panel (docs/design/2026-10-15-encargo-notificaciones.md): conteo de pendientes, baja al
 // revisar y al abrir, persistencia por cuenta, alcance (coordinador de una sede), funciones no compradas ocultas y resumen
-// del dia de llegadas tarde y ausencias con la misma regla de puntualidad que /reports/presence.
+// del dia de llegadas tarde, sin conectarse y ausencias con la misma regla de puntualidad que /reports/presence.
 function notificationTests(Database $db): void
 {
     $before = $GLOBALS['checks'];
@@ -48,6 +48,21 @@ function notificationTests(Database $db): void
         $db->run("INSERT INTO absences (tenant_id,id,user_id,kind,starts_at,ends_at,all_day,status) VALUES (?,?,?,'vacaciones',?,?,TRUE,?)", [$t, Util::bin(Util::uuid()), $o[$key]['id'], $utc("$today 00:00:00"), $utc("$tomorrow 00:00:00"), $status]);
     }
 
+    // Sin conectarse hoy: salvo juan y ag808 (horario 08:00), todos pasan a un horario que entra a las 00:00, asi su hora
+    // limite (entrada + 15 min de margen) ya paso a cualquier hora del dia salvo entre 00:00 y 00:15 de Bogota ($nc = 0).
+    $early = Util::bin(Util::uuid());
+    $db->run("INSERT INTO schedules (tenant_id,id,name,timezone,start_local,end_local) VALUES (?,?,'madrugada','America/Bogota','00:00:00','17:00:00')", [$t, $early]);
+    for ($w = 1; $w <= 7; $w++) { $db->run('INSERT INTO schedule_days (tenant_id,schedule_id,weekday) VALUES (?,?,?)', [$t, $early, $w]); }
+    $nobody = Util::bin(Util::uuid()); $nobodyUa = Util::bin(Util::uuid()); $b = $o['base'];
+    $db->run("INSERT INTO users (tenant_id,id,display_name,firm_id,site_id,area_id,position_id,schedule_id,company_id) VALUES (?,?,'sin conexion',?,?,?,?,?,?)", [$t, $nobody, $b['firm_id'], $o['teq'], $o['agentes'], $b['position_id'], $early, $o['azc']]);
+    $db->run("INSERT INTO user_assignments (tenant_id,id,user_id,firm_id,site_id,area_id,position_id,schedule_id,company_id,starts_at) VALUES (?,?,?,?,?,?,?,?,?,'2026-09-01')", [$t, $nobodyUa, $nobody, $b['firm_id'], $o['teq'], $o['agentes'], $b['position_id'], $early, $o['azc']]);
+    foreach (['users' => 'id', 'user_assignments' => 'user_id'] as $table => $col) { $db->run("UPDATE $table SET schedule_id=? WHERE tenant_id=? AND $col NOT IN (?,?)", [$early, $t, $o['juan']['id'], $o['ag808']['id']]); }
+    $clock = (new DateTimeImmutable('now', $zone))->format('H:i');
+    $nc = $clock >= '00:16' ? 1 : 0;
+    // Sin conectarse (Medellin, Torre y la sede base): zafra, bl2, agTorre, coord2, base; en Tequendama: «sin conexion». bl1 y jur808 tienen ausencia.
+    $ncAll = 6 * $nc; $ncTeq = $nc;
+    $withNc = fn (array $counts, int $n) => $n ? array_slice($counts, 0, 3, true) + ['not_connected' => $n] + array_slice($counts, 3, null, true) : $counts;
+
     $platform = sharedPlatform($db); $platform['tenant'] = $t;
     accessResetPreloginQuota();
     $perms = ['cumplimiento.ver', 'cumplimiento.editar', 'reportes.ver', 'presencia.ver', 'usuarios.ver'];
@@ -60,9 +75,13 @@ function notificationTests(Database $db): void
 
     $all = $get($platform, 'platform notifications');
     check($all['day'] === $today && $all['seen_at'] === null, 'today in company zone, never opened');
-    check($all['available'] === ['dual_job', 'suspicious_apps', 'late_arrivals', 'absences'], 'every purchased section available');
-    check($counts($all) === ['dual_job' => 2, 'suspicious_apps' => 2, 'late_arrivals' => 2, 'absences' => 2], 'platform counts: pending alerts, late today, absent today');
-    check($all['badge_count'] === 6, 'badge = 4 pending alerts + 2 unseen day summaries');
+    check($all['available'] === ['dual_job', 'suspicious_apps', 'late_arrivals', 'not_connected', 'absences'], 'every purchased section available');
+    check($counts($all) === $withNc(['dual_job' => 2, 'suspicious_apps' => 2, 'late_arrivals' => 2, 'absences' => 2], $ncAll), 'platform counts: pending alerts, late, not connected, absent today');
+    check($all['badge_count'] === 6 + $nc, 'badge = 4 pending alerts + unseen day summaries');
+    if ($nc) {
+        check($byType($all)['not_connected']['title'] === '6 sin conectarse hoy' && $byType($all)['not_connected']['group'] === 'today'
+            && $byType($all)['not_connected']['href'] === "/reportes.php?desde=$today&hasta=$today&pestana=presencia&estado=sin_conectarse", 'not connected: separate day summary with filtered link');
+    }
     check($byType($all)['late_arrivals']['title'] === '2 llegadas tarde hoy' && $byType($all)['absences']['title'] === '2 ausencias hoy', 'day summary, not one per person');
     check($byType($all)['late_arrivals']['group'] === 'today' && $byType($all)['dual_job']['group'] === 'alerts', 'grouped Alertas / Jornada de hoy');
     check($byType($all)['dual_job']['href'] === "/doble-empleo.php?reviewed=0&from=" . (new DateTimeImmutable($today))->modify('-29 days')->format('Y-m-d') . "&to=$tomorrow", 'dual job link filtered to pending');
@@ -71,10 +90,15 @@ function notificationTests(Database $db): void
     // La regla de llegada tarde es la de /reports/presence: mismas personas en estado «tarde».
     $presence = expect(adminRequest($platform, 'GET', '/reports/presence'), 200, 'presence today');
     check(count(array_filter($presence['data'], fn ($r) => $r['status'] === 'tarde')) === 2, 'same late rule as presence report');
+    check(count(array_filter($presence['data'], fn ($r) => Keeper\ActivityReports::notConnected($r, time()))) === $ncAll, 'same not-connected rule as presence report');
+    $deadlines = array_column($presence['data'], 'arrival_deadline_at', 'display_name');
+    check($deadlines['juan'] === (new DateTimeImmutable("$today 08:15:00", $zone))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.u\Z')
+        && $deadlines['sin conexion'] === (new DateTimeImmutable("$today 00:15:00", $zone))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.u\Z') && $deadlines['bl1'] === null, 'arrival deadline = start + company margin; null on an absence day');
 
     // Alcance: el coordinador de Tequendama no ve Medellin.
     $c = $get($coord, 'coordinator notifications');
-    check($counts($c) === ['dual_job' => 1, 'suspicious_apps' => 1, 'late_arrivals' => 1, 'absences' => 1] && $c['badge_count'] === 4, 'coordinator sees only his site');
+    check($counts($c) === $withNc(['dual_job' => 1, 'suspicious_apps' => 1, 'late_arrivals' => 1, 'absences' => 1], $ncTeq) && $c['badge_count'] === 4 + $nc, 'coordinator sees only his site');
+    if ($nc) { check($byType($c)['not_connected']['title'] === '1 sin conectarse hoy', 'coordinator: only his site not connected'); }
     check($byType($c)['late_arrivals']['title'] === '1 llegada tarde hoy' && $byType($c)['absences']['title'] === '1 ausencia hoy', 'singular titles');
     check(adminRequest($coord, 'PATCH', "/reports/dual-job-alerts/$medAlert", ['reviewed' => true])[0] === 404, 'cannot review an alert of another site');
     check(adminRequest($coord, 'PATCH', "/reports/suspicious-apps/$medDetection", ['reviewed' => true])[0] === 404, 'cannot review a detection of another site');
@@ -83,28 +107,28 @@ function notificationTests(Database $db): void
     // Revisar baja el numero.
     expect(adminRequest($coord, 'PATCH', "/reports/dual-job-alerts/$juanAlert", ['reviewed' => true]), 204, 'review dual job alert');
     $c = $get($coord, 'after dual review');
-    check($c['badge_count'] === 3 && !isset($byType($c)['dual_job']) && in_array('dual_job', $c['available'], true), 'reviewing an alert lowers the badge');
+    check($c['badge_count'] === 3 + $nc && !isset($byType($c)['dual_job']) && in_array('dual_job', $c['available'], true), 'reviewing an alert lowers the badge');
     expect(adminRequest($coord, 'PATCH', "/reports/suspicious-apps/$juanDetection", ['reviewed' => true]), 204, 'review suspicious detection');
     expect(adminRequest($coord, 'PATCH', "/reports/suspicious-apps/$juanDetection", ['reviewed' => true]), 204, 'review is idempotent');
     check((int) $db->one("SELECT COUNT(*) n FROM audit_log WHERE tenant_id=? AND action='reviewSuspiciousDetection'", [$t])['n'] === 2, 'detection review audited');
     $c = $get($coord, 'after detection review');
-    check($c['badge_count'] === 2 && !isset($byType($c)['suspicious_apps']), 'reviewing a detection lowers the badge');
+    check($c['badge_count'] === 2 + $nc && !isset($byType($c)['suspicious_apps']), 'reviewing a detection lowers the badge');
     check(expect(adminRequest($coord, 'GET', "/reports/suspicious-apps?from=$yday&to=$tomorrow&reviewed=0"), 200, 'pending detections')['data'] === [], 'pending filter');
     $done = expect(adminRequest($coord, 'GET', "/reports/suspicious-apps?from=$yday&to=$tomorrow&reviewed=1"), 200, 'reviewed detections')['data'];
     check(count($done) === 1 && $done[0]['reviewed'] === true, 'reviewed flag exposed');
 
     // Abrir la lista baja el numero (los resumenes del dia quedan vistos) y se guarda por cuenta, no por sesion.
     $opened = $seen($coord, 'open the list');
-    check($opened['badge_count'] === 0 && $opened['seen_at'] !== null && count($opened['items']) === 2 && !$byType($opened)['late_arrivals']['unseen'] && !$byType($opened)['absences']['unseen'], 'opening clears the day summaries');
+    check($opened['badge_count'] === 0 && $opened['seen_at'] !== null && count($opened['items']) === 2 + $nc && !($byType($opened)['not_connected']['unseen'] ?? false) && !$byType($opened)['late_arrivals']['unseen'] && !$byType($opened)['absences']['unseen'], 'opening clears the day summaries');
     check($get($coord, 'after opening')['badge_count'] === 0, 'opening persists');
     accessResetPreloginQuota();
     $otherBrowser = adminLogin($coord);
     check($get($otherBrowser, 'same account, new session')['badge_count'] === 0, 'seen state belongs to the account, not the browser');
-    check($get($platform, 'other account untouched')['badge_count'] === 4, 'another account keeps its own state (2 alerts + 2 unseen summaries)');
+    check($get($platform, 'other account untouched')['badge_count'] === 4 + $nc, 'another account keeps its own state (2 alerts + unseen summaries)');
     check($seen($platform, 'platform opens')['badge_count'] === 2, 'platform opening leaves only pending alerts');
 
     // Lo nuevo desde la ultima apertura: otra llegada tarde en la sede. El resumen se cachea 5 minutos por cuenta.
-    $newcomer = Util::bin(Util::uuid()); $newcomerUa = Util::bin(Util::uuid()); $b = $o['base'];
+    $newcomer = Util::bin(Util::uuid()); $newcomerUa = Util::bin(Util::uuid());
     $db->run("INSERT INTO users (tenant_id,id,display_name,firm_id,site_id,area_id,position_id,schedule_id,company_id) VALUES (?,?,'recien',?,?,?,?,?,?)", [$t, $newcomer, $b['firm_id'], $o['teq'], $o['agentes'], $b['position_id'], $b['schedule_id'], $o['azc']]);
     $db->run("INSERT INTO user_assignments (tenant_id,id,user_id,firm_id,site_id,area_id,position_id,schedule_id,company_id,starts_at) VALUES (?,?,?,?,?,?,?,?,?,'2026-09-01')", [$t, $newcomerUa, $newcomer, $b['firm_id'], $o['teq'], $o['agentes'], $b['position_id'], $b['schedule_id'], $o['azc']]);
     $late($newcomer, $newcomerUa);
@@ -114,21 +138,23 @@ function notificationTests(Database $db): void
     $expire();
     $c = $get($coord, 'refreshed day summary');
     check($byType($c)['late_arrivals']['count'] === 2 && $byType($c)['late_arrivals']['unseen'] && !$byType($c)['absences']['unseen'] && $c['badge_count'] === 1, 'a new late arrival after opening counts again');
-    // Margen de puntualidad de la empresa (Horarios): con 180 minutos nadie llego tarde a las 10:30.
-    $db->run("INSERT INTO punctuality_margins (tenant_id,from_day,minutes) VALUES (?,'2000-01-01',180)", [$t]); $expire();
+    // Margen de puntualidad de la empresa (Horarios): con 1430 minutos nadie llego tarde a las 10:30 y la hora limite de
+    // quien entra a las 00:00 pasa a las 23:50 (aun nadie esta «sin conectarse»).
+    $db->run("INSERT INTO punctuality_margins (tenant_id,from_day,minutes) VALUES (?,'2000-01-01',1430)", [$t]); $expire();
     $c = $get($coord, 'company margin');
-    check(!isset($byType($c)['late_arrivals']) && in_array('late_arrivals', $c['available'], true), 'uses the company punctuality margin');
+    check(!isset($byType($c)['late_arrivals']) && in_array('late_arrivals', $c['available'], true), 'late arrivals use the company punctuality margin');
+    if ((new DateTimeImmutable('now', $zone))->format('H:i') < '23:50') { check(!isset($byType($c)['not_connected']) && in_array('not_connected', $c['available'], true), 'not connected only after start + company margin'); }
     $db->run("DELETE FROM punctuality_margins WHERE tenant_id=? AND from_day='2000-01-01'", [$t]); $expire();
 
     // Rol sin permisos de cumplimiento ni presencia: solo ve lo que su rol abre.
     $r = $get($reportsOnly, 'reports-only role');
-    check($r['available'] === ['late_arrivals'] && array_column($r['items'], 'type') === ['late_arrivals'], 'sections follow the role permissions');
+    check($r['available'] === ['late_arrivals', 'not_connected'] && array_column($r['items'], 'type') === ($nc ? ['late_arrivals', 'not_connected'] : ['late_arrivals']), 'sections follow the role permissions');
 
     // Funciones no compradas: esa parte no aparece (tampoco para superadmin). Sin nada: estado vacio.
     $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code IN ('cumplimiento','ausencias')", [$t]);
     $p = $get($platform, 'without compliance and absences');
-    check($p['available'] === ['late_arrivals'] && array_column($p['items'], 'type') === ['late_arrivals'], 'unpurchased compliance and absences hidden');
-    check($get($coord, 'coordinator without features')['available'] === ['late_arrivals'], 'hidden for client accounts too');
+    check($p['available'] === ['late_arrivals', 'not_connected'] && array_column($p['items'], 'type') === ($nc ? ['late_arrivals', 'not_connected'] : ['late_arrivals']), 'unpurchased compliance and absences hidden');
+    check($get($coord, 'coordinator without features')['available'] === ['late_arrivals', 'not_connected'], 'hidden for client accounts too');
     $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='presencia'", [$t]);
     $p = $get($platform, 'nothing purchased');
     check($p['available'] === [] && $p['items'] === [] && $p['badge_count'] === 0, 'empty state when nothing applies');
