@@ -102,6 +102,14 @@ export async function operations({ page, tenant, today, shiftDay }) {
     catch (e) { if (e.status !== 403) throw e; filters.append(el('p', 'Sin permiso para listar sedes.')); }
   }
   if (page === 'client-logs') { input(filters, 'ID de equipo', 'device_id'); const l = el('label', 'Nivel'); const s = el('select'); s.name = 'level'; ['', 'info', 'warn', 'error'].forEach(v => { const o = el('option', v || 'Todos'); o.value = v; s.append(o); }); l.append(s); filters.append(l); }
+  // Desde el icono de notificaciones (?reviewed=0&from=…&to=…): la consulta arranca ya filtrada.
+  if (['dual-job', 'suspicious-apps'].includes(page)) {
+    const preset = new URLSearchParams(location.search);
+    for (const name of ['from', 'to', 'reviewed', 'severity', 'user_id']) {
+      const field = filters.elements[name], value = preset.get(name);
+      if (field && value && (field.tagName !== 'SELECT' || [...field.options].some(o => o.value === value))) field.value = value;
+    }
+  }
   const view = el('div'); parent.append(view); let offset = 0;
   async function load() {
     view.replaceChildren(); const params = new URLSearchParams({ offset, limit: 50 }); new FormData(filters).forEach((v, k) => { if (v) params.set(k, v); });

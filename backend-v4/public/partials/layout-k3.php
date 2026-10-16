@@ -35,7 +35,7 @@ require_once __DIR__ . '/brand.php';
   <button class="icon-button mobile-menu" id="open-menu" type="button" aria-controls="sidebar" aria-expanded="false" aria-label="Abrir menú">☰</button>
   <div class="tenant"><strong id="tenant-name">Cliente</strong><small>Administración del cliente</small></div>
   <label class="tenant-picker" id="tenant-control" hidden>Cliente<select id="tenant-select"></select></label>
-  <div class="top-meta"><span class="help time" id="now"></span></div>
+  <div class="top-meta"><span class="help time" id="now"></span><?php require __DIR__ . '/notifications.php'; ?></div>
 </header>
 <main id="main" tabindex="-1">
   <nav class="breadcrumb" aria-label="Ruta de navegación"><a href="/">Inicio</a><span>/</span><span><?= $e($title) ?></span></nav>

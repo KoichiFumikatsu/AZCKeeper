@@ -344,6 +344,10 @@ export async function coordinator(ctx) {
     form.querySelectorAll('.report-filters, .report-presets').forEach(n => n.remove());
     if (form.dataset.tenant !== tenant) { delete form.dataset.filters; delete form.dataset.queried; }
     form.dataset.tenant = tenant;
+    // Enlace del icono de notificaciones (?desde=…&hasta=…&pestana=presencia&estado=tarde): la primera consulta ya va filtrada.
+    const params = new URLSearchParams(location.search), isDay = v => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
+    let preset = !form.dataset.queried && isDay(params.get('desde')) && isDay(params.get('hasta')) ? { tab: params.get('pestana'), status: params.get('estado') } : null;
+    if (preset) { fromInput.value = params.get('desde'); toInput.value = params.get('hasta'); }
     const [org, users] = await Promise.all([optional('/organization'), optional('/users')]);
     const presets = el('div', undefined, 'report-presets'); presets.setAttribute('role', 'group'); presets.setAttribute('aria-label', 'Períodos rápidos');
     const end = today();
@@ -380,7 +384,8 @@ export async function coordinator(ctx) {
       const version = ++runs;
       const range = { from, to: shiftDay(last, 1) }, values = selected(controls);
       executed = { key: snapshot(), at: null }; form.dataset.queried = '1';
-      const keep = tabs?.current();
+      const keep = tabs?.current() || (preset && ['resumen', 'aplicaciones', 'presencia'].includes(preset.tab) ? preset.tab : null);
+      const presenceStatus = preset?.status || ''; preset = null;
       submit.disabled = true; showState('Consultando…', '');
       results.replaceChildren();
       const described = chain.describe();
@@ -429,7 +434,16 @@ export async function coordinator(ctx) {
             pagedTable(p, 'Promedio semanal', [['Semana desde', 'day'], ['Productividad', r => percent(r.productivity_percent)], ['Focus', r => percent(r.focus_score)]], weekly);
           }),
           apps(appsTab, range, values, true, fresh),
-          section(presenceTab, 'Presencia', async p => { const list = rows(await fresh('presence', range, values)); p.append(el('p', `Los estados salen del horario de cada persona y de su calendario de festivos: un festivo o una ausencia aprobada cuentan como «No laborable». Horas en la zona horaria de la empresa (${ctx.timezone}).`, 'help')); pagedTable(p, 'Presencia diaria', presenceColumns, list); csvButton(p, `presencia-${from}-${last}`, presenceColumns, list); }),
+          section(presenceTab, 'Presencia', async p => {
+            const list = rows(await fresh('presence', range, values));
+            p.append(el('p', `Los estados salen del horario de cada persona y de su calendario de festivos: un festivo o una ausencia aprobada cuentan como «No laborable». Horas en la zona horaria de la empresa (${ctx.timezone}).`, 'help'));
+            // Filtro por estado (p. ej. solo «Tarde» al llegar desde el icono de notificaciones).
+            const bar = el('div', undefined, 'toolbar'); const status = selector(bar, 'Estado', 'presence-status', ['tarde', 'a_tiempo', 'temprano', 'sin_actividad', 'actividad_sin_hora', 'no_laborable'].map(id => ({ id, name: label(id) })));
+            if ([...status.options].some(o => o.value === presenceStatus)) status.value = presenceStatus;
+            const view = el('div'); p.append(bar, view);
+            const draw = () => { const shown = status.value ? list.filter(r => r.status === status.value) : list; view.replaceChildren(); pagedTable(view, status.value ? `Presencia diaria · ${label(status.value)}` : 'Presencia diaria', presenceColumns, shown); csvButton(view, `presencia-${from}-${last}`, presenceColumns, shown); };
+            status.onchange = draw; draw();
+          }),
         ]);
       } finally { if (version === runs) submit.disabled = false; }
       if (version !== runs || !alive()) return;

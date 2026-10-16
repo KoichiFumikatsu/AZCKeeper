@@ -55,7 +55,7 @@ require_once __DIR__ . '/brand.php';
 <header class="topbar">
   <button class="icon-button mobile-menu" id="open-menu" type="button" aria-controls="sidebar" aria-expanded="false" aria-label="Abrir menú">☰</button>
   <div class="tenant" id="tenant-brand"><strong id="tenant-name"><?= $surface === 'admin' ? 'Panel Keeper' : 'Cliente' ?></strong><small><?= $surface === 'admin' ? 'Administración de plataforma' : 'Administración del cliente' ?></small><img id="tenant-logo" class="tenant-logo" alt="" hidden></div>
-  <div class="top-meta"><button id="refresh" type="button">Actualizar</button></div>
+  <div class="top-meta"><button id="refresh" type="button">Actualizar</button><?php require __DIR__ . '/notifications.php'; ?></div>
 </header>
 <main id="main" tabindex="-1">
   <nav class="breadcrumb" aria-label="Ruta de navegación"><a href="<?= $surface === 'admin' ? '/admin/' : '/' ?>">Inicio</a><span>/</span><span><?= $h($title) ?></span></nav>

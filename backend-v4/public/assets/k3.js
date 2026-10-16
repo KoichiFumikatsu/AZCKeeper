@@ -11,6 +11,7 @@ import { onboardingPage, returnBand, AUDIT_LABELS as ONBOARDING_AUDIT } from './
 import { evaluate as evaluateOnboarding, count as countSteps, nextPending as nextPendingStep, STATUS as ONBOARDING_STATUS } from './onboarding-state.js';
 import { canConfigureUnlockPin, mountUnlockPin } from './unlock-pin.js';
 import { canConfigureWindowsSecurity, mountWindowsSecurity } from './windows-security.js';
+import { mountNotifications } from './notifications.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
 // de la API; lo que la cuenta no puede ver se explica en vez de mostrarse vacío.
@@ -3053,11 +3054,20 @@ async function absencesPage() {
   let list = (await api('GET', `/absences?from=${day(-60)}&to=${day(180)}`)).data;
   const fmt = v => new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium' }).format(new Date(v));
   const range = a => a.all_day ? `${fmt(a.starts_at)} → ${fmt(new Date(Date.parse(a.ends_at) - 1))}` : `${when(a.starts_at)} → ${when(a.ends_at)}`;
+  // Desde el icono de notificaciones (?dia=AAAA-MM-DD): solo las ausencias aprobadas que tocan ese día de la empresa.
+  let onDay = /^\d{4}-\d{2}-\d{2}$/.test(new URLSearchParams(location.search).get('dia') || '') ? new URLSearchParams(location.search).get('dia') : null;
+  const localDay = v => new Intl.DateTimeFormat('en-CA', { timeZone: tenantZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(v));
+  const touches = (a, d) => a.status === 'approved' && localDay(a.starts_at) <= d && localDay(Date.parse(a.ends_at) - 1) >= d;
   const render = () => {
     $('page-content').replaceChildren();
-    const s = surface('Ausencias (últimos 60 días y próximos 6 meses)');
+    const s = surface(onDay ? `Ausencias del ${fmt(`${onDay}T12:00:00`)}` : 'Ausencias (últimos 60 días y próximos 6 meses)');
     s.append(el('p', owner ? `Las ausencias llegan de ${owner}: se registran allá.` : 'Un día cubierto por una ausencia no cuenta como ausencia ni tardanza, y no baja la productividad promedio.', owner ? 'notice' : 'help'));
-    if (!list.length) { empty(s, 'Sin ausencias', owner ? 'Aún no han llegado ausencias.' : 'Registra vacaciones, incapacidades o permisos con "Registrar ausencia".'); return; }
+    if (onDay) {
+      const note = el('p', `Mostrando solo las ausencias aprobadas de ese día (${tenantZone}). `, 'notice'); const all = el('button', 'Ver todas', 'link-button'); all.type = 'button';
+      all.addEventListener('click', () => { onDay = null; history.replaceState(null, '', location.pathname); render(); }); note.append(all); s.append(note);
+    }
+    const rows = onDay ? list.filter(a => touches(a, onDay)) : list;
+    if (!rows.length) { empty(s, 'Sin ausencias', onDay ? 'Nadie tiene una ausencia aprobada ese día.' : owner ? 'Aún no han llegado ausencias.' : 'Registra vacaciones, incapacidades o permisos con "Registrar ausencia".'); return; }
     table(s, 'Ausencias', [['Persona', a => who.get(a.user_id) || '—'], ['Tipo', a => ABSENCE_KINDS[a.kind] || a.kind], ['Fechas', range],
       ['Estado', a => badge(a.status === 'approved' ? 'Aprobada' : 'Cancelada', a.status === 'approved' ? 'good' : '')],
       ['', a => {
@@ -3068,7 +3078,7 @@ async function absencesPage() {
           try { const r = await api('PATCH', `/absences/${a.id}`, { body: { status: 'cancelled' }, ifMatch: a.version }); list = list.map(x => x.id === a.id ? r : x); render(); done(); } catch (e) { fail(e); }
         });
         return b;
-      }]], list, { filters: [['Tipo', a => ABSENCE_KINDS[a.kind] || a.kind], ['Estado', a => a.status === 'approved' ? 'Aprobada' : 'Cancelada']] });
+      }]], rows, { filters: [['Tipo', a => ABSENCE_KINDS[a.kind] || a.kind], ['Estado', a => a.status === 'approved' ? 'Aprobada' : 'Cancelada']], stateKey: onDay ? null : 'Ausencias' });
   };
   const editor = () => {
     const { dialog, body, ok, show } = dialogShell('Registrar ausencia');
@@ -3684,6 +3694,7 @@ async function plansPage() {
 const AUDIT_ACTIONS = {
   putScheduleSettings: 'Cambió el margen de puntualidad y horario predeterminado', refreshUserSource: 'Actualizó una persona desde su origen', setUserPortalAccess: 'Cambió el acceso al Portal',
   reviewDualJobAlert: 'Marcar alerta revisada',
+  reviewSuspiciousDetection: 'Marcó revisada una detección de app sospechosa', markNotificationsSeen: 'Abrió las notificaciones',
   setTenantUnlockPin: 'Cambió el PIN de desbloqueo local',
   revealTenantUnlockPin: 'Consultó el PIN de desbloqueo local',
   'unlock_pin.changed': 'Cambió el PIN de desbloqueo local',
@@ -4320,18 +4331,37 @@ async function suspiciousPage() {
   const day = o => new Date(Date.now() + o * 864e5).toISOString().slice(0, 10);
   const pageAll = async path => { const out = []; let next = 0; while (next !== null) { const r = await api('GET', `${path}${path.includes('?') ? '&' : '?'}limit=100&offset=${next}`); out.push(...r.data); next = r.next_offset; } return out; };
   const devices = (await optional(allPages(`/tenants/${tenant}/devices`))) || []; const host = new Map(devices.map(d => [d.id, d.hostname]));
-  let catalog = await pageAll('/policies/suspicious-apps');
+  // El catálogo exige alcance de todo el cliente; con alcance parcial (p. ej. una sede) se ven y revisan solo las detecciones.
+  const catalog0 = await optional(pageAll('/policies/suspicious-apps'));
+  let catalog = catalog0 || [];
   let detections = await pageAll(`/reports/suspicious-apps?from=${day(-29)}&to=${day(1)}`);
+  const access = await loadAccess();
+  const canReview = !!(access?.platform || access?.permissions?.some(p => p.code === 'cumplimiento.editar'));
+  // Desde el icono de notificaciones (?reviewed=0): la tabla arranca en «Pendiente» y no pisa el filtro guardado.
+  const pendingOnly = new URLSearchParams(location.search).get('reviewed') === '0';
+  const status = d => d.reviewed ? 'Revisada' : 'Pendiente';
   const render = () => {
     $('page-content').replaceChildren();
     const people = new Set(detections.map(d => d.user_id));
-    kpis([['Detecciones (30 días)', String(detections.length)], ['Personas', String(people.size)], ['Horas en estas apps', (detections.reduce((s, d) => s + d.active_seconds, 0) / 3600).toFixed(1)], ['Apps vigiladas', String(catalog.filter(c => c.active).length)]]);
+    kpis([['Sin revisar', String(detections.filter(d => !d.reviewed).length), `de ${detections.length} detecciones en 30 días`], ['Personas', String(people.size)], ['Horas en estas apps', (detections.reduce((s, d) => s + d.active_seconds, 0) / 3600).toFixed(1)], ...(catalog0 ? [['Apps vigiladas', String(catalog.filter(c => c.active).length)]] : [])]);
     const s = surface('Detecciones de los últimos 30 días');
     s.append(el('p', 'Uso de aplicaciones que pueden indicar trabajo para otra empresa o acceso a otro computador. Una detección es una señal para revisar, no una prueba.', 'help'));
+    const review = d => {
+      if (d.reviewed) return '';
+      const b = el('button', 'Marcar revisada', 'link-button'); b.type = 'button';
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        try { await api('PATCH', `/reports/suspicious-apps/${d.id}`, { body: { reviewed: true } }); detections = detections.map(x => x.id === d.id ? { ...x, reviewed: true } : x); render(); announce(`Detección de ${d.display_name} marcada revisada.`); }
+        catch (e) { fail(e); b.disabled = false; }
+      });
+      return b;
+    };
     if (!detections.length) empty(s, 'Sin detecciones', 'Nadie usó apps de la lista en los últimos 30 días.');
     else table(s, 'Detecciones', [['Día', d => d.day], ['Persona', d => d.display_name], ['Equipo', d => host.get(d.device_id) || '—'], ['Aplicación', d => d.process_name], ['Tiempo', d => `${Math.round(d.active_seconds / 60)} min`],
-      ['Horario', d => d.first_activity ? `${new Date(d.first_activity).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} – ${new Date(d.last_activity).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}` : '—']], detections,
-      { filters: [['Persona', d => d.display_name], ['Aplicación', d => d.process_name]] });
+      ['Horario', d => d.first_activity ? `${new Date(d.first_activity).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} – ${new Date(d.last_activity).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}` : '—'],
+      ['Estado', d => badge(status(d), d.reviewed ? 'good' : 'warn')], ...(canReview ? [['Acciones', review]] : [])], detections,
+      { filters: [['Persona', d => d.display_name], ['Aplicación', d => d.process_name], ['Estado', status, pendingOnly ? 'Pendiente' : undefined]], stateKey: pendingOnly ? null : 'Detecciones' });
+    if (!catalog0) return;
     const c = surface('Apps que se vigilan');
     c.append(el('p', 'Si el nombre del programa o el título de su ventana contiene el texto, se registra como detección.', 'help'));
     table(c, 'Catálogo', [['Contiene', a => a.app_pattern], ['Tipo', a => SUSPICIOUS_CATEGORY[a.category]?.[0] || a.category], ['Descripción', a => a.description || '—'], ['Estado', a => badge(a.active ? 'Vigilada' : 'Pausada', a.active ? 'good' : '')],
@@ -4546,6 +4576,7 @@ async function start() {
   if (!isUuid(tenant)) { fail(new Error('La sesión no tiene un cliente válido: vuelve a iniciar sesión.')); return; }
   setTenant(tenant);
   applyNavAccess(); // menu segun los permisos de la cuenta en esta empresa
+  mountNotifications(tenant); // icono de la barra: pendientes de revisar y jornada de hoy
   returnBand(); // llegó desde un paso de Puesta en marcha (?pm=N): «Volver al progreso»
   if (globalPage && session.is_platform_admin) { $('tenant-name').textContent = ownerName(); $('tenant-name').nextElementSibling.textContent = 'Administración de la plataforma'; }
   else { try { const t = await api('GET', `/tenants/${tenant}`); $('tenant-name').textContent = t.branding?.display_name || t.name; if (t.timezone) tenantZone = t.timezone; } catch { /* el nombre es decorativo */ } }

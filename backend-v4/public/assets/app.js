@@ -12,6 +12,7 @@ import { onboardingBanner, returnBand } from './onboarding.js';
 import { mountRelocations } from './relocations.js';
 import { fleet, deviceUpdates, releaseDeployments } from './fleet.js';
 import { LOG_COMPONENTS } from './log-components.js';
+import { mountNotifications } from './notifications.js';
 
 const page = document.body.dataset.page;
 const surface = document.body.dataset.surface;
@@ -779,6 +780,7 @@ async function context() {
   if ($('group-group')) $('group-group').hidden = !(session.group?.tenants?.length > 1);
   setTenant(tenant);
   applyNavAccess(); // menu segun los permisos de la cuenta en esta empresa
+  mountNotifications(tenant); // icono de la barra: pendientes de revisar y jornada de hoy
   try {
     const company = await get(`/tenants/${tenant}`);
     timezone = company.timezone;
