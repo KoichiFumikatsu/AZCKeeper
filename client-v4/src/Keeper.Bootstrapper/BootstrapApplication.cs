@@ -1,12 +1,13 @@
 using System.Text.Json;
 using Keeper.Bootstrapper.Hardening;
 using Keeper.Shared.Contracts;
+using Keeper.Shared.Time;
 
 namespace Keeper.Bootstrapper;
 
 public sealed class BootstrapApplication(IElevation elevation, IServiceControl services, ISystemPaths paths,
     IRegistryStore registry, Action<string> log, IHardeningRunner? hardening = null, IUpdateGuard? guard = null,
-    IRescueInstaller? rescue = null)
+    IRescueInstaller? rescue = null, ITimeSystem? time = null)
 {
     public const string ServiceName = "KeeperAgent";
     public const string ClaimedDocumentVariable = "KEEPER_CLAIMED_DOCUMENT";
@@ -126,6 +127,11 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
             Step($"DEL \"{Path.Combine(data, "next-sync.json")}\" (descartar backoff heredado)",
                 () => { var stale = Path.Combine(data, "next-sync.json"); if (File.Exists(stale)) File.Delete(stale); });
             Step($"SC FAILURE {ServiceName} (recovery: reinicio automatico ante caida)", () => services.ConfigureRecovery(ServiceName));
+            // El servicio pide el alta apenas arranca y el servidor rechaza firmas con mas de 60 s de diferencia: la hora
+            // de Windows se deja automatica y resincronizada antes. Nunca hace fallar la instalacion.
+            if (time is not null)
+                Step("HORA: W32Time automatico y en marcha, NTP time.windows.com (o el del dominio), zona automatica, w32tm /resync",
+                    () => { foreach (var line in TimeSyncOnce.RunAsync(time, CancellationToken.None).GetAwaiter().GetResult()) log(line); });
             Step($"START {ServiceName}; esperar Running (60 s)", () => services.Start(ServiceName));
             if (hardening is not null)
             {

@@ -3803,6 +3803,11 @@ const LOG_CODES = {
   simulated_input: 'Entrada simulada: Windows registra uso sin teclado ni ratón físicos (jiggler o control remoto); cuenta como inactivo', simulated_input_end: 'Terminó la entrada simulada', session_log_rejected: 'El agente descartó un aviso no permitido de la sesión del usuario (el código va en Error)', outbox_item_rejected: 'Un dato del equipo fue rechazado y apartado (el servidor no lo aceptó; queda guardado en el equipo y el resto se sigue enviando; el campo y la regla van en Detalle)', physical_input_unavailable: 'No se pudo leer el teclado/ratón físico; la actividad se mide como antes (puede contar entrada simulada)',
   capture_gap: 'El equipo estuvo suspendido o sin medir unos segundos (normal al dormir o bloquear)', applied: 'Regla aplicada en el equipo', degraded: 'Algún control no está funcionando del todo',
   package_verified: 'Versión nueva descargada y verificada', update_applying: 'Instalando versión nueva', first_login: 'Primer inicio de sesión del día',
+  time_resynced: 'Hora de Windows corregida con el servidor de hora (los segundos corregidos van en Detalle)',
+  time_settings_applied: 'Hora y zona horaria automáticas activadas en el equipo (lo ajustado va en Detalle)',
+  time_settings_restored: 'Alguien cambió la hora, la zona horaria o desactivó el ajuste automático; el agente lo volvió a poner (lo repuesto va en Detalle)',
+  time_resync_failed: 'No se pudo corregir la hora de Windows (sin acceso al servidor de hora o desfase demasiado grande); se reintenta cada 15 min',
+  time_settings_failed: 'No se pudo dejar la hora automática en el equipo (el paso que falló va en Detalle)',
   restore_point_created: 'Punto de restauración creado', failed: 'Falló', unsupported_rule: 'El equipo no soporta una regla', conflicting_rules: 'Reglas en conflicto',
 };
 async function logsPage() {

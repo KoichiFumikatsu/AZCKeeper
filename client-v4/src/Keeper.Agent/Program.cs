@@ -11,6 +11,7 @@ using Keeper.Agent.Transport;
 using Keeper.Shared.Contracts;
 using Keeper.Shared.Diagnostics;
 using Keeper.Shared.Protocol;
+using Keeper.Shared.Time;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -50,7 +51,10 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
             Log($"version del agente cambio a {AgentVersion}: se descarta el token para forzar login");
         }
         using var key = await DeviceKeyStore.LoadOrCreateAsync(Path.Combine(dataDirectory, "device-key.dpapi"), stoppingToken);
-        using var signer = new HttpMessageSigner(key);
+        // Firmas con la hora del servidor (Date / server_time): un equipo con la hora de Windows mal igual se da de alta y
+        // sincroniza; el modulo TimeSync corrige la hora de Windows. Ver ServerClock.
+        var serverClock = new ServerClock(TimeProvider.System, Log);
+        using var signer = new HttpMessageSigner(key) { Clock = serverClock };
         // outbox.json + outbox.quarantine.json (lo apartado tras un 422) + outbox.isolation.json (busqueda en curso).
         using var outbox = new DurableOutbox(Path.Combine(dataDirectory, "outbox.json"));
         var context = new ModuleContext(outbox, TimeProvider.System, Log, stoppingToken);
@@ -69,7 +73,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         {
             // Hasta que IT apruebe (o cargue el equipo como esperado) el agente solo pide alta: sin device_id no hay
             // politica que aplicar ni a quien reportar.
-            using var intakeHandler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false };
+            using var intakeHandler = new ClockSkewHandler(signer) { InnerHandler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false } };
             using var intakeHttp = new HttpClient(intakeHandler) { Timeout = TimeSpan.FromSeconds(45), BaseAddress = apiRoot };
             Log("sin device_id: alta por solicitud con la clave de la empresa");
             deviceId = await new IntakeEnrollment(intakeHttp, signer, enrollmentKey, TimeProvider.System, Log,
@@ -113,6 +117,10 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
             new RestorePointModule(new WindowsRestorePointService(!registry.IsDryRun), Path.Combine(dataDirectory, "restore-point.json"),
                 TimeSpan.FromHours(restorePointHours), TimeSpan.FromHours(6)),
             new TamperGuard(trust.BinaryHashes), new AgentDiagnostics(() => hostReference?.Snapshot() ?? []) };
+        // Hora de Windows automatica y resincronizada (en dry-run no toca nada). No resincroniza durante una cuenta
+        // regresiva de reinicio/apagado; cada salto de hora que ve corrige tambien el desfase de las firmas.
+        if (OperatingSystem.IsWindows()) moduleList.Add(new TimeSync(new WindowsTimeSystem(), !registry.IsDryRun,
+            () => serverClock.Confirmed, () => commands.PendingNotice is not null) { OnClockJump = serverClock.ShiftLocal });
         if (OperatingSystem.IsWindows()) moduleList.Add(new SessionSupervisor(new WindowsSessionLauncher(trust.BinaryHashes),
             Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), deviceLock, () => policy, () => commands.PendingNotice));
         await using var modules = new ModuleHost(moduleList, context);
@@ -139,7 +147,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
             // token guardado con clave base+keyId. El firmante es el mismo: firma la URI absoluta de cada peticion.
             IRelocatableSync Connect(Uri api)
             {
-                var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(45), BaseAddress = api };
+                var http = new HttpClient(new ClockSkewHandler(signer) { InnerHandler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false } }) { Timeout = TimeSpan.FromSeconds(45), BaseAddress = api };
                 return new SyncConnection(http, new SyncClient(http, signer, deviceId, outbox, policy, TimeProvider.System,
                     api == root ? ticket : null, new DeviceTokenStore(tokenPath, api.AbsoluteUri + signer.KeyId))
                 {
