@@ -132,6 +132,8 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
         }
         if (response.ProtocolVersion != 1 || response.PolicyVersion < 1 || response.NextSyncAfterSeconds is < 120 or > 3600)
             throw new InvalidDataException("invalid_sync_response");
+        // server_time llega en un 2xx a una peticion firmada: confirma el desfase de las firmas.
+        signer.Clock?.Observe(response.ServerTime, confirmed: true);
         await outbox.CompleteAsync(response.EpisodeAcks.Concat(response.LogAcks).Concat(response.CommandAcks)
             .Concat(response.SecurityAck is null ? [] : new[] { response.SecurityAck })
             // Sin el ack de actividad la foto enviada nunca salia de la cola: se reenviaba la misma en cada sync y las
@@ -174,7 +176,8 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
         {
             var challenge = await PostAsync<Challenge>("client/auth/challenges",
                 Serialize(MigrationEnrollment.CreateChallenge(deviceId, ticket)), false, null, null, ct);
-            if (challenge.ExpiresAt <= clock.GetUtcNow()) throw new InvalidDataException("challenge_expired");
+            // expires_at es hora del servidor: se compara con la hora corregida (un reloj adelantado lo daba por vencido).
+            if (challenge.ExpiresAt <= ServerNow()) throw new InvalidDataException("challenge_expired");
             var login = MigrationEnrollment.CreateLogin(signer, deviceId, ticket);
             var issuedAt = clock.GetUtcNow();
             var token = await PostAsync<DeviceToken>("client/login", Serialize(login), false, null, challenge.Nonce, ct);
@@ -188,6 +191,8 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
             throw _enrollmentError = new EnrollmentException(ex.Status);
         }
     }
+
+    private DateTimeOffset ServerNow() => signer.Clock?.ToServer(clock.GetUtcNow()) ?? clock.GetUtcNow();
 
     private void SetToken(DeviceToken? token, DateTimeOffset issuedAt)
     {

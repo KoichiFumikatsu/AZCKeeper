@@ -28,7 +28,7 @@ public static class MigrationEnrollment
             http.DefaultRequestHeaders.Contains("Cookie") || tenant == Guid.Empty || device == Guid.Empty)
             throw new InvalidDataException("invalid_migration_api");
         var challenge = await Send<Challenge>("client/auth/challenges", CreateChallenge(device, ticket), null);
-        if (challenge.ExpiresAt <= DateTimeOffset.UtcNow) throw new InvalidDataException("migration_challenge_expired");
+        if (challenge.ExpiresAt <= (signer.Clock?.ToServer(DateTimeOffset.UtcNow) ?? DateTimeOffset.UtcNow)) throw new InvalidDataException("migration_challenge_expired");
         var token = await Send<DeviceToken>("client/login", CreateLogin(signer, device, ticket), challenge.Nonce);
         if (token.DeviceId != device || token.TenantId != tenant || token.TokenType != "Bearer" ||
             token.ExpiresIn <= 0 || string.IsNullOrWhiteSpace(token.AccessToken)) throw new InvalidDataException("migration_identity_mismatch");

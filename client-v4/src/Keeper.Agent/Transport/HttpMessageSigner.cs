@@ -10,6 +10,9 @@ public sealed class HttpMessageSigner : IDisposable
     private readonly ECDsa _key;
     public PublicKey PublicKey { get; }
     public string KeyId { get; }
+    // Desfase con la hora del servidor (ServerClock): created/expires se firman con hora_local + desfase. Sin reloj
+    // (pruebas, herramientas) se firma con la hora recibida tal cual.
+    public ServerClock? Clock { get; init; }
 
     public HttpMessageSigner(ECDsa key)
     {
@@ -43,7 +46,8 @@ public sealed class HttpMessageSigner : IDisposable
             parts.Add(("content-type", request.Content.Headers.ContentType?.ToString() ?? throw new InvalidOperationException("content_type_required")));
         }
         if (request.Headers.TryGetValues("Idempotency-Key", out var values)) parts.Add(("idempotency-key", values.Single()));
-        var input = $"({string.Join(" ", parts.Select(p => $"\"{p.Name}\""))});created={now.ToUnixTimeSeconds()};expires={now.ToUnixTimeSeconds() + 60};nonce=\"{nonce}\";keyid=\"{KeyId}\";alg=\"ecdsa-p256-sha256\"";
+        var created = (Clock?.ToServer(now) ?? now).ToUnixTimeSeconds();
+        var input = $"({string.Join(" ", parts.Select(p => $"\"{p.Name}\""))});created={created};expires={created + 60};nonce=\"{nonce}\";keyid=\"{KeyId}\";alg=\"ecdsa-p256-sha256\"";
         var signatureBase = string.Join("\n", parts.Select(p => $"\"{p.Name}\": {p.Value}")) + $"\n\"@signature-params\": {input}";
         var signature = _key.SignData(Encoding.UTF8.GetBytes(signatureBase), HashAlgorithmName.SHA256,
             DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
@@ -54,6 +58,15 @@ public sealed class HttpMessageSigner : IDisposable
     }
 
     public void Dispose() => _key.Dispose();
+
+    // created y nonce de una peticion ya firmada (para reintentarla con la hora corregida); null si no esta firmada.
+    public static (long Created, string Nonce)? ReadSignature(HttpRequestMessage request)
+    {
+        if (!request.Headers.TryGetValues("Signature-Input", out var values) || values.SingleOrDefault() is not { } input) return null;
+        var created = System.Text.RegularExpressions.Regex.Match(input, ";created=([0-9]{1,12})(?:;|$)");
+        var nonce = System.Text.RegularExpressions.Regex.Match(input, ";nonce=\"([\x21-\x7e]{1,160}?)\"");
+        return created.Success && nonce.Success ? (long.Parse(created.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture), nonce.Groups[1].Value) : null;
+    }
 
     public static string CreateNonce() => Base64Url(RandomNumberGenerator.GetBytes(16));
     private static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
