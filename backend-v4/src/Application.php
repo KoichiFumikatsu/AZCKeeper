@@ -82,6 +82,10 @@ final class Application
             // Va a todas las versiones: ningun agente lee el cuerpo de un 422 (solo el de un 409 device_relocated), y el
             // cuerpo se valida antes de autenticar, cuando aun no se sabe la version del agente.
             $errors = $e->errors;
+            if ($e->status === 401 && str_starts_with(explode('?', $_SERVER['REQUEST_URI'] ?? '')[0], '/v1/client/')) {
+                error_log('keeper client_unauthorized request=' . $id . ' route=' . explode('?', $_SERVER['REQUEST_URI'] ?? '')[0] . ' code=' . $e->errorCode
+                    . (Signature::$lastReason !== null ? ' motivo=' . Signature::$lastReason : ''));
+            }
             if ($e->status === 422 && str_starts_with(explode('?', $_SERVER['REQUEST_URI'] ?? '')[0], '/v1/client/')) {
                 $where = $e->errorCode === 'validation_failed' ? ($e->bodyFailure ?? []) : [];
                 error_log('keeper client_rejected request=' . $id . ' route=' . explode('?', $_SERVER['REQUEST_URI'] ?? '')[0] . ' code=' . $e->errorCode

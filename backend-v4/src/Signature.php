@@ -4,6 +4,8 @@ namespace Keeper;
 
 final class Signature
 {
+    /** Motivo concreto del ultimo 401 de firma, solo para el registro (nunca se envia al cliente). */
+    public static ?string $lastReason = null;
     public static function thumbprint(object $jwk): string
     {
         self::pem($jwk);
@@ -46,6 +48,8 @@ final class Signature
         }
         foreach (['created', 'expires', 'nonce', 'keyid'] as $required) { if (!isset($p[$required])) { throw new ApiError(401, 'invalid_signature'); } }
         $created = (int) $p['created']; $expires = (int) $p['expires']; $now = time();
+        // Motivo del 401 para el registro del servidor (un equipo con el reloj desfasado no puede darse de alta ni sincronizar).
+        if (abs($now - $created) > 60 || $expires < $now - 60) { self::$lastReason = 'reloj_desfasado:' . ($created - $now) . 's'; throw new ApiError(401, 'invalid_signature'); }
         if (($p['alg'] ?? 'ecdsa-p256-sha256') !== 'ecdsa-p256-sha256' || $expires <= $created || $expires - $created > 60 || abs($now - $created) > 60 || $expires < $now - 60 || strlen($p['nonce']) > 160 || strlen(Util::unb64($p['nonce'])) < 16 || !hash_equals(Util::b64(self::thumbprint($jwk)), $p['keyid'])) { throw new ApiError(401, 'invalid_signature'); }
         $required = ['@method', '@target-uri'];
         if ($r->header('authorization') !== '') { $required[] = 'authorization'; }
