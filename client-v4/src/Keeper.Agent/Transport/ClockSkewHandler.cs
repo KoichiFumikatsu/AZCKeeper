@@ -24,9 +24,10 @@ public sealed class ClockSkewHandler(HttpMessageSigner signer) : DelegatingHandl
         }
         if (response.IsSuccessStatusCode)
         {
-            // La firma fue aceptada: el desfase con que se hizo queda confirmado; Date ajusta el siguiente.
+            // La firma fue aceptada: el desfase con que se hizo queda confirmado y Date (respuesta autenticada por TLS a
+            // una peticion que el servidor valido) es una muestra de su hora.
             clock.Confirm();
-            clock.Observe(response.Headers.Date, confirmed: false);
+            clock.Observe(response.Headers.Date, confirmed: true);
             return response;
         }
         if (response.StatusCode != HttpStatusCode.Unauthorized)
@@ -51,7 +52,11 @@ public sealed class ClockSkewHandler(HttpMessageSigner signer) : DelegatingHandl
             var body = retry.Content is null ? [] : await retry.Content.ReadAsByteArrayAsync(ct);
             signer.Sign(retry, body, clock.Local.GetUtcNow(), signature.Value.Nonce);
             var second = await base.SendAsync(retry, ct);
-            if (second.IsSuccessStatusCode) clock.Confirm();
+            if (second.IsSuccessStatusCode)
+            {
+                clock.Confirm();
+                clock.Observe(second.Headers.Date, confirmed: true);
+            }
             else if (second.StatusCode == HttpStatusCode.Unauthorized) clock.Revert();
             response.Dispose();
             return second;

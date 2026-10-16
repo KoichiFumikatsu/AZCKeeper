@@ -3808,6 +3808,8 @@ const LOG_CODES = {
   time_settings_restored: 'Alguien cambió la hora, la zona horaria o desactivó el ajuste automático; el agente lo volvió a poner (lo repuesto va en Detalle)',
   time_resync_failed: 'No se pudo corregir la hora de Windows (sin acceso al servidor de hora o desfase demasiado grande); se reintenta cada 15 min',
   time_settings_failed: 'No se pudo dejar la hora automática en el equipo (el paso que falló va en Detalle)',
+  time_set_from_server: 'El servidor de hora no corrigió el reloj: el agente puso la hora del equipo con la del servidor de Keeper (los segundos corregidos van en Detalle)',
+  time_set_from_server_failed: 'No se pudo poner la hora del equipo con la del servidor de Keeper (el motivo va en Detalle)',
   restore_point_created: 'Punto de restauración creado', failed: 'Falló', unsupported_rule: 'El equipo no soporta una regla', conflicting_rules: 'Reglas en conflicto',
 };
 async function logsPage() {

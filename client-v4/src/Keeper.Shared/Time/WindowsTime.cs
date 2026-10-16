@@ -25,6 +25,8 @@ public interface ITimeSystem
 {
     Task<TimeSettings> ReadAsync(CancellationToken ct);
     Task<TimeCommandResult> RunAsync(TimeCommand command, CancellationToken ct);
+    // Pone la hora del sistema (UTC). Solo la usa TimeSync del agente, con la hora del servidor de Keeper.
+    void SetSystemTime(DateTimeOffset utc);
 }
 
 public static class TimeSyncPlan
@@ -102,6 +104,60 @@ public sealed class WindowsTimeSystem(TimeSpan? timeout = null) : ITimeSystem
         }
         return new(process.ExitCode, await output + await error);
     }
+
+    public void SetSystemTime(DateTimeOffset utc)
+    {
+        // SYSTEM tiene SeSystemtimePrivilege pero deshabilitado: se habilita en el token del proceso antes de llamar.
+        using var self = Process.GetCurrentProcess();
+        if (!OpenProcessToken(self.Handle, 0x0020 | 0x0008, out var token)) // ADJUST_PRIVILEGES | QUERY
+            throw new System.ComponentModel.Win32Exception();
+        try
+        {
+            if (!LookupPrivilegeValue(null, "SeSystemtimePrivilege", out var luid)) throw new System.ComponentModel.Win32Exception();
+            var privileges = new TokenPrivileges { Count = 1, Luid = luid, Attributes = 0x00000002 }; // SE_PRIVILEGE_ENABLED
+            if (!AdjustTokenPrivileges(token, false, ref privileges, 0, IntPtr.Zero, IntPtr.Zero) || Marshal.GetLastWin32Error() != 0)
+                throw new System.ComponentModel.Win32Exception();
+            var value = utc.UtcDateTime;
+            var time = new SystemTime
+            {
+                Year = (ushort)value.Year, Month = (ushort)value.Month, DayOfWeek = (ushort)value.DayOfWeek, Day = (ushort)value.Day,
+                Hour = (ushort)value.Hour, Minute = (ushort)value.Minute, Second = (ushort)value.Second, Milliseconds = (ushort)value.Millisecond
+            };
+            if (!SetSystemTimeNative(ref time)) throw new System.ComponentModel.Win32Exception();
+        }
+        finally { CloseHandle(token); }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SystemTime
+    {
+        public ushort Year, Month, DayOfWeek, Day, Hour, Minute, Second, Milliseconds;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    private struct TokenPrivileges
+    {
+        public int Count;
+        public long Luid;
+        public int Attributes;
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "SetSystemTime", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetSystemTimeNative(ref SystemTime time);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool OpenProcessToken(IntPtr process, int access, out IntPtr token);
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool LookupPrivilegeValue(string? system, string name, out long luid);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AdjustTokenPrivileges(IntPtr token, [MarshalAs(UnmanagedType.Bool)] bool disableAll, ref TokenPrivileges state,
+        int length, IntPtr previous, IntPtr returnLength);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
 
     private static bool DomainJoined()
     {

@@ -14,6 +14,7 @@ public sealed class TimeSyncBootstrapTests
     private sealed class FakeTime(FakeMachine machine, TimeSettings settings, Exception? fail = null) : ITimeSystem
     {
         public List<string> Commands { get; } = [];
+        public void SetSystemTime(DateTimeOffset utc) => throw new InvalidOperationException("el Bootstrapper nunca pone la hora");
         public Task<TimeSettings> ReadAsync(CancellationToken ct) => fail is null ? Task.FromResult(settings) : throw fail;
         public Task<TimeCommandResult> RunAsync(TimeCommand command, CancellationToken ct)
         {

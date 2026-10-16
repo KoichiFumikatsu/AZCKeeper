@@ -1,4 +1,5 @@
 using Keeper.Agent.Modules.Maintenance;
+using Keeper.Agent.Transport;
 using Keeper.Shared.Contracts;
 using Keeper.Shared.Protocol;
 using Keeper.Shared.Time;
@@ -19,6 +20,16 @@ public sealed class TimeSyncTests
         // Lo que corrige la resincronizacion en el reloj de Windows.
         public TimeSpan ResyncCorrection { get; set; }
         public int ResyncExit { get; set; }
+        public List<DateTimeOffset> SetTimes { get; } = [];
+        public Exception? SetFailure { get; set; }
+        // Simula SetSystemTime moviendo el reloj de Windows de la prueba (nunca el real).
+        public void SetSystemTime(DateTimeOffset utc)
+        {
+            if (SetFailure is not null) throw SetFailure;
+            SetTimes.Add(utc);
+            lock (Commands) Commands.Add("SetSystemTime");
+            clock.ShiftWallClock(utc - clock.GetUtcNow());
+        }
         public Task<TimeSettings> ReadAsync(CancellationToken ct) { Reads++; return Task.FromResult(Settings); }
         public Task<TimeCommandResult> RunAsync(TimeCommand command, CancellationToken ct)
         {
@@ -40,14 +51,14 @@ public sealed class TimeSyncTests
         public TestClock Clock { get; } = new();
         public FakeTime Time { get; }
         public MemoryEvents Events { get; } = new();
-        public List<TimeSpan> Jumps { get; } = [];
-        public TimeSpan? ServerOffset { get; set; }
+        public ServerClock Server { get; }
         public bool Defer { get; set; }
         public TimeSync Module { get; }
         public Harness(bool enabled = true)
         {
             Time = new FakeTime(Clock);
-            Module = new TimeSync(Time, enabled, () => ServerOffset, () => Defer) { OnClockJump = Jumps.Add };
+            Server = new ServerClock(Clock);
+            Module = new TimeSync(Time, enabled, Server, () => Defer);
         }
         public Task InitAsync() => Module.InitAsync(new ModuleContext(Events, Clock, _ => { }, CancellationToken.None));
         // Un tick y, si arranco comandos, espera que terminen y los recoge con el tick siguiente.
@@ -56,10 +67,13 @@ public sealed class TimeSyncTests
             await Module.TickAsync(default);
             if (Module.Running is { } running)
             {
-                await running.WaitAsync(TimeSpan.FromSeconds(10));
+                // Un fallo de los comandos lo trata el modulo en el tick siguiente.
+                await Task.WhenAny(running, Task.Delay(TimeSpan.FromSeconds(10)));
                 await Module.TickAsync(default);
             }
         }
+        // Una respuesta autenticada del servidor cuya hora va offset por delante del reloj de Windows.
+        public void Sample(TimeSpan offset) => Server.Observe(Clock.GetUtcNow() + offset, confirmed: true);
         public void Clear() { lock (Time.Commands) Time.Commands.Clear(); Events.Logs.Clear(); }
         public IEnumerable<(string Code, string? Detail, LogEntryLevel Level)> Logs =>
             Events.Logs.Select(l => (l.Code, l.Fields?.ErrorCode, l.Level));
@@ -80,7 +94,8 @@ public sealed class TimeSyncTests
         Assert.Equal([
             ("time_settings_applied", "servicio_hora.servicio_detenido.hora_automatica.zona_automatica", LogEntryLevel.Info),
             ("time_resynced", "desfase_-300s", LogEntryLevel.Info)], h.Logs);
-        Assert.Equal([TimeSpan.FromMinutes(-5)], h.Jumps);
+        // El reloj de Windows retrocedio 5 min: el desfase de las firmas se mueve lo mismo al reves.
+        Assert.Equal(TimeSpan.FromMinutes(5), h.Server.Offset);
         Assert.Equal("applied", h.Module.Snapshot().State);
     }
 
@@ -134,7 +149,7 @@ public sealed class TimeSyncTests
         Assert.Equal(["w32tm.exe /resync"], h.Time.Commands);
         Assert.Equal([("time_resynced", "desfase_-3600s.hora_cambiada", LogEntryLevel.Info)], h.Logs);
         // El desfase de las firmas recibe los dos saltos: queda como estaba.
-        Assert.Equal([TimeSpan.FromHours(1), TimeSpan.FromHours(-1)], h.Jumps);
+        Assert.Equal(TimeSpan.Zero, h.Server.Offset);
         // Otro cambio enseguida no dispara otra resincronizacion antes de 10 min (evita bucles).
         h.Clear();
         h.Clock.ShiftWallClock(TimeSpan.FromHours(1));
@@ -150,11 +165,11 @@ public sealed class TimeSyncTests
         await h.InitAsync();
         await h.TickAsync();
         h.Clear();
-        h.ServerOffset = TimeSpan.FromSeconds(20);
+        h.Sample(TimeSpan.FromSeconds(20));
         h.Clock.Advance(TimeSpan.FromSeconds(1));
         await h.TickAsync();
         Assert.Empty(h.Time.Commands);
-        h.ServerOffset = TimeSpan.FromMinutes(5);
+        h.Sample(TimeSpan.FromMinutes(5));
         h.Time.ResyncCorrection = TimeSpan.FromMinutes(5);
         h.Clock.Advance(TimeSpan.FromSeconds(1));
         await h.TickAsync();
@@ -219,6 +234,100 @@ public sealed class TimeSyncTests
         h.Clock.Advance(TimeSync.CheckInterval);
         await h.TickAsync();
         Assert.Empty(h.Time.Commands);
+    }
+
+    // W32Time resincronizo pero no corrigio (exit 0, sin salto) y el servidor dice +10 min dos veces seguidas.
+    private static async Task<Harness> ResyncedButStillOffAsync(TimeSettings? settings = null)
+    {
+        var h = new Harness();
+        if (settings is not null) h.Time.Settings = settings;
+        await h.InitAsync();
+        await h.TickAsync();
+        h.Clear();
+        return h;
+    }
+
+    [Fact]
+    public async Task SetsSystemTimeFromServerAfterTwoConsistentSamplesWhenW32TimeDidNotCorrect()
+    {
+        var h = await ResyncedButStillOffAsync();
+        h.Sample(TimeSpan.FromMinutes(10));
+        h.Clock.Advance(TimeSpan.FromSeconds(31));
+        h.Sample(TimeSpan.FromMinutes(10).Add(TimeSpan.FromSeconds(1)));
+        var expected = h.Clock.GetUtcNow() + TimeSpan.FromMinutes(10) + TimeSpan.FromSeconds(1);
+        await h.TickAsync();
+        Assert.Equal(["SetSystemTime", "w32tm.exe /resync"], h.Time.Commands);
+        Assert.Equal([expected], h.Time.SetTimes);
+        Assert.Equal([("time_set_from_server", "desfase_601s", LogEntryLevel.Warn)], h.Logs);
+        // Tras ajustar: desfase interno en 0 (firmas y eventos) y sin muestras viejas.
+        Assert.Equal(TimeSpan.Zero, h.Server.Offset);
+        Assert.Equal(TimeSpan.Zero, h.Server.Confirmed);
+        Assert.Null(h.Server.ConsistentOffset(0));
+    }
+
+    [Fact]
+    public async Task NoSetWithASingleSampleSamplesTooCloseOrInconsistentOrSmallOffset()
+    {
+        var h = await ResyncedButStillOffAsync();
+        h.Sample(TimeSpan.FromMinutes(10));
+        await AssertNoSetAsync(h);
+        // Dos cabeceras de la misma respuesta (Date y server_time) no son dos mediciones.
+        h.Sample(TimeSpan.FromMinutes(10));
+        await AssertNoSetAsync(h);
+        h.Clock.Advance(TimeSpan.FromSeconds(31));
+        h.Sample(TimeSpan.FromMinutes(11));
+        await AssertNoSetAsync(h);
+
+        var small = await ResyncedButStillOffAsync();
+        small.Sample(TimeSpan.FromSeconds(90));
+        small.Clock.Advance(TimeSpan.FromSeconds(31));
+        small.Sample(TimeSpan.FromSeconds(90));
+        await AssertNoSetAsync(small);
+    }
+
+    [Fact]
+    public async Task NoSetInADomainOrBeforeW32TimeTried()
+    {
+        var domain = await ResyncedButStillOffAsync(Good with { NtpType = "NT5DS", DomainJoined = true });
+        domain.Sample(TimeSpan.FromMinutes(10));
+        domain.Clock.Advance(TimeSpan.FromSeconds(31));
+        domain.Sample(TimeSpan.FromMinutes(10));
+        await AssertNoSetAsync(domain);
+
+        // Muestras anteriores a la resincronizacion no cuentan: primero se le da la oportunidad a W32Time.
+        var early = new Harness { Defer = true };
+        await early.InitAsync();
+        early.Sample(TimeSpan.FromMinutes(10));
+        early.Clock.Advance(TimeSpan.FromSeconds(31));
+        early.Sample(TimeSpan.FromMinutes(10));
+        await early.TickAsync();
+        Assert.Empty(early.Time.Commands);
+        early.Defer = false;
+        await early.TickAsync();
+        Assert.DoesNotContain("SetSystemTime", early.Time.Commands);
+        Assert.Contains("w32tm.exe /resync", early.Time.Commands);
+    }
+
+    [Fact]
+    public async Task SetFailureIsReportedOnce()
+    {
+        var h = await ResyncedButStillOffAsync();
+        h.Time.SetFailure = new UnauthorizedAccessException();
+        h.Sample(TimeSpan.FromMinutes(10));
+        h.Clock.Advance(TimeSpan.FromSeconds(31));
+        h.Sample(TimeSpan.FromMinutes(10));
+        await h.TickAsync();
+        Assert.Contains(("time_set_from_server_failed", "error_UnauthorizedAccessException", LogEntryLevel.Warn), h.Logs);
+        Assert.Equal("set_failed", h.Module.Snapshot().State);
+        Assert.Equal(TimeSpan.FromMinutes(10), h.Server.Confirmed);
+    }
+
+    private static async Task AssertNoSetAsync(Harness h)
+    {
+        h.Clock.Advance(TimeSpan.FromSeconds(1));
+        await h.TickAsync();
+        Assert.DoesNotContain("SetSystemTime", h.Time.Commands);
+        Assert.Empty(h.Time.SetTimes);
     }
 
     [Theory]

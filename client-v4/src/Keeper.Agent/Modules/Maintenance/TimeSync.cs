@@ -1,3 +1,4 @@
+using Keeper.Agent.Transport;
 using Keeper.Shared.Contracts;
 using Keeper.Shared.Protocol;
 using Keeper.Shared.Time;
@@ -12,7 +13,13 @@ namespace Keeper.Agent.Modules.Maintenance;
 // Los comandos corren en segundo plano y se sondean en los ticks (como RestorePoint): ModuleHost ejecuta los ticks en
 // serie. No resincroniza mientras haya una cuenta regresiva de reinicio/apagado en pantalla (deferResync): un salto
 // de hora la adelantaria o la daria por vencida. El PIN local usa el reloj monotonico y no se ve afectado.
-public sealed class TimeSync(ITimeSystem system, bool enabled, Func<TimeSpan?>? serverOffset = null, Func<bool>? deferResync = null)
+//
+// Hora del servidor de Keeper como ultimo recurso (decision 2026-10-16): si W32Time ya intento (fallo o no corrigio:
+// sin salida a NTP, desfase mayor que MaxPhaseCorrection) y dos mediciones autenticadas y consistentes del servidor
+// (ServerClock.ConsistentOffset, tomadas despues de ese intento) dicen que la hora esta corrida mas de 2 min, se pone
+// la hora del sistema con SetSystemTime (SeSystemtimePrivilege), el desfase interno vuelve a 0 y se resincroniza
+// W32Time (time_set_from_server). Nunca en dominio: alli manda el DC.
+public sealed class TimeSync(ITimeSystem system, bool enabled, ServerClock? server = null, Func<bool>? deferResync = null)
     : ModuleBase
 {
     public override string Name => "TimeSync";
@@ -29,12 +36,10 @@ public sealed class TimeSync(ITimeSystem system, bool enabled, Func<TimeSpan?>? 
     public static readonly TimeSpan MinTriggeredGap = TimeSpan.FromMinutes(10);
     // Salto durante los comandos que se pasa a ServerClock (por debajo es ruido de la medicion).
     public static readonly TimeSpan ServerClockJump = TimeSpan.FromSeconds(2);
+    // Desfase con el servidor que justifica poner la hora del sistema con la suya (si W32Time no lo resolvio).
+    public static readonly TimeSpan SetFromServerThreshold = TimeSpan.FromMinutes(2);
 
-    private sealed record Job(IReadOnlyList<string> Restored, string? Failed, int? ResyncExit, string? Zone);
-
-    // Cada salto del reloj de Windows que ve el modulo (cambio manual o resincronizacion): el desfase de las firmas
-    // con el servidor (ServerClock) se mueve lo mismo en sentido contrario y no queda viejo.
-    public Action<TimeSpan>? OnClockJump { get; init; }
+    private sealed record Job(IReadOnlyList<string> Restored, string? Failed, int? ResyncExit, string? Zone, bool? Domain);
 
     private Task<Job>? _running;
     // Comandos en curso (segundo plano); el siguiente tick recoge el resultado.
@@ -46,6 +51,13 @@ public sealed class TimeSync(ITimeSystem system, bool enabled, Func<TimeSpan?>? 
     private long _lastTimestamp;
     private DateTimeOffset _lastWall;
     private string? _lastFailure;
+    // Poner la hora con la del servidor: solo tras un intento de W32Time, con muestras posteriores a ese intento y
+    // fuera de dominio (se sabe al leer la configuracion).
+    private bool _resyncAttempted;
+    private long _samplesAfter;
+    private bool? _domain;
+    private long _nextSet;
+    private bool _setting;
 
     public override async Task InitAsync(ModuleContext ctx)
     {
@@ -67,7 +79,13 @@ public sealed class TimeSync(ITimeSystem system, bool enabled, Func<TimeSpan?>? 
             // Lo que se movio el reloj de Windows mientras corrian los comandos (/config /update tambien puede ajustarlo).
             var moved = Jump();
             Rebase();
-            if (moved.Duration() >= ServerClockJump) OnClockJump?.Invoke(moved);
+            if (_setting)
+            {
+                _setting = false;
+                await CompleteSetAsync(finished, moved, ct);
+                return;
+            }
+            if (moved.Duration() >= ServerClockJump) server?.ShiftLocal(moved);
             await CompleteAsync(finished, moved, ct);
             return;
         }
@@ -76,11 +94,22 @@ public sealed class TimeSync(ITimeSystem system, bool enabled, Func<TimeSpan?>? 
         Rebase();
         if (jump.Duration() > JumpThreshold)
         {
-            OnClockJump?.Invoke(jump);
+            server?.ShiftLocal(jump);
             if (now >= _nextTriggered) Trigger("hora_cambiada");
         }
-        if (serverOffset?.Invoke() is { } offset && offset.Duration() > ServerSkewThreshold && now >= _nextTriggered)
+        if (server?.Confirmed is { } offset && offset.Duration() > ServerSkewThreshold && now >= _nextTriggered)
             Trigger("desfase_servidor");
+        if (server is not null && _resyncAttempted && _domain == false && now >= _nextSet &&
+            server.ConsistentOffset(_samplesAfter) is { } measured && measured.Duration() > SetFromServerThreshold &&
+            deferResync?.Invoke() != true)
+        {
+            _nextSet = now + Ticks(MinTriggeredGap);
+            _setting = true;
+            Rebase();
+            State = "setting_from_server";
+            _running = Task.Run(() => SetFromServerAsync(measured, Context.StoppingToken), Context.StoppingToken);
+            return;
+        }
         if (now < _nextCheck && now < _nextResync && _reason is null) return;
         if (deferResync?.Invoke() == true) return;
         var resync = _reason is not null || now >= _nextResync;
@@ -117,8 +146,34 @@ public sealed class TimeSync(ITimeSystem system, bool enabled, Func<TimeSpan?>? 
             else failed ??= $"{command.Item}_salida_{result.ExitCode}";
         }
         var nextZone = commands.Any(c => c.Item == "zona_horaria") ? zone : settings.TimeZoneId ?? zone;
-        if (!resync && restored.Count == 0) return new([], failed, null, nextZone);
-        return new(restored, failed, (await system.RunAsync(TimeSyncPlan.Resync, ct)).ExitCode, nextZone);
+        if (!resync && restored.Count == 0) return new([], failed, null, nextZone, settings.DomainJoined);
+        return new(restored, failed, (await system.RunAsync(TimeSyncPlan.Resync, ct)).ExitCode, nextZone, settings.DomainJoined);
+    }
+
+    private async Task<Job> SetFromServerAsync(TimeSpan offset, CancellationToken ct)
+    {
+        system.SetSystemTime(Context.Clock.GetUtcNow() + offset);
+        // W32Time toma la hora nueva como base (si NTP responde, la afina).
+        var exit = (await system.RunAsync(TimeSyncPlan.Resync, ct)).ExitCode;
+        return new([], null, exit, _zone, false);
+    }
+
+    private async Task CompleteSetAsync(Task<Job> finished, TimeSpan moved, CancellationToken ct)
+    {
+        if (!finished.IsCompletedSuccessfully)
+        {
+            if (finished.IsCanceled) return;
+            State = "set_failed";
+            await ReportOnceAsync("time_set_from_server_failed", $"error_{finished.Exception?.InnerException?.GetType().Name ?? "desconocido"}", ct);
+            return;
+        }
+        // La hora de Windows ya es la del servidor: el desfase de las firmas y de los eventos vuelve a 0.
+        server!.ResetAfterSystemSet();
+        _samplesAfter = server.SampleCount;
+        _lastFailure = null;
+        State = "applied";
+        Context.Log($"{Name}: w32tm /resync tras poner la hora del servidor -> {finished.Result.ResyncExit}");
+        await ReportAsync("time_set_from_server", ct, LogEntryLevel.Warn, $"desfase_{(long)Math.Round(moved.TotalSeconds)}s");
     }
 
     // moved: correccion aplicada = cuanto se movio el reloj de Windows menos lo que paso de verdad (monotonico).
@@ -140,6 +195,7 @@ public sealed class TimeSync(ITimeSystem system, bool enabled, Func<TimeSpan?>? 
         }
         var job = finished.Result;
         _zone = job.Zone;
+        _domain = job.Domain ?? _domain;
         if (job.Restored.Count > 0)
             await ReportAsync(first ? "time_settings_applied" : "time_settings_restored", ct,
                 first ? LogEntryLevel.Info : LogEntryLevel.Warn, Detail(job.Restored));
@@ -150,6 +206,9 @@ public sealed class TimeSync(ITimeSystem system, bool enabled, Func<TimeSpan?>? 
         }
         // Solo se reviso la configuracion (estaba bien): el estado de la ultima resincronizacion se mantiene.
         if (job.ResyncExit is not { } exit) return;
+        // Desde aqui cuentan las mediciones del servidor para decidir si W32Time no corrigio.
+        _resyncAttempted = true;
+        _samplesAfter = server?.SampleCount ?? 0;
         if (exit != 0)
         {
             State = "resync_failed";

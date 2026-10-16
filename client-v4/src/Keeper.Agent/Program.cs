@@ -56,7 +56,8 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         var serverClock = new ServerClock(TimeProvider.System, Log);
         using var signer = new HttpMessageSigner(key) { Clock = serverClock };
         // outbox.json + outbox.quarantine.json (lo apartado tras un 422) + outbox.isolation.json (busqueda en curso).
-        using var outbox = new DurableOutbox(Path.Combine(dataDirectory, "outbox.json"));
+        // Con la hora de Windows corrida mas de 5 min, los eventos se encolan con la hora del servidor (no van a cuarentena).
+        using var outbox = new DurableOutbox(Path.Combine(dataDirectory, "outbox.json")) { TimeCorrection = () => serverClock.EventCorrection };
         var context = new ModuleContext(outbox, TimeProvider.System, Log, stoppingToken);
         var registry = new WindowsSystemPolicyStore(Environment.GetEnvironmentVariable("KEEPER_ENABLE_HKLM") == "1", Log);
         using var trust = InstalledTrust.Load(AppContext.BaseDirectory);
@@ -94,7 +95,8 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
             new WindowsDeviceActions(!registry.IsDryRun),
             OperatingSystem.IsWindows() ? new WindowsComputerNamer(!registry.IsDryRun) : null,
             OperatingSystem.IsWindows() && !registry.IsDryRun ? new WindowsHardeningLauncher(AppContext.BaseDirectory, dataDirectory, trust.BinaryHashes) : null,
-            OperatingSystem.IsWindows() && !registry.IsDryRun ? new WindowsSessionLogoff(new WindowsSessionLauncher(trust.BinaryHashes), Log) : null);
+            OperatingSystem.IsWindows() && !registry.IsDryRun ? new WindowsSessionLogoff(new WindowsSessionLauncher(trust.BinaryHashes), Log) : null)
+            { ServerOffset = () => serverClock.Confirmed };
         using var updateHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         var updater = new UpdateManager(Path.Combine(dataDirectory, "staging"), trust.ReleaseKeys, trust.InstalledSequence, trust.Channel,
             registry.IsDryRun ? null : new WindowsReleaseDownloader(updateHttp),
@@ -118,9 +120,10 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
                 TimeSpan.FromHours(restorePointHours), TimeSpan.FromHours(6)),
             new TamperGuard(trust.BinaryHashes), new AgentDiagnostics(() => hostReference?.Snapshot() ?? []) };
         // Hora de Windows automatica y resincronizada (en dry-run no toca nada). No resincroniza durante una cuenta
-        // regresiva de reinicio/apagado; cada salto de hora que ve corrige tambien el desfase de las firmas.
+        // regresiva de reinicio/apagado; cada salto de hora que ve corrige tambien el desfase de las firmas. Si W32Time
+        // no la corrige, la pone con la hora del servidor (fuera de dominio, con dos mediciones consistentes).
         if (OperatingSystem.IsWindows()) moduleList.Add(new TimeSync(new WindowsTimeSystem(), !registry.IsDryRun,
-            () => serverClock.Confirmed, () => commands.PendingNotice is not null) { OnClockJump = serverClock.ShiftLocal });
+            serverClock, () => commands.PendingNotice is not null));
         if (OperatingSystem.IsWindows()) moduleList.Add(new SessionSupervisor(new WindowsSessionLauncher(trust.BinaryHashes),
             Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), deviceLock, () => policy, () => commands.PendingNotice));
         await using var modules = new ModuleHost(moduleList, context);

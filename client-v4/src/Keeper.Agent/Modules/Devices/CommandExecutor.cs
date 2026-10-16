@@ -126,6 +126,10 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
     private volatile PowerNotice? _notice;
     /// <summary>Aviso vigente para las sesiones (el de plazo mas cercano), o null si no hay cuenta regresiva.</summary>
     public PowerNotice? PendingNotice => _notice;
+    // Desfase confirmado con el servidor (ServerClock): expires_at es hora del servidor y se compara con hora_local +
+    // desfase; un reloj adelantado descartaba ordenes vigentes como expired. Los avisos (DueAt) siguen en hora local.
+    public Func<TimeSpan>? ServerOffset { get; init; }
+    private DateTimeOffset ServerNow => Context.Clock.GetUtcNow() + (ServerOffset?.Invoke() ?? TimeSpan.Zero);
     public override async Task InitAsync(ModuleContext ctx)
     {
         await base.InitAsync(ctx);
@@ -148,7 +152,7 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
                 }
                 if (command.Status is not (CommandStatus.Pending or CommandStatus.Delivered)) continue;
                 if (_entries.Any(e => e.Command.Id == command.Id)) continue;
-                if (command.ExpiresAt <= Context.Clock.GetUtcNow())
+                if (command.ExpiresAt <= ServerNow)
                 {
                     rejected.Add(Reject(command, "expired"));
                     continue;
@@ -173,7 +177,7 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
         {
             var now = Context.Clock.GetUtcNow();
             bool Waiting(InboxEntry e) => e.Result is null && e.DueAt > now;
-            if (!_entries.Any(e => (e.Result is null && !Waiting(e)) || (e.Result is not null && (!e.Published || e.Command.ExpiresAt <= now)))) return;
+            if (!_entries.Any(e => (e.Result is null && !Waiting(e)) || (e.Result is not null && (!e.Published || e.Command.ExpiresAt <= ServerNow)))) return;
             foreach (var original in _entries.Where(e => e.Result is null && !Waiting(e)).ToArray())
             {
                 var index = _entries.IndexOf(original);
@@ -189,7 +193,7 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
                     }
                     else
                     {
-                        if (command.ExpiresAt <= now) throw new InvalidOperationException("expired");
+                        if (command.ExpiresAt <= ServerNow) throw new InvalidOperationException("expired");
                         var notice = NoticeSeconds(command);
                         if (notice > 0 && !original.Started)
                         {
@@ -269,7 +273,7 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
         await actions.ExecuteAsync(DeviceAction.Restart, ct);
         return "completed";
     }
-    private void PurgeCompleted() => _entries.RemoveAll(e => e.Published && e.Result is not null && e.Command.ExpiresAt <= Context.Clock.GetUtcNow());
+    private void PurgeCompleted() => _entries.RemoveAll(e => e.Published && e.Result is not null && e.Command.ExpiresAt <= ServerNow);
     private SyncRequestCommandResultsItem Reject(Command command, string code) => new()
     {
         CommandId = command.Id,

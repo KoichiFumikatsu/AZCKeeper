@@ -43,6 +43,11 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
     private readonly string _quarantinePath = Sibling(path, "quarantine");
     private readonly string _isolationPath = Sibling(path, "isolation");
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
+    // Hora del servidor menos hora de Windows cuando el desfase confirmado supera 5 min (ServerClock.EventCorrection);
+    // cero en otro caso. Los eventos que llegan a la cola se estampan con la hora del servidor para que no los rechace
+    // (invalid_range si van >5 min a futuro) mientras TimeSync corrige la hora de Windows. Se aplica una sola vez, al
+    // encolar: el reintento de un lote lleva exactamente el mismo cuerpo.
+    public Func<TimeSpan>? TimeCorrection { get; init; }
     private static string Sibling(string path, string name) =>
         Path.Combine(Path.GetDirectoryName(path) ?? "", $"{Path.GetFileNameWithoutExtension(path)}.{name}.json");
 
@@ -73,7 +78,7 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
 
     private async Task EnqueueAsync(OutboxEvent item, CancellationToken ct)
     {
-        item = Clean(item);
+        item = Clean(Corrected(item, TimeCorrection?.Invoke() ?? TimeSpan.Zero));
         if (JsonSerializer.SerializeToUtf8Bytes(item, ProtocolJson.Options).Length > 32 * 1024)
             throw new InvalidDataException("outbox_event_too_large");
         await _gate.WaitAsync(ct);
@@ -85,6 +90,25 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
             await SaveAsync(state, ct, item.Id);
         }
         finally { _gate.Release(); }
+    }
+
+    // Marcas corregidas: episodio (started_at, ended_at), log (at), resultado de orden (at) y reporte de seguridad
+    // (observed_at y el de cada control, con su report_hash recalculado igual que AgentDiagnostics). La foto de
+    // actividad (dia local y primera/ultima actividad) y el inventario no se tocan: el servidor no les aplica el rango.
+    public static OutboxEvent Corrected(OutboxEvent item, TimeSpan shift)
+    {
+        if (shift == TimeSpan.Zero) return item;
+        if (item.Episode is { } e) item = item with { Episode = e with { StartedAt = e.StartedAt + shift, EndedAt = e.EndedAt + shift } };
+        if (item.Log is { } l) item = item with { Log = l with { At = l.At + shift } };
+        if (item.Command is { } c) item = item with { Command = c with { Result = c.Result with { At = c.Result.At + shift } } };
+        if (item.Security is { } r)
+        {
+            var controls = r.Controls.Select(x => x with { ObservedAt = x.ObservedAt + shift }).ToArray();
+            item = item with { Security = r with { ObservedAt = r.ObservedAt + shift, Controls = controls,
+                ReportHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                    JsonSerializer.SerializeToUtf8Bytes(controls, ProtocolJson.Options))).ToLowerInvariant() } };
+        }
+        return item;
     }
 
     // Inventario: solo cuenta el ultimo. Sustituye al anterior que siga sin enviar; uno ya incluido en el lote
