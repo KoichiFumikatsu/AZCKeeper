@@ -36,7 +36,8 @@ export function failure(error) {
   if (error?.status === 403 && detail === 'scope_denied') return { kind: 'scope', error };
   if (error?.status === 401 || (error?.status === 403 && error.code === 'reauth_required')) return { kind: 'reauth', error };
   if (error?.status === 403 || error?.status === 404) return { kind: 'denied', error };
-  if (error instanceof TypeError || error?.status >= 500 || error?.status === 429) return { kind: 'network', error };
+  if (error?.status === 429) return { kind: 'busy', error };
+  if (error instanceof TypeError || error?.status >= 500) return { kind: 'network', error };
   return { kind: 'error', error };
 }
 export const FAILURE_TEXT = {
@@ -45,10 +46,11 @@ export const FAILURE_TEXT = {
   scope: 'No disponible para tu cuenta: tu alcance no cubre todo el cliente.',
   reauth: 'Tu sesión venció: vuelve a iniciar sesión para comprobarlo.',
   network: 'No se pudo consultar (conexión o servidor). El dato puede estar desactualizado.',
+  busy: 'Demasiadas consultas seguidas. Espera unos segundos y pulsa Reintentar.',
   error: 'La API respondió con un error al consultar este dato.',
   partial: 'Solo se obtuvo una parte de la lista: el total no es fiable.',
 };
-export const retryable = f => !!f && ['network', 'error', 'reauth'].includes(f.kind);
+export const retryable = f => !!f && ['network', 'busy', 'error', 'reauth'].includes(f.kind);
 
 async function probe(fn) {
   try { return { ok: true, data: await fn() }; } catch (error) { return { ok: false, ...failure(error) }; }

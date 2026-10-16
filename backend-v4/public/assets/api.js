@@ -69,10 +69,18 @@ export async function api(method, path, { body, tenant = tenantId, idempotencyKe
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
   if (ifMatch !== undefined) headers['If-Match'] = `"${ifMatch}"`;
-  const response = await fetch(`/v1${path}`, {
+  const send = () => fetch(`/v1${path}`, {
     method, headers, credentials: 'include', mode: 'same-origin', cache: 'no-store', redirect: 'error',
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  let response = await send();
+  // Una pantalla que consulta mucho a la vez (Puesta en marcha) puede chocar con el limite de consultas del panel (429):
+  // las lecturas esperan lo que indica el servidor (Retry-After, maximo 10 s) y reintentan hasta dos veces.
+  for (let attempt = 0; response.status === 429 && ['GET', 'HEAD'].includes(method) && attempt < 2; attempt++) {
+    const wait = Math.min(10, Math.max(1, Number.parseInt(response.headers.get('Retry-After') || '2', 10) || 2));
+    await new Promise(resolve => setTimeout(resolve, wait * 1000 + Math.random() * 500));
+    response = await send();
+  }
   // Una contraseña mal escrita al confirmar (reautenticación o cambio de contraseña) devuelve 401 pero la sesión sigue
   // viva: solo se muestra el error. Cualquier otro 401 es sesión vencida y vuelve al login.
   const confirming = path === '/auth/reauth' || path === '/auth/password';
