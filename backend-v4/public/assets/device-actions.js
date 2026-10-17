@@ -1,6 +1,7 @@
 import { api, errorMessage } from './api.js';
 import { wireDialog } from './dialogs.js';
 import { withReauth, canceled } from './hardening-settings.js';
+import { codeText, plainCode } from './result-codes.js';
 const node = (tag, text, cls) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (cls) n.className = cls; return n; };
 // Acciones remotas (POST /devices/{id}/commands). El 202 solo encola: el agente la recibe en su próxima sincronización.
 // Soporte del agente (client-v4 CommandExecutor): lock/unlock/restart/shutdown/wipe desde 4.0.0. refresh_policy no se
@@ -29,10 +30,28 @@ const PLAN_REASON = 'No incluido en el plan de esta persona';
 const featureNames = { comandos: 'Comandos remotos', borrado: 'Borrado remoto' };
 export const commandTypes = { lock: 'Bloquear', unlock: 'Desbloquear', restart: 'Reiniciar', shutdown: 'Apagar', wipe: 'Borrado remoto', refresh_policy: 'Aplicar reglas', rename_computer: 'Cambiar nombre', harden: 'Endurecer', unharden: 'Revertir endurecimiento' };
 export const commandStates = { pending: ['Pendiente', 'info'], delivered: ['Entregado', 'info'], running: ['En curso', 'warn'], succeeded: ['Ejecutado', 'good'], failed: ['Falló', 'bad'], expired: ['Vencido', 'warn'], cancelled: ['Cancelado', ''] };
-export const commandCodes = { completed: 'Completado', pending_restart: 'Se aplica al reiniciar', expired: 'Venció antes de ejecutarse', interrupted: 'Se interrumpió (el equipo se apagó o reinició)',
-  unsupported_command: 'El agente no ejecuta esta orden', device_actions_dry_run: 'El agente está en modo de prueba: no ejecuta acciones', invalid_command_destination: 'Rechazada por el agente (destino no válido)',
-  command_inbox_full: 'El agente tiene demasiadas órdenes pendientes', invalid_computer_name: 'Nombre no válido', lock_store_unavailable: 'El agente no pudo guardar el bloqueo',
-  notice_deadline_missed: 'No se ejecutó: el equipo estaba apagado o suspendido cuando terminó el aviso', invalid_notice: 'Tiempo de aviso no válido' };
+// Cambio de nombre de Windows (GET /devices → computer_rename). Windows solo aplica el nombre al reiniciar: sin esto el
+// panel no mostraba nada y parecía que había fallado. null = no hay cambio en curso o el nombre ya coincide.
+export function renameState(d) {
+  const r = d?.computer_rename;
+  if (!r) return null;
+  if (r.state === 'pending_restart') return { kind: r.state, name: r.computer_name, text: `Nombre nuevo: ${r.computer_name} — pendiente de reinicio`, short: 'Pendiente de reinicio', tone: 'warn', code: r.result_code,
+    note: r.restart_pending ? 'Ya se envió un reinicio: el nombre se aplica cuando el equipo se reinicie.' : 'Windows aplica el nombre nuevo cuando el equipo se reinicia. Hasta entonces sigue con el nombre actual.' };
+  if (r.state === 'renaming') return { kind: r.state, name: r.computer_name, text: 'Cambiando nombre…', short: 'Cambiando nombre…', tone: 'info', code: null,
+    note: `A ${r.computer_name}. El equipo recibe la orden en su próxima sincronización (unos 2 minutos) si está encendido.${r.restart_pending ? ' Después se reinicia con aviso para aplicarlo.' : ' El nombre se aplica al reiniciar.'}` };
+  const reason = codeText(r.result_code) || r.result_code || 'sin motivo informado';
+  return { kind: 'failed', name: r.computer_name, text: `No se pudo cambiar el nombre: ${reason.charAt(0).toLowerCase()}${reason.slice(1)}`, short: 'No se pudo cambiar el nombre', tone: 'bad', code: r.result_code,
+    note: `Nombre pedido: ${r.computer_name}. Puedes volver a pedirlo en «Cambiar nombre del equipo».` };
+}
+// Línea corta para listas (Equipos): insignia + texto, con el código técnico en title.
+export function renameNote(d) {
+  const s = renameState(d);
+  if (!s) return null;
+  const box = node('small', undefined, 'rename-note'); box.dataset.rename = s.kind;
+  box.append(node('span', s.kind === 'renaming' ? `Cambiando nombre a ${s.name}…` : s.text));
+  box.title = [s.note, s.code ? `Código: ${s.code}` : ''].filter(Boolean).join(' ');
+  return box;
+}
 export const versionBelow = (version, min) => {
   const a = String(version || '0').split('.').map(n => parseInt(n, 10) || 0); const b = min.split('.').map(Number);
   for (let i = 0; i < 3; i++) { if ((a[i] || 0) !== b[i]) return (a[i] || 0) < b[i]; }
@@ -61,6 +80,21 @@ export function commandError(error, type, notice = 0) {
   return error;
 }
 export const commandExpiry = () => new Date(Date.now() + 23 * 3600 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+export const restartAction = remoteActions.find(a => a.type === 'restart');
+// «Reiniciar para aplicar el nombre» (ficha del equipo): la misma orden de reinicio con aviso, con 5 minutos elegidos y
+// el motivo listo. Respeta el plan del dueño (allowed_commands), el permiso equipos.reiniciar y la versión del agente.
+// null = la cuenta no puede reiniciar este equipo (no se ofrece).
+export async function renameRestartButton(d, { onSent }) {
+  const access = await api('GET', '/me/access').catch(() => null);
+  const state = remoteAvailability(restartAction, access, d);
+  if (!state) return null;
+  const name = d.computer_rename?.computer_name || '';
+  const b = node('button', 'Reiniciar para aplicar el nombre'); b.type = 'button'; b.dataset.command = 'restart'; b.dataset.rename = 'restart';
+  if (state.reason) { b.disabled = true; b.title = state.reason; }
+  else b.addEventListener('click', () => openRemoteAction(d, restartAction, { onSent, preset: { notice: 300, reason: `Reinicio para aplicar el nombre ${name}`.trim(),
+    title: `Reiniciar ${d.hostname} para aplicar el nombre`, note: `Al reiniciar, Windows aplica el nombre nuevo: ${name}.` } }));
+  return { button: b, reason: state.reason || null };
+}
 export async function remoteActionsSection(d, log) {
   const access = await api('GET', '/me/access').catch(() => null);
   const offered = [...remoteActions, wipeAction].map(action => ({ action, state: remoteAvailability(action, access, d) })).filter(x => x.state);
@@ -97,11 +131,13 @@ export async function remoteActionsSection(d, log) {
 }
 // Diálogo de confirmación: efecto en lenguaje simple, motivo (va a la auditoría) y, en el borrado, el nombre exacto del
 // equipo y la contraseña del panel (la API exige reautenticación de menos de 5 minutos: 403 reauth_required).
-function openRemoteAction(d, action, { onSent }) {
+// preset: aviso ya elegido (segundos), motivo, título y una nota extra (p. ej. «Reiniciar para aplicar el nombre»).
+export function openRemoteAction(d, action, { onSent, preset = {} }) {
   const wipe = action.type === 'wipe';
   const dialog = node('dialog', undefined, 'remote-dialog'); const form = node('form'); form.noValidate = true;
-  form.append(node('h2', `${action.verb} ${d.hostname}`));
+  form.append(node('h2', preset.title || `${action.verb} ${d.hostname}`));
   const body = node('div', undefined, 'dialog-body'); form.append(body);
+  if (preset.note) body.append(node('p', preset.note, 'remote-preset-note'));
   const effect = node('p', action.effect); body.append(effect);
   // Reiniciar/Apagar: «Inmediato» (por defecto, como siempre) o «Con aviso» de 1, 5 o 10 minutos a la persona.
   let noticeSeconds = () => 0;
@@ -124,10 +160,11 @@ function openRemoteAction(d, action, { onSent }) {
     };
     [immediate, withNotice, delay].forEach(x => x.addEventListener('change', refresh));
     noticeSeconds = () => withNotice.checked ? Number(delay.value) : 0;
+    if (preset.notice && !tooOld && noticeChoices.some(([v]) => v === preset.notice)) { withNotice.checked = true; delay.value = String(preset.notice); refresh(); }
     body.append(box);
   }
   if (wipe) body.append(node('p', 'Esta acción es irreversible: lo borrado no se puede recuperar.', 'error-text'));
-  const reasonLabel = node('label', 'Motivo (queda en la auditoría)'); const reason = node('input'); reason.name = 'reason'; reason.maxLength = 500; reason.value = action.reason; reason.autocomplete = 'off'; reasonLabel.append(reason); body.append(reasonLabel);
+  const reasonLabel = node('label', 'Motivo (queda en la auditoría)'); const reason = node('input'); reason.name = 'reason'; reason.maxLength = 500; reason.value = preset.reason || action.reason; reason.autocomplete = 'off'; reasonLabel.append(reason); body.append(reasonLabel);
   let confirmInput = null;
   if (wipe) {
     const l = node('label', `Escribe el nombre del equipo (${d.hostname}) para confirmar`); confirmInput = node('input'); confirmInput.name = 'confirmation'; confirmInput.autocomplete = 'off'; confirmInput.spellcheck = false; l.append(confirmInput); body.append(l);

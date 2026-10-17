@@ -1,5 +1,6 @@
 import { api, readSession, errorMessage } from './api.js';
 import { loadAccess, allowed } from './nav-access.js';
+import { codeText, plainReason, reasonCodes } from './result-codes.js';
 
 // «Seguridad de los equipos → Resumen de protección» (docs/design/2026-10-14-superadmin-por-tareas.md §2.2 punto 3, G4).
 // Responde «¿qué tan protegidos están los equipos de este cliente?» con un solo endpoint (GET /tenants/{id}/protection):
@@ -43,25 +44,31 @@ function controlCell(control) {
   if (!control) return el('span', 'Sin dato', 'help');
   const [text, tone] = STATE[control.state] || [control.state, ''];
   const box = el('div'); box.append(badge(control.detail === 'no_rules' ? 'Sin reglas' : text, control.detail === 'no_rules' ? 'warn' : tone));
-  const detail = DETAIL[control.detail] ?? control.detail;
+  // Detalle en palabras (mapa compartido result-codes.js); el código técnico queda en title.
+  const detail = DETAIL[control.detail] ?? codeText(control.detail) ?? control.detail;
   if (detail && control.detail !== 'no_rules') { const s = el('small', detail); s.title = control.detail; box.append(s); }
   return box;
 }
 
+// Motivo con los códigos entre paréntesis traducidos («Endurecimiento pendiente (Esperando la orden desde el panel)»).
+function reasonText(r, make) {
+  const n = make(plainReason(r.text)); const codes = reasonCodes(r.text);
+  if (codes.length) n.title = [n.title, `Código: ${codes.join(', ')}`].filter(Boolean).join(' · ');
+  return n;
+}
 function statusCell(row, ctx) {
   const [text, tone] = PROTECTION[row.protection];
   const box = el('div', undefined, 'protection-status'); box.append(badge(text, tone));
   const [first, ...rest] = row.reasons;
   if (first) {
     const href = fixHref(first.fix, row, ctx);
-    const line = href ? link(first.text, href) : el('span', first.text);
-    if (href) line.title = FIX[first.fix];
+    const line = reasonText(first, text => { const n = href ? link(text, href) : el('span', text); if (href) n.title = FIX[first.fix]; return n; });
     const p = el('small'); p.append(line); box.append(p);
   }
   if (rest.length) {
     const more = el('details', undefined, 'protection-more'); more.append(el('summary', `${rest.length} motivo${rest.length > 1 ? 's' : ''} más`));
     const list = el('ul');
-    rest.forEach(r => { const li = el('li'); const href = fixHref(r.fix, row, ctx); li.append(href ? link(r.text, href) : el('span', r.text)); list.append(li); });
+    rest.forEach(r => { const li = el('li'); const href = fixHref(r.fix, row, ctx); li.append(reasonText(r, text => href ? link(text, href) : el('span', text))); list.append(li); });
     more.append(list); box.append(more);
   }
   return box;

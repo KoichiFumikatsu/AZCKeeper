@@ -13,6 +13,13 @@
 .device-history>.help{margin:4px 0}
 .device-hardening .toolbar{margin:16px 0 8px}
 .dialog-extra:empty{display:none}
+.device-rename-state{margin:18px 0 0;padding:12px 16px;border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;background:var(--surface)}
+.device-rename-state[data-rename=pending_restart]{border-left-color:#ac9872}
+.device-rename-state[data-rename=failed]{border-left-color:var(--error)}
+.device-rename-state .rename-line{font-size:14px;margin:0 0 4px}
+.device-rename-state .help{margin:2px 0 0}
+.device-rename-state .actions{margin-top:10px}
+.remote-preset-note{color:var(--ink)!important;font-weight:600}
 .dialog-extra{margin:0 0 12px}
 
 .report-form{align-items:end}

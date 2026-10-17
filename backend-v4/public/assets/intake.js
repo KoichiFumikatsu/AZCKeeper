@@ -1,6 +1,7 @@
 import { api, errorMessage } from './api.js';
 import { loadHardeningSettings } from './hardening-settings.js';
 import { confirmBox } from './dialogs.js';
+import { versionBelow } from './device-actions.js';
 
 // Alta de equipos a escala (docs/architecture/v4-alta-equipos.md): cola de solicitudes, equipos esperados (manual
 // y CSV) y claves de alta/configuracion. Todo lo que cruza por serie se aprueba solo; aqui llega lo que no cruzo.
@@ -23,6 +24,43 @@ const alertNames = {
   person_excluded: 'La persona no se monitorea (directivo o dueño): apruébalo solo si es una excepción.',
 };
 const message = error => (error?.problem?.detail && rowErrors[error.problem.detail]) || errorMessage(error);
+// Placa → nombre de Windows, igual que el servidor (DeviceIntake::computerName): ACT_0015 → ACT-0015.
+export const computerName = asset => { const n = String(asset || '').toUpperCase().replace(/[^A-Z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 15); return /^(?![0-9]+$)[A-Za-z0-9-]{1,15}$/.test(n) ? n : null; };
+const RENAME_AGENT = '4.0.8', NOTICE_AGENT = '4.0.17';
+// Con placa, Windows toma el nombre nuevo solo al reiniciar. Por defecto (como siempre) espera al próximo reinicio; la
+// otra opción encola además el reinicio con aviso de 5 minutos al enrolar (restart_with_notice). Se deshabilita con el
+// motivo si la cuenta no puede reiniciar, el cliente no tiene Comandos remotos o el agente no muestra el aviso.
+function renameChoice(form, r, asset, access) {
+  const box = el('fieldset', undefined, 'rename-apply'); box.append(el('legend', 'Nombre de Windows'));
+  const preview = el('p', '', 'help rename-preview'); box.append(preview);
+  const option = (value, text) => { const l = el('label', undefined, 'check'); const i = el('input'); i.type = 'radio'; i.name = `rename_${r.id}`; i.value = value; l.append(i, text); box.append(l); return i; };
+  const later = option('later', 'Aplicar el nombre en el próximo reinicio'); later.checked = true;
+  const now = option('now', 'Reiniciar con aviso para aplicarlo ya');
+  const why = el('p', '', 'help rename-why'); box.append(why);
+  const blocked = access && !access.platform && !access.permissions.some(p => p.code === 'equipos.reiniciar') ? 'Tu cuenta no tiene permiso para reiniciar equipos: el nombre se aplicará en el próximo reinicio.'
+    : access && !(access.features || []).includes('comandos') ? 'El cliente no tiene contratada la función «Comandos remotos»: el nombre se aplicará en el próximo reinicio.'
+    : versionBelow(r.agent_version, NOTICE_AGENT) ? `El agente de este equipo (${r.agent_version}) no muestra el aviso de reinicio: actualízalo a ${NOTICE_AGENT} o posterior.` : '';
+  if (blocked) { now.disabled = true; why.textContent = blocked; }
+  const sync = () => {
+    const name = computerName(asset.value);
+    box.hidden = !asset.value.trim() || versionBelow(r.agent_version, RENAME_AGENT);
+    preview.textContent = name ? `El equipo pasará a llamarse ${name}.` : 'Esta placa no sirve como nombre de Windows (solo letras, números y guion, y no solo números): no se cambiará el nombre.';
+    later.disabled = !name; if (!name) { now.checked = false; later.checked = true; }
+    now.disabled = !!blocked || !name;
+    why.textContent = blocked || (now.checked ? 'Al enrolarse, la persona verá «El equipo se reiniciará en 5 minutos por orden de IT. Guarda tu trabajo.» y luego Windows se reinicia con el nombre nuevo.' : '');
+  };
+  asset.addEventListener('input', sync); [later, now].forEach(x => x.addEventListener('change', sync)); sync();
+  form.append(box);
+  return { restart: () => !box.hidden && now.checked && !now.disabled, name: () => computerName(asset.value) };
+}
+const approvalError = (error, restart) => {
+  if (!restart) return error;
+  if (error?.code === 'feature_not_in_plan') return 'El plan de esta persona no incluye «Comandos remotos»: elige «Aplicar el nombre en el próximo reinicio».';
+  if (error?.code === 'agent_too_old') return `El agente de este equipo es anterior a ${NOTICE_AGENT} y no puede mostrar el aviso: elige «Aplicar el nombre en el próximo reinicio».`;
+  if (error?.status === 403 && !error?.problem?.detail) return 'Tu cuenta no tiene permiso para reiniciar equipos: elige «Aplicar el nombre en el próximo reinicio».';
+  if (error?.status === 422) return 'La placa no sirve como nombre de Windows: corrígela o elige «Aplicar el nombre en el próximo reinicio».';
+  return error;
+};
 // Error junto a la fila que falló, anunciado como alerta (revisión UX M11).
 const alertText = text => { const n = el('p', text, 'error-message'); n.setAttribute('role', 'alert'); return n; };
 const inlineError = text => { const n = el('span', text, 'error-message'); n.setAttribute('role', 'alert'); return n; };
@@ -317,6 +355,7 @@ async function requests(content, tenant, { count = () => {} } = {}) {
   const holder = el('div'); s.append(holder);
   const pager = morePager(s);
   let body = null; let pending = '';
+  const access = await api('GET', '/me/access', { tenant }).catch(() => null);
   async function load(append = false) {
     const result = await api('GET', `/enrollments/requests?status=${status.value}&limit=100${append ? `&offset=${pager.next}` : ''}`, { tenant });
     if (!append) { holder.replaceChildren(); body = null; pager.reset(); }
@@ -346,16 +385,21 @@ async function requests(content, tenant, { count = () => {} } = {}) {
         if (r.asset_code) asset.value = r.asset_code;
         const approve = el('button', 'Aprobar', 'primary'); approve.type = 'submit';
         const reject = el('button', 'Rechazar'); reject.type = 'button';
+        const choice = renameChoice(form, r, asset, access);
         form.append(approve, reject); action.append(form);
         const fb = feedback(action);
         form.addEventListener('submit', async event => {
           event.preventDefault(); fb.clear();
           if (!person.value.trim() && !r.suggested_user_id) { fb.fail('Escribe la cédula o el correo de la persona a la que pertenece el equipo.'); return; }
           approve.disabled = true;
+          // restart_with_notice solo cuando se elige: sin el campo la API se comporta como siempre.
+          const restart = choice.restart(); const name = choice.name();
           try {
-            await api('POST', `/enrollments/requests/${r.id}/approve`, { tenant, body: { person: person.value.trim() || null, asset_code: asset.value.trim() || null } });
-            decision.ok(`${r.hostname}: aprobada, esperando conexión. El equipo se enrola en su próximo reintento (unos minutos); mientras tanto aparece en «Aprobadas sin enrolar».`); follow.hidden = false; await load();
-          } catch (error) { fb.fail(error); } finally { approve.disabled = false; }
+            await api('POST', `/enrollments/requests/${r.id}/approve`, { tenant, body: { person: person.value.trim() || null, asset_code: asset.value.trim() || null, ...(restart ? { restart_with_notice: true } : {}) } });
+            const renamed = name && asset.value.trim() && !versionBelow(r.agent_version, RENAME_AGENT)
+              ? (restart ? ` Al enrolarse pasa a llamarse ${name}: se reinicia con aviso de 5 minutos.` : ` Pasará a llamarse ${name} en su próximo reinicio.`) : '';
+            decision.ok(`${r.hostname}: aprobada, esperando conexión. El equipo se enrola en su próximo reintento (unos minutos); mientras tanto aparece en «Aprobadas sin enrolar».${renamed}`); follow.hidden = false; await load();
+          } catch (error) { fb.fail(approvalError(error, restart)); } finally { approve.disabled = false; }
         });
         reject.addEventListener('click', async () => {
           if (!await confirmBox({ title: 'Rechazar alta', message: `¿Rechazar el alta de ${r.hostname}? El equipo no quedará gestionado por Keeper.`, okText: 'Rechazar alta', danger: true })) return;
@@ -366,6 +410,7 @@ async function requests(content, tenant, { count = () => {} } = {}) {
       } else {
         action.append(el('span', statusNames[r.status] || r.status));
         if (r.asset_code) action.append(el('br'), el('small', `Placa ${r.asset_code}`));
+        if (r.restart_with_notice && r.status === 'approved') action.append(el('br'), el('small', 'Al enrolarse se reinicia con aviso de 5 minutos para aplicar el nombre.', 'rename-note'));
         if (r.device_id) { const a = el('a', 'Ver equipo'); a.href = `/equipo.php?id=${encodeURIComponent(r.device_id)}`; action.append(el('br'), a); }
       }
       tr.append(action); body.append(tr);

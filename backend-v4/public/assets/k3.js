@@ -7,6 +7,7 @@ import { wireDialog, confirmBox, noticeBox, feedback } from './dialogs.js';
 import { coordinator, connectionLabel, connectionState, periodControls } from './coordinator.js';
 import { canConfigureHardening, loadHardeningAccess, loadHardeningSettings, hardeningSummary, openHardeningSettings, withReauth, canceled } from './hardening-settings.js';
 import { LOG_COMPONENTS } from './log-components.js';
+import { codeNode } from './result-codes.js';
 import { onboardingPage, returnBand, AUDIT_LABELS as ONBOARDING_AUDIT } from './onboarding.js';
 import { evaluate as evaluateOnboarding, count as countSteps, nextPending as nextPendingStep, STATUS as ONBOARDING_STATUS } from './onboarding-state.js';
 import { canConfigureUnlockPin, mountUnlockPin } from './unlock-pin.js';
@@ -3834,7 +3835,7 @@ async function logsPage() {
     s.append(el('p', 'Lo que reporta el agente de cada equipo. Los errores y advertencias son lo que conviene revisar; lo informativo es el día a día normal.', 'help'));
     if (!rows.length) { empty(s, 'Sin registros', 'No hay registros con esos filtros.'); return; }
     table(s, 'Logs', [['Cuándo', r => when(r.at)], ['Equipo', r => r.hostname], ['Nivel', r => badge(r.level === 'error' ? 'Error' : r.level === 'warn' ? 'Advertencia' : 'Info', r.level === 'error' ? 'bad' : r.level === 'warn' ? 'warn' : '')],
-      ['Parte', r => LOG_COMPONENTS[r.component] || r.component], ['Qué pasó', r => LOG_CODES[r.code] || r.code], ['Detalle', r => r.error_code || '—']], rows,
+      ['Parte', r => LOG_COMPONENTS[r.component] || r.component], ['Qué pasó', r => LOG_CODES[r.code] || r.code], ['Detalle', r => codeNode(r.error_code)]], rows,
       { filters: [['Equipo', r => r.hostname], ['Parte', r => LOG_COMPONENTS[r.component] || r.component]] });
     if (more) { const b = el('button', 'Cargar 100 más'); b.type = 'button'; b.addEventListener('click', async () => { b.disabled = true; try { await fetchPage(); render(); } catch (e) { fail(e); } }); s.append(b); }
   };

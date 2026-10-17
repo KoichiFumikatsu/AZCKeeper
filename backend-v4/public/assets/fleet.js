@@ -1,4 +1,5 @@
 import { api, errorMessage, PLATFORM_TENANT } from './api.js';
+import { renameNote } from './device-actions.js';
 
 const el = (tag, text, cls) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (cls) n.className = cls; return n; };
 export const ringLabel = ring => ({ stable: 'Automáticas', pruebas: 'Primero (pruebas)', pausado: 'Pausadas' }[ring] || ring);
@@ -68,13 +69,15 @@ export async function fleet({ root, tenant, allPages, platform }) {
     fresh.forEach(d => counts.set(d.agent_version, (counts.get(d.agent_version) || 0) + 1));
     if (!fresh.length) versions.append(el('p', 'No hay equipos activos recientes para comparar versiones.', 'empty-state'));
     for (const [version, count] of [...counts].sort((a, b) => b[1] - a[1])) { const label = el('label', `v${version} · ${count} de ${fresh.length}`); const meter = el('meter'); meter.min = 0; meter.max = fresh.length; meter.value = count; label.append(meter); versions.append(label); }
-    const term = search.value.trim().toLocaleLowerCase('es'); matches = devices.filter(d => (!status.value || state(d) === status.value) && (!ring.value || d.release_ring === ring.value) && `${d.hostname} ${names.get(d.user_id) || ''} ${d.agent_version}`.toLocaleLowerCase('es').includes(term));
+    const term = search.value.trim().toLocaleLowerCase('es'); matches = devices.filter(d => (!status.value || state(d) === status.value) && (!ring.value || d.release_ring === ring.value) && `${d.hostname} ${d.computer_rename?.computer_name || ''} ${names.get(d.user_id) || ''} ${d.agent_version}`.toLocaleLowerCase('es').includes(term));
     offset = Math.min(offset, Math.max(0, Math.ceil(matches.length / 25) - 1) * 25); view.replaceChildren(); selectedCount.textContent = platform ? `${chosen.size} equipos seleccionados (incluye otras páginas o filtros).` : 'Solo plataforma puede cambiar las actualizaciones.';
     if (!matches.length) view.append(el('p', 'No hay equipos que coincidan con los filtros.', 'empty-state'));
     else table(view, [...(platform ? ['Seleccionar'] : []), 'Equipo', 'Persona', 'Estado', 'Versión', 'Última conexión', 'Actualizaciones', 'Motivo de pausa'], matches.slice(offset, offset + 25).map(d => {
+      // Debajo del nombre, el cambio de nombre de Windows en curso (pendiente de reinicio, en curso o fallido).
       const link = el('a', d.hostname); link.href = `/equipo.php?id=${encodeURIComponent(d.id)}`;
+      const note = renameNote(d); const name = note ? el('div') : link; if (note) name.append(link, note);
       const box = el('input'); box.type = 'checkbox'; box.checked = chosen.has(d.id); box.setAttribute('aria-label', `Seleccionar ${d.hostname}`); box.onchange = () => { if (box.checked) chosen.add(d.id); else chosen.delete(d.id); selectedCount.textContent = `${chosen.size} equipos seleccionados (incluye otras páginas o filtros).`; };
-      return [...(platform ? [box] : []), link, names.get(d.user_id) || 'No disponible', state(d), d.agent_version, d.last_seen_at ? new Date(d.last_seen_at).toLocaleString('es-CO') : 'Sin registro', ringLabel(d.release_ring), d.release_pause_reason || '—'];
+      return [...(platform ? [box] : []), name, names.get(d.user_id) || 'No disponible', state(d), d.agent_version, d.last_seen_at ? new Date(d.last_seen_at).toLocaleString('es-CO') : 'Sin registro', ringLabel(d.release_ring), d.release_pause_reason || '—'];
     }));
     counter.textContent = matches.length ? `${offset + 1}–${Math.min(offset + 25, matches.length)} de ${matches.length}` : '0 equipos'; previous.disabled = !offset; next.disabled = offset + 25 >= matches.length;
   }

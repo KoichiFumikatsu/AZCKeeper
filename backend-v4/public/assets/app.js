@@ -1,4 +1,5 @@
-import { remoteActionsSection, commandTypes, commandStates, commandCodes, versionBelow, commandError, commandExpiry, remoteAvailability } from './device-actions.js';
+import { remoteActionsSection, commandTypes, commandStates, versionBelow, commandError, commandExpiry, remoteAvailability, renameState, renameNote, renameRestartButton } from './device-actions.js';
+import { codeNode, plainCode } from './result-codes.js';
 import { api, ApiError, PLATFORM_TENANT, isUuid, setTenant, saveSession, readSession, refreshCsrf, goToLogin, errorMessage } from './api.js';
 import { applyNavAccess } from './nav-access.js';
 import { coordinator } from './coordinator.js';
@@ -118,7 +119,7 @@ function personLink(id) {
   const a = node('a', name); a.href = `/miembro.php?id=${encodeURIComponent(id)}`; return a;
 }
 const resources = {
-  devices: { title: 'Equipos', path: () => `/tenants/${tenant}/devices`, prepare: loadUserNames, columns: [['Equipo', r => { const a = node('a', r.hostname); a.href = `/equipo.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Estado', r => label(r.status)], ['Persona', r => personLink(r.user_id)], ['Sistema operativo', 'os_edition'], ['Agente', 'agent_version'], ['Última conexión', r => dateTime(r.last_seen_at)], ['K3 abierto', r => r.legacy_k3?.running === true ? badge('Sí', 'bad') : r.legacy_k3?.running === false ? 'No' : null]], empty: 'Aún no hay equipos enrolados en tu alcance.' },
+  devices: { title: 'Equipos', path: () => `/tenants/${tenant}/devices`, prepare: loadUserNames, columns: [['Equipo', r => { const a = node('a', r.hostname); a.href = `/equipo.php?id=${encodeURIComponent(r.id)}`; const note = renameNote(r); if (!note) return a; const box = node('div'); box.append(a, note); return box; }], ['Estado', r => label(r.status)], ['Persona', r => personLink(r.user_id)], ['Sistema operativo', 'os_edition'], ['Agente', 'agent_version'], ['Última conexión', r => dateTime(r.last_seen_at)], ['K3 abierto', r => r.legacy_k3?.running === true ? badge('Sí', 'bad') : r.legacy_k3?.running === false ? 'No' : null]], empty: 'Aún no hay equipos enrolados en tu alcance.' },
   users: { title: 'Usuarios', path: () => '/users', columns: [['Nombre', r => { const a = node('a', r.display_name); a.href = `/miembro.php?id=${encodeURIComponent(r.id)}`; return a; }], ['Correo', 'email'], ['Estado', r => label(r.status)], ['Cuenta del panel', r => r.panel_login_enabled ? 'Habilitada' : 'Sin cuenta'], ['Acceso al panel', r => r.access?.role_name || 'Sin acceso al panel']], empty: 'Aún no hay usuarios en tu alcance.' },
   policies: { title: 'Reglas', path: () => '/policies', columns: [['Política', 'name'], ['Destino', r => label(r.target_type)], ['ID del destino', 'target_id'], ['Estado', r => r.enabled ? 'Habilitada' : 'Inactiva'], ['Reglas', r => r.rules.length], ['Versión', 'version']], empty: 'Aún no hay políticas configuradas en esta empresa.' },
   tenants: { title: 'Clientes', path: () => '/tenants', columns: [['Cliente', 'name'], ['ID', 'id'], ['Estado', r => label(r.status)], ['Zona horaria', 'timezone'], ['Autogestión de roles', r => r.rbac_self_management ? 'Habilitada' : 'Inactiva']], empty: 'No hay clientes accesibles.' },
@@ -337,7 +338,7 @@ async function dashboard() {
 }
 function details(parent, fields) {
   const list = node('dl', undefined, 'details');
-  fields.forEach(([key, value]) => { const row = node('div'); row.append(node('dt', key), node('dd', value === null || value === undefined ? 'Sin dato' : String(value))); list.append(row); });
+  fields.forEach(([key, value]) => { const row = node('div'); const dd = node('dd'); if (value instanceof Node) dd.append(value); else dd.textContent = value === null || value === undefined ? 'Sin dato' : String(value); row.append(node('dt', key), dd); list.append(row); });
   parent.append(list);
 }
 // Smart App Control según el inventario del agente (4.0.19+); sin dato = Desconocido.
@@ -382,7 +383,7 @@ function hardeningState(status) {
   if (status.state === 'hardened') return { text: 'Endurecido', tone: 'good', note: status.hardened_at ? `Desde ${dateTime(status.hardened_at)}` : '' };
   if (['none', 'unhardened', 'waiting_panel'].includes(status.state)) return { text: 'No endurecido', tone: 'warn', note: text };
   if (status.state === 'running') return { text: 'En curso', tone: 'info', note: 'El agente está aplicando la orden.' };
-  return { text, tone: 'bad', note: status.detail || '' };
+  return { text, tone: 'bad', note: status.detail ? plainCode(status.detail) : '' };
 }
 // No hay un campo «bloqueado»: se deduce de la última orden de bloquear/desbloquear ejecutada del historial.
 function lockState(rows) {
@@ -452,7 +453,7 @@ async function device() {
   deviceUpdates($('content'), d, tenant, session.is_platform_admin);
   const remote = await remoteActionsSection(d, log);
   if (remote) $('content').append(remote);
-  $('content').append(renameSection(d, log));
+  $('content').append(renameSection(d, log, () => header.rename()));
   const hardeningBox = await hardeningSection(d, hardening, status => header.hardening(status), log);
   if (hardeningBox) $('content').append(hardeningBox);
   $('content').append(await controlsSection(d));
@@ -474,6 +475,31 @@ function deviceSummary(d, owner, org, hardening, log) {
     ['Última conexión', lastSeen], ['Conexión', null, 'connection'], ['Endurecimiento', null, 'hardening'], ['Bloqueo', null, 'lock'],
     ['Keeper 3 (K3)', null, 'legacyK3']], 'details device-facts');
   stateCell(cells.legacyK3, legacyK3State(d.legacy_k3));
+  // Nombre de Windows en curso (computer_rename): «pendiente de reinicio», «Cambiando nombre…» o por qué falló, con
+  // «Reiniciar para aplicar el nombre» (la orden de reinicio con aviso de siempre). Nada si el nombre ya coincide.
+  const renameBox = node('div', undefined, 'device-rename-state'); renameBox.hidden = true; section.append(renameBox);
+  const renameFeedback = node('p', undefined, 'help rename-feedback'); renameFeedback.setAttribute('role', 'status');
+  let renameSeq = 0;
+  const drawRename = async () => {
+    const mine = ++renameSeq; const s = renameState(d);
+    renameBox.hidden = !s; renameBox.dataset.rename = s?.kind || '';
+    if (!s) { renameBox.replaceChildren(renameFeedback); renameBox.hidden = !renameFeedback.textContent; return; }
+    const line = node('p', undefined, 'rename-line'); const strong = node('strong', s.text); if (s.code) strong.title = s.code; line.append(strong);
+    const parts = [line, node('p', s.note, 'help')];
+    if (s.kind !== 'failed' && !d.computer_rename.restart_pending) {
+      const offer = await renameRestartButton(d, { onSent: async () => {
+        renameFeedback.textContent = `Reinicio enviado con aviso. El equipo lo recibe en su próxima sincronización (unos 2 minutos) y, al reiniciarse, pasa a llamarse ${s.name}.`;
+        await refreshRename(); log.load();
+      } });
+      if (mine !== renameSeq) return;
+      if (offer) { const bar = node('div', undefined, 'actions'); bar.append(offer.button); parts.push(bar); if (offer.reason) parts.push(node('p', offer.reason, 'help')); }
+    }
+    renameBox.replaceChildren(...parts, renameFeedback);
+  };
+  const refreshRename = async () => {
+    try { d.computer_rename = (await api('GET', `/devices/${d.id}`, { tenant })).computer_rename; } catch { /* se queda con el último estado leído */ }
+    draw(); await drawRename();
+  };
   const more = node('details', undefined, 'device-more'); more.append(node('summary', 'Datos técnicos del equipo'));
   details(more, [['Estado del equipo', label(d.status)], ['Sistema operativo', d.os_edition], ['CPU', d.cpu], ['RAM', d.ram_bytes ? `${number.format(d.ram_bytes / 1073741824)} GB` : null],
     ['Cifrado de disco', d.encryption_state], ['Versión de política aplicada', d.policy_version],
@@ -484,11 +510,13 @@ function deviceSummary(d, owner, org, hardening, log) {
   const states = { connection, hardening: hardeningState(hardening), lock: lockState(log.rows) };
   const draw = () => {
     chips.replaceChildren(badge(states.connection.text, states.connection.tone), badge(`Endurecimiento: ${states.hardening.text.toLowerCase()}`, states.hardening.tone), badge(`Bloqueo: ${states.lock.text.toLowerCase()}`, states.lock.tone));
+    const rename = renameState(d);
+    if (rename) { const chip = badge(rename.kind === 'failed' ? rename.short : rename.text, rename.tone); if (rename.code) chip.title = rename.code; chips.append(chip); }
     Object.entries(states).forEach(([key, state]) => stateCell(cells[key], state));
   };
   log.on(current => { states.lock = lockState(current.rows); draw(); });
-  draw();
-  return { section, hardening: status => { states.hardening = hardeningState(status); draw(); } };
+  draw(); drawRename();
+  return { section, hardening: status => { states.hardening = hardeningState(status); draw(); }, rename: refreshRename };
 }
 // Estado declarado por el agente en su último reporte; no es una verificación independiente.
 async function controlsSection(d) {
@@ -496,7 +524,7 @@ async function controlsSection(d) {
   try {
     const report = await get(`/devices/${d.id}/security`);
     controls.append(node('p', `Último reporte del agente: ${dateTime(report.observed_at)}${report.observed_at ? ` (${ago(report.observed_at)})` : ''}. Es el estado que declara el agente, no una verificación independiente.`, 'help'));
-    const columns = [['Control', r => { const name = node('span', LOG_COMPONENTS[r.control_id] || r.control_id); name.title = r.control_id; return name; }], ['Estado', r => badge(controlStates[r.state] || r.state, controlTones[r.state] || '')], ['Detalle', r => r.error_code || '—'], ['Observado', r => dateTime(r.observed_at)]];
+    const columns = [['Control', r => { const name = node('span', LOG_COMPONENTS[r.control_id] || r.control_id); name.title = r.control_id; return name; }], ['Estado', r => badge(controlStates[r.state] || r.state, controlTones[r.state] || '')], ['Detalle', r => codeNode(r.error_code)], ['Observado', r => dateTime(r.observed_at)]];
     const failing = report.controls.filter(c => c.state !== 'applied');
     if (failing.length) controls.append(node('p', `${failing.length} de ${report.controls.length} controles no están aplicados. Aparecen primero.`, 'error-message'));
     else if (report.controls.length) controls.append(node('p', 'Todos los controles reportados están aplicados.', 'help'));
@@ -535,7 +563,7 @@ async function historySection(d, log) {
         const [text, tone] = commandStates[stale ? 'expired' : r.status] || [r.status, ''];
         return badge(text, tone);
       }],
-      ['Resultado', r => r.result ? `${commandCodes[r.result.code] || r.result.code} · ${dateTime(r.result.completed_at)}` : '—'],
+      ['Resultado', r => { if (!r.result) return '—'; const n = codeNode(r.result.code); n.textContent += ` · ${dateTime(r.result.completed_at)}`; return n; }],
       ['Vence', r => dateTime(r.expires_at)]];
     appendRows(table(history, `Últimas ${recent.length} órdenes de este equipo`, columns).body, recent, columns);
     history.append(node('p', 'Quién envió cada orden y su motivo quedan en Auditoría.', 'help'));
@@ -549,7 +577,7 @@ async function historySection(d, log) {
     const result = await get(query('/audit/client-logs', { device_id: d.id, limit: 50 }));
     if (!result.data.length) section.append(node('p', 'No hay registros del agente en el período de retención.', 'empty-state'));
     else {
-      const columns = [['Fecha', r => dateTime(r.at)], ['Nivel', 'level'], ['Componente', 'component'], ['Código', r => r.component === 'DeviceLock' && r.code === 'local_unlock' ? 'Desbloqueo con PIN local' : agentLogCodes[r.code] || r.code], ['Error', r => r.error_code || '—']];
+      const columns = [['Fecha', r => dateTime(r.at)], ['Nivel', 'level'], ['Componente', 'component'], ['Código', r => r.component === 'DeviceLock' && r.code === 'local_unlock' ? 'Desbloqueo con PIN local' : agentLogCodes[r.code] || r.code], ['Error', r => codeNode(r.error_code)]];
       appendRows(table(section, 'Últimos 50 registros', columns).body, result.data, columns);
     }
   } catch (error) {
@@ -604,7 +632,7 @@ async function hardeningSection(d, initial, onStatus, log) {
   const state = node('div'); const checked = node('p', undefined, 'help history-checked');
   const drawState = () => {
     state.replaceChildren();
-    details(state, [['Estado', hardeningStates[status.state] || status.state], ['Último paso', status.last_step], ['Detalle', status.detail],
+    details(state, [['Estado', hardeningStates[status.state] || status.state], ['Último paso', status.last_step], ['Detalle', status.detail ? codeNode(status.detail) : null],
       ['Endurecido desde', status.hardened_at ? dateTime(status.hardened_at) : null], ['Último reporte', status.reported_at ? dateTime(status.reported_at) : null]]);
     checked.textContent = `Última consulta: ${clock()}.`;
   };
@@ -689,7 +717,7 @@ async function hardeningSection(d, initial, onStatus, log) {
 // Cambio del nombre de Windows del equipo (comando rename_computer). La placa de activo ACT_0015 se convierte a
 // ACT-0015: el guion bajo no es valido en nombres DNS. El agente lo aplica en el proximo reinicio o al reiniciar ahora.
 const computerNamePattern = /^(?![0-9]+$)[A-Za-z0-9-]{1,15}$/;
-function renameSection(d, log) {
+function renameSection(d, log, onRenamed = () => {}) {
   const section = node('section', undefined, 'work-surface device-rename'); section.append(node('h2', 'Cambiar nombre del equipo'));
   section.append(node('p', `Nombre actual en Windows: ${d.hostname}. Usa la placa de activo (por ejemplo ACT-0015). Máximo 15 caracteres: letras, números y guion.`, 'help'));
   const form = node('form'); form.className = 'toolbar'; form.noValidate = true;
@@ -724,7 +752,7 @@ function renameSection(d, log) {
           ? `Orden enviada. El equipo la recibe en su próxima sincronización (unos 2 minutos), se renombra a ${name} y se reinicia.`
           : `Orden enviada. El equipo la recibe en su próxima sincronización y pasará a llamarse ${name} en su próximo reinicio.`;
         input.value = '';
-        log.load();
+        log.load(); onRenamed();
         return true;
       },
     });
