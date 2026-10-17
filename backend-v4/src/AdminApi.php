@@ -190,6 +190,7 @@ final class AdminApi
             'listAbsences','createAbsence','patchAbsence'=>(new Absences($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listDoors','createDoor','patchDoor','getDoorQuarantine'=>(new DoorsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
+            'getTenantProtection'=>(new ProtectionSummary($this->db,$this->c,$this->access,$this->r))->dispatch(),
             'getMyAccess'=>$this->myAccess(), 'getMe'=>$this->me(),
             'listNotifications','markNotificationsSeen'=>(new PanelNotifications($this->db,$this->c))->dispatch($op),
             'listPortalOrigins','createPortalOrigin','deletePortalOrigin'=>$this->portalOrigins($op,$id,$b),

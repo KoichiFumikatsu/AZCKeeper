@@ -44,6 +44,7 @@ require __DIR__ . '/cron-runs.php';
 require __DIR__ . '/episode-title-limit.php';
 require __DIR__ . '/tenant-provision.php';
 require __DIR__ . '/notifications.php';
+require __DIR__ . '/protection.php';
 
 use Keeper\{Config, Database, Util, Validator};
 
@@ -484,6 +485,8 @@ try {
     episodeTitleLimitTests();
     tenantProvisionTests($db);
     notificationTests($db);
+    protectionEvaluateTests();
+    protectionApiTests($db);
     // Al final y con el cupo de prelogin repuesto: sus 4 logins de fixture lo agotaban para panelAccountsTests.
     windowsSecurityTests($db);
     relocationTests($db);

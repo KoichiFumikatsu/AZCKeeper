@@ -12190,6 +12190,78 @@ paths:
       - $ref: '#/components/parameters/Id'
       x-permission: empresas.gestionar
       x-platform-only: true
+  /tenants/{id}/protection:
+    get:
+      tags:
+      - admin
+      operationId: getTenantProtection
+      summary: Resumen de protección del cliente
+      description: «Seguridad de los equipos → Resumen de protección» (docs/design/2026-10-14-superadmin-por-tareas.md G4).
+        Qué compró el cliente (funciones de control de equipos, planes que las incluyen y personas del alcance a las que
+        llegan), sus ajustes (cuenta de IT, modo de endurecimiento, PIN, Smart App Control) y, por equipo activo del alcance,
+        el estado de cada control (último reporte del agente, endurecimiento, reglas compiladas, Smart App Control y cifrado)
+        con un estado global y sus motivos. Respeta el alcance de la cuenta; las funciones no compradas salen como
+        not_in_plan con detail not_contracted. totals cuenta los equipos tras sede y búsqueda (antes del filtro protection).
+      security:
+      - adminSession: []
+      x-tenant-boundary: ID validado contra la sesión y alcance de rol aplicado a las personas dueñas de los equipos.
+      x-resources:
+      - ProtectionSummary
+      responses:
+        '200':
+          description: Resumen de protección del cliente
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProtectionSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Site'
+      - name: protection
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [protected, partial, unprotected, no_data]
+        description: Solo los equipos con ese estado global.
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description: Busca en el nombre del equipo y de la persona (sin mayúsculas ni tildes).
+      x-permission: equipos.ver
   /tenants/{id}/logo:
     post:
       tags:
@@ -19010,6 +19082,136 @@ components:
               plan_id: {anyOf: [{type: string, format: uuid}, {type: 'null'}]}
               name: {type: string, maxLength: 80}
               people: {type: integer, minimum: 0}
+    ProtectionControlState:
+      anyOf:
+      - type: object
+        additionalProperties: false
+        required: [state, detail]
+        properties:
+          state:
+            type: string
+            enum: [applied, failed, unsupported, pending, not_in_plan, unknown]
+            description: not_in_plan con detail not_contracted (el cliente no la compró) o not_in_plan (su plan no la incluye).
+              pending solo en endurecimiento y Smart App Control.
+          detail:
+            anyOf:
+            - type: string
+              maxLength: 120
+              description: Código del agente (p. ej. waiting_panel, failed_step_3_panel), no_rules, not_contracted, not_in_plan
+                u on/off/evaluation de Smart App Control.
+            - type: 'null'
+      - type: 'null'
+    ProtectionSummary:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, generated_at, client, totals, data, next_cursor]
+      properties:
+        tenant_id: {type: string, format: uuid}
+        generated_at: {type: string, format: date-time}
+        client:
+          type: object
+          additionalProperties: false
+          required: [it_account_configured, hardening_mode, deny_network_logon, unlock_pin_configured, disable_smart_app_control, default_plan, hardening_active, features]
+          properties:
+            it_account_configured: {type: boolean}
+            hardening_mode: {type: string, enum: [auto, panel]}
+            deny_network_logon: {type: boolean}
+            unlock_pin_configured: {type: boolean}
+            disable_smart_app_control: {type: boolean}
+            default_plan:
+              anyOf:
+              - type: object
+                additionalProperties: false
+                required: [id, name]
+                properties:
+                  id: {type: string, format: uuid}
+                  name: {type: string, maxLength: 80}
+              - type: 'null'
+            hardening_active: {type: boolean, description: Compró endurecimiento y tiene la cuenta de IT configurada.}
+            features:
+              type: array
+              maxItems: 20
+              items:
+                type: object
+                additionalProperties: false
+                required: [code, name, contracted, plans, people, devices_applied]
+                properties:
+                  code: {type: string, enum: [web, usb, descargas, instalaciones, comandos, borrado, endurecimiento]}
+                  name: {type: string, maxLength: 120}
+                  contracted: {type: boolean}
+                  plans: {type: array, maxItems: 100, items: {type: string, maxLength: 80}}
+                  people: {type: integer, minimum: 0, description: Personas activas del alcance cuyo plan la incluye (0 si no se compró).}
+                  devices_applied:
+                    anyOf: [{type: integer, minimum: 0}, {type: 'null'}]
+                    description: Equipos del alcance que la reportan aplicada; null en las que el agente no reporta (comandos, borrado).
+        totals:
+          type: object
+          additionalProperties: false
+          required: [devices, protected, partial, unprotected, no_data]
+          properties:
+            devices: {type: integer, minimum: 0}
+            protected: {type: integer, minimum: 0}
+            partial: {type: integer, minimum: 0}
+            unprotected: {type: integer, minimum: 0}
+            no_data: {type: integer, minimum: 0}
+        data:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [device_id, hostname, user_id, display_name, site_id, site_name, plan, agent_version, agent_outdated, last_seen_at, report_observed_at, controls, protection, reason, reasons]
+            properties:
+              device_id: {type: string, format: uuid}
+              hostname: {type: string, maxLength: 255}
+              user_id: {type: string, format: uuid}
+              display_name: {type: string, maxLength: 200}
+              site_id: {anyOf: [{type: string, format: uuid}, {type: 'null'}]}
+              site_name: {anyOf: [{type: string, maxLength: 200}, {type: 'null'}]}
+              plan:
+                anyOf:
+                - type: object
+                  additionalProperties: false
+                  required: [id, name]
+                  properties:
+                    id: {type: string, format: uuid}
+                    name: {type: string, maxLength: 80}
+                - type: 'null'
+              agent_version: {anyOf: [{type: string, maxLength: 40}, {type: 'null'}]}
+              agent_outdated: {type: boolean}
+              last_seen_at: {anyOf: [{type: string, format: date-time}, {type: 'null'}]}
+              report_observed_at: {anyOf: [{type: string, format: date-time}, {type: 'null'}]}
+              controls:
+                type: object
+                additionalProperties: false
+                required: [web, usb, downloads, installs, hardening, smart_app_control, encryption]
+                properties:
+                  web: {$ref: '#/components/schemas/ProtectionControlState'}
+                  usb: {$ref: '#/components/schemas/ProtectionControlState'}
+                  downloads: {$ref: '#/components/schemas/ProtectionControlState'}
+                  installs: {$ref: '#/components/schemas/ProtectionControlState'}
+                  hardening: {$ref: '#/components/schemas/ProtectionControlState'}
+                  smart_app_control: {$ref: '#/components/schemas/ProtectionControlState'}
+                  encryption: {$ref: '#/components/schemas/ProtectionControlState'}
+              protection: {type: string, enum: [protected, partial, unprotected, no_data]}
+              reason:
+                anyOf: [{type: string, maxLength: 200}, {type: 'null'}]
+                description: Primer motivo, en una línea.
+              reasons:
+                type: array
+                maxItems: 30
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [code, text, fix]
+                  properties:
+                    code: {type: string, maxLength: 60}
+                    text: {type: string, maxLength: 200}
+                    fix:
+                      type: string
+                      enum: [device, settings, rules, plan, contract]
+                      description: Dónde se arregla (ficha del equipo, Ajustes del cliente §Seguridad, Reglas, plan de la persona o funciones del cliente).
+        next_cursor: {anyOf: [{type: string, maxLength: 1024}, {type: 'null'}]}
     UserPlanInput:
       type: object
       additionalProperties: false
