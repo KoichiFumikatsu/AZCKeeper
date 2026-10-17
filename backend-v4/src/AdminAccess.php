@@ -31,6 +31,8 @@ final class AdminAccess
     }
 
     public function scope(): AccessScope { return $this->scope; }
+    /** Otro permiso de la misma cuenta (p. ej. equipos.reiniciar al aprobar un alta con reinicio). Superadmin: todos. */
+    public function has(string $code): bool { return $this->c['platform'] || in_array($code, $this->permissions, true); }
     public function full(): bool { return $this->scope->kind === 'all'; }
     public function requireFull(): void { if (!$this->full()) { throw new ApiError(403, 'permission_denied', [], 'scope_denied'); } }
     /**

@@ -8,6 +8,9 @@ namespace Keeper;
 final class DeviceIntake
 {
     public const RENAME_MIN_AGENT = '4.0.8';
+    // Reinicio con aviso al enrolar para aplicar el nombre ya: aviso de 5 min, el mismo minimo de agente que el panel.
+    public const NOTICE_MIN_AGENT = '4.0.17';
+    public const RENAME_RESTART_NOTICE = 300;
     private const DOCUMENT_SOURCES = ['document', 'k3:cc'];
 
     public function __construct(private Database $db) {}
@@ -134,6 +137,22 @@ final class DeviceIntake
         return $this->db->one('SELECT * FROM enrollment_requests WHERE tenant_id=? AND id=? FOR UPDATE', [$tenant, $row['id']]);
     }
 
+    /**
+     * Aprobar con «Reiniciar con aviso para aplicarlo ya» (campo opcional restart_with_notice; sin el, como antes). Exige lo
+     * mismo que la orden de reinicio con aviso desde la ficha: una placa que se convierta en nombre, el permiso
+     * equipos.reiniciar de quien aprueba, la funcion comandos en el plan de la persona y un agente que muestre el aviso.
+     */
+    private function restartNotice(string $tenant, AdminAccess $access, array $row, string $user, ?string $asset, bool $wanted): ?int
+    {
+        if (!$wanted) { return null; }
+        if ($asset === null || self::computerName($asset) === null) { throw new ApiError(422, 'validation_failed'); }
+        if (!$access->has('equipos.reiniciar')) { throw new ApiError(403, 'permission_denied'); }
+        $feature = AdminApi::COMMAND_FEATURES['restart'];
+        if (!in_array($feature, PersonPlans::functions($this->db, $tenant, $user), true)) { throw new ApiError(403, 'feature_not_in_plan', [], $feature); }
+        if (version_compare($row['agent_version'], self::NOTICE_MIN_AGENT, '<')) { throw new ApiError(409, 'agent_too_old'); }
+        return self::RENAME_RESTART_NOTICE;
+    }
+
     // Serie ya usada: un esperado ya consumido o un equipo activo que la reporto en su inventario.
     private function knownSerial(string $tenant, string $serial): ?array
     {
@@ -188,6 +207,12 @@ final class DeviceIntake
         if ($name !== null && strcasecmp($name, $d['hostname']) !== 0 && version_compare($d['agent_version'], self::RENAME_MIN_AGENT, '>=')) {
             $expires = $db->one('SELECT UTC_TIMESTAMP(6)+INTERVAL 23 HOUR at')['at'];
             self::enqueueCommand($db, $tenant, $d, 'rename_computer', 'Placa de activo ' . $row['asset_code'], Util::json(['computer_name' => $name, 'restart_now' => false]), $expires);
+            // «Reiniciar con aviso para aplicarlo ya»: la misma orden de reinicio con aviso del panel, detras del renombre
+            // (el agente las ejecuta en orden). Se revalidan el plan del dueño y la version: pudieron cambiar desde la aprobacion.
+            $notice = $row['restart_notice_seconds'] === null ? 0 : (int) $row['restart_notice_seconds'];
+            if ($notice > 0 && version_compare($d['agent_version'], self::NOTICE_MIN_AGENT, '>=') && in_array(AdminApi::COMMAND_FEATURES['restart'], PersonPlans::functions($db, $tenant, $d['user_id']), true)) {
+                self::enqueueCommand($db, $tenant, $d, 'restart', 'Reinicio para aplicar el nombre ' . $name, Util::json(['notice_seconds' => $notice]), $expires);
+            }
         }
         return $row['id'];
     }
@@ -243,8 +268,9 @@ final class DeviceIntake
                     if (!$e || $e['user_id'] !== $user) { $expected = null; }
                 }
                 $asset = self::asset($b->asset_code ?? null) ?? ($expected !== null ? $row['asset_code'] : null);
-                $this->db->run('UPDATE enrollment_requests SET status=\'approved\',user_id=?,asset_code=?,expected_device_id=?,match_kind=IF(?,\'manual\',match_kind),decided_by=?,decided_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?', [$user, $asset, $expected, (int) $manual, $c['principal_id'], $tenant, $id]);
-                $audit('enrollment_request', $id, ['status', 'user_id', 'asset_code']);
+                $notice = $this->restartNotice($tenant, $access, $row, $user, $asset, (bool) ($b->restart_with_notice ?? false));
+                $this->db->run('UPDATE enrollment_requests SET status=\'approved\',user_id=?,asset_code=?,restart_notice_seconds=?,expected_device_id=?,match_kind=IF(?,\'manual\',match_kind),decided_by=?,decided_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?', [$user, $asset, $notice, $expected, (int) $manual, $c['principal_id'], $tenant, $id]);
+                $audit('enrollment_request', $id, $notice === null ? ['status', 'user_id', 'asset_code'] : ['status', 'user_id', 'asset_code', 'restart_with_notice']);
                 return AdminApi::response($this->requestDto($this->request($tenant, $id)));
             case 'rejectEnrollmentRequest':
                 $row = $this->request($tenant, $id);
@@ -420,7 +446,7 @@ final class DeviceIntake
             'claimed_document' => $r['claimed_document'], 'match_kind' => $r['match_kind'], 'alert' => $r['alert'],
             'user_id' => self::optId($r['user_id']), 'user_name' => $this->name($r['tenant_id'], $r['user_id']),
             'suggested_user_id' => self::optId($r['suggested_user_id']), 'suggested_user_name' => $this->name($r['tenant_id'], $r['suggested_user_id']),
-            'asset_code' => $r['asset_code'], 'device_id' => self::optId($r['device_id']), 'created_at' => Util::time($r['created_at']),
+            'asset_code' => $r['asset_code'], 'restart_with_notice' => $r['restart_notice_seconds'] !== null, 'device_id' => self::optId($r['device_id']), 'created_at' => Util::time($r['created_at']),
             'last_seen_at' => Util::time($r['last_seen_at']), 'decided_at' => self::optTime($r['decided_at'])];
     }
     private function settingsDto(array $s): array

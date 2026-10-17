@@ -10977,7 +10977,14 @@ paths:
       - admin
       operationId: approveEnrollmentRequest
       summary: Aprobar solicitud de alta
-      description: Asigna el equipo a la persona indicada (o a la sugerida). El agente recibe su ticket en su próximo reintento.
+      description: >-
+        Asigna el equipo a la persona indicada (o a la sugerida). El agente recibe su ticket en su próximo reintento.
+        Con placa, al enrolar se encola el cambio de nombre (rename_computer, se aplica al reiniciar). Con
+        restart_with_notice=true se encola además un reinicio con aviso de 5 minutos para aplicarlo ya; exige placa
+        convertible en nombre (si no, 422), el permiso equipos.reiniciar de quien aprueba (403 permission_denied), la
+        función comandos en el plan de la persona (403 feature_not_in_plan, detail comandos) y agente 4.0.17 o
+        posterior (409 agent_too_old). Al enrolar se revalidan el plan y la versión; si ya no se cumplen, solo se
+        encola el cambio de nombre.
       security:
       - adminSession: []
         csrfToken: []
@@ -17199,6 +17206,7 @@ components:
       - suggested_user_id
       - suggested_user_name
       - asset_code
+      - restart_with_notice
       - device_id
       - created_at
       - last_seen_at
@@ -17271,6 +17279,9 @@ components:
             minLength: 1
             maxLength: 40
           - type: 'null'
+        restart_with_notice:
+          type: boolean
+          description: Se aprobó con «Reiniciar con aviso para aplicarlo ya» (reinicio con aviso de 5 min al enrolar).
         device_id:
           anyOf:
           - type: string
@@ -17307,6 +17318,11 @@ components:
             minLength: 1
             maxLength: 40
           - type: 'null'
+        restart_with_notice:
+          type: boolean
+          description: >-
+            Opcional (por defecto false, como antes: el nombre se aplica en el próximo reinicio). true = al enrolar,
+            además del cambio de nombre, reinicio con aviso de 5 minutos a la persona para aplicarlo ya.
     EnrollmentSettings:
       type: object
       additionalProperties: false
@@ -19966,6 +19982,53 @@ components:
             - wipe
             - refresh_policy
             - rename_computer
+        computer_rename:
+          description: >-
+            Cambio del nombre de Windows en curso según la orden rename_computer más reciente del equipo, comparada con
+            el hostname que reporta el agente. null si no hay orden o si el nombre ya coincide.
+          anyOf:
+          - $ref: '#/components/schemas/DeviceComputerRename'
+          - type: 'null'
+    DeviceComputerRename:
+      type: object
+      additionalProperties: false
+      required:
+      - computer_name
+      - state
+      - result_code
+      - requested_at
+      - completed_at
+      - restart_pending
+      properties:
+        computer_name:
+          type: string
+          maxLength: 15
+        state:
+          description: >-
+            renaming = la orden aún no tiene respuesta del equipo; pending_restart = el agente la ejecutó y Windows
+            aplica el nombre al reiniciar (result_code pending_restart, o completed si ya reinició y el agente aún no
+            reporta el nombre); failed = falló (result_code del agente), venció (expired) o se canceló (cancelled).
+          type: string
+          enum:
+          - renaming
+          - pending_restart
+          - failed
+        result_code:
+          anyOf:
+          - type: string
+            maxLength: 100
+          - type: 'null'
+        requested_at:
+          type: string
+          format: date-time
+        completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        restart_pending:
+          description: Hay una orden de reinicio posterior al cambio de nombre aún sin ejecutar.
+          type: boolean
     LegacyK3Status:
       type: object
       additionalProperties: false

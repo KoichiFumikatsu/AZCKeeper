@@ -757,7 +757,26 @@ final class AdminApi
         $k3=is_array($specs)&&is_array($specs['legacy_k3']??null)?$specs['legacy_k3']:null; $out['legacy_k3']=$k3===null?null:['running'=>is_bool($k3['running']??null)?$k3['running']:null,'autostart'=>is_bool($k3['autostart']??null)?$k3['autostart']:null,'installed'=>is_bool($k3['installed']??null)?$k3['installed']:null];
         $out+=['last_seen_at'=>$r['last_seen_at']===null?null:Util::time($r['last_seen_at']),'ram_bytes'=>(int)$r['ram_bytes'],'capabilities'=>json_decode($r['capabilities']),'policy_version'=>$r['policy_version']===null?null:(int)$r['policy_version'],'version'=>(int)$r['version']];
         // Ordenes que el plan de su dueño permite: el panel deshabilita las demas sin un intento fallido.
-        $out['allowed_commands']=$this->allowedCommands($r); return $out;
+        $out['allowed_commands']=$this->allowedCommands($r);
+        $out['computer_rename']=$this->computerRename($r); return $out;
+    }
+    /**
+     * Cambio de nombre de Windows en curso (2026-10-17): la orden rename_computer mas reciente comparada con el hostname
+     * que reporta el agente. null si no hay orden o si el nombre ya coincide. renaming = aun sin respuesta del equipo;
+     * pending_restart = el agente lo aplico y Windows lo toma al reiniciar; failed = fallo, vencio o se cancelo (result_code).
+     * restart_pending: hay un reinicio posterior sin ejecutar (el nombre se aplicara con el).
+     */
+    private function computerRename(array $d): ?array
+    {
+        $c=$this->db->one("SELECT sequence,status,parameters,result_code,created_at,completed_at,expires_at<=UTC_TIMESTAMP(6) lapsed FROM device_command WHERE tenant_id=? AND device_id=? AND type='rename_computer' ORDER BY sequence DESC LIMIT 1",[$this->tenant,$d['id']]);
+        if (!$c) { return null; }
+        $name=json_decode((string)$c['parameters'],true)['computer_name']??null;
+        if (!is_string($name) || strcasecmp($name,(string)$d['hostname'])===0) { return null; }
+        $open=in_array($c['status'],['pending','delivered','running'],true);
+        $state=$c['status']==='succeeded'?'pending_restart':($open && !$c['lapsed']?'renaming':'failed');
+        $code=match (true) { $c['status']==='cancelled'=>'cancelled', $state==='failed' && $open=>'expired', $c['status']==='expired'=>'expired', default=>$c['result_code'] };
+        $restart=$state!=='failed' && $this->db->one("SELECT id FROM device_command WHERE tenant_id=? AND device_id=? AND type='restart' AND sequence>? AND status IN ('pending','delivered','running') AND expires_at>UTC_TIMESTAMP(6) LIMIT 1",[$this->tenant,$d['id'],$c['sequence']])!==null;
+        return ['computer_name'=>$name,'state'=>$state,'result_code'=>$code,'requested_at'=>Util::time($c['created_at']),'completed_at'=>$c['completed_at']===null?null:Util::time($c['completed_at']),'restart_pending'=>$restart];
     }
     private function revokeDevice(string $id): void
     {
