@@ -208,3 +208,23 @@ details.nav-group>summary.nav-heading:hover{background:var(--hover);color:var(--
 .notify-empty{padding:12px 0 4px}.notify-empty-title{font-weight:600;font-size:14px;margin-bottom:4px}.notify-empty .link-button{margin-top:8px}
 .notify-shortcuts{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:14px;padding-top:12px;border-top:1px solid var(--divider);font-size:13px}.notify-shortcuts a{display:inline-flex;align-items:center;min-height:32px}
 @media(max-width:820px){.notify-panel{position:fixed;top:78px;right:16px;left:16px;width:auto}}
+/* Resumen de protección (Seguridad de los equipos): arriba qué compró y ajustes lado a lado; abajo la tabla por equipo. */
+.protection-top{display:grid;grid-template-columns:minmax(0,1fr);gap:24px;margin-bottom:24px}
+.protection-top .surface{margin-bottom:0}
+.protection-table{overflow-x:auto}
+.protection-table th,.protection-table td{vertical-align:top;overflow-wrap:normal}
+.protection-devices .protection-table th,.protection-devices .protection-table td{padding:9px 5px}.protection-devices .protection-table td small{overflow-wrap:anywhere}.protection-devices .protection-table th{font-size:12px;white-space:normal}
+.protection-devices .protection-table .badge{padding:1px 7px;font-size:11px;white-space:normal}
+/* Estado por control: texto de color con punto (sin cápsula) para que las 7 columnas quepan; la cápsula queda para el estado global. */
+.protection-devices .protection-table td.control .badge{padding:0;border:0;background:none;gap:5px}.protection-devices .protection-table td.control .badge:before{display:inline-block;content:'';height:6px;width:6px;border-radius:50%;background:currentColor;flex:none}.protection-devices .protection-table td:first-child{min-width:120px}
+.protection-devices .protection-table td{font-size:12px}
+.protection-devices .protection-table td small{color:var(--muted)}
+.protection-status{min-width:140px}.protection-status small a{font-weight:600}
+.protection-more summary{cursor:pointer;font-size:12px;color:var(--accent);margin-top:4px}.protection-more ul{margin:4px 0 0;padding-left:16px;font-size:12px}
+.protection-kpi .link-button{font-size:12px;margin-top:6px}
+.protection-kpi.protected dd{color:#305b48}.protection-kpi.partial dd{color:#6d4c15}.protection-kpi.unprotected dd{color:#93121d}.protection-kpi.no_data dd{color:var(--muted)}
+.protection-facts{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.protection-settings .actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+.protection-count{margin:0 0 8px}
+.protection-devices>button{margin-top:12px}
+@media(max-width:820px){.protection-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}

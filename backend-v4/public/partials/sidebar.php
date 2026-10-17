@@ -16,7 +16,7 @@ $portal = [
         ['client-logs', 'Logs de los equipos', '/logs.php', false]]],
     'productividad' => ['Productividad', [['reports', 'Productividad', '/reportes.php'], ['sites', 'Comparar sedes', '/sedes.php', false]]],
     'alertas' => ['Alertas', [['dual-job', 'Doble empleo', '/doble-empleo.php'], ['suspicious-apps', 'Apps sospechosas', '/apps-sospechosas.php', false]]],
-    'seguridad' => ['Seguridad de los equipos', [['policies', 'Reglas de apps, sitios y USB', '/reglas.php', false]]],
+    'seguridad' => ['Seguridad de los equipos', [['protection', 'Resumen de protección', '/proteccion.php', false], ['policies', 'Reglas de apps, sitios y USB', '/reglas.php', false]]],
     'jornada' => ['Jornada', [['schedules', 'Horarios', '/horarios.php', false], ['holidays', 'Festivos', '/festivos.php', false],
         ['absences', 'Ausencias', '/ausencias.php', false], ['doors', 'Puertas', '/puertas.php', false]]],
     'accesos' => ['Estructura y accesos', [['organization', 'Estructura del cliente', '/organizacion.php', false],

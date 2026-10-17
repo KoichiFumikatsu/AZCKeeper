@@ -12,6 +12,7 @@ import { evaluate as evaluateOnboarding, count as countSteps, nextPending as nex
 import { canConfigureUnlockPin, mountUnlockPin } from './unlock-pin.js';
 import { canConfigureWindowsSecurity, mountWindowsSecurity } from './windows-security.js';
 import { mountNotifications } from './notifications.js';
+import { protectionPage } from './protection.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
 // de la API; lo que la cuenta no puede ver se explica en vez de mostrarse vacío.
@@ -4602,6 +4603,7 @@ async function start() {
     else if (page === 'absences') await absencesPage();
     else if (page === 'classification') await classificationPage();
     else if (page === 'policies') await policiesPage();
+    else if (page === 'protection') await protectionPage({ tenant, content: $('page-content'), status: $('page-status') });
     else if (page === 'audit') await auditPage();
     else if (page === 'client-logs') await logsPage();
     else if (page === 'server-health') await healthPage();

@@ -7,7 +7,7 @@ const NEEDS = {
   home: ['reportes.ver', false],
   sites: ['organizacion.ver', true], users: ['usuarios.ver', false], devices: ['equipos.ver', false], reports: ['reportes.ver', false],
   intake: ['equipos.enrolar', true], organization: ['organizacion.ver', true], schedules: ['horarios.ver', true], holidays: ['festivos.ver', true],
-  absences: ['presencia.ver', false], doors: ['organizacion.ver', true], assignments: ['equipos.asignar', false], policies: ['reglas.ver', true],
+  absences: ['presencia.ver', false], doors: ['organizacion.ver', true], assignments: ['equipos.asignar', false], policies: ['reglas.ver', true], protection: ['equipos.ver', false],
   classification: ['reportes.ver', true], 'suspicious-apps': ['cumplimiento.ver', false], 'dual-job': ['cumplimiento.ver', false],
   coverage: ['cobertura.ver', false], accounts: ['usuarios.editar', true], roles: ['roles.ver', true], sources: ['integraciones.ver', true],
   audit: ['auditoria.ver', true], 'client-logs': ['operacion.logs', false], 'panel-settings': ['operacion.ajustes_ver', true],
