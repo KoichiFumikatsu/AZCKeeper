@@ -20,6 +20,10 @@ final class Idempotency
             $plain = openssl_decrypt(substr($blob, 28), 'aes-256-gcm', Config::key(), OPENSSL_RAW_DATA, substr($blob, 0, 12), substr($blob, 12, 16), implode('', $args));
             if ($plain === false) { throw new \RuntimeException('Invalid idempotency ciphertext'); }
             $saved = json_decode($plain, false, 64, JSON_THROW_ON_ERROR);
+            // `server_time` es la hora del servidor AL RESPONDER (el agente la toma como hora confirmada para su desfase):
+            // en un replay la guardada es del primer intento, minutos antes si el sync se corto por timeout. Se refresca.
+            // `received_at` (acks de ingesta) NO: dice cuando se recibio el dato, y eso ocurrio en el primer intento.
+            if (is_object($saved->body) && isset($saved->body->server_time)) { $saved->body->server_time = Util::now(); }
             return ['status' => $saved->status, 'json' => Util::json($saved->body), 'headers' => (array) $saved->headers];
         }
         $this->db->run('INSERT INTO idempotency_keys (tenant_id,principal_id,method,route_hash,idempotency_key,route,request_hash,created_at,expires_at) VALUES (?,?,?,?,?,?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6)+INTERVAL 24 HOUR)', [...$args, $r->path, $hash]);

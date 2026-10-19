@@ -43,6 +43,7 @@ require __DIR__ . '/retention.php';
 require __DIR__ . '/cron-runs.php';
 require __DIR__ . '/episode-title-limit.php';
 require __DIR__ . '/deadlock-retry.php';
+require __DIR__ . '/idempotent-replay-time.php';
 require __DIR__ . '/tenant-provision.php';
 require __DIR__ . '/notifications.php';
 require __DIR__ . '/protection.php';
@@ -195,7 +196,8 @@ try {
     check(isset($first[2]['ratelimit-limit'], $first[2]['ratelimit-remaining'], $first[2]['ratelimit-reset'], $first[2]['x-ratelimit-scope']), 'HTTP rate-limit headers');
     check($s['policy_version'] === 1 && $s['policy']['version'] === '1', 'first policy downloaded');
     $repeat = request('POST', '/client/sync', $sync, $key, $bearer, $idem);
-    expect($repeat, 200, 'idempotency replay'); check($repeat[3] === $first[3], 'exact response replay');
+    expect($repeat, 200, 'idempotency replay'); check(withoutServerTime($repeat[3]) === withoutServerTime($first[3]), 'exact response replay (salvo server_time, que se refresca)');
+    idempotentReplayTimeTests($sync, $key, $bearer);
     $sync['sequence'] = 2; $sync['policy_version'] = 1;
     expect(request('POST', '/client/sync', $sync, $key, $bearer, $idem), 409, 'idempotency body conflict');
     $s = expect(request('POST', '/client/sync', $sync, $key, $bearer, Util::uuid()), 200, 'unchanged policy sync'); check($s['policy'] === null, 'policy omitted');
