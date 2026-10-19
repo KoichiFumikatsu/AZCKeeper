@@ -130,9 +130,11 @@ function commandCancelTests(Database $db): void
     check($r[0] === 404 && $row($guarded)['status'] === 'pending', 'device outside the admin scope: not found, unchanged');
     check($cancel(Util::uuid())[0] === 404, 'unknown command: 404');
     $plan(['productividad']);
+    // Cancelar no depende del plan (2026-10-19): sin «comandos» ya no se puede enviar un reinicio, pero si frenar el enviado.
+    check(adminRequest($admin, 'POST', "/devices/$did/commands", ['type' => 'restart', 'reason' => 'Prueba de cancelar', 'expires_at' => gmdate('Y-m-d\TH:i:s\Z', time() + 3600)], ['idempotency-key' => Util::uuid()])[0] === 403, 'owner plan without comandos: no new restart');
     $r = $cancel($guarded);
-    check($r[0] === 403 && $r[1]['code'] === 'feature_not_in_plan' && $r[1]['detail'] === 'comandos' && $row($guarded)['status'] === 'pending', 'owner plan without comandos: 403');
-    check((int) $db->one("SELECT COUNT(*) n FROM audit_log WHERE tenant_id=? AND action='cancelDeviceCommand' AND outcome='denied' AND reason='feature_not_in_plan:comandos'", [$t])['n'] === 1, 'plan denial audited');
+    check($r[0] === 200 && $row($guarded)['status'] === 'cancelled', 'owner plan without comandos: cancelling still allowed');
+    check((int) $db->one("SELECT COUNT(*) n FROM audit_log WHERE tenant_id=? AND action='cancelDeviceCommand' AND reason='feature_not_in_plan:comandos'", [$t])['n'] === 0, 'no plan denial for cancel');
     $plan(['comandos', 'borrado', 'productividad']);
     // Borrado: reautenticacion de menos de 5 minutos, como al crearlo.
     expect(adminRequest($admin, 'POST', '/auth/reauth', ['password' => $admin['password']]), 200, 'reauth for wipe');

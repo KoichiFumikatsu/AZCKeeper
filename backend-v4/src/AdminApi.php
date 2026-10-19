@@ -19,7 +19,7 @@ final class AdminApi
         if ($r->operation['operationId']==='patchDevice' && (property_exists($r->body,'release_ring') || property_exists($r->body,'release_pause_reason')) && !$c['platform']) { throw new ApiError(403,'permission_denied'); }
         $commandType=null;
         if ($r->operation['operationId']==='createDeviceCommand') { $commandType=$r->body->type; }
-        // Cancelar una orden exige el mismo permiso que crearla: el de su tipo (2026-10-19).
+        // Cancelar una orden exige el mismo permiso que crearla: el de su tipo (2026-10-19); el plan no (ver abajo).
         if ($r->operation['operationId']==='cancelDeviceCommand') {
             $command=$db->one('SELECT type FROM device_command WHERE tenant_id=? AND device_id=? AND id=?',[$this->tenant,Util::bin($r->resourceId),Util::bin($r->subResourceId)]);
             if (!$command) { throw new ApiError(404,'resource_not_found'); }
@@ -34,8 +34,9 @@ final class AdminApi
         if ($permission==='roles.gestionar') { $this->access->rolesGate(); }
         if (in_array($r->operation['operationId'],['createDeviceCommand','createHardeningCommand','assignDevice','cancelDeviceCommand'],true)) { $this->authorizedDevice=$this->row('devices',Util::bin($r->resourceId)); $this->deviceUser=$this->access->user($this->authorizedDevice['user_id']); }
         // El plan del DUEÑO del equipo gobierna las ordenes remotas (encargo 4): sin la funcion, 403 feature_not_in_plan auditado.
-        // Tambien al cancelarlas (mismo plan que crearlas). harden/unharden no estan en COMMAND_TYPES: su plan lo mira Hardening.
-        if ($commandType!==null && in_array($commandType,self::COMMAND_TYPES,true) && !in_array($commandType,$this->allowedCommands($this->authorizedDevice),true)) {
+        // Cancelar NO depende del plan (decision de Koichi, 2026-10-19): reduce riesgo y una orden ya enviada debe poder
+        // frenarse aunque el plan haya perdido la funcion; si exige el permiso de su tipo. harden/unharden: Hardening.
+        if ($commandType!==null && $r->operation['operationId']!=='cancelDeviceCommand' && in_array($commandType,self::COMMAND_TYPES,true) && !in_array($commandType,$this->allowedCommands($this->authorizedDevice),true)) {
             $feature=self::COMMAND_FEATURES[$commandType]; $device=$this->authorizedDevice['id']; $op=$r->operation['operationId'];
             $e=new ApiError(403,'feature_not_in_plan',[],$feature);
             $e->afterRollback=function () use ($db,$c,$r,$device,$feature,$op): void {

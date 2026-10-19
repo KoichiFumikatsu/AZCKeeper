@@ -54,7 +54,6 @@ export function cancelState(r, d, access, now = Date.now()) {
   if (r.status !== 'pending' && !countdown(r)) return null;
   const permission = cancelPermissions[r.type];
   if (access && !access.platform && !access.permissions.some(p => p.code === permission)) return null;
-  if (Array.isArray(d.allowed_commands) && ['lock', 'unlock', 'restart', 'shutdown', 'wipe'].includes(r.type) && !d.allowed_commands.includes(r.type)) return null;
   if (r.status !== 'pending' && versionBelow(d.agent_version, CANCEL_AGENT)) return { kind: 'old_agent', note: OLD_AGENT_CANCEL };
   return { kind: 'cancellable', countdown: r.status !== 'pending' };
 }
