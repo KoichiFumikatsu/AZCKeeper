@@ -152,6 +152,10 @@ export async function rulesTab(root, { type, id, name }) {
     body.replaceChildren(el('p', 'Consultando las reglas…', 'help'));
     try { data = await api('GET', `/${type === 'device' ? 'devices' : 'users'}/${id}/rules`); }
     catch (e) { body.replaceChildren(); const p = el('p', e.status === 403 ? 'Tu cuenta no puede ver las reglas (se necesita el permiso para ver reglas).' : e.status === 409 ? 'No se pudieron calcular sus reglas: su ubicación laboral o sus reglas tienen un problema que también impide enviárselas al equipo.' : errorMessage(e), 'error-text'); p.setAttribute('role', 'alert'); body.append(p); return; }
+    // Ficha de la persona: lo que añaden las reglas propias de cada equipo suyo, con la composición de ese equipo
+    // (GET /devices/{id}/rules, la misma del compilador). Un equipo que no se pudo leer se dice en su sección.
+    data.deviceRules = type === 'user' ? await Promise.all(data.devices.filter(d => d.own_policy_ids.length)
+      .map(d => api('GET', `/devices/${d.device_id}/rules`).then(rules => ({ device: d, rules }), error => ({ device: d, error })))) : [];
     draw();
   };
   const draw = () => {
@@ -173,7 +177,7 @@ export async function rulesTab(root, { type, id, name }) {
         if (d.compiled_version === null) li.append(el('span', 'aún no tiene reglas compiladas: las recibe en su próxima sincronización.'));
         else if (d.up_to_date) li.append(el('span', `tiene aplicada la versión ${d.compiled_version} de sus reglas (al día).`));
         else li.append(el('span', `versión ${d.compiled_version} lista; el agente reporta la ${d.reported_version}. La aplica en su próxima sincronización.`));
-        if (subject.type === 'user' && d.own_policy_ids.length) li.append(' ', el('small', 'Este equipo tiene además reglas propias: míralas en su ficha.'));
+        if (subject.type === 'user' && d.own_policy_ids.length) li.append(' ', el('small', 'Este equipo tiene además reglas propias: están más abajo.'));
         ul.append(li);
       }
       body.append(ul);
@@ -205,7 +209,31 @@ export async function rulesTab(root, { type, id, name }) {
         sec.append(ul);
       }
     }
+    deviceSections();
     actions();
+  };
+  // «En su equipo AZC-ANA:»: solo lo que tocan las reglas propias de ese equipo, quién gana y a quién le gana.
+  const deviceSections = () => {
+    for (const { device, rules, error } of data.deviceRules || []) {
+      const sec = el('section', undefined, 'rules-kind rules-device'); sec.dataset.device = device.device_id; body.append(sec);
+      const h = el('h3', `En su equipo ${device.hostname}:`); sec.append(h);
+      const edit = el('a', 'Editar en la ficha del equipo', 'link-button'); edit.href = `/equipo.php?id=${encodeURIComponent(device.device_id)}&tab=reglas`;
+      edit.setAttribute('aria-label', `Editar las reglas del equipo ${device.hostname} en su ficha`); h.append(' ', edit);
+      if (error) { const p = el('p', `No se pudieron leer las reglas de este equipo: ${errorMessage(error)}`, 'error-text'); p.setAttribute('role', 'alert'); sec.append(p); continue; }
+      const touched = rules.entries.filter(e => [...e.winners, ...e.overridden].some(x => x.scope === 'device'));
+      const dropped = rules.excluded.filter(x => x.source.scope === 'device');
+      sec.append(el('p', 'Las reglas propias de este equipo ganan a las de la persona, su área, su sede y la empresa.', 'help'));
+      if (!touched.length && !dropped.length) { sec.append(el('p', 'Sus reglas propias no cambian nada de lo anterior.', 'help')); continue; }
+      const ul = el('ul', undefined, 'rules-effective');
+      for (const e of touched) {
+        const li = el('li'); li.dataset.target = e.target; li.dataset.kind = e.kind;
+        const line = el('p'); line.append(el('strong', subjectLabel(e.kind, e.target)), ' — ', badgeEl(outcome(e.kind, e.target, e.effect), e.effect === 'deny' ? 'bad' : e.effect === 'allow' ? 'good' : 'info'), ' ', el('span', explainEntry(e, rules.subject).replace(/^[^(]+\(/, '(')));
+        li.append(line, el('small', `Regla: ${policyNames([...e.winners, ...e.overridden])}`)); ul.append(li);
+      }
+      sec.append(ul); const off = el('ul', undefined, 'rules-excluded');
+      for (const x of dropped) off.append(el('li', `${x.targets.map(t => subjectLabel(x.kind, t)).join(', ')} — este equipo ${verb(x.kind, x.targets[0], x.effect)} («${x.source.policy_name || 'Regla'}»), pero ${x.reason === 'not_contracted' ? 'el cliente no contrató la función' : 'no aplica por plan'}.`));
+      if (dropped.length) sec.append(off);
+    }
   };
   // Botones de la ficha: crean o editan la regla propia (destino esta persona o este equipo).
   const actions = () => {
