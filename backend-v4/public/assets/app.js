@@ -14,6 +14,7 @@ import { mountRelocations } from './relocations.js';
 import { fleet, deviceUpdates, releaseDeployments } from './fleet.js';
 import { LOG_COMPONENTS } from './log-components.js';
 import { mountNotifications } from './notifications.js';
+import { rulesTab } from './policy-rules.js';
 
 const page = document.body.dataset.page;
 const surface = document.body.dataset.surface;
@@ -448,16 +449,47 @@ async function device() {
     api('GET', `/admin/devices/${d.id}/hardening`).catch(error => { if ([403, 404].includes(error.status)) return null; throw error; }),
     log.load(),
   ]);
+  // Pestañas de la ficha: «Equipo» (todo lo de siempre) y «Reglas» (lo que le aplica hoy y cambiarlo, policy-rules.js).
+  const panel = deviceTabs(d);
   const header = deviceSummary(d, owner, org, hardening, log);
-  $('content').append(header.section);
-  deviceUpdates($('content'), d, tenant, session.is_platform_admin);
+  panel.append(header.section);
+  deviceUpdates(panel, d, tenant, session.is_platform_admin);
   const remote = await remoteActionsSection(d, log);
-  if (remote) $('content').append(remote);
-  $('content').append(renameSection(d, log, () => header.rename()));
+  if (remote) panel.append(remote);
+  panel.append(renameSection(d, log, () => header.rename()));
   const hardeningBox = await hardeningSection(d, hardening, status => header.hardening(status), log);
-  if (hardeningBox) $('content').append(hardeningBox);
-  $('content').append(await controlsSection(d));
-  $('content').append(await historySection(d, log));
+  if (hardeningBox) panel.append(hardeningBox);
+  panel.append(await controlsSection(d));
+  panel.append(await historySection(d, log));
+}
+const DEVICE_TABS = [['equipo', 'Equipo'], ['reglas', 'Reglas']];
+function deviceTabs(d) {
+  const bar = node('div', undefined, 'tabs device-tabs'); bar.setAttribute('role', 'tablist'); bar.setAttribute('aria-label', 'Ficha del equipo');
+  $('content').append(bar);
+  const views = {};
+  for (const [key, text] of DEVICE_TABS) {
+    const b = node('button', text); b.type = 'button'; b.id = `device-tab-${key}`; b.dataset.key = key; b.setAttribute('role', 'tab'); b.setAttribute('aria-controls', `device-panel-${key}`);
+    const p = node('div'); p.id = `device-panel-${key}`; p.setAttribute('role', 'tabpanel'); p.setAttribute('aria-labelledby', b.id); p.tabIndex = 0; p.hidden = true;
+    bar.append(b); $('content').append(p); views[key] = { button: b, panel: p, drawn: key === 'equipo' };
+    b.addEventListener('click', () => go(key));
+  }
+  const go = key => {
+    for (const [k, v] of Object.entries(views)) { const on = k === key; v.button.setAttribute('aria-selected', String(on)); v.button.tabIndex = on ? 0 : -1; v.panel.hidden = !on; }
+    if (!views[key].drawn) {
+      views[key].drawn = true;
+      rulesTab(views[key].panel, { type: 'device', id: d.id, name: d.hostname }).catch(error => appendError(views[key].panel, error));
+    }
+    const url = new URL(location.href); if (key === 'equipo') url.searchParams.delete('tab'); else url.searchParams.set('tab', key);
+    history.replaceState(null, '', url.pathname + url.search);
+  };
+  bar.addEventListener('keydown', e => {
+    const list = [...bar.children]; const i = list.indexOf(document.activeElement); let next;
+    if (e.key === 'ArrowRight') next = (i + 1) % list.length; if (e.key === 'ArrowLeft') next = (i + list.length - 1) % list.length; if (e.key === 'Home') next = 0; if (e.key === 'End') next = list.length - 1;
+    if (next !== undefined) { e.preventDefault(); list[next].click(); list[next].focus(); }
+  });
+  const asked = new URLSearchParams(location.search).get('tab');
+  go(DEVICE_TABS.some(([k]) => k === asked) ? asked : 'equipo');
+  return views.equipo.panel;
 }
 // Encabezado de la ficha: quién lo usa, dónde, con qué agente, si está en línea, endurecido o bloqueado.
 function deviceSummary(d, owner, org, hardening, log) {

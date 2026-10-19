@@ -14,6 +14,7 @@ import { canConfigureUnlockPin, mountUnlockPin } from './unlock-pin.js';
 import { canConfigureWindowsSecurity, mountWindowsSecurity } from './windows-security.js';
 import { mountNotifications } from './notifications.js';
 import { protectionPage } from './protection.js';
+import { SCOPE_LABEL, CHOICES, CHOICE_LABEL, NOTHING, unsupportedRules, describeRule, itemize as itemizeRules, parseDomains, ruleChoices, buildRules, policySaveError, rulesTab } from './policy-rules.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
 // de la API; lo que la cuenta no puede ver se explica en vez de mostrarse vacío.
@@ -2383,6 +2384,9 @@ function personProfile(ctx, u, { tab = 'datos', created = null, draft = null } =
       const dataDirty = dataPanel(v.panel, ctx, () => u, saved);
       const accessDirty = accessPanel(v.panel, ctx, () => u, saved, draft);
       v.dirty = () => dataDirty() || accessDirty();
+    } else if (key === 'politicas') {
+      // Pestaña «Reglas»: lo que le aplica hoy y los botones para bloquear o permitir (policy-rules.js).
+      rulesTab(v.panel, { type: 'user', id: u.id, name: u.display_name }).catch(e => { const p = el('p', errorMessage(e), 'error-text'); p.setAttribute('role', 'alert'); v.panel.append(p); });
     } else activityPanel(v.panel, u, key, ctx.canIntake);
     draft = null;
   };
@@ -3191,30 +3195,12 @@ async function classificationPage() {
 }
 
 // ---- Reglas (politicas) ---------------------------------------------------------------------------------------------
-// Solo se ofrece lo que el agente sabe aplicar: bloquear sitios web (con excepciones), descargas e instalaciones
-// (bloquear todo o permitir como excepcion) y USB (bloquear, solo lectura o permitir). Gana lo mas especifico:
-// equipo > persona > area > sede > empresa.
-const SCOPE_LABEL = { tenant: 'Toda la empresa', site: 'Sede', area: 'Área', user: 'Persona', device: 'Equipo' };
-const RULE_KIND = { web: 'sitios web', download: 'descargas', installation: 'instalaciones', usb: 'USB', schedule: 'horario', os: 'sistema operativo', encryption: 'cifrado' };
-// Lo que el editor simplificado no sabe mostrar (F11): horarios, prioridades, varias entradas del mismo tipo, tipos o
-// destinos que no tiene. Una regla así no se reescribe al guardar: solo cambian nombre, destino y estado.
-function unsupportedRules(rules) {
-  const why = new Set(); const seen = new Set();
-  for (const r of rules || []) {
-    if (r.schedule_id) why.add('horarios');
-    if (r.priority) why.add('prioridades');
-    const key = r.kind === 'web' ? `web:${r.effect}` : r.kind;
-    if (seen.has(key)) why.add('varias entradas del mismo tipo'); seen.add(key);
-    const one = t => r.targets.length === 1 && r.targets[0] === t;
-    if (!['web', 'download', 'installation', 'usb'].includes(r.kind)) why.add(`reglas de ${RULE_KIND[r.kind] || r.kind}`);
-    else if (!['allow', 'deny'].includes(r.effect)) why.add('efectos que no son bloquear o permitir');
-    else if ((r.kind === 'download' || r.kind === 'installation') && !one('*')) why.add(`destinos específicos de ${RULE_KIND[r.kind]}`);
-    else if (r.kind === 'usb' && !(one('*') || (r.effect === 'deny' && one('write')))) why.add('destinos específicos de USB');
-  }
-  return [...why];
-}
+// Lo que el agente sabe aplicar, cómo se describe y cómo se arma cada regla viven en policy-rules.js (lo comparte la
+// pestaña «Reglas» de las fichas de persona y equipo). Gana lo más específico: equipo > persona > área > sede > empresa.
 async function policiesPage() {
   const isSuper = !!readSession()?.is_platform_admin;
+  const query = new URLSearchParams(location.search);
+  const focus = isUuid(query.get('persona')) ? { type: 'user', id: query.get('persona') } : isUuid(query.get('equipo')) ? { type: 'device', id: query.get('equipo') } : null;
   const [org0, users, devices, schedules, me] = await Promise.all([optional(allPages('/organization')), optional(allPages('/users')), optional(allPages(`/tenants/${tenant}/devices`)),
     optional(allPages('/schedules')), isSuper ? null : loadAccess()]);
   let list = await allPages('/policies');
@@ -3224,28 +3210,29 @@ async function policiesPage() {
   const canUnits = !!org0 && (isSuper || !!me?.permissions?.some(p => p.code === 'organizacion.editar'));
   const targetName = p => p.target_type === 'tenant' ? 'Toda la empresa' : p.target_type === 'user' ? `Persona: ${who.get(p.target_id) || '—'}` : p.target_type === 'device' ? `Equipo: ${dev.get(p.target_id) || '—'}` : `${SCOPE_LABEL[p.target_type]}: ${n.get(p.target_id) || '—'}`;
   const scheduleName = id => (schedules || []).find(s => s.id === id)?.name || 'un horario';
-  const describe = r => {
-    let text;
-    if (r.kind === 'web') text = `${r.effect === 'deny' ? 'Bloquea' : r.effect === 'allow' ? 'Permite (excepción)' : 'Exige'} ${r.targets.join(', ')}`;
-    else if (r.kind === 'download' && r.targets.length === 1 && r.targets[0] === '*') text = r.effect === 'deny' ? 'Bloquea las descargas' : 'Permite las descargas (excepción)';
-    else if (r.kind === 'installation' && r.targets.length === 1 && r.targets[0] === '*') text = r.effect === 'deny' ? 'Bloquea instalar programas' : 'Permite instalar programas (excepción)';
-    else if (r.kind === 'usb' && ['*', 'write'].includes(r.targets[0]) && r.targets.length === 1) text = r.effect === 'allow' ? 'Permite USB (excepción)' : r.targets[0] === 'write' ? 'USB solo lectura' : 'Bloquea USB';
-    else text = `${{ deny: 'Bloquea', allow: 'Permite', require: 'Exige' }[r.effect] || r.effect} ${RULE_KIND[r.kind] || r.kind}: ${r.targets.join(', ') || '—'}`;
-    if (r.schedule_id) text += ` · solo en el horario «${scheduleName(r.schedule_id)}»`;
-    if (r.priority) text += ` · prioridad ${r.priority}`;
-    return text;
-  };
+  const describe = r => describeRule(r, scheduleName);
   const render = () => {
     $('page-content').replaceChildren();
     const s = surface('Reglas de los equipos');
     s.append(el('p', 'Una regla dice qué se bloquea o se permite y a quién aplica. Si dos reglas chocan, gana la más específica: equipo, luego persona, área, sede y por último la empresa. Así se hacen excepciones: la empresa bloquea Facebook y una persona de Mercadeo lo tiene permitido.', 'help'));
+    // «Ver en Reglas» desde la ficha de una persona o un equipo: solo las reglas que lo alcanzan (activas o no).
+    if (focus) {
+      const shownName = focus.type === 'user' ? who.get(focus.id) : dev.get(focus.id);
+      const box = el('div', undefined, 'notice rules-focus'); box.setAttribute('role', 'status');
+      box.append(el('p', `Mostrando las reglas que alcanzan a ${focus.type === 'user' ? 'la persona' : 'el equipo'} ${shownName || '(fuera de tu alcance)'}: las de la empresa, su sede, su área y las suyas.`));
+      const all = el('a', 'Ver todas las reglas', 'link-button'); all.href = '/reglas.php';
+      const back = el('a', `Volver a la ficha${shownName ? ` de ${shownName}` : ''}`, 'link-button'); back.href = focus.type === 'user' ? `/miembro.php?id=${encodeURIComponent(focus.id)}&tab=politicas` : `/equipo.php?id=${encodeURIComponent(focus.id)}&tab=reglas`;
+      box.append(all, ' ', back); s.append(box);
+    }
+    const shown = focus ? list.filter(reacher(focus.type, focus.id)) : list;
+    if (focus && !shown.length) { empty(s, 'Ninguna regla lo alcanza', 'Ni la empresa, ni su sede, ni su área ni una regla propia le bloquean o permiten nada.'); return; }
     if (!list.length) { empty(s, 'Aún no hay reglas', 'Puedes empezar a monitorear sin bloqueos y añadirlos después de probar el primer equipo. Crea la primera con "Crear regla".'); return; }
     table(s, 'Reglas', [['Nombre', p => p.name], ['Aplica a', targetName], ['Qué hace', p => { const ul = el('ul'); p.rules.forEach(r => ul.append(el('li', describe(r)))); return ul; }],
       ['Estado', p => badge(p.enabled ? 'Activa' : 'Inactiva', p.enabled ? 'good' : '')],
-      ['', p => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(p)); return b; }]], list,
+      ['', p => { const b = el('button', 'Editar', 'link-button'); b.type = 'button'; b.addEventListener('click', () => editor(p)); return b; }]], shown,
       { filters: [['Aplica a', p => SCOPE_LABEL[p.target_type]], ['Estado', p => p.enabled ? 'Activa' : 'Inactiva']] });
   };
-  const domains = text => [...new Set(text.split(/[\s,;]+/).map(x => x.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')).filter(Boolean))];
+  const domains = parseDomains;
   // Alcance de un destino con los datos cargados (personas y equipos que la cuenta puede ver). null: no se puede contar.
   const activeUsers = (users || []).filter(u => u.status === 'active');
   const activeDevices = (devices || []).filter(d => d.status === 'active');
@@ -3274,23 +3261,25 @@ async function policiesPage() {
   };
   // Otras reglas activas que alcanzan a alguien del mismo destino y quién gana si chocan (equipo > persona > área > sede > empresa).
   const LEVEL = { tenant: 0, site: 1, area: 2, user: 3, device: 4 };
-  const related = (type, id, selfId) => {
+  // ¿La regla x alcanza a alguien del destino (type, id)? La usan los choques del editor y el filtro ?persona= / ?equipo=.
+  const reacher = (type, id) => {
     const user = type === 'user' ? (users || []).find(u => u.id === id) : type === 'device' ? (users || []).find(u => u.id === (devices || []).find(d => d.id === id)?.user_id) : null;
     const memberIds = type === 'site' || type === 'area' ? new Set(activeUsers.filter(u => u[`${type}_id`] === id).map(u => u.id)) : null;
     const devOwner = new Map((devices || []).map(d => [d.id, d.user_id]));
-    return list.filter(x => x.enabled && x.id !== selfId).filter(x => {
+    return x => {
       if (x.target_type === type && x.target_id === id) return true;
       if (type === 'tenant' || x.target_type === 'tenant') return true;
       if (user) return (x.target_type === 'site' && x.target_id === user.site_id) || (x.target_type === 'area' && x.target_id === user.area_id) || (x.target_type === 'user' && x.target_id === user.id)
         || (type === 'user' && x.target_type === 'device' && devOwner.get(x.target_id) === user.id);
       if (memberIds) return (x.target_type === 'user' && memberIds.has(x.target_id)) || (x.target_type === 'device' && memberIds.has(devOwner.get(x.target_id)));
       return false;
-    }).map(x => ({ policy: x, rel: x.target_type === type && (x.target_id === id || type === 'tenant') ? 'same' : LEVEL[x.target_type] < LEVEL[type] ? 'broader' : 'narrower' }));
+    };
   };
+  const related = (type, id, selfId) => list.filter(x => x.enabled && x.id !== selfId).filter(reacher(type, id))
+    .map(x => ({ policy: x, rel: x.target_type === type && (x.target_id === id || type === 'tenant') ? 'same' : LEVEL[x.target_type] < LEVEL[type] ? 'broader' : 'narrower' }));
   const REL_TEXT = { same: 'mismo nivel: no pueden bloquear y permitir lo mismo', broader: 'más general: esta gana donde choquen', narrower: 'más específica: gana sobre esta donde choquen' };
   // Lo que hace una lista de entradas, una línea por sitio o control, para comparar con lo guardado.
-  const itemize = rules => rules.flatMap(r => r.kind === 'web' && ['deny', 'allow'].includes(r.effect) && !r.schedule_id && !r.priority
-    ? r.targets.map(t => `${r.effect === 'deny' ? 'Bloquea' : 'Permite (excepción)'} ${t}`) : [describe(r)]);
+  const itemize = rules => itemizeRules(rules, scheduleName);
   const STEPS = ['Qué controlar', 'A quién aplica', 'Cuándo y excepciones', 'Revisar el efecto'];
   // Editor por pasos (revisión UX M6): qué controlar → a quién → cuándo y excepciones → revisar el efecto antes de guardar.
   const editor = p => {
@@ -3354,39 +3343,22 @@ async function policiesPage() {
       if (rules.some(r => r.schedule_id)) whenText.textContent = 'Cuándo: esta regla usa horarios. Se conservan tal cual; aquí solo decides si está activa.';
       read = () => [null, rules];
     } else {
-      // Se reutilizan los id de las entradas existentes para no reemplazarlas en cada guardado.
-      const prev = new Map(rules.map(r => [r.kind === 'web' ? `web:${r.effect}` : r.kind, r.id]));
-      const idFor = key => prev.get(key) || crypto.randomUUID();
-      const rule = kind => rules.find(r => r.kind === kind);
+      // Campos y armado de la regla: policy-rules.js (los mismos que usan los botones de la ficha de persona y equipo).
+      const current = ruleChoices(rules);
       whatPane.append(el('h4', 'Sitios web'));
       const block = labeled(whatPane, 'Bloquear estos sitios (uno por línea)', el('textarea'), 'Ej.: facebook.com, youtube.com. Bloquea también sus subdominios.');
-      block.value = rules.filter(r => r.kind === 'web' && r.effect === 'deny').flatMap(r => r.targets).join('\n');
+      block.value = current.block.join('\n');
       const allow = labeled(whenPane, 'Permitir estos sitios (excepción a un bloqueo más general)', el('textarea'), 'Úsalo en reglas de persona, área o sede: quita el sitio del bloqueo de la empresa solo para ellos.');
-      allow.value = rules.filter(r => r.kind === 'web' && r.effect === 'allow').flatMap(r => r.targets).join('\n');
+      allow.value = current.allow.join('\n');
       whatPane.append(el('h4', 'Equipo'));
-      const choice = (label, options, current) => { const sel = el('select'); options.forEach(([v, t]) => sel.append(new Option(t, v))); sel.value = current; labeled(whatPane, label, sel); return sel; };
-      const effectOf = kind => rule(kind) ? rule(kind).effect : '';
-      const download = choice('Descargas desde el navegador', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['allow', 'Permitir (excepción)']], effectOf('download'));
-      const install = choice('Instalar programas', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['allow', 'Permitir (excepción)']], effectOf('installation'));
-      const usbRule = rule('usb');
-      const usb = choice('Memorias USB', [['', 'Sin regla aquí (se usa la general)'], ['deny', 'Bloquear'], ['write', 'Solo lectura (no copiar a la USB)'], ['allow', 'Permitir (excepción)']], usbRule ? (usbRule.effect === 'allow' ? 'allow' : usbRule.targets[0] === 'write' ? 'write' : 'deny') : '');
+      const choice = kind => { const sel = el('select'); CHOICES[kind].forEach(([v, t]) => sel.append(new Option(t, v))); sel.value = current[kind]; labeled(whatPane, CHOICE_LABEL[kind], sel); return sel; };
+      const download = choice('download');
+      const install = choice('installation');
+      const usb = choice('usb');
       // Paso de cada problema: un sitio mal escrito se corrige donde está escrito; el choque bloquear/permitir, en excepciones.
-      stepOf = problem => problem.startsWith('La regla no hace nada') ? 1 : problem.startsWith('Un mismo sitio') ? 3
+      stepOf = problem => problem === NOTHING ? 1 : problem.startsWith('Un mismo sitio') ? 3
         : domains(block.value).some(d => problem.startsWith(`"${d}"`)) ? 1 : 3;
-      read = () => {
-        const out = [];
-        const blocked = domains(block.value), allowed = domains(allow.value);
-        const bad = [...blocked, ...allowed].find(d => !/^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(d));
-        if (bad) return [`"${bad}" no parece un sitio (escribe solo el dominio, p. ej. facebook.com).`];
-        if (blocked.some(d => allowed.includes(d))) return ['Un mismo sitio no puede estar bloqueado y permitido en la misma regla.'];
-        if (blocked.length) out.push({ id: idFor('web:deny'), kind: 'web', effect: 'deny', targets: blocked, schedule_id: null, priority: 0 });
-        if (allowed.length) out.push({ id: idFor('web:allow'), kind: 'web', effect: 'allow', targets: allowed, schedule_id: null, priority: 0 });
-        if (download.value) out.push({ id: idFor('download'), kind: 'download', effect: download.value, targets: ['*'], schedule_id: null, priority: 0 });
-        if (install.value) out.push({ id: idFor('installation'), kind: 'installation', effect: install.value, targets: ['*'], schedule_id: null, priority: 0 });
-        if (usb.value) out.push({ id: idFor('usb'), kind: 'usb', effect: usb.value === 'allow' ? 'allow' : 'deny', targets: [usb.value === 'write' ? 'write' : '*'], schedule_id: null, priority: 0 });
-        if (!out.length) return ['La regla no hace nada: agrega al menos un bloqueo o permiso.'];
-        return [null, out];
-      };
+      read = () => buildRules({ block: domains(block.value), allow: domains(allow.value), download: download.value, installation: install.value, usb: usb.value }, rules);
     }
     const enabled = el('input'); enabled.type = 'checkbox'; enabled.checked = p ? p.enabled : true;
     const el2 = el('label', undefined, 'check'); el2.append(enabled, ' Regla activa'); whenPane.append(el2);
@@ -3466,10 +3438,7 @@ async function policiesPage() {
         const saved = p ? await api('PATCH', `/policies/${p.id}`, { body: payload, ifMatch: p.version }) : await api('POST', '/policies', { body: payload });
         list = p ? list.map(x => x.id === p.id ? saved : x) : [...list, saved]; dialog.close(); render(); done();
       } catch (e) {
-        const detail = String(e.problem?.detail || '');
-        show(e.code === 'invalid_transition' || e.status === 409 ? 'Choca con otra regla del mismo nivel (una bloquea y otra permite lo mismo). Ponlas en niveles distintos o únelas.'
-          : detail.startsWith('invalid_target:') ? `El valor "${detail.split(':').slice(2).join(':')}" no es válido en ${RULE_KIND[detail.split(':')[1]] || detail.split(':')[1]}.`
-          : detail.startsWith('blocks_panel:') ? `No puedes bloquear ${detail.slice(13)}: dejaría a los equipos sin acceso al panel de Keeper.` : e);
+        show(policySaveError(e) || e);
         ok.disabled = false;
       }
     });

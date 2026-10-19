@@ -470,11 +470,10 @@ export async function coordinator(ctx) {
     async function renderMember() {
       const range = period.range(); if (!range) return; const version = ++cycle;
       submit.disabled = true; kpis.replaceChildren(); panels.replaceChildren();
-      const [act, devices, schedules, effective, month] = await Promise.all([
+      const [act, devices, schedules, month] = await Promise.all([
         ['resumen', 'presencia'].includes(activeTab) ? optional(query(`/users/${id}/activity`, range), false) : {},
-        ['resumen', 'controles', 'politicas'].includes(activeTab) ? optional(query(devicesPath, { user_id: id })) : {},
+        ['resumen', 'controles'].includes(activeTab) ? optional(query(devicesPath, { user_id: id })) : {},
         activeTab === 'resumen' ? optional('/schedules') : {},
-        activeTab === 'politicas' ? optional(`/users/${id}/policies`, false) : {},
         activeTab === 'resumen' ? optional(query(`/users/${id}/activity`, { from: today().slice(0, 8) + '01', to: shiftDay(today(), 1) }), false) : {},
       ]);
       if (!alive() || cycle !== version) return;
@@ -555,14 +554,6 @@ export async function coordinator(ctx) {
       if (activeTab === 'presencia' && canActivity) {
         const presence = tab('presencia', 'Presencia');
         if (act.data) { details(presence, [['Días sin actividad', act.data.data.filter(d => d.status === 'sin_actividad').length]]); pagedTable(presence, 'Check-ins observados a partir de la actividad', presenceColumns.slice(1), act.data.data); presence.append(el('p', 'Primera y última actividad observadas; no son registros de login ni marcaciones manuales.', 'help')); } else error(presence, act.error);
-      }
-      if (activeTab === 'politicas') {
-        const policies = tab('politicas', 'Reglas');
-        if (effective.error) error(policies, effective.error);
-        else {
-          const sources = rows(effective.data, 'devices').flatMap(d => d.rules.map(r => ({ ...r, device: devices.data?.find(x => x.id === d.device_id)?.hostname || d.device_id || 'Sin equipo' })));
-          pagedTable(policies, 'Reglas efectivas y origen de cada regla', [['Equipo', 'device'], ['Tipo', r => r.rule.kind], ['Efecto', r => label(r.rule.effect)], ['Destinos', r => r.rule.targets.join(', ') || 'Sin destinos'], ['Scope de origen', r => label(r.scope)], ['Asignaciones de origen', r => r.assignment_ids.join(', ') || 'Sin asignación'], ['Prioridad', r => r.rule.priority]], sources);
-        }
       }
       submit.disabled = false;
     }

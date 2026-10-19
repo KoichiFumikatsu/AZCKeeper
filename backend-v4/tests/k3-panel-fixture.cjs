@@ -44,7 +44,18 @@ const unknown = [], writes = [];
     else if (p === '/reports/apps') result = { data: [{ process_name: 'WINWORD', active_seconds: 10800, idle_seconds: 600, total_seconds: 11400, sessions: 8, users_count: 1, percent_total: 100 }] };
     else if (p === '/dashboard') result = { ...totals, active_sites: 1, total_sites: 1, online_members: 1, away_members: 0, offline_members: 0, total_members: 1, weekly_output: [activity], workload_by_area: [{ area_id: area, active_seconds: 14400 }], roster: [{ user_id: uid, display_name: person.display_name, devices: 'AZC-ANA', connection_status: 'online', last_seen_at: now, online: true, utilization_percent: 75 }] };
     else if (p === `/users/${uid}/activity`) result = { data: [activity], totals };
-    else if (p === `/users/${uid}/policies`) result = { devices: [] };
+    else if (p === `/users/${uid}/rules` || p === `/devices/${device}/rules`) {
+      // Pestaña «Reglas» de las fichas: la empresa bloquea facebook.com y USB; Ana tiene facebook.com como excepción.
+      const onDevice = p.startsWith('/devices/');
+      const src = (scope, effect, name) => ({ policy_id: id(scope === 'tenant' ? 60 : 61), policy_name: name, scope, target_name: scope === 'user' ? person.display_name : null, effect, priority: 0, own: scope === 'user' && !onDevice });
+      result = { subject: { type: onDevice ? 'device' : 'user', user_id: uid, device_id: onDevice ? device : null, display_name: person.display_name, hostname: onDevice ? 'AZC-ANA' : null, active: true },
+        entries: [{ kind: 'web', target: 'facebook.com', effect: 'allow', winners: [src('user', 'allow', 'Excepción Ana')], overridden: [src('tenant', 'deny', 'Bloqueos generales')] },
+          { kind: 'usb', target: '*', effect: 'deny', winners: [src('tenant', 'deny', 'Bloqueos generales')], overridden: [] }],
+        excluded: [], conflict: null, recompile_pending: false,
+        kinds: [['web', 'web', 'Bloqueo de sitios web'], ['usb', 'usb', 'Bloqueo de USB'], ['download', 'descargas', 'Control de descargas'], ['installation', 'instalaciones', 'Control de instalación de programas']].map(([kind, feature, feature_name]) => ({ kind, feature, feature_name, contracted: true, in_plan: true })),
+        own_policies: onDevice ? [] : [{ id: id(61), tenant_id: tenant, name: 'Excepción Ana', target_type: 'user', target_id: uid, enabled: true, rules: [{ id: id(62), kind: 'web', effect: 'allow', targets: ['facebook.com'], schedule_id: null, priority: 0 }], version: 1 }],
+        devices: [{ device_id: device, hostname: 'AZC-ANA', status: 'active', compiled_version: 7, reported_version: 7, up_to_date: true, last_seen_at: now, own_policy_ids: [] }] };
+    }
     else if (p === '/schedules') result = list([{ id: id(24), name: 'Oficina', start_local: '08:00', end_local: '17:00', timezone: 'America/Bogota', days: [1, 2, 3, 4, 5] }]);
     else if (p === '/person-plans/available') result = { data: [], features: [], default_plan_id: null };
     else if (p === '/monitoring-exclusions') result = { position_ids: [] };
