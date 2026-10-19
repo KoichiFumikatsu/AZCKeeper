@@ -170,6 +170,7 @@ final class Application
             case '/client/episodes:batch':
                 Ingest::unique($b->episodes);
                 $acks = array_map(fn ($e) => $i->partial($e, fn () => $i->episode($e)), $b->episodes);
+                $i->flushDays();
                 return $this->ok(['acks' => $acks, 'received_at' => Util::now()]);
             case '/client/logs':
                 Ingest::unique($b->entries);
@@ -224,6 +225,8 @@ final class Application
                 // (1..version compilada) y sin tocar devices.version, que es el ETag de edicion del panel.
                 $applied = isset($b->policy_version) && $b->policy_version > 0 && $b->policy_version <= $version ? (int) $b->policy_version : null;
                 $db->run('UPDATE devices SET last_seen_at=UTC_TIMESTAMP(6),policy_version=COALESCE(?,policy_version) WHERE tenant_id=? AND id=?', [$applied, $c['tenant_id'], $c['device_id']]);
+                // Dias a recalcular: lo ultimo del envio, para tener tomada la fila de rollup_days el menor tiempo posible.
+                $i->flushDays();
                 return ['status' => 200, 'json' => $json, 'headers' => []];
         }
         throw new ApiError(404, 'resource_not_found');

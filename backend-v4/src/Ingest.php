@@ -51,15 +51,32 @@ final class Ingest
     {
         if (strtotime($at) > time() + 300) { throw new ApiError(422, 'invalid_range'); }
     }
+    /** Dias a recalcular de este request => cuantos episodios los tocan; se escriben juntos en flushDays(). */
+    private array $days = [];
     private function markDays(string $start, string $end): void
     {
         $tz = new \DateTimeZone($this->c['timezone']);
         $a = (new \DateTimeImmutable($start))->setTimezone($tz)->setTime(0, 0);
         $b = (new \DateTimeImmutable($end))->modify('-1 microsecond')->setTimezone($tz)->format('Y-m-d');
         do {
-            $this->db->run('INSERT INTO rollup_days (tenant_id,day,dirty,input_revision) VALUES (?,?,TRUE,1) ON DUPLICATE KEY UPDATE dirty=TRUE,input_revision=input_revision+1,finalized_at=NULL', [$this->c['tenant_id'], $a->format('Y-m-d')]);
+            $this->days[$a->format('Y-m-d')] = ($this->days[$a->format('Y-m-d')] ?? 0) + 1;
             $a = $a->modify('+1 day');
         } while ($a->format('Y-m-d') <= $b);
+    }
+    /**
+     * Marca los dias pendientes del request en UNA sentencia, ordenada por dia, al final de la transaccion del envio: asi
+     * la fila de rollup_days (la que pide el calculo de productividad al cerrar un dia) queda tomada lo minimo
+     * (2026-10-19, deadlocks). input_revision sube lo mismo que antes: uno por episodio que toca el dia.
+     */
+    public function flushDays(): void
+    {
+        if ($this->days === []) { return; }
+        ksort($this->days, SORT_STRING);
+        $args = [];
+        foreach ($this->days as $day => $count) { array_push($args, $this->c['tenant_id'], (string) $day, $count); }
+        $this->db->run('INSERT INTO rollup_days (tenant_id,day,dirty,input_revision) VALUES ' . implode(',', array_fill(0, count($this->days), '(?,?,TRUE,?)'))
+            . ' ON DUPLICATE KEY UPDATE dirty=TRUE,input_revision=input_revision+VALUES(input_revision),finalized_at=NULL', $args);
+        $this->days = [];
     }
     private ?array $functions = null;
     /** Funciones de la persona duena del equipo (cliente compro y plan incluye), una vez por request. */
