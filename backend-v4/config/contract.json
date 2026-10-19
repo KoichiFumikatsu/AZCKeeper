@@ -1,5 +1,5 @@
 {
-  "source_sha256": "23cc1efcb6b5d9cd5fe794091165b83d823f1a962ef9acf1896f78411c118dee",
+  "source_sha256": "3fc902a8d5a9a426369b2cb4ba03ba1a53ed71789af7aafbe9e15ea7afb903d6",
   "paths": {
     "/me": {
       "get": {
@@ -13762,6 +13762,174 @@
         "x-permission": "reglas.ver"
       }
     },
+    "/users/{id}/rules": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "getUserRules",
+        "summary": "Reglas que le aplican hoy a una persona",
+        "description": "Pestaña «Reglas» de la ficha de la persona (2026-10-19). Solo lectura. Lo que le aplica hoy juntando empresa, sede, área y persona (sin las reglas de un equipo concreto), resuelto por el mismo compilador que el documento del agente (PolicyComposer): por tipo y destino, las reglas que ganan y las que pierden con su política y nivel; las que no aplican porque el cliente no contrató la función o el plan de la persona no la incluye; las políticas propias de la persona (para editarlas en vez de crear otra) y, por equipo activo, la versión compilada frente a la que reporta el agente. Un choque sin resolver (mismo nivel y prioridad, bloquear y permitir) sale en conflict. Persona inactiva: no recibe reglas.",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol (fuera del alcance, 404).",
+        "x-resources": [
+          "EffectiveRules"
+        ],
+        "responses": {
+          "200": {
+            "description": "Reglas que le aplican hoy, con su procedencia",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveRules"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "x-permission": "reglas.ver"
+      }
+    },
+    "/devices/{id}/rules": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "getDeviceRules",
+        "summary": "Reglas que le aplican hoy a un equipo",
+        "description": "Pestaña «Reglas» de la ficha del equipo (2026-10-19). Igual que getUserRules, con las reglas del equipo además de las de su persona asignada, sus políticas propias (destino el equipo) y la versión compilada frente a la aplicada.",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol (fuera del alcance, 404).",
+        "x-resources": [
+          "EffectiveRules"
+        ],
+        "responses": {
+          "200": {
+            "description": "Reglas que le aplican hoy, con su procedencia",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveRules"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "x-permission": "reglas.ver"
+      }
+    },
     "/devices/{id}/escrow": {
       "post": {
         "tags": [
@@ -26745,6 +26913,425 @@
         }
       },
       "description": "Sin PIN, secretos ni webhooks. Versión de toda la composición y compilador."
+    },
+    "EffectiveRuleSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Una regla de una política que toca este destino. policy_id null en reglas de la plataforma (global).",
+      "required": [
+        "policy_id",
+        "policy_name",
+        "scope",
+        "target_name",
+        "effect",
+        "priority",
+        "own"
+      ],
+      "properties": {
+        "policy_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "policy_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 120
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "global",
+            "tenant",
+            "site",
+            "area",
+            "user",
+            "device"
+          ]
+        },
+        "target_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 255
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effect": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "deny",
+            "require"
+          ]
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "own": {
+          "type": "boolean",
+          "description": "La política es de esta persona (o de este equipo)."
+        }
+      }
+    },
+    "EffectiveRules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subject",
+        "entries",
+        "excluded",
+        "kinds",
+        "conflict",
+        "own_policies",
+        "devices",
+        "recompile_pending"
+      ],
+      "properties": {
+        "subject": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "user_id",
+            "device_id",
+            "display_name",
+            "hostname",
+            "active"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "user",
+                "device"
+              ]
+            },
+            "user_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "device_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "display_name": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 160
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "hostname": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 255
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "active": {
+              "type": "boolean",
+              "description": "Persona activa. Inactiva no recibe ninguna regla."
+            }
+          }
+        },
+        "entries": {
+          "type": "array",
+          "description": "Por tipo y destino, la regla que gana (winners, varias si coinciden) y las que pierden (overridden, de la más cercana a la más general).",
+          "maxItems": 5000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "target",
+              "effect",
+              "winners",
+              "overridden"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "web",
+                  "download",
+                  "installation",
+                  "schedule",
+                  "os",
+                  "usb",
+                  "encryption"
+                ]
+              },
+              "target": {
+                "type": "string",
+                "maxLength": 255
+              },
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "allow",
+                  "deny",
+                  "require"
+                ]
+              },
+              "winners": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "items": {
+                  "$ref": "#/components/schemas/EffectiveRuleSource"
+                }
+              },
+              "overridden": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "$ref": "#/components/schemas/EffectiveRuleSource"
+                }
+              }
+            }
+          }
+        },
+        "excluded": {
+          "type": "array",
+          "description": "Reglas que no le aplican porque el cliente no contrató la función (not_contracted) o su plan no la incluye (not_in_plan).",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "effect",
+              "targets",
+              "reason",
+              "source"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "maxLength": 20
+              },
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "allow",
+                  "deny",
+                  "require"
+                ]
+              },
+              "targets": {
+                "type": "array",
+                "maxItems": 1000,
+                "items": {
+                  "type": "string",
+                  "maxLength": 255
+                }
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "not_contracted",
+                  "not_in_plan"
+                ]
+              },
+              "source": {
+                "$ref": "#/components/schemas/EffectiveRuleSource"
+              }
+            }
+          }
+        },
+        "kinds": {
+          "type": "array",
+          "description": "Por tipo de regla que se ofrece desde la ficha, su función, si el cliente la contrató y si el plan de la persona la incluye.",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "feature",
+              "feature_name",
+              "contracted",
+              "in_plan"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "web",
+                  "usb",
+                  "download",
+                  "installation"
+                ]
+              },
+              "feature": {
+                "type": "string",
+                "maxLength": 40
+              },
+              "feature_name": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "contracted": {
+                "type": "boolean"
+              },
+              "in_plan": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "conflict": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Choque sin resolver (mismo nivel y prioridad, una bloquea y otra permite). Mientras siga, el equipo no recibe reglas nuevas.",
+              "required": [
+                "kind",
+                "target",
+                "sources"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "maxLength": 20
+                },
+                "target": {
+                  "type": "string",
+                  "maxLength": 255
+                },
+                "sources": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": {
+                    "$ref": "#/components/schemas/EffectiveRuleSource"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "own_policies": {
+          "type": "array",
+          "description": "Políticas cuyo destino es esta persona (o este equipo), activas primero.",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/components/schemas/Policy"
+          }
+        },
+        "devices": {
+          "type": "array",
+          "description": "Equipos activos de la persona (o el equipo pedido) con la versión de reglas compilada y la que reporta el agente.",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "device_id",
+              "hostname",
+              "status",
+              "compiled_version",
+              "reported_version",
+              "up_to_date",
+              "last_seen_at",
+              "own_policy_ids"
+            ],
+            "properties": {
+              "device_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "hostname": {
+                "type": "string",
+                "maxLength": 255
+              },
+              "status": {
+                "type": "string",
+                "maxLength": 20
+              },
+              "compiled_version": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reported_version": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "up_to_date": {
+                "type": "boolean"
+              },
+              "last_seen_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "own_policy_ids": {
+                "type": "array",
+                "description": "Políticas activas cuyo destino es este equipo.",
+                "maxItems": 100,
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          }
+        },
+        "recompile_pending": {
+          "type": "boolean",
+          "description": "Hay cambios del cliente pendientes de compilar (el equipo los recibe cuando se compilen y sincronice)."
+        }
+      }
     },
     "EnrollmentApproval": {
       "type": "object",

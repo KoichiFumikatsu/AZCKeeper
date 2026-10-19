@@ -15,9 +15,14 @@ final class PolicyComposer
         return $feature === null || in_array($feature, $functions, true);
     }
 
-    public static function compose(array $input, ?array &$provenance = null): object
+    /**
+     * $explain (opcional, solo lectura para el panel): por cada tipo y destino, todas las reglas que lo tocan y cuales ganan,
+     * mas las que quedaron fuera porque la persona no tiene la funcion. Es la misma resolucion que produce el documento.
+     */
+    public static function compose(array $input, ?array &$provenance = null, ?array &$explain = null): object
     {
         $provenance = [];
+        $explain = ['candidates' => [], 'entries' => [], 'excluded' => []];
         $validator = new Validator();
         $assignments = $input['assignments'];
         $winners = []; $candidates = []; $hosts = []; $parts = [];
@@ -26,7 +31,7 @@ final class PolicyComposer
             foreach ($assignment['management_hosts'] as $host) { $hosts[$host] = true; }
             foreach ($assignment['rules'] as $rule) {
                 $validator->named('Rule', $rule);
-                if (!self::ruleAllowed($rule->kind, $input['functions'])) { continue; }
+                if (!self::ruleAllowed($rule->kind, $input['functions'])) { $explain['excluded'][] = ['rule' => $rule, 'level' => $level, 'assignment' => $assignment['id']]; continue; }
                 $rule = clone $rule;
                 $rule->targets = self::normalizeTargets($rule->targets);
                 $candidates[] = ['rule' => $rule, 'level' => $level, 'rank' => self::SCOPES[$assignment['scope']], 'assignment' => $assignment['id']];
@@ -34,11 +39,12 @@ final class PolicyComposer
         }
         // Canonical order stabilizes serialization and diagnostics, never resolves opposite effects.
         usort($candidates, static fn ($a, $b) => [$a['rank'], $a['rule']->priority, self::canonical($a)] <=> [$b['rank'], $b['rule']->priority, self::canonical($b)]);
-        $seen = [];
+        $seen = []; $touches = [];
         foreach ($candidates as $index => $candidate) {
             $rule = $candidate['rule'];
             foreach ($rule->targets as $target) {
                 $key = Util::json([$rule->kind, $target]);
+                $touches[$key][] = $index;
                 $bucket = Util::json([$candidate['rank'], $rule->priority, $key]);
                 $side = $rule->effect === 'deny' ? 'deny' : 'permit';
                 $opposite = $side === 'deny' ? 'permit' : 'deny';
@@ -52,6 +58,10 @@ final class PolicyComposer
                 }
                 if ($precedence === $winners[$key]['precedence']) { $winners[$key]['indices'][] = $index; }
             }
+        }
+        $explain['candidates'] = $candidates;
+        foreach ($winners as $key => $winner) {
+            $explain['entries'][] = ['kind' => json_decode($key)[0], 'target' => $winner['target'], 'winners' => $winner['indices'], 'others' => array_values(array_diff($touches[$key], $winner['indices']))];
         }
         $groups = [];
         foreach ($winners as $winner) {

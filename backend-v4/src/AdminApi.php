@@ -191,6 +191,7 @@ final class AdminApi
             'listDoors','createDoor','patchDoor','getDoorQuarantine'=>(new DoorsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getTenantProtection'=>(new ProtectionSummary($this->db,$this->c,$this->access,$this->r))->dispatch(),
+            'getUserRules','getDeviceRules'=>(new EffectiveRules($this->db,$this->c,$this->access))->dispatch($op,$id),
             'getMyAccess'=>$this->myAccess(), 'getMe'=>$this->me(),
             'listNotifications','markNotificationsSeen'=>(new PanelNotifications($this->db,$this->c))->dispatch($op),
             'listPortalOrigins','createPortalOrigin','deletePortalOrigin'=>$this->portalOrigins($op,$id,$b),
@@ -879,10 +880,12 @@ final class AdminApi
         $this->audit('enrollment',$id,['user_id','device_id']);
         return self::response(['ticket'=>$ticket,'expires_at'=>gmdate('Y-m-d\TH:i:s\Z',time()+600)],201);
     }
-    private function policyDto(array $r): array
+    private function policyDto(array $r): array { return self::policyResource($this->db,$this->tenant,$r); }
+    /** Policy del contrato a partir de su fila de policy_documents (tambien la usa EffectiveRules para la regla propia). */
+    public static function policyResource(Database $db,string $tenant,array $r): array
     {
-        $a=$this->db->one('SELECT * FROM policy_assignments WHERE tenant_id=? AND policy_id=? ORDER BY id LIMIT 1',[$this->tenant,$r['id']]);
-        $v=$this->db->one('SELECT document FROM policy_versions WHERE tenant_id=? AND policy_id=? AND policy_version=?',[$this->tenant,$r['id'],$r['version']]);
+        $a=$db->one('SELECT * FROM policy_assignments WHERE tenant_id=? AND policy_id=? ORDER BY id LIMIT 1',[$tenant,$r['id']]);
+        $v=$db->one('SELECT document FROM policy_versions WHERE tenant_id=? AND policy_id=? AND policy_version=?',[$tenant,$r['id'],$r['version']]);
         if (!$a || !$v || $a['scope']==='global') { throw new ApiError(404,'resource_not_found'); }
         return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'name'=>$r['name'],'target_type'=>$a['scope'],'target_id'=>Util::id($a['scope_target']),'enabled'=>(bool)$r['enabled'],'rules'=>json_decode($v['document'])->rules,'version'=>(int)$r['version']];
     }

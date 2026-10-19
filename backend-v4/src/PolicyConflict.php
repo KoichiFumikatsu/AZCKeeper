@@ -4,7 +4,7 @@ namespace Keeper;
 
 final class PolicyConflict extends \RuntimeException
 {
-    public function __construct(string $level, string $kind, string $target, int $priority, array $first, array $second)
+    public function __construct(public readonly string $level, public readonly string $kind, public readonly string $target, int $priority, public readonly array $first, public readonly array $second)
     {
         $rules = [$first['assignment'] . '/' . $first['rule']->id, $second['assignment'] . '/' . $second['rule']->id];
         sort($rules, SORT_STRING);

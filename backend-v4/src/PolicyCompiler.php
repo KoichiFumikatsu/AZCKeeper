@@ -113,6 +113,21 @@ final class PolicyCompiler
         return ['user_id'=>Util::id($user),'devices'=>$result];
     }
 
+    /**
+     * Lo que le aplica hoy a una persona (sin equipo: empresa, sede, area y persona) o a un equipo (ademas, el equipo), con
+     * la misma instantanea y composicion que el documento que recibe el agente. Solo lectura: no compila ni guarda nada.
+     * @return array{input: array, explain: array, conflict: ?PolicyConflict}
+     */
+    public function explain(string $tenant, ?string $device, string $user): array
+    {
+        $at = $this->db->one('SELECT UTC_TIMESTAMP(6) t')['t'];
+        $input = $this->snapshot($tenant, $device, $at, $device === null ? $user : null);
+        $explain = null; $conflict = null;
+        try { PolicyComposer::compose($input, $sources, $explain); }
+        catch (PolicyConflict $e) { $conflict = $e; }
+        return ['input' => $input, 'explain' => $explain, 'conflict' => $conflict];
+    }
+
     private function snapshot(string $tenant, ?string $device, string $at, ?string $subject=null): array
     {
         $d = $device===null ? ['user_id'=>$subject,'policy_version'=>0] : $this->db->one('SELECT * FROM devices WHERE tenant_id=? AND id=?', [$tenant, $device]);

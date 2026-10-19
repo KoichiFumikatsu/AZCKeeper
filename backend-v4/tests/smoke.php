@@ -47,6 +47,7 @@ require __DIR__ . '/tenant-provision.php';
 require __DIR__ . '/notifications.php';
 require __DIR__ . '/protection.php';
 require __DIR__ . '/computer-rename.php';
+require __DIR__ . '/effective-rules.php';
 
 use Keeper\{Config, Database, Util, Validator};
 
@@ -490,6 +491,8 @@ try {
     notificationTests($db);
     protectionEvaluateTests();
     protectionApiTests($db);
+    effectiveRulesComposeTests();
+    effectiveRulesApiTests($db);
     computerRenameTests($db);
     // Al final y con el cupo de prelogin repuesto: sus 4 logins de fixture lo agotaban para panelAccountsTests.
     windowsSecurityTests($db);
