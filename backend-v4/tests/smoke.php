@@ -42,6 +42,7 @@ require __DIR__ . '/onboarding.php';
 require __DIR__ . '/retention.php';
 require __DIR__ . '/cron-runs.php';
 require __DIR__ . '/episode-title-limit.php';
+require __DIR__ . '/deadlock-retry.php';
 require __DIR__ . '/tenant-provision.php';
 require __DIR__ . '/notifications.php';
 require __DIR__ . '/protection.php';
@@ -484,6 +485,7 @@ try {
     retentionTests($db);
     cronRunsTests($db);
     episodeTitleLimitTests();
+    deadlockRetryTests($db);
     tenantProvisionTests($db);
     notificationTests($db);
     protectionEvaluateTests();

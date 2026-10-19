@@ -26,10 +26,26 @@ final class Database
         return $q;
     }
     public function one(string $sql, array $args = []): ?array { return $this->run($sql, $args)->fetch() ?: null; }
+    /**
+     * Un choque entre escrituras (deadlock, SQLSTATE 40001 / error 1213) deshace la transaccion entera, asi que repetirla
+     * es seguro: hasta 3 intentos con una espera corta y aleatoria. Antes, cada choque llegaba al agente como 503
+     * (2026-10-19: el calculo de productividad y los envios de los equipos chocaban al marcar dias a recalcular).
+     */
     public function transaction(callable $fn): mixed
     {
-        $this->pdo->beginTransaction();
-        try { $v = $fn(); $this->pdo->commit(); return $v; }
-        catch (\Throwable $e) { if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); } throw $e; }
+        for ($attempt = 1; ; $attempt++) {
+            $this->pdo->beginTransaction();
+            try { $v = $fn(); $this->pdo->commit(); return $v; }
+            catch (\Throwable $e) {
+                if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+                if ($attempt >= 3 || !self::deadlock($e)) { throw $e; }
+                usleep(random_int(20000, 120000) * $attempt);
+            }
+        }
+    }
+
+    public static function deadlock(\Throwable $e): bool
+    {
+        return $e instanceof \PDOException && ((int) ($e->errorInfo[1] ?? 0) === 1213 || $e->getCode() === '40001');
     }
 }
