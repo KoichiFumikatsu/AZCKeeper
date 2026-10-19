@@ -121,10 +121,18 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
     // se reporta notice_deadline_missed para no apagar por sorpresa a quien acaba de encender el equipo.
     public static readonly TimeSpan NoticeGrace = TimeSpan.FromMinutes(2);
     private static readonly long[] NoticeChoices = [0, 60, 300, 600];
+    // Cancelacion por IT (4.0.27): el servidor reenvia la orden con cancel_requested_at. Si la cuenta regresiva no llego a
+    // shutdown.exe, se detiene y se responde failed/cancelled_by_admin; la persona ve «IT cancelo...» durante CancelledNoticeFor.
+    // Si ya se ejecuto (o se interrumpio a mitad), se informa en el registro que llego tarde y el resultado normal sigue su curso.
+    public const string CancelledByAdmin = "cancelled_by_admin";
+    public static readonly TimeSpan CancelledNoticeFor = TimeSpan.FromSeconds(60);
     private readonly SemaphoreSlim _gate = new(1, 1);
     private List<InboxEntry> _entries = [];
     private volatile PowerNotice? _notice;
-    /// <summary>Aviso vigente para las sesiones (el de plazo mas cercano), o null si no hay cuenta regresiva.</summary>
+    private (PowerNotice Notice, DateTimeOffset Until)? _cancelledNotice;
+    private readonly HashSet<Guid> _lateReported = [];
+    /// <summary>Aviso vigente para las sesiones (el de plazo mas cercano), o null si no hay cuenta regresiva. Tras una
+    /// cancelacion de IT, durante CancelledNoticeFor, el aviso con Cancelled = true.</summary>
     public PowerNotice? PendingNotice => _notice;
     // Desfase confirmado con el servidor (ServerClock): expires_at es hora del servidor y se compara con hora_local +
     // desfase; un reloj adelantado descartaba ordenes vigentes como expired. Los avisos (DueAt) siguen en hora local.
@@ -143,6 +151,7 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
         {
             PurgeCompleted();
             var rejected = new List<SyncRequestCommandResultsItem>();
+            var logs = new List<LogEntry>();
             foreach (var command in commands)
             {
                 if (command.Id == Guid.Empty || command.DeviceId != deviceId || command.TenantId != tenant || !Enum.IsDefined(command.Type))
@@ -150,6 +159,7 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
                     rejected.Add(Reject(command, "invalid_command_destination"));
                     continue;
                 }
+                if (command.CancelRequestedAt is not null) { Cancel(command, logs); continue; }
                 if (command.Status is not (CommandStatus.Pending or CommandStatus.Delivered)) continue;
                 if (_entries.Any(e => e.Command.Id == command.Id)) continue;
                 if (command.ExpiresAt <= ServerNow)
@@ -167,9 +177,46 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
             }
             await SaveAsync(ct);
             foreach (var result in rejected) await Context.Outbox.EnqueueAsync(result, ct);
+            foreach (var log in logs) await Context.Outbox.EnqueueAsync(log, ct);
         }
-        finally { _gate.Release(); }
+        finally { RefreshNotice(); _gate.Release(); }
     }
+    // Bajo _gate: TickAsync tambien lo toma mientras llama a shutdown.exe, asi que una cancelacion que entra aqui ve la orden
+    // o todavia esperando (y la detiene antes de shutdown.exe) o ya iniciada (Started: llego tarde). Nunca a medias.
+    private void Cancel(Command command, List<LogEntry> logs)
+    {
+        var index = _entries.FindIndex(e => e.Command.Id == command.Id);
+        var now = Context.Clock.GetUtcNow();
+        if (index < 0)
+        {
+            // Nunca la recibio (o se perdio la respuesta que la traia): se guarda ya cancelada para no ejecutarla si llega.
+            _entries.Add(new(command, Cancelled(now), false));
+            logs.Add(CancelLog(command, "command_cancelled", LogEntryLevel.Info, "not_started", now));
+            Context.Log($"orden {command.Type} {command.Id} cancelada por IT antes de empezar");
+            return;
+        }
+        var entry = _entries[index];
+        if (entry.Result is { Code: CancelledByAdmin }) return;
+        if (entry.Result is null && !entry.Started)
+        {
+            _entries[index] = entry with { Result = Cancelled(now) };
+            if (entry.DueAt is not null && entry.Command.Type is CommandType.Restart or CommandType.Shutdown)
+                _cancelledNotice = (new PowerNotice(entry.Command.Type == CommandType.Restart ? PowerNoticeAction.Restart : PowerNoticeAction.Shutdown, entry.DueAt.Value, Cancelled: true), now + CancelledNoticeFor);
+            logs.Add(CancelLog(command, "command_cancelled", LogEntryLevel.Info, entry.DueAt is null ? "not_started" : "countdown_stopped", now));
+            Context.Log($"orden {command.Type} {command.Id} cancelada por IT: cuenta regresiva detenida antes de ejecutarla");
+            return;
+        }
+        // Ya se llamo a shutdown.exe (Started) o ya tiene resultado: no se puede deshacer. Se informa una vez.
+        if (!_lateReported.Add(command.Id)) return;
+        logs.Add(CancelLog(command, "command_cancel_too_late", LogEntryLevel.Warn, entry.Result?.Code ?? "already_started", now));
+        Context.Log($"orden {command.Type} {command.Id}: la cancelacion de IT llego tarde ({entry.Result?.Code ?? "ya iniciada"})");
+    }
+    private static CommandResult Cancelled(DateTimeOffset at) => new() { EventId = Guid.NewGuid(), At = at, Status = CommandResultStatus.Failed, Code = CancelledByAdmin };
+    private LogEntry CancelLog(Command command, string code, LogEntryLevel level, string detail, DateTimeOffset at) => new()
+    {
+        EventId = Guid.NewGuid(), At = at, Level = level, Component = Name, Code = code,
+        Fields = new LogEntryFields { CommandId = command.Id, ErrorCode = detail }
+    };
     public override async Task TickAsync(CancellationToken ct)
     {
         await _gate.WaitAsync(ct);
@@ -244,11 +291,17 @@ public sealed class CommandExecutor(string path, Guid deviceId, DeviceLock devic
         var seconds = command.Parameters?.NoticeSeconds ?? 0;
         return NoticeChoices.Contains(seconds) ? seconds : throw new CommandRejectedException("invalid_notice");
     }
-    private void RefreshNotice() => _notice = _entries
-        .Where(e => e.Result is null && e.DueAt is not null)
-        .OrderBy(e => e.DueAt)
-        .Select(e => new PowerNotice(e.Command.Type == CommandType.Restart ? PowerNoticeAction.Restart : PowerNoticeAction.Shutdown, e.DueAt!.Value))
-        .FirstOrDefault();
+    private void RefreshNotice()
+    {
+        var running = _entries
+            .Where(e => e.Result is null && e.DueAt is not null)
+            .OrderBy(e => e.DueAt)
+            .Select(e => new PowerNotice(e.Command.Type == CommandType.Restart ? PowerNoticeAction.Restart : PowerNoticeAction.Shutdown, e.DueAt!.Value))
+            .FirstOrDefault();
+        // Otra cuenta regresiva vigente gana al aviso de cancelacion.
+        if (_cancelledNotice is { } c && (running is not null || Context.Clock.GetUtcNow() >= c.Until)) _cancelledNotice = null;
+        _notice = running ?? _cancelledNotice?.Notice;
+    }
     private async Task<(CommandResultStatus, string)> HardeningAsync(Command command, bool undo, CancellationToken ct)
     {
         if (hardening is null) throw new CommandRejectedException("device_actions_dry_run");

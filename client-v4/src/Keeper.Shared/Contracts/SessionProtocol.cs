@@ -13,8 +13,10 @@ public sealed record PinStatus(int Attempts, DateTimeOffset? RetryAt);
 /// <summary>
 /// Aviso previo a un reinicio o apagado ordenado por IT (agentes 4.0.17+). El agente lo repite en cada intercambio
 /// mientras dure la cuenta regresiva; la sesion muestra la ventana mientras lo reciba y la cierra cuando deja de llegar.
+/// Cancelled (4.0.27): IT cancelo la orden; la ventana dice «IT cancelo el reinicio/apagado» sin cuenta regresiva y se
+/// puede cerrar. El agente lo envia un rato (CommandExecutor.CancelledNoticeFor) y luego deja de enviarlo.
 /// </summary>
-public sealed record PowerNotice(PowerNoticeAction Action, DateTimeOffset Deadline);
+public sealed record PowerNotice(PowerNoticeAction Action, DateTimeOffset Deadline, bool Cancelled = false);
 public enum PowerNoticeAction { Restart, Shutdown }
 public sealed record SessionResponse(int ProtocolVersion, Guid CorrelationId, IReadOnlyList<Episode> Episodes,
     IReadOnlyList<LogEntry> Logs, string? Pin = null, IReadOnlyList<ActivitySnapshot>? Activity = null)

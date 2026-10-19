@@ -18,6 +18,11 @@ public static class PowerNoticeText
         var seconds = Math.Max(0, (int)Math.Ceiling(remaining.TotalSeconds));
         return $"{seconds / 60:00}:{seconds % 60:00}";
     }
+
+    // IT cancelo la orden (4.0.27): sin cuenta regresiva.
+    public static string CancelledTitle(PowerNoticeAction action) => action == PowerNoticeAction.Restart ? "Reinicio cancelado" : "Apagado cancelado";
+    public static string CancelledMessage(PowerNoticeAction action) =>
+        $"IT canceló el {(action == PowerNoticeAction.Restart ? "reinicio" : "apagado")}. Puedes seguir trabajando con normalidad.";
 }
 
 // Aviso previo a un reinicio o apagado ordenado por IT (agente 4.0.17+): siempre encima, grande y centrado en la pantalla
@@ -27,15 +32,17 @@ public sealed class PowerNoticeWindow(Control dispatcher) : IDisposable
 {
     private NoticeForm? _form;
     private PowerNotice? _notice;
+    // Aviso de cancelacion que la persona cerro: no se vuelve a abrir aunque el agente lo siga enviando un rato.
+    private PowerNotice? _dismissed;
 
     public void Set(PowerNotice? notice) => dispatcher.BeginInvoke(() => Apply(notice));
 
     private void Apply(PowerNotice? notice)
     {
-        if (notice == _notice && (notice is null || _form is { IsDisposed: false })) return;
+        if (notice == _notice && (notice is null || notice == _dismissed || _form is { IsDisposed: false })) return;
         _notice = notice;
-        if (notice is null) { Close(); return; }
-        if (_form is null || _form.IsDisposed) _form = new NoticeForm();
+        if (notice is null || notice == _dismissed) { Close(); return; }
+        if (_form is null || _form.IsDisposed) _form = new NoticeForm(() => { _dismissed = _notice; Close(); });
         _form.Display(notice);
     }
 
@@ -51,7 +58,8 @@ public sealed class PowerNoticeWindow(Control dispatcher) : IDisposable
         if (dispatcher.InvokeRequired) dispatcher.Invoke(Close); else Close();
     }
 
-    // Grande y centrada al aparecer; "Minimizar" la pasa a la esquina inferior derecha y "Ampliar" la devuelve.
+    // Grande y centrada al aparecer; "Minimizar" la pasa a la esquina inferior derecha y "Ampliar" la devuelve. Si IT cancela
+    // la orden, el mismo boton dice "Cerrar" y la cierra.
     private sealed class NoticeForm : Form
     {
         private static readonly Font TitleFont = new("Segoe UI", 18, FontStyle.Bold);
@@ -65,16 +73,18 @@ public sealed class PowerNoticeWindow(Control dispatcher) : IDisposable
         private readonly System.Windows.Forms.Timer _timer = new() { Interval = 500 };
         private PowerNotice? _notice;
         private bool _compact;
+        private readonly Action _dismiss;
 
-        public NoticeForm()
+        public NoticeForm(Action dismiss)
         {
+            _dismiss = dismiss;
             FormBorderStyle = FormBorderStyle.None; TopMost = true; ShowInTaskbar = false; ControlBox = false;
             StartPosition = FormStartPosition.Manual; BackColor = Color.FromArgb(0, 58, 93); Text = "AZCKeeper";
             _toggle.FlatAppearance.BorderColor = Color.White;
             var bottom = new Panel { Dock = DockStyle.Bottom, Height = 40 };
             bottom.Controls.Add(_toggle);
             Controls.Add(_countdown); Controls.Add(bottom); Controls.Add(_message); Controls.Add(_title);
-            _toggle.Click += (_, _) => { _compact = !_compact; ApplyMode(); };
+            _toggle.Click += (_, _) => { if (_notice?.Cancelled == true) { _dismiss(); return; } _compact = !_compact; ApplyMode(); };
             _timer.Tick += (_, _) => Render();
             FormClosing += (_, e) => { if (e.CloseReason == CloseReason.UserClosing) e.Cancel = true; };
             ApplyMode();
@@ -86,7 +96,7 @@ public sealed class PowerNoticeWindow(Control dispatcher) : IDisposable
             _title.Visible = !_compact;
             _message.Font = _compact ? SmallText : LargeText; _message.Height = _compact ? 48 : 70;
             _countdown.Font = _compact ? SmallCount : LargeCount;
-            _toggle.Text = _compact ? "Ampliar" : "Minimizar"; _toggle.Width = _compact ? 96 : 130;
+            _toggle.Text = _notice?.Cancelled == true ? "Cerrar" : _compact ? "Ampliar" : "Minimizar"; _toggle.Width = _compact ? 96 : 130;
             _toggle.Font = _compact ? SmallButton : LargeButton;
             Padding = _compact ? new Padding(14, 10, 14, 10) : new Padding(28, 22, 28, 20);
             Size = _compact ? new Size(380, 160) : new Size(640, 320);
@@ -111,15 +121,24 @@ public sealed class PowerNoticeWindow(Control dispatcher) : IDisposable
 
         public void Display(PowerNotice notice)
         {
+            var mode = _notice?.Cancelled != notice.Cancelled;
             _notice = notice;
+            if (mode) ApplyMode();
             Render();
             if (!Visible) Show();
-            _timer.Start();
+            if (notice.Cancelled) _timer.Stop(); else _timer.Start();
         }
 
         private void Render()
         {
             if (_notice is null) return;
+            if (_notice.Cancelled)
+            {
+                _title.Text = PowerNoticeText.CancelledTitle(_notice.Action);
+                _message.Text = PowerNoticeText.CancelledMessage(_notice.Action);
+                _countdown.Text = "";
+                return;
+            }
             var remaining = _notice.Deadline - DateTimeOffset.UtcNow;
             _title.Text = _notice.Action == PowerNoticeAction.Restart ? "Reinicio programado" : "Apagado programado";
             _message.Text = PowerNoticeText.Message(_notice.Action, remaining);

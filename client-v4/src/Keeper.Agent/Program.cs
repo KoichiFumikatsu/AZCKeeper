@@ -123,7 +123,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         // regresiva de reinicio/apagado; cada salto de hora que ve corrige tambien el desfase de las firmas. Si W32Time
         // no la corrige, la pone con la hora del servidor (fuera de dominio, con dos mediciones consistentes).
         if (OperatingSystem.IsWindows()) moduleList.Add(new TimeSync(new WindowsTimeSystem(), !registry.IsDryRun,
-            serverClock, () => commands.PendingNotice is not null));
+            serverClock, () => commands.PendingNotice is { Cancelled: false }));
         if (OperatingSystem.IsWindows()) moduleList.Add(new SessionSupervisor(new WindowsSessionLauncher(trust.BinaryHashes),
             Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), deviceLock, () => policy, () => commands.PendingNotice));
         await using var modules = new ModuleHost(moduleList, context);
