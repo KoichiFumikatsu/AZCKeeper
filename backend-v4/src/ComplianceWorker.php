@@ -17,12 +17,18 @@ final class ComplianceWorker
     }
     public function calculate(string $tenant,string $day): void
     {
-        if (!Features::has($this->db,$tenant,'cumplimiento')) { return; }
-        // Las detecciones ya revisadas se conservan (0064): recalcular el dia no debe devolverlas a pendientes.
-        $this->db->run('DELETE FROM suspicious_app_detections WHERE tenant_id=? AND day=? AND reviewed=FALSE',[$tenant,$day]);
-        $this->db->run("DELETE FROM dual_job_alerts WHERE tenant_id=? AND day=? AND source='worker' AND reviewed=FALSE",[$tenant,$day]);
+        $this->apply($tenant,$day,$this->collect($tenant,$day));
+    }
+
+    /**
+     * Lecturas del dia sin escribir nada (el calculo de productividad las hace fuera de su transaccion). Usa el
+     * activity_calendar de un dia que dejo el llamador y lo reemplaza por el de siete dias. null: el cliente no tiene cumplimiento.
+     */
+    public function collect(string $tenant,string $day): ?array
+    {
+        if (!Features::has($this->db,$tenant,'cumplimiento')) { return null; }
         // Keep episodes first: MariaDB otherwise repeats a tenant scan for every assignment.
-        $rows=$this->db->run("SELECT e.user_id,e.user_assignment_id,e.device_id,k.id app_id,k.category,e.process_name,
+        $apps=$this->db->run("SELECT e.user_id,e.user_assignment_id,e.device_id,k.id app_id,k.category,e.process_name,
             MIN(GREATEST(e.started_at,c.starts_at)) first_activity,MAX(LEAST(e.ended_at,c.ends_at)) last_activity,
             SUM(FLOOR(e.active_seconds*TIMESTAMPDIFF(MICROSECOND,e.started_at,LEAST(e.ended_at,c.ends_at))/TIMESTAMPDIFF(MICROSECOND,e.started_at,e.ended_at))-
                 FLOOR(e.active_seconds*TIMESTAMPDIFF(MICROSECOND,e.started_at,GREATEST(e.started_at,c.starts_at))/TIMESTAMPDIFF(MICROSECOND,e.started_at,e.ended_at))) active_seconds
@@ -33,8 +39,32 @@ final class ComplianceWorker
             WHERE e.tenant_id=? AND e.event_date BETWEEN DATE_SUB(?,INTERVAL 2 DAY) AND DATE_ADD(?,INTERVAL 1 DAY)
               AND e.started_at<c.ends_at AND e.ended_at>c.starts_at AND e.active_seconds>0
             GROUP BY e.user_id,e.user_assignment_id,e.device_id,k.id,k.category,e.process_name",[$tenant,$day,$day])->fetchAll();
+        $from=(new \DateTimeImmutable($day))->modify('-6 days')->format('Y-m-d');
+        ActivityCalendar::create($this->db,$tenant,$from,(new \DateTimeImmutable($day))->modify('+1 day')->format('Y-m-d'));
+        $expected=ActivityCalendar::expected('a');
+        $after=$this->db->run("SELECT user_id,COUNT(*) days_count,SUM(seconds) seconds FROM (
+            SELECT e.user_id,c.day,SUM(e.active_seconds*(
+              GREATEST(0,TIMESTAMPDIFF(MICROSECOND,GREATEST(e.started_at,c.starts_at),LEAST(e.ended_at,c.work_start)))+
+              GREATEST(0,TIMESTAMPDIFF(MICROSECOND,GREATEST(e.started_at,c.work_start+INTERVAL c.expected_seconds SECOND),LEAST(e.ended_at,c.ends_at))))/
+              TIMESTAMPDIFF(MICROSECOND,e.started_at,e.ended_at)) seconds
+            FROM episodes e FORCE INDEX (episode_rollup_day) STRAIGHT_JOIN user_assignments a ON a.tenant_id=e.tenant_id AND a.id=e.user_assignment_id
+            STRAIGHT_JOIN activity_calendar c ON c.schedule_id=a.schedule_id
+            WHERE e.tenant_id=? AND e.event_date BETWEEN DATE_SUB(?,INTERVAL 2 DAY) AND DATE_ADD(?,INTERVAL 1 DAY)
+              AND e.started_at<c.ends_at AND e.ended_at>c.starts_at AND c.expected_seconds>0
+              AND (e.started_at<c.work_start OR e.ended_at>c.work_start+INTERVAL c.expected_seconds SECOND) AND $expected>0
+            GROUP BY e.user_id,c.day HAVING seconds>=3600) daily GROUP BY user_id HAVING COUNT(*)>=5",[$tenant,$from,$day])->fetchAll();
+        return ['apps'=>$apps,'after_hours'=>$after,'from'=>$from];
+    }
+
+    /** Escrituras del dia a partir de collect(); suspicious_idle lee el day_summary recien escrito en la misma transaccion. */
+    public function apply(string $tenant,string $day,?array $collected): void
+    {
+        if ($collected===null) { return; }
+        // Las detecciones ya revisadas se conservan (0064): recalcular el dia no debe devolverlas a pendientes.
+        $this->db->run('DELETE FROM suspicious_app_detections WHERE tenant_id=? AND day=? AND reviewed=FALSE',[$tenant,$day]);
+        $this->db->run("DELETE FROM dual_job_alerts WHERE tenant_id=? AND day=? AND source='worker' AND reviewed=FALSE",[$tenant,$day]);
         $signals=[];
-        foreach ($rows as $r) {
+        foreach ($collected['apps'] as $r) {
             if ((int)$r['active_seconds']===0) { continue; }
             $id=self::id($tenant.$day.$r['user_assignment_id'].$r['device_id'].$r['app_id'].$r['process_name']);
             $this->db->run('INSERT INTO suspicious_app_detections (tenant_id,id,user_id,user_assignment_id,device_id,app_id,day,process_name,active_seconds,first_activity,last_activity) VALUES (?,?,?,?,?,?,?,?,?,?,?)
@@ -48,21 +78,8 @@ final class ComplianceWorker
         foreach ($this->db->run('SELECT user_id,SUM(active_seconds) active,SUM(idle_seconds) idle FROM day_summary WHERE tenant_id=? AND day=? GROUP BY user_id HAVING SUM(active_seconds+idle_seconds)>=7200 AND SUM(idle_seconds)>=0.8*SUM(active_seconds+idle_seconds)',[$tenant,$day]) as $r) {
             $this->alert($tenant,$day,$r['user_id'],'suspicious_idle','low',['active_seconds'=>(int)$r['active'],'idle_seconds'=>(int)$r['idle']]);
         }
-        $from=(new \DateTimeImmutable($day))->modify('-6 days')->format('Y-m-d');
-        ActivityCalendar::create($this->db,$tenant,$from,(new \DateTimeImmutable($day))->modify('+1 day')->format('Y-m-d'));
-        $expected=ActivityCalendar::expected('a');
-        $rows=$this->db->run("SELECT user_id,COUNT(*) days_count,SUM(seconds) seconds FROM (
-            SELECT e.user_id,c.day,SUM(e.active_seconds*(
-              GREATEST(0,TIMESTAMPDIFF(MICROSECOND,GREATEST(e.started_at,c.starts_at),LEAST(e.ended_at,c.work_start)))+
-              GREATEST(0,TIMESTAMPDIFF(MICROSECOND,GREATEST(e.started_at,c.work_start+INTERVAL c.expected_seconds SECOND),LEAST(e.ended_at,c.ends_at))))/
-              TIMESTAMPDIFF(MICROSECOND,e.started_at,e.ended_at)) seconds
-            FROM episodes e FORCE INDEX (episode_rollup_day) STRAIGHT_JOIN user_assignments a ON a.tenant_id=e.tenant_id AND a.id=e.user_assignment_id
-            STRAIGHT_JOIN activity_calendar c ON c.schedule_id=a.schedule_id
-            WHERE e.tenant_id=? AND e.event_date BETWEEN DATE_SUB(?,INTERVAL 2 DAY) AND DATE_ADD(?,INTERVAL 1 DAY)
-              AND e.started_at<c.ends_at AND e.ended_at>c.starts_at AND c.expected_seconds>0
-              AND (e.started_at<c.work_start OR e.ended_at>c.work_start+INTERVAL c.expected_seconds SECOND) AND $expected>0
-            GROUP BY e.user_id,c.day HAVING seconds>=3600) daily GROUP BY user_id HAVING COUNT(*)>=5",[$tenant,$from,$day])->fetchAll();
-        foreach ($rows as $r) { $this->alert($tenant,$day,$r['user_id'],'after_hours_pattern','medium',['days'=>(int)$r['days_count'],'active_seconds'=>(int)$r['seconds'],'from'=>$from,'to'=>$day]); }
+        $from=$collected['from'];
+        foreach ($collected['after_hours'] as $r) { $this->alert($tenant,$day,$r['user_id'],'after_hours_pattern','medium',['days'=>(int)$r['days_count'],'active_seconds'=>(int)$r['seconds'],'from'=>$from,'to'=>$day]); }
     }
     private function alert(string $tenant,string $day,string $user,string $type,string $severity,array $evidence): void
     {

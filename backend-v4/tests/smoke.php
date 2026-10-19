@@ -47,6 +47,7 @@ require __DIR__ . '/tenant-provision.php';
 require __DIR__ . '/notifications.php';
 require __DIR__ . '/protection.php';
 require __DIR__ . '/computer-rename.php';
+require __DIR__ . '/productivity-batches.php';
 require __DIR__ . '/effective-rules.php';
 
 use Keeper\{Config, Database, Util, Validator};
@@ -498,6 +499,8 @@ try {
     windowsSecurityTests($db);
     relocationTests($db);
     legacyK3Tests($db);
+    // Al final: recalcula todos los dias de la base para comparar el calculo nuevo con el anterior.
+    productivityBatchTests($db);
     echo "SMOKE PASS: $checks assertions\n";
 } catch (Throwable $e) {
     fwrite(STDERR, $e instanceof PDOException ? 'Database fixture failure SQLSTATE=' . $e->getCode() . ' driver=' . ($e->errorInfo[1]??0) . "\n" : $e->getMessage() . "\n");
