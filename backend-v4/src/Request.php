@@ -13,6 +13,8 @@ final class Request
     public readonly array $headers;
     public readonly array $operation;
     public readonly ?string $resourceId;
+    /** Segundo parametro de ruta ({commandId} en /devices/{id}/commands/{commandId}/cancel), en minusculas. */
+    public readonly ?string $subResourceId;
     public readonly string $route;
     /** Peticion por la puerta del Portal (/portal/v1). */
     public readonly bool $portal;
@@ -46,13 +48,14 @@ final class Request
         // Portal: sus rutas de sesion estan en el contrato con la ruta completa; las de datos son las mismas del panel.
         $this->portal = str_starts_with($this->path, Portal::PREFIX . '/');
         $route = $external ? $this->path : ($this->portal ? (isset($validator->contract['paths'][$this->path]) ? $this->path : substr($this->path, strlen(Portal::PREFIX))) : substr($this->path, 3));
-        $resource = null;
+        $resource = null; $sub = null;
         foreach (isset($validator->contract['paths'][$route]) ? [] : $validator->contract['paths'] as $template => $operations) {
             if (!str_contains($template, '{')) { continue; }
-            $pattern = str_replace(['\{id\}', '\{code\}'], ['([^/]+)', '([^/]+)'], preg_quote($template, '~'));
+            $pattern = str_replace(['\{id\}', '\{code\}', '\{commandId\}'], ['([^/]+)', '([^/]+)', '([^/]+)'], preg_quote($template, '~'));
             if (preg_match('~^' . $pattern . '$~D', $route, $m)) {
                 $resource = $m[1];
                 if (str_contains($template, '{id}')) { $validator->check(['type' => 'string', 'format' => 'uuid'], $resource); $resource = strtolower($resource); }
+                if (str_contains($template, '{commandId}')) { $validator->check(['type' => 'string', 'format' => 'uuid'], $m[2]); $sub = strtolower($m[2]); }
                 $route = $template; break;
             }
         }
@@ -61,6 +64,7 @@ final class Request
         if ($this->portal ? !Portal::allowed($this->method, $route) : str_starts_with($route, Portal::PREFIX . '/')) { throw new ApiError(404, 'resource_not_found'); }
         $this->route = $route;
         $this->resourceId = $resource;
+        $this->subResourceId = $sub;
         $this->operation = $validator->contract['paths'][$route][strtolower($this->method)];
         if (isset($headers['x-tenant-id'])) { $validator->check(['type'=>'string','format'=>'uuid'],$headers['x-tenant-id']); }
         $allowedQuery = [];

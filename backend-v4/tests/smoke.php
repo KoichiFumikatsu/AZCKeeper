@@ -50,6 +50,7 @@ require __DIR__ . '/computer-rename.php';
 require __DIR__ . '/productivity-batches.php';
 require __DIR__ . '/effective-rules.php';
 require __DIR__ . '/auth-locks.php';
+require __DIR__ . '/command-cancel.php';
 
 use Keeper\{Config, Database, Util, Validator};
 
@@ -80,7 +81,8 @@ function rawSignature(string $der): string
     }
     return $raw;
 }
-function request(string $method, string $path, mixed $body = null, ?array $identity = null, ?string $token = null, ?string $idem = null, ?string $nonce = null, array $extra = [], bool $sign = true): array
+// Peticion preparada sin enviar: [curl, cabeceras recibidas]. La usan request() y las pruebas de carreras (curl_multi).
+function requestHandle(string $method, string $path, mixed $body = null, ?array $identity = null, ?string $token = null, ?string $idem = null, ?string $nonce = null, array $extra = [], bool $sign = true): array
 {
     $uri = Config::get('ORIGIN') . '/v1' . $path;
     $raw = $body === null ? '' : Util::json($body);
@@ -101,16 +103,26 @@ function request(string $method, string $path, mixed $body = null, ?array $ident
         $headers['signature'] = 'sig1=:' . base64_encode(rawSignature($der)) . ':';
     }
     $headers = array_merge($headers, $extra);
-    $received = [];
+    $received = new ArrayObject();
     $curl = curl_init($uri);
-    curl_setopt_array($curl, [CURLOPT_CUSTOMREQUEST => $method, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_HTTPHEADER => array_map(fn ($k, $v) => $k . ': ' . $v, array_keys($headers), $headers), CURLOPT_HEADERFUNCTION => static function ($c, $line) use (&$received): int { if (str_contains($line, ':')) { [$k, $v] = explode(':', $line, 2); $received[strtolower($k)] = trim($v); } return strlen($line); }]);
+    curl_setopt_array($curl, [CURLOPT_CUSTOMREQUEST => $method, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_HTTPHEADER => array_map(fn ($k, $v) => $k . ': ' . $v, array_keys($headers), $headers), CURLOPT_HEADERFUNCTION => static function ($c, $line) use ($received): int { if (str_contains($line, ':')) { [$k, $v] = explode(':', $line, 2); $received[strtolower($k)] = trim($v); } return strlen($line); }]);
     if ($body !== null) { curl_setopt($curl, CURLOPT_POSTFIELDS, $raw); }
-    $response = curl_exec($curl);
-    if ($response === false) { throw new RuntimeException('HTTP connection failed'); }
+    return [$curl, $received];
+}
+/** Resultado de una peticion ya ejecutada: [status, json, cabeceras, cuerpo]. */
+function requestResult(\CurlHandle $curl, ArrayObject $received, string|false|null $response): array
+{
+    if ($response === false || $response === null) { throw new RuntimeException('HTTP connection failed'); }
+    $received = $received->getArrayCopy();
     $status = curl_getinfo($curl, CURLINFO_RESPONSE_CODE); curl_close($curl);
     $json = $response === '' || ($received['content-type'] ?? '') === 'application/zip' ? null : json_decode($response, true, 64, JSON_THROW_ON_ERROR);
     if ($status >= 400) { (new Validator())->named('Problem', json_decode($response)); }
     return [$status, $json, $received, $response];
+}
+function request(string $method, string $path, mixed $body = null, ?array $identity = null, ?string $token = null, ?string $idem = null, ?string $nonce = null, array $extra = [], bool $sign = true): array
+{
+    [$curl, $received] = requestHandle($method, $path, $body, $identity, $token, $idem, $nonce, $extra, $sign);
+    return requestResult($curl, $received, curl_exec($curl));
 }
 function expect(array $r, int $status, string $label): array
 {
@@ -496,6 +508,7 @@ try {
     effectiveRulesComposeTests();
     effectiveRulesApiTests($db);
     computerRenameTests($db);
+    commandCancelTests($db);
     // Al final y con el cupo de prelogin repuesto: sus 4 logins de fixture lo agotaban para panelAccountsTests.
     windowsSecurityTests($db);
     relocationTests($db);

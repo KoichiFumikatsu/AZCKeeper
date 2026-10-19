@@ -7592,6 +7592,93 @@ paths:
       - $ref: '#/components/parameters/Cursor'
       - $ref: '#/components/parameters/Limit'
       x-permission: equipos.ver
+  /devices/{id}/commands/{commandId}/cancel:
+    post:
+      tags:
+      - admin
+      operationId: cancelDeviceCommand
+      summary: Cancelar una orden remota
+      description: >-
+        Mismo permiso, alcance y plan del dueño que crear esa orden (restart=equipos.reiniciar, shutdown=equipos.apagar,
+        lock/unlock/wipe/refresh_policy/rename_computer como en createDeviceCommand, harden/unharden=hardening.gestionar;
+        wipe exige reauth <5 min). Auditada (cancelDeviceCommand, con el motivo). Según el estado de la orden:
+        pending (el equipo aún no la recibió) -> 200 con status cancelled y cancelled_at; no se entrega nunca (el sync
+        la marca delivered al entregarla y ambos se excluyen con compare-and-set sobre status en la transacción).
+        delivered/running de un reinicio o apagado con aviso (notice_seconds > 0) -> 200 con cancel_requested_at; el
+        próximo sync se la vuelve a entregar al agente con cancel_requested_at (solo agentes 4.0.27 o posteriores),
+        el agente detiene la cuenta regresiva y responde failed con code cancelled_by_admin, y la orden pasa a
+        cancelled. Si el agente ya la había ejecutado, la orden queda succeeded con cancel_requested_at (no se pudo
+        cancelar). Repetir la cancelación de una orden con cancel_requested_at devuelve 200 sin cambios.
+        409 command_already_executed (succeeded/failed; detail con la hora), command_expired (venció sin
+        entregarse), command_already_cancelled, command_executes_on_receipt (orden sin aviso ya entregada: el agente
+        la ejecuta al recibirla) y agent_too_old (cuenta regresiva ya entregada a un agente anterior a 4.0.27, que no
+        sabe detenerla).
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
+      x-resources:
+      - Device
+      - Command
+      - AuditEntry
+      responses:
+        '200':
+          description: Orden cancelada (cancelled) o cancelación pedida al equipo (cancel_requested_at)
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Command'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - name: commandId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/Idempotency'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommandCancelInput'
+      x-permission: equipos.<acción>
+      x-max-body-bytes: 65536
   /users/batch:
     post:
       tags:
@@ -21097,6 +21184,14 @@ components:
         confirmation:
           type: string
           maxLength: 160
+    CommandCancelInput:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+          description: Motivo opcional; queda en la auditoría.
     Command:
       type: object
       additionalProperties: false
@@ -21149,6 +21244,18 @@ components:
           format: date-time
         parameters:
           $ref: '#/components/schemas/CommandParameters'
+        cancel_requested_at:
+          type: string
+          format: date-time
+          description: >-
+            IT pidió cancelar la orden cuando el equipo ya la tenía (cuenta regresiva de un reinicio o apagado con
+            aviso). Solo cuando existe; al agente solo se le envía desde 4.0.27 (los anteriores rechazan campos
+            desconocidos y no reciben la orden mientras tenga este campo). El agente detiene la cuenta y responde
+            failed con code cancelled_by_admin; si ya la había ejecutado, informa su resultado normal.
+        cancelled_at:
+          type: string
+          format: date-time
+          description: Panel. Hora en que la orden quedó cancelada (status cancelled por IT); solo cuando existe.
         result:
           anyOf:
           - type: object

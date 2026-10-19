@@ -50,14 +50,29 @@ final class Resources
         $condition = '';
         if ($page['id'] !== null) { $condition = ' AND (created_at>? OR (created_at=? AND id>?))'; array_push($args, $page['at'], $page['at'], Util::bin($page['id'])); }
         $args[] = $limit + 1;
-        $rows = $this->db->run('SELECT * FROM device_command WHERE tenant_id=? AND device_id=? AND created_at<=? AND status IN (\'pending\',\'delivered\',\'running\') AND expires_at>UTC_TIMESTAMP(6)' . $condition . ' ORDER BY created_at,id LIMIT ?', $args)->fetchAll();
+        // Cancelacion (2026-10-19). Una orden con cancel_requested_at se reenvia con ese campo solo a agentes >= 4.0.27, aunque
+        // ya haya vencido (la cuenta regresiva no caduca con la orden): el agente la detiene y confirma. A los anteriores no
+        // se les entrega (no conocen el campo y el panel no les pide cancelar).
+        $cancel = version_compare((string) ($this->c['agent_version'] ?? '0'), AdminApi::CANCEL_MIN_AGENT, '>=');
+        $open = $cancel ? '(expires_at>UTC_TIMESTAMP(6) OR (cancel_requested_at IS NOT NULL AND expires_at>UTC_TIMESTAMP(6)-INTERVAL 1 DAY))' : 'expires_at>UTC_TIMESTAMP(6) AND cancel_requested_at IS NULL';
+        // FOR UPDATE: lectura actual con la fila tomada. Cancelar una orden pending (AdminApi::cancelCommand) toma la misma
+        // fila, asi que o la cancela antes y aqui ya no aparece, o espera a que este sync la marque delivered.
+        $rows = $this->db->run('SELECT * FROM device_command WHERE tenant_id=? AND device_id=? AND created_at<=? AND status IN (\'pending\',\'delivered\',\'running\') AND ' . $open . $condition . ' ORDER BY created_at,id LIMIT ? FOR UPDATE', $args)->fetchAll();
         $more = count($rows) > $limit;
         if ($more) { array_pop($rows); }
+        // Entregada = el servidor la puso en la respuesta de este equipo (antes solo cambiaba si el agente informaba).
+        $pending = array_values(array_filter($rows, static fn (array $row): bool => $row['status'] === 'pending'));
+        if ($pending) {
+            $this->db->run('UPDATE device_command SET status=\'delivered\' WHERE tenant_id=? AND device_id=? AND status=\'pending\' AND id IN (' . implode(',', array_fill(0, count($pending), '?')) . ')', [$this->c['tenant_id'], $this->c['device_id'], ...array_column($pending, 'id')]);
+            foreach ($rows as &$row) { if ($row['status'] === 'pending') { $row['status'] = 'delivered'; } }
+            unset($row);
+        }
         $next = null;
         if ($more) { $last = end($rows); $next = $this->encodeCursor(['at' => $last['created_at'], 'id' => Util::id($last['id']), 'snapshot' => $page['snapshot'], 'exp' => $page['exp'], 'limit' => $limit]); }
         // 'parameters' solo cuando existe: un agente < 4.0.8 no conoce el campo y rechazaria el sync entero.
         $data = array_map(static fn (array $row): array => ['id' => Util::id($row['id']), 'tenant_id' => Util::id($row['tenant_id']), 'device_id' => Util::id($row['device_id']), 'type' => $row['type'], 'status' => $row['status'], 'created_at' => Util::time($row['created_at']), 'expires_at' => Util::time($row['expires_at']), 'result' => null]
-            + (($row['parameters'] ?? null) !== null ? ['parameters' => json_decode($row['parameters'])] : []), $rows);
+            + (($row['parameters'] ?? null) !== null ? ['parameters' => json_decode($row['parameters'])] : [])
+            + (($row['cancel_requested_at'] ?? null) !== null ? ['cancel_requested_at' => Util::time($row['cancel_requested_at'])] : []), $rows);
         return ['data' => $data, 'next_cursor' => $next, 'generated_at' => Util::now(), 'data_through' => Util::time($page['snapshot'])];
     }
     public function release(?string $id = null): ?array

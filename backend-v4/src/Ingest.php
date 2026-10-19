@@ -184,6 +184,8 @@ final class Ingest
         if (!$q) { throw new ApiError(404, 'resource_not_found'); }
         return $q;
     }
+    /** Codigo con el que el agente confirma que detuvo una orden que IT cancelo (status failed). */
+    public const CANCELLED_BY_ADMIN = 'cancelled_by_admin';
     public function command(string $id, object $e): array
     {
         $command = $this->ownCommand($id);
@@ -200,9 +202,16 @@ final class Ingest
             if ($command['status'] === $e->status && $command['result_code'] === $resultCode && $command['completed_at'] === Util::sqlTime($e->at)) { return self::ack($e->event_id, 'duplicate'); }
             throw new ApiError(409, 'invalid_transition');
         }
-        if ($command['expired'] || in_array($command['status'], ['cancelled', 'expired'], true) || Util::sqlTime($e->at) < $command['created_at']) { throw new ApiError(409, 'invalid_transition'); }
+        // Con cancelacion pedida (cancel_requested_at) se acepta aunque haya vencido: la cuenta regresiva no caduca con la orden.
+        $cancelling = ($command['cancel_requested_at'] ?? null) !== null;
+        if (($command['expired'] && !$cancelling) || in_array($command['status'], ['cancelled', 'expired'], true) || Util::sqlTime($e->at) < $command['created_at']) { throw new ApiError(409, 'invalid_transition'); }
         $this->write('INSERT INTO device_command_results (tenant_id,device_id,event_id,command_id,status,at,code,body_hash) VALUES (?,?,?,?,?,?,?,?)', [...$this->args($e->event_id), Util::bin($id), $e->status, Util::sqlTime($e->at), $e->code ?? null, $hash], 'invalid_transition');
-        $this->db->run('UPDATE device_command SET status=?,result_code=?,completed_at=? WHERE tenant_id=? AND device_id=? AND id=?', [$e->status, $resultCode, $terminal ? Util::sqlTime($e->at) : null, ...$this->args($id)]);
+        if ($cancelling && $e->status === 'failed' && ($e->code ?? null) === self::CANCELLED_BY_ADMIN) {
+            // El agente (>= 4.0.27) detuvo la cuenta regresiva: la orden queda cancelada (el CHECK exige result_code NULL).
+            $this->db->run('UPDATE device_command SET status=\'cancelled\',result_code=NULL,completed_at=NULL,cancelled_at=? WHERE tenant_id=? AND device_id=? AND id=?', [Util::sqlTime($e->at), ...$this->args($id)]);
+        } else {
+            $this->db->run('UPDATE device_command SET status=?,result_code=?,completed_at=? WHERE tenant_id=? AND device_id=? AND id=?', [$e->status, $resultCode, $terminal ? Util::sqlTime($e->at) : null, ...$this->args($id)]);
+        }
         (new Audit($this->db))->record($this->c, $this->r, 'command.result', 'command', Util::bin($id), ['status', 'result']);
         return self::ack($e->event_id);
     }

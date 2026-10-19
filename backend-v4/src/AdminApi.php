@@ -17,23 +17,30 @@ final class AdminApi
         // Icono de notificaciones: cualquier sesion; cada seccion exige alli su permiso, funcion y alcance (PanelNotifications).
         if (in_array($r->operation['operationId'],['getMyAccess','getMe',...PanelNotifications::OPERATIONS],true)) { return; }
         if ($r->operation['operationId']==='patchDevice' && (property_exists($r->body,'release_ring') || property_exists($r->body,'release_pause_reason')) && !$c['platform']) { throw new ApiError(403,'permission_denied'); }
-        if ($r->operation['operationId']==='createDeviceCommand') {
-            $permission=match($r->body->type) { 'lock'=>'equipos.bloquear','unlock'=>'equipos.desbloquear','restart'=>'equipos.reiniciar','shutdown'=>'equipos.apagar','wipe'=>'equipos.borrar','refresh_policy'=>'reglas.aplicar','rename_computer'=>'equipos.editar',default=>throw new ApiError(422,'validation_failed') };
+        $commandType=null;
+        if ($r->operation['operationId']==='createDeviceCommand') { $commandType=$r->body->type; }
+        // Cancelar una orden exige el mismo permiso que crearla: el de su tipo (2026-10-19).
+        if ($r->operation['operationId']==='cancelDeviceCommand') {
+            $command=$db->one('SELECT type FROM device_command WHERE tenant_id=? AND device_id=? AND id=?',[$this->tenant,Util::bin($r->resourceId),Util::bin($r->subResourceId)]);
+            if (!$command) { throw new ApiError(404,'resource_not_found'); }
+            $commandType=$command['type'];
         }
+        if ($commandType!==null) { $permission=self::COMMAND_PERMISSIONS[$commandType]??throw new ApiError(422,'validation_failed'); }
         // Lote de personas: el permiso del paso principal (datos > acceso > plan); los demas pasos se exigen en batchUsers().
         if ($r->operation['operationId']==='batchUpdateUsers' && !isset($r->body->changes)) { $permission=isset($r->body->access)?'roles.gestionar':(isset($r->body->plan)?'planes.asignar':$permission); }
         // Puesta en marcha: cualquier permiso de administracion del cliente (Onboarding::permission); el alcance se exige alli.
         if (in_array($r->operation['operationId'],Onboarding::OPERATIONS,true)) { $permission=Onboarding::permission($db,$c); }
         $this->access=new AdminAccess($db,$c,$permission,$r->operation['operationId']);
         if ($permission==='roles.gestionar') { $this->access->rolesGate(); }
-        if (in_array($r->operation['operationId'],['createDeviceCommand','createHardeningCommand','assignDevice'],true)) { $this->authorizedDevice=$this->row('devices',Util::bin($r->resourceId)); $this->deviceUser=$this->access->user($this->authorizedDevice['user_id']); }
+        if (in_array($r->operation['operationId'],['createDeviceCommand','createHardeningCommand','assignDevice','cancelDeviceCommand'],true)) { $this->authorizedDevice=$this->row('devices',Util::bin($r->resourceId)); $this->deviceUser=$this->access->user($this->authorizedDevice['user_id']); }
         // El plan del DUEÑO del equipo gobierna las ordenes remotas (encargo 4): sin la funcion, 403 feature_not_in_plan auditado.
-        if ($r->operation['operationId']==='createDeviceCommand' && !in_array($r->body->type,$this->allowedCommands($this->authorizedDevice),true)) {
-            $feature=self::COMMAND_FEATURES[$r->body->type]; $device=$this->authorizedDevice['id'];
+        // Tambien al cancelarlas (mismo plan que crearlas). harden/unharden no estan en COMMAND_TYPES: su plan lo mira Hardening.
+        if ($commandType!==null && in_array($commandType,self::COMMAND_TYPES,true) && !in_array($commandType,$this->allowedCommands($this->authorizedDevice),true)) {
+            $feature=self::COMMAND_FEATURES[$commandType]; $device=$this->authorizedDevice['id']; $op=$r->operation['operationId'];
             $e=new ApiError(403,'feature_not_in_plan',[],$feature);
-            $e->afterRollback=function () use ($db,$c,$r,$device,$feature): void {
+            $e->afterRollback=function () use ($db,$c,$r,$device,$feature,$op): void {
                 $c['principal_id']=(new AdminAuth($db,new RateLimiter()))->principal($c);
-                (new Audit($db))->record($c,$r,'createDeviceCommand','device',$device,['type'],'denied',"feature_not_in_plan:$feature");
+                (new Audit($db))->record($c,$r,$op,'device',$device,['type'],'denied',"feature_not_in_plan:$feature");
             };
             throw $e;
         }
@@ -42,6 +49,10 @@ final class AdminApi
     /** Funcion del plan que exige cada orden remota; las que no aparecen (refresh_policy, rename_computer) no dependen del plan. */
     public const COMMAND_FEATURES=['lock'=>'comandos','unlock'=>'comandos','restart'=>'comandos','shutdown'=>'comandos','wipe'=>'borrado'];
     private const COMMAND_TYPES=['lock','unlock','restart','shutdown','wipe','refresh_policy','rename_computer'];
+    /** Permiso para crear (y cancelar) cada tipo de orden. harden/unharden se crean en Hardening (hardening.gestionar). */
+    private const COMMAND_PERMISSIONS=['lock'=>'equipos.bloquear','unlock'=>'equipos.desbloquear','restart'=>'equipos.reiniciar','shutdown'=>'equipos.apagar','wipe'=>'equipos.borrar','refresh_policy'=>'reglas.aplicar','rename_computer'=>'equipos.editar','harden'=>'hardening.gestionar','unharden'=>'hardening.gestionar'];
+    /** Agente que sabe detener una cuenta regresiva ya iniciada (Command.cancel_requested_at). */
+    public const CANCEL_MIN_AGENT='4.0.27';
     private array $deviceFunctions=[];
     /**
      * Ordenes que el plan permite para este equipo: las funciones del plan efectivo de su dueño (PersonPlans::functions);
@@ -177,7 +188,7 @@ final class AdminApi
             'listSchedules','createSchedule','getSchedule','putSchedule'=>$this->schedules($op,$id,$b),
             'listUsers','createUser','getUser','patchUser'=>$this->users($op,$id,$b),
             'batchUpdateUsers'=>$this->batchUsers($b),
-            'listTenantDevices','getDevice','getDeviceSecurity','patchDevice','assignDevice','createDeviceCommand','listAdminCommands','createEnrollment'=>$this->devices($op,$id,$b),
+            'listTenantDevices','getDevice','getDeviceSecurity','patchDevice','assignDevice','createDeviceCommand','cancelDeviceCommand','listAdminCommands','createEnrollment'=>$this->devices($op,$id,$b),
             'listRoles','getRole','createRole','patchRole'=>$this->roles($op,$id,$b),
             'listPermissions','getPermission','patchPermission'=>$this->permissions($op,$b),
             'listPolicies','getPolicy','createPolicy','patchPolicy'=>$this->policies($op,$id,$b),
@@ -788,7 +799,53 @@ final class AdminApi
     }
     private function commandDto(array $r): array
     {
-        return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'device_id'=>Util::id($r['device_id']),'type'=>$r['type'],'status'=>$r['status'],'created_at'=>Util::time($r['created_at']),'expires_at'=>Util::time($r['expires_at']),'result'=>$r['completed_at']===null?null:['code'=>$r['result_code'],'completed_at'=>Util::time($r['completed_at'])]];
+        // parameters (p. ej. notice_seconds), cancel_requested_at y cancelled_at solo cuando existen: el panel decide con
+        // ellos si ofrece «Cancelar» (cuenta regresiva) y muestra «Cancelando…» / «Cancelada».
+        return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'device_id'=>Util::id($r['device_id']),'type'=>$r['type'],'status'=>$r['status'],'created_at'=>Util::time($r['created_at']),'expires_at'=>Util::time($r['expires_at']),'result'=>$r['completed_at']===null?null:['code'=>$r['result_code'],'completed_at'=>Util::time($r['completed_at'])]]
+            +(($r['parameters']??null)!==null?['parameters'=>json_decode($r['parameters'])]:[])
+            +(($r['cancel_requested_at']??null)!==null?['cancel_requested_at'=>Util::time($r['cancel_requested_at'])]:[])
+            +(($r['cancelled_at']??null)!==null?['cancelled_at'=>Util::time($r['cancelled_at'])]:[]);
+    }
+    /**
+     * Cancelar una orden (Koichi, 2026-10-19: un reinicio con aviso a varios equipos no se podia detener en uno).
+     * La fila se toma FOR UPDATE y el sync la marca delivered con la fila tomada (Resources::commands): cancelar y entregar
+     * no se cruzan. pending -> cancelled (nunca se entrega). delivered/running con cuenta regresiva -> cancel_requested_at y
+     * el sync se la reenvia al agente (>= 4.0.27), que la detiene y confirma (Ingest::command). Lo demas, 409 con motivo.
+     */
+    private function cancelCommand(array $d, object $b): array
+    {
+        $id=Util::bin($this->r->subResourceId);
+        $c=$this->db->one('SELECT *,expires_at<=UTC_TIMESTAMP(6) lapsed FROM device_command WHERE tenant_id=? AND device_id=? AND id=? FOR UPDATE',[$this->tenant,$d['id'],$id]);
+        if (!$c) { throw new ApiError(404,'resource_not_found'); }
+        if ($c['type']==='wipe') { $this->reauth(); }
+        if (in_array($c['status'],['succeeded','failed'],true)) { throw new ApiError(409,'command_already_executed',[],'La orden ya se ejecutó '.$this->tenantClock($c['completed_at']).'.'); }
+        if ($c['status']==='cancelled') { throw new ApiError(409,'command_already_cancelled',[],'La orden ya estaba cancelada.'); }
+        if ($c['status']==='expired') { throw new ApiError(409,'command_expired',[],'La orden venció sin ejecutarse.'); }
+        if ($c['cancel_requested_at']!==null) { return self::response($this->commandDto($c)); }
+        if ($c['status']==='pending') {
+            if ($c['lapsed']) { throw new ApiError(409,'command_expired',[],'La orden venció sin entregarse.'); }
+            // Compare-and-set: solo si sigue pending (la fila esta tomada, asi que siempre es 1).
+            $done=$this->db->run("UPDATE device_command SET status='cancelled',cancelled_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=? AND status='pending'",[$this->tenant,$id])->rowCount();
+            $fields=['status','cancelled_at'];
+        } else {
+            $notice=in_array($c['type'],['restart','shutdown'],true) ? (int)(json_decode((string)$c['parameters'],true)['notice_seconds']??0) : 0;
+            if ($notice<=0) { throw new ApiError(409,'command_executes_on_receipt',[],'El equipo ya recibió la orden y la ejecuta al recibirla: no hay nada que detener.'); }
+            if (version_compare((string)$d['agent_version'],self::CANCEL_MIN_AGENT,'<')) { throw new ApiError(409,'agent_too_old',[],'Este equipo tiene una versión del agente que no permite cancelar una cuenta regresiva ya iniciada.'); }
+            $done=$this->db->run("UPDATE device_command SET cancel_requested_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=? AND status IN ('delivered','running') AND cancel_requested_at IS NULL",[$this->tenant,$id])->rowCount();
+            $fields=['cancel_requested_at'];
+        }
+        if ($done!==1) { throw new ApiError(409,'invalid_transition'); }
+        $reason=trim((string)($b->reason??''));
+        (new Audit($this->db))->record($this->c,$this->r,'cancelDeviceCommand','device_command',$id,$fields,'allowed',$reason===''?null:$reason);
+        return self::response($this->commandDto($this->row('device_command',$id)));
+    }
+    /** «a las 3:04 p. m.» (o «el 18/10 a las 3:04 p. m.» si no es hoy) en la zona horaria de la empresa. */
+    private function tenantClock(string $at): string
+    {
+        try { $tz=new \DateTimeZone((string)($this->c['timezone']??'UTC')); } catch (\Exception) { $tz=new \DateTimeZone('UTC'); }
+        $when=(new \DateTimeImmutable($at,new \DateTimeZone('UTC')))->setTimezone($tz);
+        // Mismo formato que el panel (es-CO, 12 h): «a las 3:04 p. m.».
+        return ($when->format('Y-m-d')===(new \DateTimeImmutable('now',$tz))->format('Y-m-d') ? '' : 'el '.$when->format('d/m').' ').'a las '.$when->format('g:i').($when->format('A')==='AM'?' a. m.':' p. m.');
     }
     private function devices(string $op,?string $id,?object $b): array
     {
@@ -804,6 +861,7 @@ final class AdminApi
             return $this->result(['device_id'=>Util::id($d['id']),'event_id'=>Util::id($r['event_id']),'observed_at'=>Util::time($r['observed_at']),'controls'=>json_decode($r['controls'])]);
         }
         if ($op==='listAdminCommands') { return $this->page('SELECT * FROM device_command WHERE tenant_id=? AND device_id=?',[$this->tenant,$id],fn($x)=>$this->commandDto($x)); }
+        if ($op==='cancelDeviceCommand') { return $this->cancelCommand($d,$b); }
         if ($op==='createDeviceCommand') {
             if ($d['status']!=='active') { throw new ApiError(409,'invalid_transition'); }
             $expires=Util::sqlTime($b->expires_at); $delta=strtotime($b->expires_at)-time();

@@ -3688,7 +3688,7 @@ const AUDIT_ACTIONS = {
   approveEnrollmentRequest: 'Aprobó un equipo nuevo', rejectEnrollmentRequest: 'Rechazó un equipo nuevo', requestEnrollment: 'Un equipo pidió registrarse', createEnrollment: 'Autorizó un equipo',
   createEnrollmentKey: 'Creó una clave de registro de equipos', downloadInstaller: 'Descargó el instalador con clave nueva', revokeEnrollmentKey: 'Revocó una clave de registro', putEnrollmentSettings: 'Cambió los ajustes de registro de equipos',
   createExpectedDevice: 'Agregó un equipo esperado', importExpectedDevices: 'Importó equipos esperados', externalImportExpectedDevices: 'Otro sistema cargó equipos esperados', cancelExpectedDevice: 'Canceló un equipo esperado',
-  assignDevice: 'Asignó un equipo a una persona', transferDevice: 'Transfirió un equipo', patchDevice: 'Editó un equipo', createDeviceCommand: 'Envió un comando a un equipo',
+  assignDevice: 'Asignó un equipo a una persona', transferDevice: 'Transfirió un equipo', patchDevice: 'Editó un equipo', createDeviceCommand: 'Envió un comando a un equipo', cancelDeviceCommand: 'Canceló un comando de un equipo',
   createHardeningCommand: 'Envió un endurecimiento a un equipo', setTenantHardening: 'Cambió la seguridad de cuentas de Windows', revealTenantHardening: 'Vio la contraseña de administrador local',
   reportHardening: 'El equipo reportó su endurecimiento', reportSecurity: 'El equipo reportó su seguridad', reportCommandResult: 'El equipo respondió un comando',
   deviceLogin: 'El equipo se conectó', deviceChallenge: 'El equipo pidió conectarse', syncDevice: 'El equipo se sincronizó', ingestEpisodes: 'El equipo envió actividad', ingestLogs: 'El equipo envió registros',
