@@ -9,6 +9,7 @@ export const RESULT_CODES = {
   device_actions_dry_run: 'El agente está en modo de prueba: no ejecuta acciones', invalid_command_destination: 'Rechazada por el agente (destino no válido)',
   command_inbox_full: 'El agente tiene demasiadas órdenes pendientes', invalid_computer_name: 'Nombre no válido', lock_store_unavailable: 'El agente no pudo guardar el bloqueo',
   notice_deadline_missed: 'No se ejecutó: el equipo estaba apagado o suspendido cuando terminó el aviso', invalid_notice: 'Tiempo de aviso no válido',
+  cancelled_by_admin: 'IT canceló la orden antes de que se ejecutara',
   // Excepciones de Windows que el agente informa por su nombre.
   Win32Exception: 'Windows rechazó el cambio', UnauthorizedAccessException: 'Windows negó el permiso', IOException: 'Error de lectura o escritura en el equipo',
   InvalidOperationException: 'El agente no pudo completar la acción', TimeoutException: 'Se agotó el tiempo de espera', NotSupportedException: 'No se puede en este equipo',

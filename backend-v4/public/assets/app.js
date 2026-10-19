@@ -1,4 +1,4 @@
-import { remoteActionsSection, commandTypes, commandStates, versionBelow, commandError, commandExpiry, remoteAvailability, renameState, renameNote, renameRestartButton } from './device-actions.js';
+import { remoteActionsSection, commandTypes, commandStates, versionBelow, commandError, commandExpiry, remoteAvailability, renameState, renameNote, renameRestartButton, cancelState, cancelBadge, openCancelCommand } from './device-actions.js';
 import { codeNode, plainCode } from './result-codes.js';
 import { api, ApiError, PLATFORM_TENANT, isUuid, setTenant, saveSession, readSession, refreshCsrf, goToLogin, errorMessage } from './api.js';
 import { applyNavAccess } from './nav-access.js';
@@ -357,6 +357,7 @@ const sacStates = { off: 'Apagado', on: 'Activo', evaluation: 'En evaluación', 
 const agentLogCodes = {
   smart_app_control_disabled: 'Smart App Control desactivado (aplica al reiniciar)', smart_app_control_disable_failed: 'No se pudo desactivar Smart App Control',
   update_launch_failed: 'Windows no dejó arrancar el instalador de la actualización', update_apply_stalled: 'La actualización no terminó; se reintentará',
+  command_cancelled: 'IT canceló una cuenta regresiva de reinicio o apagado', command_cancel_too_late: 'Llegó la cancelación, pero la orden ya se había ejecutado',
   legacy_k3_running: 'Keeper 3 (K3) está abierto en el equipo', legacy_k3_autostart: 'Keeper 3 (K3) arranca al iniciar sesión', legacy_k3_gone: 'Keeper 3 (K3) ya no corre ni arranca',
 };
 const controlStates = { applied: 'Aplicado', failed: 'Fallido', unsupported: 'No soportado', unknown: 'Desconocido' };
@@ -576,7 +577,11 @@ async function historySection(d, log) {
   const refresh = node('button', 'Actualizar historial', 'link-button'); refresh.type = 'button'; head.append(refresh);
   const checked = node('p', undefined, 'help history-checked');
   const history = node('div', undefined, 'remote-history');
-  section.append(head, node('p', '«Pendiente» y «Entregado» significan que la orden aún no tiene confirmación del equipo. «Ejecutado» o «Falló» es lo que informó el agente.', 'help'), checked, history);
+  // Avisos de «Cancelar» (resultado o por qué no se pudo); queda visible tras refrescar la tabla.
+  const feedback = node('p', undefined, 'help cancel-feedback'); feedback.setAttribute('role', 'status'); feedback.hidden = true;
+  section.append(head, node('p', '«Pendiente» significa que el equipo aún no recibió la orden y «Entregado», que la recibió pero aún no confirma. «Ejecutado» o «Falló» es lo que informó el agente. Puedes cancelar una orden pendiente, o un reinicio o apagado con aviso mientras corre la cuenta regresiva.', 'help'), checked, feedback, history);
+  const access = await api('GET', '/me/access').catch(() => null);
+  const say = (text, bad = false) => { feedback.textContent = text; feedback.hidden = !text; feedback.classList.toggle('error-text', bad); };
   const render = current => {
     refresh.disabled = false;
     checked.textContent = `Última consulta: ${clock()}.`;
@@ -591,15 +596,38 @@ async function historySection(d, log) {
     const recent = [...current.rows].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).slice(0, 20);
     const columns = [['Orden', r => commandTypes[r.type] || r.type], ['Enviada', r => dateTime(r.created_at)],
       ['Estado', r => {
+        const special = cancelBadge(r, cancelState(r, d, access, now));
+        if (special) {
+          const box = node('span', undefined, 'cancel-state'); box.dataset.cancelState = special.text; box.append(badge(special.text, special.tone));
+          if (special.note) box.append(node('small', special.note, 'state-note'));
+          return box;
+        }
         const stale = ['pending', 'delivered'].includes(r.status) && Date.parse(r.expires_at) <= now;
         const [text, tone] = commandStates[stale ? 'expired' : r.status] || [r.status, ''];
         return badge(text, tone);
       }],
       ['Resultado', r => { if (!r.result) return '—'; const n = codeNode(r.result.code); n.textContent += ` · ${dateTime(r.result.completed_at)}`; return n; }],
-      ['Vence', r => dateTime(r.expires_at)]];
+      ['Vence', r => dateTime(r.expires_at)],
+      ['Cancelar', r => {
+        const state = cancelState(r, d, access, now);
+        if (state?.kind === 'old_agent') return node('small', state.note, 'state-note cancel-old-agent');
+        if (state?.kind !== 'cancellable') return '—';
+        const b = node('button', 'Cancelar', 'link-button'); b.type = 'button'; b.dataset.cancel = r.id;
+        b.setAttribute('aria-label', `Cancelar ${(commandTypes[r.type] || r.type).toLowerCase()} enviada ${dateTime(r.created_at)}`);
+        b.addEventListener('click', () => { say(''); openCancelCommand(d, r, { onDone: (result, error) => {
+          if (error) say(error.message, true);
+          else say(result?.status === 'cancelled' ? 'Orden cancelada: el equipo no la recibirá.' : 'Cancelando…: el equipo detiene la cuenta regresiva en su próxima sincronización (unos 2 minutos).');
+          log.load();
+        } }); });
+        return b;
+      }]];
     appendRows(table(history, `Últimas ${recent.length} órdenes de este equipo`, columns).body, recent, columns);
-    history.append(node('p', 'Quién envió cada orden y su motivo quedan en Auditoría.', 'help'));
+    history.append(node('p', 'Quién envió o canceló cada orden y su motivo quedan en Auditoría.', 'help'));
+    // «Cancelando…»: se vuelve a consultar cada 30 s hasta que el equipo confirme (o la ejecute).
+    clearTimeout(poll);
+    if (current.rows.some(r => cancelState(r, d, access, now)?.kind === 'cancelling')) poll = setTimeout(() => { if (section.isConnected) log.load(); }, 30000);
   };
+  let poll = null;
   log.on(render);
   render(log);
   refresh.addEventListener('click', () => { refresh.disabled = true; log.load(); });

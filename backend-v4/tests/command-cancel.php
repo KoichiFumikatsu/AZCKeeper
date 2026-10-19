@@ -180,5 +180,9 @@ function commandCancelTests(Database $db): void
     check($changed === 1 && $blocked && $r[0] === 200 && !in_array($second, array_column($r[1]['commands'], 'id'), true) && $row($second)['status'] === 'cancelled', 'race b: sync waits for the cancellation and never delivers it');
     $other = null;
 
+    // Panel: textos llanos y el boton en la ficha.
+    $assets = dirname(__DIR__) . '/public/assets/';
+    check(str_contains(file_get_contents($assets . 'result-codes.js'), 'cancelled_by_admin'), 'plain text for cancelled_by_admin');
+    check(str_contains(file_get_contents($assets . 'device-actions.js'), '/cancel'), 'device page offers Cancel');
     echo 'PASS command cancel (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

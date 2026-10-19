@@ -19,17 +19,102 @@ const remoteActions = [
     effect: 'Se quita la pantalla de bloqueo y la persona puede volver a usar el equipo.' },
   { type: 'restart', label: 'Reiniciar', permission: 'equipos.reiniciar', feature: 'comandos', agent: '4.0.0', reason: 'Reinicio desde el panel', verb: 'Reiniciar',
     effect: 'Windows se reinicia de inmediato, sin aviso ni cuenta regresiva. La persona perderá lo que no haya guardado.',
-    noticeEffect: m => `La persona verá en su pantalla «El equipo se reiniciará en ${m} por orden de IT. Guarda tu trabajo.» con una cuenta regresiva, sin opción de posponer ni cancelar. Al terminar, Windows se reinicia. La cuenta empieza cuando el equipo recibe la orden.` },
+    noticeEffect: m => `La persona verá en su pantalla «El equipo se reiniciará en ${m} por orden de IT. Guarda tu trabajo.» con una cuenta regresiva, sin opción de posponer ni cancelar por su parte. Al terminar, Windows se reinicia. La cuenta empieza cuando el equipo recibe la orden.` },
   { type: 'shutdown', label: 'Apagar', permission: 'equipos.apagar', feature: 'comandos', agent: '4.0.0', reason: 'Apagado desde el panel', verb: 'Apagar',
     effect: 'El equipo se apaga de inmediato, sin aviso. La persona perderá lo que no haya guardado y alguien tendrá que encenderlo a mano: no se puede encender desde el panel.',
-    noticeEffect: m => `La persona verá en su pantalla «El equipo se apagará en ${m} por orden de IT. Guarda tu trabajo.» con una cuenta regresiva, sin opción de posponer ni cancelar. Al terminar, el equipo se apaga y alguien tendrá que encenderlo a mano: no se puede encender desde el panel. La cuenta empieza cuando el equipo recibe la orden.` },
+    noticeEffect: m => `La persona verá en su pantalla «El equipo se apagará en ${m} por orden de IT. Guarda tu trabajo.» con una cuenta regresiva, sin opción de posponer ni cancelar por su parte. Al terminar, el equipo se apaga y alguien tendrá que encenderlo a mano: no se puede encender desde el panel. La cuenta empieza cuando el equipo recibe la orden.` },
 ];
 const wipeAction = { type: 'wipe', label: 'Borrado remoto', permission: 'equipos.borrar', feature: 'borrado', agent: '4.0.0', reason: 'Borrado remoto por robo o pérdida', verb: 'Borrar',
   effect: 'Se borran los archivos de todas las personas del equipo (Documentos, Escritorio, Descargas, correo y configuración de sus cuentas de Windows) y se sobrescribe el espacio libre para que no se puedan recuperar. Se conservan Windows, Keeper y la cuenta de IT. Solo funciona si el equipo se enciende y se conecta: no protege un disco que ya sacaron del equipo.' };
 const PLAN_REASON = 'No incluido en el plan de esta persona';
 const featureNames = { comandos: 'Comandos remotos', borrado: 'Borrado remoto' };
 export const commandTypes = { lock: 'Bloquear', unlock: 'Desbloquear', restart: 'Reiniciar', shutdown: 'Apagar', wipe: 'Borrado remoto', refresh_policy: 'Aplicar reglas', rename_computer: 'Cambiar nombre', harden: 'Endurecer', unharden: 'Revertir endurecimiento' };
-export const commandStates = { pending: ['Pendiente', 'info'], delivered: ['Entregado', 'info'], running: ['En curso', 'warn'], succeeded: ['Ejecutado', 'good'], failed: ['Falló', 'bad'], expired: ['Vencido', 'warn'], cancelled: ['Cancelado', ''] };
+export const commandStates = { pending: ['Pendiente', 'info'], delivered: ['Entregado', 'info'], running: ['En curso', 'warn'], succeeded: ['Ejecutado', 'good'], failed: ['Falló', 'bad'], expired: ['Vencido', 'warn'], cancelled: ['Cancelada', ''] };
+// Cancelar una orden (POST /devices/{id}/commands/{commandId}/cancel, 2026-10-19). Pendiente = el equipo aún no la
+// recibió: se cancela y no le llega. Reinicio/apagado con aviso ya entregado = cuenta regresiva en curso: el equipo la
+// detiene en su próxima sincronización (agente 4.0.27 o posterior). Mismo permiso y plan que para enviarla.
+export const CANCEL_AGENT = '4.0.27';
+const OLD_AGENT_CANCEL = 'Este equipo tiene una versión que no permite cancelar una cuenta regresiva ya iniciada.';
+const cancelPermissions = { lock: 'equipos.bloquear', unlock: 'equipos.desbloquear', restart: 'equipos.reiniciar', shutdown: 'equipos.apagar', wipe: 'equipos.borrar', refresh_policy: 'reglas.aplicar', rename_computer: 'equipos.editar', harden: 'hardening.gestionar', unharden: 'hardening.gestionar' };
+const cancelNouns = { restart: 'el reinicio', shutdown: 'el apagado', lock: 'el bloqueo', unlock: 'el desbloqueo', wipe: 'el borrado remoto', rename_computer: 'el cambio de nombre', refresh_policy: 'la orden', harden: 'el endurecimiento', unharden: 'la reversión del endurecimiento' };
+const isOpen = r => ['pending', 'delivered', 'running'].includes(r.status);
+const countdown = r => ['restart', 'shutdown'].includes(r.type) && Number(r.parameters?.notice_seconds) > 0;
+const hhmm = at => new Intl.DateTimeFormat('es-CO', { timeStyle: 'short' }).format(new Date(at));
+const sentence = text => text.endsWith('.') ? text : `${text}.`;
+/**
+ * Estado de cancelación de una orden del historial:
+ * { kind: 'cancellable', countdown } | { kind: 'old_agent', note } | { kind: 'cancelling' } | { kind: 'cancelled' } |
+ * { kind: 'too_late' } | null (nada que mostrar). access = GET /me/access (null: decide la API).
+ */
+export function cancelState(r, d, access, now = Date.now()) {
+  if (r.status === 'cancelled' && r.cancelled_at) return { kind: 'cancelled' };
+  if (r.cancel_requested_at && isOpen(r)) return { kind: 'cancelling' };
+  if (r.cancel_requested_at && r.status === 'succeeded') return { kind: 'too_late' };
+  if (!isOpen(r) || Date.parse(r.expires_at) <= now) return null;
+  if (r.status !== 'pending' && !countdown(r)) return null;
+  const permission = cancelPermissions[r.type];
+  if (access && !access.platform && !access.permissions.some(p => p.code === permission)) return null;
+  if (Array.isArray(d.allowed_commands) && ['lock', 'unlock', 'restart', 'shutdown', 'wipe'].includes(r.type) && !d.allowed_commands.includes(r.type)) return null;
+  if (r.status !== 'pending' && versionBelow(d.agent_version, CANCEL_AGENT)) return { kind: 'old_agent', note: OLD_AGENT_CANCEL };
+  return { kind: 'cancellable', countdown: r.status !== 'pending' };
+}
+export function cancelError(error) {
+  const detail = String(error.problem?.detail || '').replace(/\.$/, '');
+  const lower = detail ? detail.charAt(0).toLowerCase() + detail.slice(1) : '';
+  if (error.code === 'command_already_executed') return new Error(`No se pudo cancelar: ya se ejecutó${/ a las \d/.test(lower) ? lower.replace(/^la orden ya se ejecutó/, '') : ''}.`);
+  if (error.code === 'command_executes_on_receipt') return new Error('No se pudo cancelar: el equipo ya recibió la orden y la ejecuta al recibirla.');
+  if (error.code === 'command_expired') return new Error('No se pudo cancelar: la orden ya venció.');
+  if (error.code === 'command_already_cancelled') return new Error('La orden ya estaba cancelada.');
+  if (error.code === 'agent_too_old') return new Error(OLD_AGENT_CANCEL);
+  if (error.code === 'feature_not_in_plan') return new Error(`${PLAN_REASON}.`);
+  if (error.code === 'reauth_required') return new Error('Confirma tu contraseña para cancelar el borrado.');
+  if (error.status === 403 && !error.problem?.detail) return new Error('Tu cuenta no tiene permiso para cancelar esta orden.');
+  if (error.status === 404) return new Error('La orden no existe o el equipo está fuera de tu alcance.');
+  return error;
+}
+// Insignia del estado con la cancelación: «Cancelando…», «Cancelada» o «No se pudo cancelar: ya se ejecutó».
+export function cancelBadge(r, state) {
+  if (state?.kind === 'cancelling') return { text: 'Cancelando…', tone: 'info', note: 'El equipo detiene la cuenta regresiva en su próxima sincronización (unos 2 minutos).' };
+  if (state?.kind === 'cancelled') return { text: 'Cancelada', tone: '', note: sentence(`IT la canceló a las ${hhmm(r.cancelled_at)}`) };
+  if (state?.kind === 'too_late') return { text: 'No se pudo cancelar: ya se ejecutó', tone: 'bad', note: r.result?.completed_at ? sentence(`Se ejecutó a las ${hhmm(r.result.completed_at)}`) : '' };
+  return null;
+}
+// Confirmación de «Cancelar»: qué pasa en lenguaje simple y motivo opcional (va a la auditoría).
+export function openCancelCommand(d, r, { onDone }) {
+  const noun = cancelNouns[r.type] || 'la orden';
+  const dialog = node('dialog', undefined, 'remote-dialog cancel-dialog'); const form = node('form'); form.noValidate = true;
+  form.append(node('h2', `¿Cancelar ${noun} de ${d.hostname}?`));
+  const body = node('div', undefined, 'dialog-body'); form.append(body);
+  const verb = r.type === 'restart' ? 'reinicia' : 'apaga';
+  body.append(node('p', countdown(r) && r.status !== 'pending'
+    ? `El equipo ya está mostrando la cuenta regresiva. En su próxima sincronización (unos 2 minutos) la detiene y la persona verá «IT canceló ${r.type === 'restart' ? 'el reinicio' : 'el apagado'}». Si la cuenta termina antes, el equipo se ${verb} igual.`
+    : 'El equipo aún no recibió la orden: se cancela ahora y no le llegará.'));
+  const reasonLabel = node('label', 'Motivo (opcional, queda en la auditoría)'); const reason = node('input'); reason.name = 'reason'; reason.maxLength = 500; reason.autocomplete = 'off'; reasonLabel.append(reason); body.append(reasonLabel);
+  const error = node('p', '', 'error-text'); error.hidden = true; error.setAttribute('role', 'alert');
+  const footer = node('div', undefined, 'dialog-footer'); const back = node('button', 'Volver'); back.type = 'button';
+  const ok = node('button', 'Cancelar la orden', 'danger'); ok.type = 'submit';
+  footer.append(back, ok); form.append(error, footer); dialog.append(form); document.body.append(dialog);
+  wireDialog(dialog, { error });
+  back.addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => dialog.remove());
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); error.hidden = true; ok.disabled = true; back.disabled = true;
+    const text = reason.value.trim();
+    const send = () => api('POST', `/devices/${d.id}/commands/${r.id}/cancel`, { body: text ? { reason: text } : {}, idempotencyKey: crypto.randomUUID() });
+    try {
+      const result = r.type === 'wipe' ? await withReauth(send, `Para cancelar el borrado de ${d.hostname}, confirma la contraseña con la que entras al panel.`) : await send();
+      if (result === canceled) { error.textContent = 'No se canceló: falta confirmar tu contraseña.'; error.hidden = false; return; }
+      dialog.close(); onDone(result, null);
+    } catch (e) {
+      const shown = cancelError(e);
+      // Ya ejecutada, vencida o cancelada: el historial cambió; se cierra y el aviso queda junto a la tabla.
+      if (e.status === 409) { dialog.close(); onDone(null, shown); return; }
+      error.textContent = errorMessage(shown); error.hidden = false;
+    } finally { if (dialog.open) { ok.disabled = false; back.disabled = false; } }
+  });
+  dialog.showModal();
+  reason.focus();
+}
 // Cambio de nombre de Windows (GET /devices → computer_rename). Windows solo aplica el nombre al reiniciar: sin esto el
 // panel no mostraba nada y parecía que había fallado. null = no hay cambio en curso o el nombre ya coincide.
 export function renameState(d) {
@@ -156,7 +241,9 @@ export function openRemoteAction(d, action, { onSent, preset = {} }) {
     }
     const refresh = () => {
       delayLabel.hidden = !withNotice.checked;
-      effect.textContent = withNotice.checked ? action.noticeEffect(delay.selectedOptions[0].textContent) : action.effect;
+      // Desde 4.0.27 IT puede detener la cuenta ya iniciada (Cancelar en el historial).
+      const undo = versionBelow(d.agent_version, CANCEL_AGENT) ? '' : ' Si te equivocas, puedes cancelarla desde «Historial del equipo» mientras corre la cuenta.';
+      effect.textContent = withNotice.checked ? action.noticeEffect(delay.selectedOptions[0].textContent) + undo : action.effect;
     };
     [immediate, withNotice, delay].forEach(x => x.addEventListener('change', refresh));
     noticeSeconds = () => withNotice.checked ? Number(delay.value) : 0;
