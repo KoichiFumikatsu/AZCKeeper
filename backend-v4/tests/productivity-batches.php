@@ -165,7 +165,7 @@ function productivityBatchTests(Database $db): void
     printf("  comparison: %d days, %d rows; legacy %.2f s, new %.2f s; write phase (prepared->written) median %.1f ms, max %.1f ms\n",
         $pending, $rows, $legacyTime, $newTime, 1000 * $writes[intdiv(count($writes), 2)], 1000 * max($writes));
 
-    // (d) Concurrencia real: un envio (tenants FOR UPDATE como Auth::deviceContext, luego marca el dia) y el calculo en otro
+    // (d) Concurrencia real: un envio (tenants FOR UPDATE como la autenticacion anterior a Auth::lockDevice, luego marca el dia) y el calculo en otro
     // proceso. Con el calculo viejo hay deadlock; con el nuevo el envio pasa y el dia queda pendiente.
     $legacyRace = productivityRace($db, $fx, 'legacy');
     check($legacyRace['midway'] && $legacyRace['waited'] && ($legacyRace['sync'] === 1213 || ($legacyRace['calc']['driver'] ?? 0) === 1213), 'previous method deadlocks against a sync ' . json_encode($legacyRace));
@@ -180,7 +180,7 @@ function productivityBatchTests(Database $db): void
 
 /**
  * Envio simulado + calculo (viejo o nuevo) en un proceso aparte, sobre el ultimo dia del fixture. Intercalado: el calculo va a
- * mitad de camino, el envio toma la fila de tenants (como Auth::deviceContext ... FOR UPDATE), el calculo sigue hasta pedir
+ * mitad de camino, el envio toma la fila de tenants (como la autenticacion anterior, ... FOR UPDATE), el calculo sigue hasta pedir
  * tenants y el envio marca el dia (INSERT ... rollup_days de Ingest::flushDays).
  *  - viejo: "a mitad de camino" = ya tiene rollup_days FOR UPDATE; se lo frena antes de su DELETE de episode_daily con otra
  *    conexion que tiene esas filas FOR UPDATE.

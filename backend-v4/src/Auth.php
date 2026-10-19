@@ -8,17 +8,69 @@ final class Auth
     public function admin(): AdminAuth { return new AdminAuth($this->db, $this->limiter); }
     public function external(): ExternalAuth { return new ExternalAuth($this->db, $this->limiter); }
 
+    /**
+     * Bloqueos de la autenticacion de un equipo (2026-10-19, flota K3 -> v4). Orden fijo, el mismo en challenge, login y
+     * en cada peticion autenticada de /v1/client/*:
+     *   1. tenants (compartido)  2. users (compartido)  3. devices (exclusivo, por PK)
+     *   4. filas del propio equipo: enrollments del ticket, device_sessions del token, device_keys (exclusivo)
+     * Antes una sola sentencia "devices JOIN tenants JOIN users ... FOR UPDATE" tomaba la fila del cliente en exclusivo en
+     * cada envio: serializaba todos los equipos de un cliente y chocaba con el calculo de productividad, que tiene tenants
+     * en compartido (llave foranea de episode_daily) y espera devices (deadlock 1213). Ahora:
+     *  - Dos envios del mismo cliente o de la misma persona no se esperan entre si (compartido con compartido).
+     *  - El calculo toma tenants en compartido y luego devices (llave foranea): mismo orden que aqui, sin ciclo.
+     *  - Una revocacion (UPDATE de tenants/users: auth_version, status) pide la fila en exclusivo: espera a que terminen los
+     *    envios en curso, y un envio que llega despues espera a que la revocacion confirme y la ve. Por eso es LOCK IN SHARE
+     *    MODE y no una lectura sin bloqueo: sin el, una suspension del cliente podia confirmar mientras un envio autenticado
+     *    con la version vieja seguia escribiendo (la revocacion del cliente no toca devices ni device_sessions).
+     *  - devices sigue en exclusivo: baja, reasignacion, revocacion del equipo y rotacion de claves bloquean esa fila antes
+     *    de tocar asignaciones, claves, sesiones o enrolamientos (AdminApi::row + revokeDevice, login con ticket), asi que lo
+     *    que se lee con el equipo bloqueado es lo confirmado y no cambia hasta el commit.
+     * MariaDB no tiene FOR UPDATE OF tabla: por eso son sentencias separadas.
+     *
+     * @return ?array la fila de devices bloqueada, o null si el cliente, la persona o el equipo no estan activos o el equipo
+     *                ya no es de esa persona.
+     */
+    private function lockDevice(string $tenant, string $user, string $device): ?array
+    {
+        if (!$this->lockOwner($tenant, $user)) { return null; }
+        $d = $this->db->one('SELECT * FROM devices WHERE tenant_id=? AND id=? FOR UPDATE', [$tenant, $device]);
+        return $d && $d['status'] === 'active' && $d['user_id'] === $user ? $d : null;
+    }
+
+    /** Pasos 1 y 2 de lockDevice(): cliente y persona activos, en modo compartido. */
+    private function lockOwner(string $tenant, string $user): bool
+    {
+        return $this->db->one('SELECT tenant_id FROM tenants WHERE tenant_id=? AND status=\'active\' LOCK IN SHARE MODE', [$tenant]) !== null
+            && $this->db->one('SELECT id FROM users WHERE tenant_id=? AND id=? AND status=\'active\' LOCK IN SHARE MODE', [$tenant, $user]) !== null;
+    }
+
     private function identity(object $body): array
     {
-        $ticket = isset($body->enrollment_ticket);
-        $sql = $ticket
-            ? 'SELECT e.* FROM enrollments e JOIN tenants t ON t.tenant_id=e.tenant_id JOIN users u ON u.tenant_id=e.tenant_id AND u.id=e.user_id WHERE e.ticket_hash=? AND e.status=\'pending\' AND e.expires_at>UTC_TIMESTAMP(6) AND t.status=\'active\' AND u.status=\'active\' LIMIT 2 FOR UPDATE'
-            : 'SELECT d.* FROM devices d JOIN tenants t ON t.tenant_id=d.tenant_id JOIN users u ON u.tenant_id=d.tenant_id AND u.id=d.user_id WHERE d.id=? AND d.status=\'active\' AND t.status=\'active\' AND u.status=\'active\' LIMIT 2 FOR UPDATE';
-        $rows = $this->db->run($sql, [$ticket ? hash('sha256', $body->enrollment_ticket, true) : Util::bin($body->device_id)])->fetchAll();
-        $identity = count($rows) === 1 ? $rows[0] : null;
+        $identity = isset($body->enrollment_ticket) ? $this->ticketIdentity(hash('sha256', $body->enrollment_ticket, true)) : $this->deviceIdentity(Util::bin($body->device_id));
         $this->limiter->bootstrap($identity);
         if (!$identity) { throw new ApiError(401, 'invalid_credentials'); }
         return $identity;
+    }
+
+    /** Ticket de enrolamiento: lectura sin bloqueo para saber cliente, persona y equipo; bloqueos en orden; relectura. */
+    private function ticketIdentity(string $hash): ?array
+    {
+        $rows = $this->db->run('SELECT tenant_id,user_id,device_id FROM enrollments WHERE ticket_hash=? LIMIT 2', [$hash])->fetchAll();
+        if (count($rows) !== 1) { return null; }
+        [$tenant, $user, $device] = [$rows[0]['tenant_id'], $rows[0]['user_id'], $rows[0]['device_id']];
+        if (!$this->lockOwner($tenant, $user)) { return null; }
+        // Equipo pre-creado (modelo B): su fila antes que la del enrolamiento, como en revokeDevice. login() valida su estado.
+        if ($device !== null) { $this->db->one('SELECT id FROM devices WHERE tenant_id=? AND id=? FOR UPDATE', [$tenant, $device]); }
+        $rows = $this->db->run('SELECT * FROM enrollments WHERE ticket_hash=? AND status=\'pending\' AND expires_at>UTC_TIMESTAMP(6) LIMIT 2 FOR UPDATE', [$hash])->fetchAll();
+        if (count($rows) !== 1) { return null; }
+        $e = $rows[0];
+        return $e['tenant_id'] === $tenant && $e['user_id'] === $user && $e['device_id'] === $device ? $e : null;
+    }
+
+    private function deviceIdentity(string $id): ?array
+    {
+        $rows = $this->db->run('SELECT tenant_id,user_id FROM devices WHERE id=? LIMIT 2', [$id])->fetchAll();
+        return count($rows) === 1 ? $this->lockDevice($rows[0]['tenant_id'], $rows[0]['user_id'], $id) : null;
     }
 
     public function challenge(Request $r): array
@@ -76,7 +128,7 @@ final class Auth
             $previous = $this->db->one('SELECT agent_version FROM devices WHERE tenant_id=? AND id=?', [$tenant, $device])['agent_version'] ?? null;
             $this->db->run('UPDATE devices SET hostname=?,agent_version=?,last_seen_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?', [$r->body->hostname, $r->body->agent_version, $tenant, $device]);
             if ($previous !== null && $previous !== $r->body->agent_version) { $changed = [$tenant, $device]; }
-            $c = $this->deviceContext($tenant, $device, $keyId);
+            $c = $this->deviceContext($tenant, $i['user_id'], $device, $keyId);
             $token = $this->issue($c);
             $action = $ticket ? ($i['device_id'] === null ? 'device.enrolled' : 'device.key_recovered') : 'device.login';
             (new Audit($this->db))->record($c, $r, $action, 'device', $device, ['session']);
@@ -104,9 +156,17 @@ final class Auth
         }
     }
 
-    private function deviceContext(string $tenant, string $device, string $key): array
+    /** Contexto del equipo: bloqueos de lockDevice() y luego el resto sin bloqueo (ver lockDevice). */
+    private function deviceContext(string $tenant, string $user, string $device, string $key): array
     {
-        $c = $this->db->one('SELECT d.tenant_id,d.id device_id,d.user_id,d.auth_version device_auth_version,d.agent_version,d.release_ring,d.specs,t.auth_version tenant_auth_version,t.timezone,u.auth_version user_auth_version,a.id assignment_id,a.starts_at assignment_start,a.ends_at assignment_end,k.id key_id,k.jwk_x,k.jwk_y,k.thumbprint,p.id principal_id,e.id enrollment_id FROM devices d JOIN tenants t ON t.tenant_id=d.tenant_id JOIN users u ON u.tenant_id=d.tenant_id AND u.id=d.user_id JOIN device_assignments a ON a.tenant_id=d.tenant_id AND a.device_id=d.id AND a.user_id=d.user_id AND a.starts_at<=UTC_TIMESTAMP(6) AND (a.ends_at IS NULL OR a.ends_at>UTC_TIMESTAMP(6)) JOIN device_keys k ON k.tenant_id=d.tenant_id AND k.device_id=d.id AND k.id=? AND k.revoked_at IS NULL JOIN principals p ON p.tenant_id=d.tenant_id AND p.device_id=d.id AND p.kind=\'device\' JOIN enrollments e ON e.tenant_id=d.tenant_id AND e.device_id=d.id AND e.public_key_thumbprint=k.thumbprint AND e.status=\'consumed\' WHERE d.tenant_id=? AND d.id=? AND d.status=\'active\' AND t.status=\'active\' AND u.status=\'active\' FOR UPDATE', [$key, $tenant, $device]);
+        if (!$this->lockDevice($tenant, $user, $device)) { throw new ApiError(401, 'invalid_credentials'); }
+        return $this->context($tenant, $device, $key);
+    }
+
+    /** Lectura sin bloqueo; quien llama ya tiene los bloqueos de lockDevice() en esta transaccion. */
+    private function context(string $tenant, string $device, string $key): array
+    {
+        $c = $this->db->one('SELECT d.tenant_id,d.id device_id,d.user_id,d.auth_version device_auth_version,d.agent_version,d.release_ring,d.specs,t.auth_version tenant_auth_version,t.timezone,u.auth_version user_auth_version,a.id assignment_id,a.starts_at assignment_start,a.ends_at assignment_end,k.id key_id,k.jwk_x,k.jwk_y,k.thumbprint,p.id principal_id,e.id enrollment_id FROM devices d JOIN tenants t ON t.tenant_id=d.tenant_id JOIN users u ON u.tenant_id=d.tenant_id AND u.id=d.user_id JOIN device_assignments a ON a.tenant_id=d.tenant_id AND a.device_id=d.id AND a.user_id=d.user_id AND a.starts_at<=UTC_TIMESTAMP(6) AND (a.ends_at IS NULL OR a.ends_at>UTC_TIMESTAMP(6)) JOIN device_keys k ON k.tenant_id=d.tenant_id AND k.device_id=d.id AND k.id=? AND k.revoked_at IS NULL JOIN principals p ON p.tenant_id=d.tenant_id AND p.device_id=d.id AND p.kind=\'device\' JOIN enrollments e ON e.tenant_id=d.tenant_id AND e.device_id=d.id AND e.public_key_thumbprint=k.thumbprint AND e.status=\'consumed\' WHERE d.tenant_id=? AND d.id=? AND d.status=\'active\' AND t.status=\'active\' AND u.status=\'active\'', [$key, $tenant, $device]);
         if (!$c) { throw new ApiError(401, 'invalid_credentials'); }
         return $c;
     }
@@ -114,11 +174,19 @@ final class Auth
     public function authenticate(Request $r, bool $proof = true): array
     {
         if (!preg_match('/^Bearer ([A-Za-z0-9_-]{43,512})$/D', $r->header('authorization'), $m)) { throw new ApiError(401, 'invalid_credentials'); }
-        $rows = $this->db->run('SELECT *,expires_at<=UTC_TIMESTAMP(6) expired,TIMESTAMPDIFF(SECOND,UTC_TIMESTAMP(6),expires_at) remaining FROM device_sessions WHERE token_hash=? LIMIT 2 FOR UPDATE', [hash('sha256', $m[1], true)])->fetchAll();
-        if (count($rows) !== 1 || $rows[0]['revoked_at'] !== null) { throw new ApiError(401, 'invalid_credentials'); }
-        $s = $rows[0];
-        if ($s['expired']) { throw new ApiError(401, 'token_expired'); }
-        $c = $this->deviceContext($s['tenant_id'], $s['device_id'], $s['key_id']);
+        $hash = hash('sha256', $m[1], true);
+        $session = function (bool $lock) use ($hash): array {
+            $rows = $this->db->run('SELECT *,expires_at<=UTC_TIMESTAMP(6) expired,TIMESTAMPDIFF(SECOND,UTC_TIMESTAMP(6),expires_at) remaining FROM device_sessions WHERE token_hash=? LIMIT 2' . ($lock ? ' FOR UPDATE' : ''), [$hash])->fetchAll();
+            if (count($rows) !== 1 || $rows[0]['revoked_at'] !== null) { throw new ApiError(401, 'invalid_credentials'); }
+            if ($rows[0]['expired']) { throw new ApiError(401, 'token_expired'); }
+            return $rows[0];
+        };
+        // La sesion primero sin bloqueo (para saber cliente, persona y equipo), luego los bloqueos en el orden de lockDevice y
+        // la sesion bloqueada: una revocacion de la sesion confirmada entre medias se ve en la relectura.
+        $s = $session(false);
+        if (!$this->lockDevice($s['tenant_id'], $s['user_id'], $s['device_id'])) { throw new ApiError(401, 'invalid_credentials'); }
+        $s = $session(true);
+        $c = $this->context($s['tenant_id'], $s['device_id'], $s['key_id']);
         foreach (['user_id', 'assignment_id', 'device_auth_version', 'user_auth_version', 'tenant_auth_version'] as $field) {
             if ($c[$field] !== $s[$field]) { throw new ApiError(401, 'invalid_credentials'); }
         }

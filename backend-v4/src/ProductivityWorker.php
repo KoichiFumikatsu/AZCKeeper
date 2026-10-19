@@ -11,9 +11,10 @@ namespace Keeper;
  *  2. Escribir, en una transaccion corta: borra y reescribe el dia desde esas tablas y lo marca limpio solo si su
  *     input_revision sigue siendo la leida en el paso 1 (compare-and-set). Si entro un envio mientras tanto, lo escrito
  *     queda (es un calculo completo del dia con los datos leidos) pero el dia sigue pendiente y se recalcula despues.
- * Orden de bloqueos igual al del envio de un equipo: primero la fila de tenants (el sync la toma al autenticar,
- * Auth::deviceContext ... FOR UPDATE) y al final la de rollup_days (el sync la toma al marcar dias). Antes el calculo tomaba
- * rollup_days al empezar y tenants al insertar (llave foranea de episode_daily): orden inverso, deadlock 1213.
+ * Orden de bloqueos igual al del envio de un equipo (ver Auth::lockDevice): primero la fila de tenants en compartido, luego
+ * devices (aqui en compartido por la llave foranea; el envio la tiene en exclusivo al autenticar) y al final rollup_days (el
+ * sync la toma al marcar dias). Antes el calculo tomaba rollup_days al empezar y tenants al insertar (llave foranea de
+ * episode_daily): orden inverso, deadlock 1213. Y el envio tomaba tenants en exclusivo despues de devices: tambien inverso.
  * Un fallo en el paso 2 deshace solo ese dia; los dias ya escritos en la misma corrida quedan confirmados.
  */
 final class ProductivityWorker
@@ -129,7 +130,7 @@ final class ProductivityWorker
     private function write(string $tenant,string $day,int $revision,string $through,array $occupied,?array $compliance): bool
     {
         // Primer bloqueo de la transaccion: la fila del cliente, en modo compartido (el mismo que piden las llaves foraneas
-        // al insertar). Si un envio la tiene, se espera a que termine ANTES de tener ningun otro bloqueo.
+        // al insertar, y el que toman los envios al autenticar). Solo espera a quien la tenga en exclusivo (una revocacion).
         $this->db->run('SELECT tenant_id FROM tenants WHERE tenant_id=? LOCK IN SHARE MODE',[$tenant]);
         foreach (['episode_daily','focus_daily','day_summary'] as $table) { $this->db->run("DELETE FROM $table WHERE tenant_id=? AND day=? AND calculation_version NOT LIKE 'k3-import-%'",[$tenant,$day]); }
         $this->db->run('INSERT INTO episode_daily (tenant_id,day,user_id,user_assignment_id,device_id,process_name,category,active_seconds,idle_seconds,call_seconds,episode_count,calculation_version,calculated_at,data_through,first_activity,last_activity)
