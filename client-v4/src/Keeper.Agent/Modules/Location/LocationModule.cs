@@ -11,7 +11,7 @@ public sealed class LocationModule(LocationSettingsStore? settings, Func<bool> d
     public LocationCapture? Pending { get; private set; }
     private bool _enabled;
     private bool _knownPolicy;
-    private DateTimeOffset _nextSettings, _nextPoint;
+    private long? _lastSettings, _lastPoint, _pendingStarted;
     private Guid _network;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private Guid Network => network?.Invoke() ?? LocationNetwork.Current;
@@ -24,8 +24,8 @@ public sealed class LocationModule(LocationSettingsStore? settings, Func<bool> d
             _knownPolicy = true;
             _enabled = policy.LocationTracking == true && settings is not null && !domainJoined();
             if (!_enabled) Pending = null;
-            _nextSettings = DateTimeOffset.MinValue;
-            _nextPoint = DateTimeOffset.MinValue;
+            _lastSettings = null;
+            _lastPoint = null;
         }
         finally { _gate.Release(); }
     }
@@ -36,28 +36,29 @@ public sealed class LocationModule(LocationSettingsStore? settings, Func<bool> d
         try
         {
             var now = Context.Clock.GetUtcNow();
-            if (now >= _nextSettings)
+            var timestamp = Context.Clock.GetTimestamp();
+            if (_lastSettings is null || Context.Clock.GetElapsedTime(_lastSettings.Value, timestamp) >= TimeSpan.FromMinutes(2))
             {
                 if (domainJoined()) { _enabled = false; Pending = null; }
                 var changed = await settings.ApplyAsync(_enabled, ct);
-                _nextSettings = now.AddMinutes(2);
+                _lastSettings = timestamp;
                 if (changed) await ReportAsync(_enabled ? "location_restored" : "location_released", ct);
             }
             State = _enabled ? "ready" : "disabled";
             if (!_enabled) return;
             var current = Network;
             if (Pending is { } old && current != old.NetworkId) Pending = null;
-            if (Pending is { } pending && now - pending.At >= TimeSpan.FromSeconds(20))
+            if (Pending is { } pending && _pendingStarted is { } started && Context.Clock.GetElapsedTime(started, timestamp) >= TimeSpan.FromSeconds(20))
             {
                 await Context.Outbox.EnqueueAsync(new LocationPoint { EventId = pending.EventId, At = pending.At,
                     NetworkId = pending.NetworkId, NetworkType = networkType?.Invoke() ?? LocationNetwork.Type() }, ct);
                 Pending = null;
             }
-            if (Pending is null && (now >= _nextPoint || current != _network))
+            if (Pending is null && (_lastPoint is null || Context.Clock.GetElapsedTime(_lastPoint.Value, timestamp) >= TimeSpan.FromMinutes(15) || current != _network))
             {
                 Pending = new(Guid.NewGuid(), current, now);
                 _network = current;
-                _nextPoint = now.AddMinutes(15);
+                _lastPoint = _pendingStarted = timestamp;
             }
         }
         finally { _gate.Release(); }

@@ -458,7 +458,7 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
                 .Select(g => g.MaxBy(e => e.Activity!.Sequence)!.Id).ToHashSet();
             var droppable = state.Events.Where(e => !pending.Contains(e.Id) && e.Id != keep
                 && e.Log is not { Component: "DeviceLock", Code: "local_unlock" }).Select((e, i) => (Event: e, Index: i,
-                Rank: e.Log is not null ? 0 : e.Activity is not null && !latestDay.Contains(e.Id) ? 1 : e.Episode is not null ? 2 : -1))
+                Rank: e.Log is not null ? 0 : e.Activity is not null && !latestDay.Contains(e.Id) ? 1 : e.Episode is not null || e.Location is not null ? 2 : -1))
                 .Where(x => x.Rank >= 0).OrderBy(x => x.Rank).ThenBy(x => x.Index).Select(x => x.Event).ToList();
             state.Quarantine.Clear();
             var removed = 0;

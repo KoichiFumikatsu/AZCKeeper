@@ -138,6 +138,46 @@ public sealed class LocationTests
     }
 
     [Fact]
+    public async Task WallClockChangesDoNotDelayCaptureOrSettingsRepair()
+    {
+        using var dir = new TestDirectory();
+        using var outbox = new DurableOutbox(dir.File("outbox.json"));
+        var clock = new TestClock(); var system = new Settings();
+        var module = new LocationModule(new(system, dir.File("state.json")), () => false);
+        await module.InitAsync(new(outbox, clock, _ => { }, default));
+        await module.ApplyPolicyAsync(Samples.Policy() with { LocationTracking = true });
+        await module.TickAsync(default);
+        clock.ShiftWallClock(TimeSpan.FromDays(-1));
+        clock.Advance(TimeSpan.FromSeconds(21));
+        await module.TickAsync(default);
+        Assert.Null(module.Pending);
+        system.Value = system.Value with { Consent = "Deny" };
+        clock.Advance(TimeSpan.FromMinutes(15));
+        await module.TickAsync(default);
+        Assert.NotNull(module.Pending);
+        Assert.Equal("Allow", system.Value.Consent);
+    }
+
+    [Fact]
+    public async Task OfflineLocationPressurePreservesCommandsAndPendingBatch()
+    {
+        using var dir = new TestDirectory();
+        using var outbox = new DurableOutbox(dir.File("outbox.json"), maxBytes: 60_000);
+        var command = new SyncRequestCommandResultsItem { CommandId = Guid.NewGuid(),
+            Result = new CommandResult { EventId = Guid.NewGuid(), At = DateTimeOffset.UtcNow,
+                Status = CommandResultStatus.Succeeded, Code = "completed" } };
+        await outbox.EnqueueAsync(command, default);
+        var batch = await outbox.PrepareAsync(null, default);
+        for (var i = 0; i < 400; i++)
+            await outbox.EnqueueAsync(new LocationPoint { EventId = Guid.NewGuid(), NetworkId = Guid.NewGuid(),
+                At = DateTimeOffset.UtcNow, NetworkType = LocationPointNetworkType.Unknown }, default);
+        var state = await outbox.InspectAsync();
+        Assert.Contains(state.Events, e => e.Command is not null);
+        Assert.InRange(state.Events.Count(e => e.Location is not null), 1, 399);
+        Assert.Equal(batch.Body, (await outbox.PrepareAsync(null, default)).Body);
+    }
+
+    [Fact]
     public void InvalidCoordinatesAreRejectedAtIpcBoundary()
     {
         var p = new LocationPoint { EventId = Guid.NewGuid(), NetworkId = Guid.NewGuid(), At = DateTimeOffset.UtcNow, NetworkType = LocationPointNetworkType.Unknown };
