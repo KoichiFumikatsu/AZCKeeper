@@ -7,6 +7,8 @@ function featureCatalogTests(Database $db): void
 {
     $before = $GLOBALS['checks'];
     check(count(Features::CATALOG) === 23, 'catalog has 23 functions');
+    // Ubicacion del equipo: el agente no la mide todavia (2026-10-20); se rotula pendiente como api y webhooks.
+    check(Features::CATALOG['ubicacion']['pending'] === true && array_keys(array_filter(Features::CATALOG, fn ($f) => $f['pending'])) === ['ubicacion', 'api', 'webhooks'], 'pending functions: ubicacion, api, webhooks');
     check(isset(Features::CATALOG['sitios']) && !isset(Features::CATALOG['titulos']) && Features::CATALOG['sitios']['name'] === 'Sitios web visitados', 'titles function is now visited websites');
     // Todo permiso existente pertenece a una funcion, al nucleo o a la plataforma (nunca a dos).
     $byFeature = array_merge(...array_values(array_map(fn ($f) => $f['permissions'], Features::CATALOG)));
