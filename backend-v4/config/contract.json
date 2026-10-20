@@ -1,5 +1,5 @@
 {
-  "source_sha256": "a7f8152f5d45beed9cd54fe903067adbaa4ba162695ce7501eec9acc5c886000",
+  "source_sha256": "56251a32dd16e599f29f537ebc4fab74241e7d8e462a8c4ed6e20801bcaedc4a",
   "paths": {
     "/me": {
       "get": {
@@ -22449,7 +22449,7 @@
           "admin"
         ],
         "operationId": "getUserLocations",
-        "summary": "getUserLocations",
+        "summary": "Consultar ubicaciones de una persona",
         "security": [
           {
             "adminSession": []
@@ -22459,7 +22459,7 @@
         "x-resources": [],
         "responses": {
           "200": {
-            "description": "Ultimo reporte de controles del equipo",
+            "description": "Resultado de la operación de ubicación",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -22551,7 +22551,7 @@
           "admin"
         ],
         "operationId": "getDeviceLocations",
-        "summary": "getDeviceLocations",
+        "summary": "Consultar ubicaciones de un equipo",
         "security": [
           {
             "adminSession": []
@@ -22561,7 +22561,7 @@
         "x-resources": [],
         "responses": {
           "200": {
-            "description": "Ultimo reporte de controles del equipo",
+            "description": "Resultado de la operación de ubicación",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -22653,7 +22653,7 @@
           "admin"
         ],
         "operationId": "setDeviceLost",
-        "summary": "setDeviceLost",
+        "summary": "Abrir o cerrar caso de equipo perdido",
         "security": [
           {
             "adminSession": [],
@@ -22664,7 +22664,7 @@
         "x-resources": [],
         "responses": {
           "200": {
-            "description": "Ultimo reporte de controles del equipo",
+            "description": "Resultado de la operación de ubicación",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -22743,7 +22743,7 @@
           "admin"
         ],
         "operationId": "getSiteLocation",
-        "summary": "getSiteLocation",
+        "summary": "Consultar reconocimiento de sede",
         "security": [
           {
             "adminSession": []
@@ -22753,7 +22753,7 @@
         "x-resources": [],
         "responses": {
           "200": {
-            "description": "Ultimo reporte de controles del equipo",
+            "description": "Resultado de la operación de ubicación",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -22819,7 +22819,7 @@
           "admin"
         ],
         "operationId": "setSiteLocation",
-        "summary": "setSiteLocation",
+        "summary": "Configurar reconocimiento de sede",
         "security": [
           {
             "adminSession": [],
@@ -22830,7 +22830,7 @@
         "x-resources": [],
         "responses": {
           "200": {
-            "description": "Ultimo reporte de controles del equipo",
+            "description": "Resultado de la operación de ubicación",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -22909,15 +22909,14 @@
           "external"
         ],
         "operationId": "externalLocations",
-        "summary": "externalLocations",
+        "summary": "Consultar ubicaciones laborales de una persona",
         "security": [
           {
             "apiKey": []
           },
           {
             "oauth2": [
-              "members:read",
-              "presence:read"
+              "location:read"
             ]
           }
         ],
@@ -22925,7 +22924,7 @@
         "x-resources": [],
         "responses": {
           "200": {
-            "description": "Ultimo reporte de controles del equipo",
+            "description": "Resultado de la operación de ubicación",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"

@@ -33,4 +33,19 @@ $_SERVER['REMOTE_ADDR'] = '192.0.2.10'; $_SERVER['HTTPS'] = 'on';
 $expect(200);
 $GLOBALS['testHeaders']['Host'] = 'attacker.example.test';
 $expect(400);
+$GLOBALS['testHeaders']['Host'] = 'keeper.example.test';
+$GLOBALS['testHeaders']['X-Real-IP'] = '8.8.8.8';
+$GLOBALS['testHeaders']['X-Forwarded-For'] = '8.8.8.8, 1.1.1.1';
+$_SERVER['REMOTE_ADDR'] = '9.9.9.9';
+if (DeviceLocations::publicIp(new Request($validator)) !== '9.9.9.9') { throw new \RuntimeException('Untrusted location header'); }
+$checks++;
+$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+if (DeviceLocations::publicIp(new Request($validator)) !== '1.1.1.1') { throw new \RuntimeException('Wrong trusted location hop'); }
+$checks++;
+unset($GLOBALS['testHeaders']['X-Forwarded-For']);
+if (DeviceLocations::publicIp(new Request($validator)) !== '8.8.8.8') { throw new \RuntimeException('Missing trusted real IP'); }
+$checks++;
+$GLOBALS['testHeaders']['X-Real-IP'] = '192.168.1.1';
+if (DeviceLocations::publicIp(new Request($validator)) !== null) { throw new \RuntimeException('Private location IP'); }
+$checks++;
 echo "TRANSPORT PASS: $checks assertions\n";

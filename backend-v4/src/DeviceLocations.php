@@ -14,7 +14,11 @@ final class DeviceLocations
     {
         $peer = $_SERVER['REMOTE_ADDR'] ?? '';
         $trusted = array_filter(array_map('trim', explode(',', Config::get('TRUSTED_PROXY_IPS'))));
-        $ip = in_array($peer, $trusted, true) ? $r->header('x-real-ip') : $peer;
+        $ip = $peer;
+        if (in_array($peer, $trusted, true)) {
+            $hops = array_map('trim', explode(',', $r->header('x-forwarded-for')));
+            $ip = end($hops) ?: $r->header('x-real-ip');
+        }
         return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) ? inet_ntop(inet_pton($ip)) : null;
     }
 
@@ -165,19 +169,44 @@ final class DeviceLocations
             if (count(array_filter($coords,static fn($v)=>$v!==null))!==0 && count(array_filter($coords,static fn($v)=>$v!==null))!==3) { throw new ApiError(422,'validation_failed'); }
             foreach ($b->wifi as $wifi) { if ($wifi->ssid==='') { throw new ApiError(422,'validation_failed'); } if ($wifi->bssid!==null) { $wifi->bssid=strtolower($wifi->bssid); } }
             $this->db->run('INSERT INTO site_location_settings (tenant_id,site_id,public_ips,wifi,latitude,longitude,radius_m) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE public_ips=VALUES(public_ips),wifi=VALUES(wifi),latitude=VALUES(latitude),longitude=VALUES(longitude),radius_m=VALUES(radius_m),version=version+1',[$tenant,$id,Util::json(array_values(array_unique($ips))),Util::json($b->wifi),...$coords]);
-            $this->sites=null; $sites=$this->sites($tenant);
-            $rows=$this->db->run('SELECT * FROM device_locations WHERE tenant_id=? AND at>=UTC_TIMESTAMP(6)-INTERVAL 7 DAY',[$tenant]);
-            while ($row=$rows->fetch()) {
-                $point=(object)array_filter($row,static fn($v)=>$v!==null);
-                foreach (['latitude','longitude','accuracy_m'] as $key) { if (isset($point->$key)) { $point->$key=(float)$point->$key; } }
-                [$result,$match,$by]=self::classify($point,$row['ip_at_capture']?$row['public_ip']:null,$sites);
-                $this->db->run('UPDATE device_locations SET result=?,site_id=?,matched_by=? WHERE tenant_id=? AND device_id=? AND id=?',[$result,$match,$by,$tenant,$row['device_id'],$row['id']]);
-            }
+            $this->db->run('INSERT INTO location_reclassification (tenant_id,until_at) VALUES (?,UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE until_at=VALUES(until_at),cursor_at=NULL,cursor_device=NULL,cursor_id=NULL',[$tenant]);
             (new Audit($this->db))->record($c,$r,'location.site_updated','org_unit',$id,['public_ips','wifi','geofence']);
         }
         $row=$this->db->one('SELECT * FROM site_location_settings WHERE tenant_id=? AND site_id=?',[$tenant,$id]);
         $ips=$this->db->run('SELECT DISTINCT l.public_ip FROM device_locations l JOIN devices d ON d.tenant_id=l.tenant_id AND d.id=l.device_id JOIN users u ON u.tenant_id=d.tenant_id AND u.id=d.user_id WHERE l.tenant_id=? AND u.site_id=? AND l.public_ip IS NOT NULL AND l.received_at>=UTC_TIMESTAMP(6)-INTERVAL 7 DAY LIMIT 50',[$tenant,$id])->fetchAll();
         return ['public_ips'=>$row?json_decode($row['public_ips']):[],'wifi'=>$row?json_decode($row['wifi']):[],'latitude'=>isset($row['latitude'])?(float)$row['latitude']:null,'longitude'=>isset($row['longitude'])?(float)$row['longitude']:null,'radius_m'=>isset($row['radius_m'])?(float)$row['radius_m']:null,'version'=>(int)($row['version']??1),'suggested_ips'=>array_column($ips,'public_ip')];
+    }
+
+    public function reclassify(string $tenant, int $batch = 100): int
+    {
+        return $this->db->transaction(fn()=>$this->reclassifyBatch($tenant,$batch));
+    }
+
+    private function reclassifyBatch(string $tenant, int $batch): int
+    {
+        $job=$this->db->one('SELECT * FROM location_reclassification WHERE tenant_id=? FOR UPDATE',[$tenant]);
+        if (!$job) { return 0; }
+        $this->sites=null; $sites=$this->sites($tenant);
+        $args=[$tenant,$job['until_at'],$job['until_at']];
+        $cursor='';
+        if ($job['cursor_at']!==null) {
+            $cursor=' AND at>=? AND (at,device_id,id)>(?,?,?)';
+            array_push($args,$job['cursor_at'],$job['cursor_at'],$job['cursor_device'],$job['cursor_id']);
+        }
+        $args[]=$batch;
+        $rows=$this->db->run('SELECT * FROM device_locations WHERE tenant_id=? AND at>=?-INTERVAL 7 DAY AND at<=?'.$cursor.' ORDER BY at,device_id,id LIMIT ?',$args)->fetchAll();
+        foreach ($rows as $row) {
+            $point=(object)array_filter($row,static fn($v)=>$v!==null);
+            foreach (['latitude','longitude','accuracy_m'] as $key) { if (isset($point->$key)) { $point->$key=(float)$point->$key; } }
+            [$result,$match,$by]=self::classify($point,$row['ip_at_capture']?$row['public_ip']:null,$sites);
+            $this->db->run('UPDATE device_locations SET result=?,site_id=?,matched_by=? WHERE tenant_id=? AND device_id=? AND id=?',[$result,$match,$by,$tenant,$row['device_id'],$row['id']]);
+        }
+        if (count($rows)<$batch) { $this->db->run('DELETE FROM location_reclassification WHERE tenant_id=?',[$tenant]); }
+        else {
+            $last=end($rows);
+            $this->db->run('UPDATE location_reclassification SET cursor_at=?,cursor_device=?,cursor_id=? WHERE tenant_id=?',[$last['at'],$last['device_id'],$last['id'],$tenant]);
+        }
+        return count($rows);
     }
 
     public function purge(string $tenant, int $batch, float $deadline): int

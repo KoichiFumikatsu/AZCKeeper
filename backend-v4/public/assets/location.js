@@ -135,7 +135,7 @@ export async function mountSiteLocation(root, id) {
             public_ips: ips.value.split(/\s+/).filter(Boolean), wifi: wifi.value.split('\n').filter(l => l.trim()).map(l => { const [ssid, bssid] = l.split('|'); return { ssid: ssid.trim(), bssid: bssid?.trim() || null }; }),
             latitude: lat.value === '' ? null : Number(lat.value), longitude: lon.value === '' ? null : Number(lon.value), radius_m: radius.value === '' ? null : Number(radius.value),
           } });
-          const status = el('p', 'Sede guardada. Se reclasificaron los últimos 7 días.'); status.setAttribute('role', 'status'); form.append(status);
+          const status = el('p', 'Sede guardada. Se actualizarán los últimos 7 días; puede tardar unos minutos.'); status.setAttribute('role', 'status'); form.append(status);
         } catch (error) { failure(form, error); }
         finally { save.disabled = false; }
       });

@@ -5,11 +5,12 @@ namespace Keeper;
 /**
  * Retención aplicada (decisión del dueño 2026-10-07). Cada noche revisa, cliente por cliente, lo que quedó fuera de
  * sus plazos (retention_settings) y lo deja anotado en retention_runs. Solo borra en los clientes con enforce = TRUE;
- * en los demás (piloto, por defecto) solo cuenta.
+ * en los demás (piloto, por defecto) solo cuenta actividad. Ubicación aplica siempre su plazo propio de 90 días.
  *
  * Lo único que toca: el detalle de actividad (episodes, su llave de deduplicación episode_ingest_keys y
  * activity_snapshots), los resúmenes diarios (episode_daily, day_summary, focus_daily y su control rollup_days) y los
- * registros técnicos de los equipos (client_logs). Nunca auditoría, personas, equipos, organización, reglas ni altas.
+ * registros técnicos de los equipos (client_logs), además de device_locations sin caso de pérdida abierto.
+ * Nunca auditoría, personas, equipos, organización, reglas ni altas.
  *
  * Nada fechado dentro de la ventana de llegada tardía (late_arrival_days + 2 días, la misma que cierra los resúmenes)
  * se borra, aunque el plazo configurado sea menor: lo que todavía puede llegar no se pierde antes de tiempo.
@@ -71,7 +72,6 @@ final class RetentionWorker
     private function tenant(string $tenant, int $batch, float $deadline): array
     {
         $started = microtime(true);
-        $locationRows = (new DeviceLocations($this->db))->purge($tenant,$batch,$deadline);
         $cut = $this->db->one("SELECT r.enforce,
               LEAST(UTC_DATE()-INTERVAL r.raw_days DAY, UTC_DATE()-INTERVAL (r.late_arrival_days+2) DAY) raw_before,
               LEAST(DATE_SUB(UTC_DATE(),INTERVAL r.aggregate_months MONTH), UTC_DATE()-INTERVAL (r.late_arrival_days+2) DAY) aggregate_before,
@@ -81,7 +81,7 @@ final class RetentionWorker
         $run = Util::bin(Util::uuid());
         $this->db->run('INSERT INTO retention_runs (tenant_id,id,run_date,started_at,mode,raw_before,aggregate_before,logs_before) VALUES (?,?,UTC_DATE(),UTC_TIMESTAMP(6),?,?,?,?)',
             [$tenant, $run, $mode, $cut['raw_before'], $cut['aggregate_before'], $cut['logs_before']]);
-        $rows = ['device_locations'=>$locationRows]; $complete = true; $error = null; $days = ['raw' => 0, 'aggregate' => 0];
+        $rows = []; $complete = true; $error = null; $days = ['raw' => 0, 'aggregate' => 0];
         try {
             $raw = $cut['raw_before']; $agg = $cut['aggregate_before'];
             $days['raw'] = (int) $this->db->one('SELECT COUNT(*) n FROM (SELECT event_date d FROM episodes WHERE tenant_id=? AND started_at<? AND event_date<?
@@ -103,6 +103,7 @@ final class RetentionWorker
                 }
                 if (!$complete) { break; }
             }
+            $rows['device_locations'] = (new DeviceLocations($this->db))->purge($tenant,$batch,$deadline);
         } catch (\Throwable $e) {
             $complete = false;
             $error = mb_substr(get_class($e) . ($e instanceof \PDOException ? ' ' . ($e->errorInfo[0] ?? $e->getCode()) . '/' . ($e->errorInfo[1] ?? '') : '') . ': ' . CronRun::clean($e->getMessage()), 0, 200);
