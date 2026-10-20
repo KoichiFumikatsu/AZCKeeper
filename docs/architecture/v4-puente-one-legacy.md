@@ -2,6 +2,8 @@
 
 Estado: **diseño, sin implementar** · 2026-10-06 · Autor: Koichi + Claude
 
+> **2026-10-20 (decisión de Koichi):** Keeper se alimenta en continuo desde One v1 hasta One v2. Se implementó el modo vivo de `tools/one-legacy-snapshot/serve.php` (README §3), sin vistas `kb_*`. Corre en el hosting de One (opción (a) de §4) y usa el usuario de BD de One, que tiene todos los permisos. Ambas cosas van contra la recomendación de §4 y §5.1. Lo contienen la sesión `READ ONLY`, la guarda de solo-SELECT y las columnas explícitas, pero no cubren el riesgo de §4(a): quien comprometa One puede reescribir el puente.
+
 El puente es un servicio pequeño y **separado del código de One**. Lee la BD del One legacy (`pipezafra_soporte_db`) y sirve el formato canónico `keeper.roster.v1` para que el conector REST que ya tiene Keeper (`DataSync::restFetch`) sincronice Grupo AZC. Cuando exista el One nuevo, Keeper solo cambia la URL base. Para eso el One nuevo debe servir **los mismos endpoints y los mismos `external_id`** (§2.0).
 
 Etiquetas de confianza: **[Seguro]** = verificado en el código, el esquema o el volcado del 2026-09-22; **[Probable]** = inferencia fuerte; **[Suposición]** = falta un dato.
