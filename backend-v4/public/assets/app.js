@@ -15,6 +15,7 @@ import { fleet, deviceUpdates, releaseDeployments } from './fleet.js';
 import { LOG_COMPONENTS } from './log-components.js';
 import { mountNotifications } from './notifications.js';
 import { rulesTab } from './policy-rules.js';
+import { mountLocation } from './location.js';
 
 const page = document.body.dataset.page;
 const surface = document.body.dataset.surface;
@@ -455,6 +456,7 @@ async function device() {
   const panel = deviceTabs(d);
   const header = deviceSummary(d, owner, org, hardening, log);
   panel.append(header.section);
+  await mountLocation(panel, { type: 'device', id: d.id });
   deviceUpdates(panel, d, tenant, session.is_platform_admin);
   const remote = await remoteActionsSection(d, log);
   if (remote) panel.append(remote);

@@ -1,5 +1,5 @@
 {
-  "source_sha256": "c3721a1ee0272b22c48e829b35ab803b880597b80ed325f16554fb1ccad154cd",
+  "source_sha256": "a7f8152f5d45beed9cd54fe903067adbaa4ba162695ce7501eec9acc5c886000",
   "paths": {
     "/me": {
       "get": {
@@ -22442,6 +22442,586 @@
         "x-permission": "actividad.clasificar",
         "x-max-body-bytes": 8192
       }
+    },
+    "/users/{id}/locations": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "getUserLocations",
+        "summary": "getUserLocations",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [],
+        "responses": {
+          "200": {
+            "description": "Ultimo reporte de controles del equipo",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocationHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "name": "day",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "include_out_of_hours",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          }
+        ],
+        "x-permission": "presencia.ubicacion_ver"
+      }
+    },
+    "/devices/{id}/locations": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "getDeviceLocations",
+        "summary": "getDeviceLocations",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [],
+        "responses": {
+          "200": {
+            "description": "Ultimo reporte de controles del equipo",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocationHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "name": "day",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "include_out_of_hours",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          }
+        ],
+        "x-permission": "presencia.ubicacion_ver"
+      }
+    },
+    "/devices/{id}/lost": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "setDeviceLost",
+        "summary": "setDeviceLost",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [],
+        "responses": {
+          "200": {
+            "description": "Ultimo reporte de controles del equipo",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LostDeviceState"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "x-permission": "equipos.editar",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LostDeviceInput"
+              }
+            }
+          }
+        },
+        "x-max-body-bytes": 32768
+      }
+    },
+    "/organization/{id}/location": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "getSiteLocation",
+        "summary": "getSiteLocation",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [],
+        "responses": {
+          "200": {
+            "description": "Ultimo reporte de controles del equipo",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteLocationSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "x-permission": "organizacion.ver"
+      },
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "setSiteLocation",
+        "summary": "setSiteLocation",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [],
+        "responses": {
+          "200": {
+            "description": "Ultimo reporte de controles del equipo",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteLocationSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "x-permission": "organizacion.editar",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SiteLocationInput"
+              }
+            }
+          }
+        },
+        "x-max-body-bytes": 32768
+      }
+    },
+    "/ext/v1/members/{id}/locations": {
+      "get": {
+        "tags": [
+          "external"
+        ],
+        "operationId": "externalLocations",
+        "summary": "externalLocations",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "oauth2": [
+              "members:read",
+              "presence:read"
+            ]
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-resources": [],
+        "responses": {
+          "200": {
+            "description": "Ultimo reporte de controles del equipo",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocationHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "name": "day",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "include_out_of_hours",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          {
+            "name": "include_location",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "x-required-scopes": [
+          "location:read"
+        ],
+        "servers": [
+          {
+            "url": "/"
+          }
+        ]
+      }
     }
   },
   "parameters": {
@@ -26531,6 +27111,157 @@
       },
       "description": "Inventario declarado por el agente. Se envia en el primer sync de cada arranque y cuando cambia; el servidor actualiza el equipo sin tocar su version de edicion."
     },
+    "DeviceLocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "device_id",
+        "user_id",
+        "at",
+        "latitude",
+        "longitude",
+        "accuracy_m",
+        "network_type",
+        "wifi_ssid",
+        "wifi_bssid",
+        "result",
+        "site_id",
+        "site_name",
+        "matched_by",
+        "in_work_hours"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "device_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "user_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "latitude": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "longitude": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "accuracy_m": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "network_type": {
+          "type": "string",
+          "enum": [
+            "wifi",
+            "cable",
+            "unknown"
+          ]
+        },
+        "wifi_ssid": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wifi_bssid": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 17
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "en_sede",
+            "fuera",
+            "sin_dato"
+          ]
+        },
+        "site_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "site_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "matched_by": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "red",
+                "geocerca"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "in_work_hours": {
+          "type": "boolean"
+        }
+      }
+    },
     "DeviceLogin": {
       "type": "object",
       "additionalProperties": false,
@@ -27090,6 +27821,10 @@
         "time_change_lock": {
           "type": "boolean",
           "description": "Bloquear el cambio manual de la hora (quitar SeSystemtimePrivilege a Administradores; SYSTEM y LOCAL SERVICE lo conservan; la zona horaria sigue libre). Solo se envía, y solo con true, a agentes 4.0.28 o posteriores (los anteriores rechazan campos desconocidos). Ausente = desbloqueado; el agente devuelve el derecho si lo había quitado. El agente nunca lo aplica en equipos de dominio."
+        },
+        "location_tracking": {
+          "type": "boolean",
+          "description": "Ubicación desde agente 4.0.29. Ausente o false desactiva. Requiere función contratada."
         }
       },
       "description": "Sin PIN, secretos ni webhooks. Versión de toda la composición y compilador."
@@ -27185,6 +27920,9 @@
         "recompile_pending"
       ],
       "properties": {
+        "location_tracking": {
+          "type": "boolean"
+        },
         "subject": {
           "type": "object",
           "additionalProperties": false,
@@ -29575,6 +30313,127 @@
         }
       }
     },
+    "LocationHistory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data",
+        "next_cursor",
+        "latest",
+        "can_include_out_of_hours",
+        "lost_at",
+        "lost_reason"
+      ],
+      "properties": {
+        "data": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "$ref": "#/components/schemas/DeviceLocation"
+          }
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latest": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/DeviceLocation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "can_include_out_of_hours": {
+          "type": "boolean"
+        },
+        "lost_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lost_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "LocationPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "at",
+        "network_id",
+        "network_type"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "network_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "network_type": {
+          "type": "string",
+          "enum": [
+            "wifi",
+            "cable",
+            "unknown"
+          ]
+        },
+        "latitude": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "longitude": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "accuracy_m": {
+          "type": "number",
+          "minimum": 0
+        },
+        "wifi_ssid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "wifi_bssid": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$"
+        }
+      }
+    },
     "LogBatch": {
       "type": "object",
       "additionalProperties": false,
@@ -29653,6 +30512,60 @@
         }
       },
       "description": "Sin message libre ni meta arbitraria. PIN y secretos nunca serializados."
+    },
+    "LostDeviceInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lost",
+        "confirmation",
+        "reason"
+      ],
+      "properties": {
+        "lost": {
+          "type": "boolean"
+        },
+        "confirmation": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "LostDeviceState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lost_at",
+        "lost_reason"
+      ],
+      "properties": {
+        "lost_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lost_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
     },
     "Me": {
       "type": "object",
@@ -32345,6 +33258,10 @@
         "time_change_lock": {
           "type": "boolean",
           "description": "Solo si la política lo define (ver PolicyInput.time_change_lock)."
+        },
+        "location_tracking": {
+          "type": "boolean",
+          "description": "Ubicación desde agente 4.0.29. Ausente o false desactiva. Requiere función contratada."
         }
       }
     },
@@ -32390,6 +33307,10 @@
         "time_change_lock": {
           "type": "boolean",
           "description": "Bloquear el cambio manual de la hora en los equipos a los que llega esta política (agentes 4.0.28 o posteriores; nunca en equipos de dominio). El agente quita «Cambiar la hora del sistema» (SeSystemtimePrivilege) a Administradores y lo devuelve al apagarla; la zona horaria sigue libre. Sin el campo o false = no bloquea. Entre varias políticas que lo definen gana la de alcance más cercano (equipo > persona > área > sede > empresa) y, en el mismo alcance, la de mayor prioridad; si empatan, true. Hoy solo por la API (el panel aún no lo muestra; guardar la política desde el panel sin este campo lo quita)."
+        },
+        "location_tracking": {
+          "type": "boolean",
+          "description": "Ubicación desde agente 4.0.29. Ausente o false desactiva. Requiere función contratada."
         }
       }
     },
@@ -35061,6 +35982,192 @@
         }
       }
     },
+    "SiteLocationInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "public_ips",
+        "wifi",
+        "latitude",
+        "longitude",
+        "radius_m"
+      ],
+      "properties": {
+        "public_ips": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "string",
+            "maxLength": 45
+          }
+        },
+        "wifi": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ssid",
+              "bssid"
+            ],
+            "properties": {
+              "ssid": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "bssid": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "latitude": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "longitude": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "radius_m": {
+          "anyOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 100000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "SiteLocationSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "public_ips",
+        "wifi",
+        "latitude",
+        "longitude",
+        "radius_m",
+        "version",
+        "suggested_ips"
+      ],
+      "properties": {
+        "public_ips": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "string",
+            "maxLength": 45
+          }
+        },
+        "wifi": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ssid",
+              "bssid"
+            ],
+            "properties": {
+              "ssid": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "bssid": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "latitude": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "longitude": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "radius_m": {
+          "anyOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 100000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "suggested_ips": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 45
+          },
+          "maxItems": 50
+        }
+      }
+    },
     "SuspiciousApp": {
       "type": "object",
       "additionalProperties": false,
@@ -35479,6 +36586,13 @@
             }
           },
           "maxItems": 20
+        },
+        "locations": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/components/schemas/LocationPoint"
+          }
         }
       }
     },
@@ -35600,6 +36714,13 @@
         "token": {
           "$ref": "#/components/schemas/DeviceToken",
           "description": "Renovación opcional, solo si restan <10 min. Si replay devuelve token ya expirado, usar challenge/login con clave registrada; nunca emitir token distinto bajo la misma respuesta idempotente."
+        },
+        "location_acks": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/components/schemas/Ack"
+          }
         }
       }
     },

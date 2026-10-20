@@ -169,6 +169,7 @@ final class AdminApi
     private function handle(): array
     {
         $op=$this->r->operation['operationId']; $b=$this->r->body;
+        if (in_array($op,DeviceLocations::OPERATIONS,true)) { return self::response((new DeviceLocations($this->db))->admin($this->c,$this->r,$this->access)); }
         $id=$this->r->resourceId!==null && !str_starts_with($op,'getPermission') && $op!=='patchPermission'?Util::bin($this->r->resourceId):null;
         return match($op) {
             'refreshUserSource'=>$this->refreshUserSource($id,$b),
@@ -947,7 +948,8 @@ final class AdminApi
         $v=$db->one('SELECT document FROM policy_versions WHERE tenant_id=? AND policy_id=? AND policy_version=?',[$tenant,$r['id'],$r['version']]);
         if (!$a || !$v || $a['scope']==='global') { throw new ApiError(404,'resource_not_found'); }
         return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'name'=>$r['name'],'target_type'=>$a['scope'],'target_id'=>Util::id($a['scope_target']),'enabled'=>(bool)$r['enabled'],'rules'=>json_decode($v['document'])->rules,'version'=>(int)$r['version']]
-            +(isset(($doc=json_decode($v['document']))->time_change_lock) ? ['time_change_lock'=>(bool)$doc->time_change_lock] : []);
+            +(isset(($doc=json_decode($v['document']))->time_change_lock) ? ['time_change_lock'=>(bool)$doc->time_change_lock] : [])
+            +(isset($doc->location_tracking) ? ['location_tracking'=>(bool)$doc->location_tracking] : []);
     }
     private function policyTarget(string $kind,string $target): void
     {
@@ -988,6 +990,8 @@ final class AdminApi
         $target=Util::bin($b->target_id); $this->policyTarget($b->target_type,$target); $this->validateRules($b->rules);
         // time_change_lock (agente 4.0.28): bloquea el cambio manual de la hora en los equipos; solo un admin de toda la
         // empresa lo cambia. Sin el campo al editar se conserva el valor anterior (el panel aun no lo muestra ni lo envia).
+        if (property_exists($b,'location_tracking') && $b->location_tracking && !Features::has($this->db,$this->tenant,'ubicacion')) { throw new ApiError(403,'permission_denied',[],'feature_not_contracted:ubicacion'); }
+        if (!property_exists($b,'location_tracking') && isset($dto['location_tracking'])) { $b->location_tracking=$dto['location_tracking']; }
         if (property_exists($b,'time_change_lock')) { $this->access->requireFull(); }
         elseif (isset($dto['time_change_lock'])) { $b->time_change_lock=$dto['time_change_lock']; }
         if ($id) { $this->update('policy_documents',$id,['name'=>$b->name,'enabled'=>(int)$b->enabled]); }

@@ -71,6 +71,7 @@ final class RetentionWorker
     private function tenant(string $tenant, int $batch, float $deadline): array
     {
         $started = microtime(true);
+        $locationRows = (new DeviceLocations($this->db))->purge($tenant,$batch,$deadline);
         $cut = $this->db->one("SELECT r.enforce,
               LEAST(UTC_DATE()-INTERVAL r.raw_days DAY, UTC_DATE()-INTERVAL (r.late_arrival_days+2) DAY) raw_before,
               LEAST(DATE_SUB(UTC_DATE(),INTERVAL r.aggregate_months MONTH), UTC_DATE()-INTERVAL (r.late_arrival_days+2) DAY) aggregate_before,
@@ -80,7 +81,7 @@ final class RetentionWorker
         $run = Util::bin(Util::uuid());
         $this->db->run('INSERT INTO retention_runs (tenant_id,id,run_date,started_at,mode,raw_before,aggregate_before,logs_before) VALUES (?,?,UTC_DATE(),UTC_TIMESTAMP(6),?,?,?,?)',
             [$tenant, $run, $mode, $cut['raw_before'], $cut['aggregate_before'], $cut['logs_before']]);
-        $rows = []; $complete = true; $error = null; $days = ['raw' => 0, 'aggregate' => 0];
+        $rows = ['device_locations'=>$locationRows]; $complete = true; $error = null; $days = ['raw' => 0, 'aggregate' => 0];
         try {
             $raw = $cut['raw_before']; $agg = $cut['aggregate_before'];
             $days['raw'] = (int) $this->db->one('SELECT COUNT(*) n FROM (SELECT event_date d FROM episodes WHERE tenant_id=? AND started_at<? AND event_date<?

@@ -1,5 +1,6 @@
 import { api, isUuid, setTenant, readSession, refreshCsrf, goToLogin, errorMessage, PLATFORM_TENANT } from './api.js';
 import './menu.js';
+import { mountLocation, mountLocationRule, mountSiteLocation } from './location.js';
 import { enhance } from './tablekit.js';
 import { applyNavAccess, loadAccess, allowed, canSeeOnboarding } from './nav-access.js';
 import { scopeSummary, sameAccess, scopeConditions, scopeChips, SCOPE_RULE, TEAM_LABEL } from './access-scope.js';
@@ -224,7 +225,7 @@ async function sites() {
   if (!siteList.length) { empty(surface('Sedes'), 'Aún no hay sedes', 'Crea la primera con "Crear sede".'); return; }
   const cards = el('div', undefined, 'three'); $('page-content').append(cards);
   for (const r of rows) {
-    const s = surface(r.site.name, cards); s.append(el('p', 'Operación de sede', 'eyebrow'));
+    const s = surface(r.site.name, cards); mountSiteLocation(s, r.site.id); s.append(el('p', 'Operación de sede', 'eyebrow'));
     const big = el('p', devices ? `${r.online} ` : '—', 'kpi-inline'); big.append(el('small', devices ? `en línea / ${r.devices}` : 'sin acceso a equipos')); s.append(big);
     s.append(el('p', `${placeOf(r.site)} · ${r.members} personas · productividad ${jornadaPct(r.productive, r.expected)}`, 'help'));
   }
@@ -2359,6 +2360,7 @@ async function personPage() {
 
 function personProfile(ctx, u, { tab = 'datos', created = null, draft = null } = {}) {
   const content = $('page-content'); content.replaceChildren(); personHeader(ctx, u);
+  mountLocation(content, { type: 'user', id: u.id });
   if (created) {
     const n = el('div', undefined, 'notice'); n.setAttribute('role', created.pending.length ? 'alert' : 'status');
     if (created.pending.length) {
@@ -3207,6 +3209,7 @@ async function policiesPage() {
   const [org0, users, devices, schedules, me] = await Promise.all([optional(allPages('/organization')), optional(allPages('/users')), optional(allPages(`/tenants/${tenant}/devices`)),
     optional(allPages('/schedules')), isSuper ? null : loadAccess()]);
   let list = await allPages('/policies');
+  mountLocationRule($('page-content'), { type: 'tenant', id: tenant });
   const org = org0 || [];
   const n = names(org); const who = new Map((users || []).map(u => [u.id, u.display_name])); const dev = new Map((devices || []).map(d => [d.id, d.hostname]));
   // + Nueva sede / + Nueva área en el destino (F11): el editor de Organización, sin cerrar la regla.
@@ -3666,6 +3669,9 @@ async function plansPage() {
 // Todas las acciones auditables (operaciones del contrato y eventos automaticos), en palabras. auditAction() tiene
 // un respaldo que traduce verbo + objeto, para que una accion nueva nunca salga en ingles tecnico.
 const AUDIT_ACTIONS = {
+  setDeviceLost: 'Cambió el estado de pérdida del equipo', setSiteLocation: 'Configuró reconocimiento de sede',
+  'location.out_of_hours_read': 'Consultó ubicación fuera de horario', 'location.lost_opened': 'Marcó equipo perdido o robado',
+  'location.lost_closed': 'Cerró caso de pérdida', 'location.site_updated': 'Configuró reconocimiento de sede',
   putScheduleSettings: 'Cambió el margen de puntualidad y horario predeterminado', refreshUserSource: 'Actualizó una persona desde su origen', setUserPortalAccess: 'Cambió el acceso al Portal',
   reviewDualJobAlert: 'Marcar alerta revisada',
   reviewSuspiciousDetection: 'Marcó revisada una detección de app sospechosa', markNotificationsSeen: 'Abrió las notificaciones',

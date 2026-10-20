@@ -1,11 +1,12 @@
-param([int]$MySqlPort = 13384, [int]$HttpPort = 18084, [switch]$DebugResponses, [switch]$ActivityOnly, [string]$MariaDbDirectory = '', [switch]$UnlockPinOnly, [switch]$WindowsSecurityOnly)
+param([int]$MySqlPort = 13384, [int]$HttpPort = 18084, [switch]$DebugResponses, [switch]$ActivityOnly, [string]$MariaDbDirectory = '', [switch]$UnlockPinOnly, [switch]$WindowsSecurityOnly, [switch]$LocationOnly)
 $ErrorActionPreference = 'Stop'
 $backend = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $tempRoot = Join-Path $backend ('.validation/mysql-' + [guid]::NewGuid().ToString('N'))
 $mysqlProcess = $null
 $httpProcess = $null
 $savedEnv = @{}
-$envNames = @('KEEPER_DB_DSN','KEEPER_DB_USER','KEEPER_DB_PASSWORD','KEEPER_DB_PASSWORD_FILE','KEEPER_ORIGIN','KEEPER_ALLOW_HTTP_LOCAL','KEEPER_RESPONSE_KEY','KEEPER_RESPONSE_KEY_ID','KEEPER_RATE_DIR','KEEPER_DEVICE_RATE','KEEPER_DEVICE_BURST','KEEPER_TENANT_FLEET','KEEPER_BOOTSTRAP_RATE','KEEPER_BOOTSTRAP_BURST','KEEPER_CHALLENGE_OUTSTANDING','KEEPER_TEST_ALLOW_FIXTURES','KEEPER_RELEASE_KEYS_FILE','KEEPER_ENROLLMENT_DEVICE_RATE','KEEPER_ENROLLMENT_DEVICE_BURST')
+$savedEnv['KEEPER_TEST_LOCATION_ONLY'] = [Environment]::GetEnvironmentVariable('KEEPER_TEST_LOCATION_ONLY')
+$envNames = @('KEEPER_TEST_LOCATION_ONLY','KEEPER_DB_DSN','KEEPER_DB_USER','KEEPER_DB_PASSWORD','KEEPER_DB_PASSWORD_FILE','KEEPER_ORIGIN','KEEPER_ALLOW_HTTP_LOCAL','KEEPER_RESPONSE_KEY','KEEPER_RESPONSE_KEY_ID','KEEPER_RATE_DIR','KEEPER_DEVICE_RATE','KEEPER_DEVICE_BURST','KEEPER_TENANT_FLEET','KEEPER_BOOTSTRAP_RATE','KEEPER_BOOTSTRAP_BURST','KEEPER_CHALLENGE_OUTSTANDING','KEEPER_TEST_ALLOW_FIXTURES','KEEPER_RELEASE_KEYS_FILE','KEEPER_ENROLLMENT_DEVICE_RATE','KEEPER_ENROLLMENT_DEVICE_BURST')
 foreach ($name in $envNames) { $savedEnv[$name] = [Environment]::GetEnvironmentVariable($name) }
 $savedEnv['KEEPER_DEBUG'] = [Environment]::GetEnvironmentVariable('KEEPER_DEBUG')
 $envNames += 'KEEPER_DEBUG'
@@ -79,6 +80,7 @@ try {
     $env:KEEPER_DEBUG = if ($DebugResponses) { '1' } else { '0' }
     $env:KEEPER_TEST_ACTIVITY_ONLY = if ($ActivityOnly) { '1' } else { '0' }
     $env:KEEPER_TEST_UNLOCK_PIN_ONLY = if ($UnlockPinOnly) { '1' } else { '0' }
+    $env:KEEPER_TEST_LOCATION_ONLY = if ($LocationOnly) { '1' } else { '0' }
     $env:KEEPER_TEST_WINDOWS_SECURITY_ONLY = if ($WindowsSecurityOnly) { '1' } else { '0' }
     & $php (Join-Path $PSScriptRoot 'prepare.php')
     if ($LASTEXITCODE -ne 0) { throw 'Test database preparation failed' }

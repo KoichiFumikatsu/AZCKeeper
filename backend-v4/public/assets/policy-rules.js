@@ -1,5 +1,6 @@
 import { api, readSession, errorMessage } from './api.js';
 import { loadAccess } from './nav-access.js';
+import { mountLocationRule } from './location.js';
 import { wireDialog, confirmBox, feedback } from './dialogs.js';
 
 // Reglas de apps, sitios y USB: lo que comparten el editor general (k3.js, Reglas) y la pestaña «Reglas» de la ficha de
@@ -322,5 +323,6 @@ export async function rulesTab(root, { type, id, name }) {
     dialog.showModal();
   };
   await load();
+  await mountLocationRule(root, { type, id });
 }
 const badgeEl = (text, tone) => el('span', text, `badge ${tone || ''}`.trim());

@@ -64,6 +64,7 @@ final class EffectiveRules
         return AdminApi::response([
             'subject' => ['type' => $own['type'], 'user_id' => Util::id($subjectUser), 'device_id' => $device === null ? null : Util::id($device),
                 'display_name' => $user['display_name'] ?? null, 'hostname' => $device === null ? null : $d['hostname'], 'active' => ($user['status'] ?? null) === 'active'],
+            'location_tracking' => ($input['location_supported'] ?? false) && in_array('ubicacion',$input['functions'],true) && ($explain['location_tracking']['value'] ?? false),
             'entries' => $entries, 'excluded' => $excluded, 'kinds' => $kinds, 'conflict' => $conflict,
             'own_policies' => $this->ownPolicies($own['type'], $own['id']),
             'devices' => $this->devices($device, $subjectUser),

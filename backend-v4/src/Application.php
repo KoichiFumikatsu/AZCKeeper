@@ -181,10 +181,14 @@ final class Application
             case '/client/commands/{id}/result': return $this->ok($i->command($r->resourceId, $b));
             case '/client/check-ins': return $this->ok($i->checkIn($b), 201);
             case '/client/sync':
-                Ingest::unique($b->episodes ?? []); Ingest::unique($b->logs ?? []);
+                Ingest::unique($b->episodes ?? []); Ingest::unique($b->logs ?? []); Ingest::unique($b->locations ?? []);
                 Ingest::unique(array_map(fn ($x) => $x->result, $b->command_results ?? []));
                 [$version, $policy] = $resources->policy();
                 $response = ['protocol_version' => 1, 'server_time' => Util::now(), 'next_sync_after_seconds' => 120, 'policy_version' => $version, 'policy' => $version > ($b->policy_version ?? 0) ? $policy : null, 'release' => null, 'commands' => [], 'episode_acks' => [], 'log_acks' => [], 'security_ack' => null, 'activity_ack' => null, 'command_acks' => []];
+                if (isset($b->locations)) {
+                    $locations=new DeviceLocations($db);
+                    $response['location_acks']=array_map(fn($p)=>$i->partial($p,fn()=>$locations->ingest($c,$r,$p)),$b->locations);
+                }
                 foreach ($b->episodes ?? [] as $e) { $response['episode_acks'][] = $i->partial($e, fn () => $i->episode($e)); }
                 foreach ($b->logs ?? [] as $e) { $response['log_acks'][] = $i->partial($e, fn () => $i->log($e)); }
                 if (isset($b->security)) { $response['security_ack'] = $i->partial($b->security, fn () => $i->security($b->security)); }

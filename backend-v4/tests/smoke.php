@@ -54,6 +54,7 @@ require __DIR__ . '/effective-rules.php';
 require __DIR__ . '/auth-locks.php';
 require __DIR__ . '/command-cancel.php';
 require __DIR__ . '/time-change-lock.php';
+require __DIR__ . '/locations.php';
 
 use Keeper\{Config, Database, Util, Validator};
 
@@ -180,6 +181,7 @@ try {
     $contract = (new Validator())->contract;
     check(hash_file('sha256', dirname(__DIR__, 2) . '/docs/architecture/openapi-v4.yaml') === $contract['source_sha256'], 'OpenAPI extract current');
     $db = new Database();
+    if (getenv('KEEPER_TEST_LOCATION_ONLY')==='1') { locationTests($db); echo "LOCATION SMOKE PASS: $checks assertions\n"; exit(0); }
     if (getenv('KEEPER_TEST_ACTIVITY_ONLY')==='1') { activityMigrationTests($db); echo "A1 SMOKE PASS: $checks assertions\n"; exit(0); }
     if (getenv('KEEPER_TEST_UNLOCK_PIN_ONLY')==='1') { unlockPinTests($db); echo "UNLOCK PIN SMOKE PASS: $checks assertions\n"; exit(0); }
     if (getenv('KEEPER_TEST_WINDOWS_SECURITY_ONLY')==='1') { windowsSecurityTests($db); echo "WINDOWS SECURITY SMOKE PASS: $checks assertions\n"; exit(0); }
@@ -515,6 +517,7 @@ try {
     computerRenameTests($db);
     commandCancelTests($db);
     timeChangeLockTests($db);
+    locationTests($db);
     // Al final y con el cupo de prelogin repuesto: sus 4 logins de fixture lo agotaban para panelAccountsTests.
     windowsSecurityTests($db);
     relocationTests($db);

@@ -7,6 +7,7 @@ final class PolicyCompiler
     private const PLATFORM = '00000000-0000-4000-8000-000000000001';
     /** Desde esta version el agente entiende time_change_lock (bloqueo del cambio manual de la hora). */
     public const TIME_CHANGE_LOCK_MIN_AGENT = '4.0.28';
+    public const LOCATION_MIN_AGENT = '4.0.29';
     private Validator $validator;
     public function __construct(private Database $db) { $this->validator = new Validator(); }
 
@@ -174,6 +175,8 @@ final class PolicyCompiler
             // Una persona inactiva no recibe ninguna regla (tampoco las de nucleo); se valida la publicacion antes de vaciarla.
             if ($inactive) { $rules = []; }
             $hosts = $document->management_hosts ?? [];
+            $location = $document->location_tracking ?? null;
+            if ($location !== null && !is_bool($location)) { throw new \RuntimeException('Published policy location_tracking must be boolean'); }
             $lock = $document->time_change_lock ?? null;
             if ($lock !== null && !is_bool($lock)) { throw new \RuntimeException('Published policy time_change_lock must be boolean'); }
             $this->validator->check(['type' => 'array', 'maxItems' => 30, 'items' => ['type' => 'string', 'maxLength' => 255]], $hosts);
@@ -183,9 +186,9 @@ final class PolicyCompiler
                     $ruleSchedules[$key] = $this->schedule($row['tenant_id'], Util::bin($rule->schedule_id), $dayHours);
                 }
             }
-            $assignments[] = ['id' => Util::id($row['id']), 'scope' => $row['scope'], 'priority' => (int) $row['priority'], 'rules' => $rules, 'management_hosts' => $hosts, 'time_change_lock' => $lock];
+            $assignments[] = ['id' => Util::id($row['id']), 'scope' => $row['scope'], 'priority' => (int) $row['priority'], 'rules' => $rules, 'management_hosts' => $hosts, 'time_change_lock' => $lock, 'location_tracking' => $location];
         }
-        return ['tenant_id' => Util::id($tenant), 'device_id' => Util::id($device??$userId), 'reported_version' => (int) $d['policy_version'], 'functions' => $functions, 'capture' => $capture, 'time_change_lock_supported' => $timeLock, 'assignments' => $assignments, 'work_schedule' => $this->schedule($tenant, $org['schedule_id'], $dayHours), 'rule_schedules' => $ruleSchedules];
+        return ['tenant_id' => Util::id($tenant), 'device_id' => Util::id($device??$userId), 'reported_version' => (int) $d['policy_version'], 'functions' => $functions, 'capture' => $capture, 'location_supported' => $device === null || version_compare((string)($d['agent_version'] ?? '0'), self::LOCATION_MIN_AGENT, '>='), 'time_change_lock_supported' => $timeLock, 'assignments' => $assignments, 'work_schedule' => $this->schedule($tenant, $org['schedule_id'], $dayHours), 'rule_schedules' => $ruleSchedules];
     }
 
     private function current(string $table, string $owner, string $tenant, string $id, string $at): ?array

@@ -28,6 +28,10 @@ final class ExternalApi
             (new Audit($this->db))->record($this->c,$this->r,'externalCheckInsBatch','check_in',$this->tenant,['events','accepted:'.$result['accepted']]);
             return $result;
         }
+        if ($this->r->operation['operationId']==='externalLocations') {
+            if (($_GET['include_location']??'false')!=='true') { throw new ApiError(403,'insufficient_scope'); }
+            return (new DeviceLocations($this->db))->history($this->c,$this->r,null,false);
+        }
         if ($this->r->method!=='GET') { throw new ApiError(404,'resource_not_found'); }
         if (isset($_GET['country'])) { $this->filters['country']=$_GET['country']; }
         if (isset($_GET['city'])) { $this->filters['city']=trim($_GET['city']); }

@@ -25,7 +25,7 @@ final class PolicyComposer
         $explain = ['candidates' => [], 'entries' => [], 'excluded' => []];
         $validator = new Validator();
         $assignments = $input['assignments'];
-        $winners = []; $candidates = []; $hosts = []; $parts = []; $timeLock = null;
+        $winners = []; $candidates = []; $hosts = []; $parts = []; $timeLock = null; $location = null;
         foreach ($assignments as $assignment) {
             $level = $assignment['scope'] === 'global' ? 'platform' : $assignment['scope'];
             foreach ($assignment['management_hosts'] as $host) { $hosts[$host] = true; }
@@ -33,6 +33,10 @@ final class PolicyComposer
             if (($assignment['time_change_lock'] ?? null) !== null) {
                 $candidate = [self::SCOPES[$assignment['scope']], (int) $assignment['priority'], (bool) $assignment['time_change_lock'], $level, $assignment['id']];
                 if ($timeLock === null || array_slice($candidate, 0, 2) > array_slice($timeLock, 0, 2) || (array_slice($candidate, 0, 2) === array_slice($timeLock, 0, 2) && $candidate[2])) { $timeLock = $candidate; }
+            }
+            if (($assignment['location_tracking'] ?? null) !== null) {
+                $candidate = [self::SCOPES[$assignment['scope']], (int)$assignment['priority'], (bool)$assignment['location_tracking'], $level, $assignment['id']];
+                if ($location === null || array_slice($candidate,0,3) > array_slice($location,0,3)) { $location = $candidate; }
             }
             foreach ($assignment['rules'] as $rule) {
                 $validator->named('Rule', $rule);
@@ -108,6 +112,9 @@ final class PolicyComposer
                 $parts[$candidate['level']]['schedules'][$key] = $schedule;
             }
         }
+        $explain['location_tracking'] = $location === null ? null : ['value'=>$location[2], 'level'=>$location[3], 'assignment'=>$location[4]];
+        $locationOn = ($input['location_supported'] ?? false) && in_array('ubicacion',$input['functions'],true) && $location !== null && $location[2];
+        if ($locationOn) { $parts[$location[3]]['location_tracking'] = true; }
         $explain['time_change_lock'] = $timeLock === null ? null : ['value' => $timeLock[2], 'level' => $timeLock[3], 'assignment' => $timeLock[4]];
         // Solo con true y solo a agentes que lo entienden (el compilador decide): ausente = desbloqueado. Entra al hash.
         $lockOn = ($input['time_change_lock_supported'] ?? false) && $timeLock !== null && $timeLock[2];
@@ -135,6 +142,7 @@ final class PolicyComposer
             $document->capture = (object) ['windows' => (bool) $capture['windows'], 'window_titles' => (bool) $capture['window_titles'], 'activity' => (bool) $capture['activity']];
         }
         if ($lockOn) { $document->time_change_lock = true; }
+        if ($locationOn) { $document->location_tracking = true; }
         $validator->named('EffectivePolicy', self::versioned($document, 1));
         return $document;
     }
