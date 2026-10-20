@@ -130,7 +130,7 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
             // El servicio pide el alta apenas arranca y el servidor rechaza firmas con mas de 60 s de diferencia: la hora
             // de Windows se deja automatica y resincronizada antes. Nunca hace fallar la instalacion.
             if (time is not null)
-                Step("HORA: W32Time automatico y en marcha, NTP time.windows.com (o el del dominio), zona automatica, w32tm /resync",
+                Step("HORA: W32Time automatico y en marcha, NTP time.windows.com (o el del dominio), w32tm /resync (la zona horaria no se toca)",
                     () => { foreach (var line in TimeSyncOnce.RunAsync(time, CancellationToken.None).GetAwaiter().GetResult()) log(line); });
             Step($"START {ServiceName}; esperar Running (60 s)", () => services.Start(ServiceName));
             if (hardening is not null)

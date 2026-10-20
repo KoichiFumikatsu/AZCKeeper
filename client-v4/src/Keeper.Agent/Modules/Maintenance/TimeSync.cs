@@ -6,13 +6,19 @@ using Keeper.Shared.Time;
 namespace Keeper.Agent.Modules.Maintenance;
 
 // Mantiene la hora de Windows correcta (la necesita la firma de cada peticion: el servidor admite +-60 s).
-// Al arrancar y cada 6 h: W32Time automatico y en marcha, NTP time.windows.com (o el del dominio, sin tocarlo), zona
-// automatica (tzautoupdate) y w32tm /resync. Cada 2 min revisa la configuracion; si alguien la cambio la repone
-// (time_settings_restored). Si el reloj de Windows salta respecto del reloj monotonico (alguien cambio la hora) o el
-// servidor dice que la hora esta corrida, resincroniza en el acto (time_resynced con los segundos corregidos).
+// Al arrancar y cada 6 h: W32Time automatico y en marcha, NTP time.windows.com (o el del dominio, sin tocarlo) y
+// w32tm /resync. Cada 2 min revisa la configuracion; si alguien la cambio la repone (time_settings_restored). Si el
+// reloj de Windows salta respecto del reloj monotonico (alguien cambio la hora) o el servidor dice que la hora esta
+// corrida, resincroniza en el acto (time_resynced con los segundos corregidos).
 // Los comandos corren en segundo plano y se sondean en los ticks (como RestorePoint): ModuleHost ejecuta los ticks en
 // serie. No resincroniza mientras haya una cuenta regresiva de reinicio/apagado en pantalla (deferResync): un salto
 // de hora la adelantaria o la daria por vencida. El PIN local usa el reloj monotonico y no se ve afectado.
+//
+// Zona horaria libre (decision 2026-10-20, agente 4.0.28): los abogados ponen la zona de la firma extranjera para la que
+// trabajan. TimeSync ya no exige la zona automatica (tzautoupdate) ni devuelve la zona a la anterior; si la zona
+// automatica esta encendida tampoco la apaga (es eleccion del usuario). Keeper no depende de la zona del PC: las firmas
+// usan UTC y el horario laboral usa la zona del horario de la politica. Cambiar la zona no mueve la hora UTC, asi que
+// no dispara el detector de saltos; cambiar la hora si (y con time_change_lock solo SYSTEM y W32Time pueden hacerlo).
 //
 // Hora del servidor de Keeper como ultimo recurso (decision 2026-10-16): si W32Time ya intento (fallo o no corrigio:
 // sin salida a NTP, desfase mayor que MaxPhaseCorrection) y dos mediciones autenticadas y consistentes del servidor
@@ -39,14 +45,13 @@ public sealed class TimeSync(ITimeSystem system, bool enabled, ServerClock? serv
     // Desfase con el servidor que justifica poner la hora del sistema con la suya (si W32Time no lo resolvio).
     public static readonly TimeSpan SetFromServerThreshold = TimeSpan.FromMinutes(2);
 
-    private sealed record Job(IReadOnlyList<string> Restored, string? Failed, int? ResyncExit, string? Zone, bool? Domain);
+    private sealed record Job(IReadOnlyList<string> Restored, string? Failed, int? ResyncExit, bool? Domain);
 
     private Task<Job>? _running;
     // Comandos en curso (segundo plano); el siguiente tick recoge el resultado.
     public Task? Running => _running;
     private string? _reason;
     private bool _firstCheck = true;
-    private string? _zone;
     private long _nextCheck, _nextResync, _nextTriggered;
     private long _lastTimestamp;
     private DateTimeOffset _lastWall;
@@ -116,9 +121,7 @@ public sealed class TimeSync(ITimeSystem system, bool enabled, ServerClock? serv
         _nextCheck = now + Ticks(CheckInterval);
         Rebase();
         State = resync ? "syncing" : State;
-        var zone = _zone;
-        var first = _firstCheck;
-        _running = Task.Run(() => RunAsync(resync, zone, first, Context.StoppingToken), Context.StoppingToken);
+        _running = Task.Run(() => RunAsync(resync, Context.StoppingToken), Context.StoppingToken);
     }
 
     private void Trigger(string reason)
@@ -127,15 +130,10 @@ public sealed class TimeSync(ITimeSystem system, bool enabled, ServerClock? serv
         _nextTriggered = Context.Clock.GetTimestamp() + Ticks(MinTriggeredGap);
     }
 
-    private async Task<Job> RunAsync(bool resync, string? zone, bool first, CancellationToken ct)
+    private async Task<Job> RunAsync(bool resync, CancellationToken ct)
     {
         var settings = await system.ReadAsync(ct);
-        var commands = TimeSyncPlan.Restore(settings).ToList();
-        // Zona: con la automatica encendida Windows la elige (no se puede cambiar a mano). Si la apagaron y la zona
-        // cambio, se vuelve a la ultima conocida. En el primer chequeo se toma la actual como conocida.
-        var zoneManual = settings.TzAutoUpdateStart is not (TimeSyncPlan.ServiceAuto or TimeSyncPlan.ServiceDemand);
-        if (!first && zoneManual && zone is not null && settings.TimeZoneId is { } current && current != zone)
-            commands.Add(TimeSyncPlan.RestoreZone(zone));
+        var commands = TimeSyncPlan.Restore(settings);
         var restored = new List<string>();
         string? failed = null;
         foreach (var command in commands)
@@ -145,9 +143,8 @@ public sealed class TimeSync(ITimeSystem system, bool enabled, ServerClock? serv
             if (result.ExitCode == 0 || (command.Item == "servicio_detenido" && result.ExitCode == 1056)) restored.Add(command.Item);
             else failed ??= $"{command.Item}_salida_{result.ExitCode}";
         }
-        var nextZone = commands.Any(c => c.Item == "zona_horaria") ? zone : settings.TimeZoneId ?? zone;
-        if (!resync && restored.Count == 0) return new([], failed, null, nextZone, settings.DomainJoined);
-        return new(restored, failed, (await system.RunAsync(TimeSyncPlan.Resync, ct)).ExitCode, nextZone, settings.DomainJoined);
+        if (!resync && restored.Count == 0) return new([], failed, null, settings.DomainJoined);
+        return new(restored, failed, (await system.RunAsync(TimeSyncPlan.Resync, ct)).ExitCode, settings.DomainJoined);
     }
 
     private async Task<Job> SetFromServerAsync(TimeSpan offset, CancellationToken ct)
@@ -155,7 +152,7 @@ public sealed class TimeSync(ITimeSystem system, bool enabled, ServerClock? serv
         system.SetSystemTime(Context.Clock.GetUtcNow() + offset);
         // W32Time toma la hora nueva como base (si NTP responde, la afina).
         var exit = (await system.RunAsync(TimeSyncPlan.Resync, ct)).ExitCode;
-        return new([], null, exit, _zone, false);
+        return new([], null, exit, false);
     }
 
     private async Task CompleteSetAsync(Task<Job> finished, TimeSpan moved, CancellationToken ct)
@@ -194,7 +191,6 @@ public sealed class TimeSync(ITimeSystem system, bool enabled, ServerClock? serv
             return;
         }
         var job = finished.Result;
-        _zone = job.Zone;
         _domain = job.Domain ?? _domain;
         if (job.Restored.Count > 0)
             await ReportAsync(first ? "time_settings_applied" : "time_settings_restored", ct,

@@ -25,7 +25,7 @@ public sealed class TimeSyncBootstrapTests
         }
     }
 
-    private static readonly TimeSettings Manual = new(3, false, "NoSync", null, false, 4, "SA Pacific Standard Time");
+    private static readonly TimeSettings Manual = new(3, false, "NoSync", null, false);
 
     [Fact]
     public void InstallSetsAutomaticTimeAndResyncsBeforeStartingTheService()
@@ -35,7 +35,9 @@ public sealed class TimeSyncBootstrapTests
         Assert.Equal([
             "sc.exe config w32time start= auto", "sc.exe start w32time",
             "w32tm.exe /config /manualpeerlist:time.windows.com,0x9 /syncfromflags:manual /update",
-            "sc.exe config tzautoupdate start= demand", "w32tm.exe /resync"], time.Commands);
+            "w32tm.exe /resync"], time.Commands);
+        // La zona horaria no se toca (4.0.28): ni la automatica ni la elegida.
+        Assert.DoesNotContain(time.Commands, c => c.Contains("tzautoupdate", StringComparison.Ordinal) || c.Contains("tzutil", StringComparison.Ordinal));
         var resync = machine.Mutations.IndexOf("time:resincronizar");
         Assert.True(resync >= 0 && resync < machine.Mutations.IndexOf("start"));
         Assert.Contains(output, line => line.StartsWith("HORA: w32tm.exe /resync -> 0", StringComparison.Ordinal));
@@ -63,7 +65,7 @@ public sealed class TimeSyncBootstrapTests
     [Fact]
     public void DomainMachineKeepsTheDomainTimeSource()
     {
-        var time = new FakeTime(machine, new(2, true, "NT5DS", "", true, 3, "SA Pacific Standard Time"));
+        var time = new FakeTime(machine, new(2, true, "NT5DS", "", true));
         Assert.Equal(0, new BootstrapApplication(new FakeElevation(), machine, machine, machine, output.Add, time: time).Run(Options, []));
         Assert.Equal(["w32tm.exe /resync"], time.Commands);
     }

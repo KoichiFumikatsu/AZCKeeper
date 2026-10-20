@@ -9,8 +9,8 @@ namespace Keeper.Agent.Tests;
 // Modulo TimeSync con un sistema simulado: se verifican los comandos que se ejecutarian (nunca w32tm de verdad).
 public sealed class TimeSyncTests
 {
-    private static readonly TimeSettings Good = new(2, true, "NTP", "time.windows.com,0x9", false, 3, "SA Pacific Standard Time");
-    private static readonly TimeSettings Factory = new(3, false, "NoSync", null, false, 4, "SA Pacific Standard Time");
+    private static readonly TimeSettings Good = new(2, true, "NTP", "time.windows.com,0x9", false);
+    private static readonly TimeSettings Factory = new(3, false, "NoSync", null, false);
 
     private sealed class FakeTime(TestClock clock) : ITimeSystem
     {
@@ -40,8 +40,7 @@ public sealed class TimeSyncTests
                 ResyncCorrection = TimeSpan.Zero;
                 return Task.FromResult(new TimeCommandResult(ResyncExit, ""));
             }
-            if (command.Item != "zona_horaria") Settings = Good with { TimeZoneId = Settings.TimeZoneId };
-            else Settings = Settings with { TimeZoneId = command.Arguments[1] };
+            Settings = Good;
             return Task.FromResult(new TimeCommandResult(0, ""));
         }
     }
@@ -80,7 +79,7 @@ public sealed class TimeSyncTests
     }
 
     [Fact]
-    public async Task StartupTurnsOnAutomaticTimeAndZoneThenResyncsAndReportsTheCorrection()
+    public async Task StartupTurnsOnAutomaticTimeThenResyncsAndReportsTheCorrection()
     {
         var h = new Harness();
         h.Time.Settings = Factory;
@@ -90,9 +89,9 @@ public sealed class TimeSyncTests
         Assert.Equal([
             "sc.exe config w32time start= auto", "sc.exe start w32time",
             "w32tm.exe /config /manualpeerlist:time.windows.com,0x9 /syncfromflags:manual /update",
-            "sc.exe config tzautoupdate start= demand", "w32tm.exe /resync"], h.Time.Commands);
+            "w32tm.exe /resync"], h.Time.Commands);
         Assert.Equal([
-            ("time_settings_applied", "servicio_hora.servicio_detenido.hora_automatica.zona_automatica", LogEntryLevel.Info),
+            ("time_settings_applied", "servicio_hora.servicio_detenido.hora_automatica", LogEntryLevel.Info),
             ("time_resynced", "desfase_-300s", LogEntryLevel.Info)], h.Logs);
         // El reloj de Windows retrocedio 5 min: el desfase de las firmas se mueve lo mismo al reves.
         Assert.Equal(TimeSpan.FromMinutes(5), h.Server.Offset);
@@ -125,13 +124,13 @@ public sealed class TimeSyncTests
         await h.InitAsync();
         await h.TickAsync();
         h.Clear();
-        h.Time.Settings = Good with { NtpType = "NoSync", TzAutoUpdateStart = 4 };
+        h.Time.Settings = Good with { NtpType = "NoSync" };
         h.Clock.Advance(TimeSync.CheckInterval);
         await h.TickAsync();
         Assert.Equal([
             "w32tm.exe /config /manualpeerlist:time.windows.com,0x9 /syncfromflags:manual /update",
-            "sc.exe config tzautoupdate start= demand", "w32tm.exe /resync"], h.Time.Commands);
-        Assert.Equal([("time_settings_restored", "hora_automatica.zona_automatica", LogEntryLevel.Warn)], h.Logs);
+            "w32tm.exe /resync"], h.Time.Commands);
+        Assert.Equal([("time_settings_restored", "hora_automatica", LogEntryLevel.Warn)], h.Logs);
     }
 
     [Fact]
@@ -216,24 +215,43 @@ public sealed class TimeSyncTests
         Assert.Equal("dry_run", dry.Module.Snapshot().State);
     }
 
+    // Zona horaria libre (4.0.28): el abogado pone la de la firma extranjera. Cambiar la zona no mueve la hora UTC, asi
+    // que ni se repone la zona ni se fuerza la automatica, y no hay resincronizacion ni evento.
     [Fact]
-    public async Task ManualZoneChangeIsReturnedToTheLastKnownZone()
+    public async Task ManualZoneChangeIsNeitherRevertedNorForcedToAutomatic()
     {
         var h = new Harness();
         await h.InitAsync();
         await h.TickAsync();
         h.Clear();
-        h.Time.Settings = Good with { TzAutoUpdateStart = 4, TimeZoneId = "Pacific Standard Time" };
-        h.Clock.Advance(TimeSync.CheckInterval);
-        await h.TickAsync();
-        Assert.Equal(["sc.exe config tzautoupdate start= demand", "tzutil.exe /s SA Pacific Standard Time", "w32tm.exe /resync"], h.Time.Commands);
-        Assert.Equal([("time_settings_restored", "zona_automatica.zona_horaria", LogEntryLevel.Warn)], h.Logs);
-        // Con la zona automatica encendida, un cambio de zona lo hizo Windows: se acepta.
-        h.Clear();
-        h.Time.Settings = Good with { TimeZoneId = "Eastern Standard Time" };
-        h.Clock.Advance(TimeSync.CheckInterval);
-        await h.TickAsync();
+        // El usuario apaga la zona automatica y elige otra zona: la hora UTC no cambia (el reloj de la prueba es UTC).
+        for (var i = 0; i < 3; i++)
+        {
+            h.Clock.Advance(TimeSync.CheckInterval);
+            await h.TickAsync();
+        }
         Assert.Empty(h.Time.Commands);
+        Assert.Empty(h.Logs);
+        Assert.Empty(TimeSyncPlan.Restore(Good));
+        // El plan no tiene ya ningun paso de zona: nada de tzautoupdate ni tzutil, en ningun estado de la configuracion.
+        Assert.DoesNotContain(TimeSyncPlan.Restore(Factory), c => c.Item.StartsWith("zona", StringComparison.Ordinal) ||
+            c.Arguments.Contains("tzautoupdate") || c.Program == "tzutil.exe");
+    }
+
+    // Un cambio manual de hora junto con un cambio de zona: lo que se corrige es la hora (UTC), no la zona.
+    [Fact]
+    public async Task ManualClockChangeStillResyncsWhileZoneIsLeftAlone()
+    {
+        var h = new Harness();
+        await h.InitAsync();
+        await h.TickAsync();
+        h.Clear();
+        h.Clock.ShiftWallClock(TimeSpan.FromMinutes(-30));
+        h.Time.ResyncCorrection = TimeSpan.FromMinutes(30);
+        h.Clock.Advance(TimeSpan.FromSeconds(1));
+        await h.TickAsync();
+        Assert.Equal(["w32tm.exe /resync"], h.Time.Commands);
+        Assert.Equal([("time_resynced", "desfase_1800s.hora_cambiada", LogEntryLevel.Info)], h.Logs);
     }
 
     // W32Time resincronizo pero no corrigio (exit 0, sin salto) y el servidor dice +10 min dos veces seguidas.
@@ -336,7 +354,7 @@ public sealed class TimeSyncTests
     [InlineData("NoSync", true)]
     public void DomainTimeSourceIsNeverOverwritten(string type, bool reenabled)
     {
-        var commands = TimeSyncPlan.Restore(new(2, true, type, "dc.corp.local,0x8", true, 3, "x"));
+        var commands = TimeSyncPlan.Restore(new(2, true, type, "dc.corp.local,0x8", true));
         string[] expected = reenabled ? ["w32tm.exe /config /syncfromflags:domhier /update"] : [];
         Assert.Equal(expected, commands.Select(c => c.ToString()));
     }

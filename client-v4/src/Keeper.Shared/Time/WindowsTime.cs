@@ -6,12 +6,13 @@ using Microsoft.Win32;
 
 namespace Keeper.Shared.Time;
 
-// Hora de Windows: servicio W32Time en automatico y en marcha, NTP time.windows.com (o el del dominio, que no se toca),
-// zona horaria automatica (servicio tzautoupdate) y w32tm /resync. Lo usan el agente (modulo TimeSync, SYSTEM) y el
+// Hora de Windows: servicio W32Time en automatico y en marcha, NTP time.windows.com (o el del dominio, que no se toca)
+// y w32tm /resync. Lo usan el agente (modulo TimeSync, SYSTEM) y el
 // Bootstrapper antes de arrancar el servicio que pide el alta. Un equipo con la hora mal no puede firmar peticiones
 // que el servidor acepte (ventana de +-60 s); el agente tambien corrige sus firmas con la hora del servidor.
-public sealed record TimeSettings(int? W32TimeStart, bool W32TimeRunning, string? NtpType, string? NtpServer, bool DomainJoined,
-    int? TzAutoUpdateStart, string? TimeZoneId);
+// La zona horaria no se toca (decision 2026-10-20, agente 4.0.28): los abogados ponen la de la firma extranjera para la
+// que trabajan. Keeper no depende de ella: las firmas usan UTC y el horario laboral, la zona de la politica.
+public sealed record TimeSettings(int? W32TimeStart, bool W32TimeRunning, string? NtpType, string? NtpServer, bool DomainJoined);
 
 // Item: nombre corto para el log (va en error_code: solo [a-zA-Z0-9_.:-]).
 public sealed record TimeCommand(string Item, string Program, IReadOnlyList<string> Arguments)
@@ -33,8 +34,6 @@ public static class TimeSyncPlan
 {
     public const string WindowsNtp = "time.windows.com,0x9";
     public const int ServiceAuto = 2;
-    public const int ServiceDemand = 3;
-    public const int ServiceDisabled = 4;
 
     public static TimeCommand Resync { get; } = new("resincronizar", "w32tm.exe", ["/resync"]);
 
@@ -52,13 +51,8 @@ public static class TimeSyncPlan
         }
         else if (!string.Equals(s.NtpType, "NTP", StringComparison.OrdinalIgnoreCase) || !UsesWindowsNtp(s.NtpServer))
             commands.Add(new("hora_automatica", "w32tm.exe", ["/config", "/manualpeerlist:" + WindowsNtp, "/syncfromflags:manual", "/update"]));
-        if (s.TzAutoUpdateStart is not (ServiceAuto or ServiceDemand))
-            commands.Add(new("zona_automatica", "sc.exe", ["config", "tzautoupdate", "start=", "demand"]));
         return commands;
     }
-
-    // La zona que el usuario cambio a mano (para eso tuvo que apagar la zona automatica) se devuelve a la anterior.
-    public static TimeCommand RestoreZone(string zoneId) => new("zona_horaria", "tzutil.exe", ["/s", zoneId]);
 
     public static bool UsesWindowsNtp(string? server) =>
         server is not null && server.Split(' ', StringSplitOptions.RemoveEmptyEntries)
@@ -77,16 +71,14 @@ public sealed class WindowsTimeSystem(TimeSpan? timeout = null) : ITimeSystem
     {
         using var w32 = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\W32Time");
         using var parameters = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\W32Time\Parameters");
-        using var tz = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\tzautoupdate");
-        using var zone = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\TimeZoneInformation");
         var query = await RunAsync(new("consulta", "sc.exe", ["query", "w32time"]), ct);
         return new(w32?.GetValue("Start") as int?, TimeSyncPlan.IsRunning(query.Output), parameters?.GetValue("Type") as string,
-            parameters?.GetValue("NtpServer") as string, DomainJoined(), tz?.GetValue("Start") as int?, zone?.GetValue("TimeZoneKeyName") as string);
+            parameters?.GetValue("NtpServer") as string, DomainJoined());
     }
 
     public async Task<TimeCommandResult> RunAsync(TimeCommand command, CancellationToken ct)
     {
-        if (command.Program is not ("sc.exe" or "w32tm.exe" or "tzutil.exe")) throw new ArgumentException("programa no permitido", nameof(command));
+        if (command.Program is not ("sc.exe" or "w32tm.exe")) throw new ArgumentException("programa no permitido", nameof(command));
         var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), command.Program))
         { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var argument in command.Arguments) start.ArgumentList.Add(argument);
