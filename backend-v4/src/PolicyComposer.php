@@ -25,10 +25,15 @@ final class PolicyComposer
         $explain = ['candidates' => [], 'entries' => [], 'excluded' => []];
         $validator = new Validator();
         $assignments = $input['assignments'];
-        $winners = []; $candidates = []; $hosts = []; $parts = [];
+        $winners = []; $candidates = []; $hosts = []; $parts = []; $timeLock = null;
         foreach ($assignments as $assignment) {
             $level = $assignment['scope'] === 'global' ? 'platform' : $assignment['scope'];
             foreach ($assignment['management_hosts'] as $host) { $hosts[$host] = true; }
+            // Bloqueo del cambio de hora: gana el alcance mas cercano y, en el mismo, la mayor prioridad; si empatan, true.
+            if (($assignment['time_change_lock'] ?? null) !== null) {
+                $candidate = [self::SCOPES[$assignment['scope']], (int) $assignment['priority'], (bool) $assignment['time_change_lock'], $level, $assignment['id']];
+                if ($timeLock === null || array_slice($candidate, 0, 2) > array_slice($timeLock, 0, 2) || (array_slice($candidate, 0, 2) === array_slice($timeLock, 0, 2) && $candidate[2])) { $timeLock = $candidate; }
+            }
             foreach ($assignment['rules'] as $rule) {
                 $validator->named('Rule', $rule);
                 if (!self::ruleAllowed($rule->kind, $input['functions'])) { $explain['excluded'][] = ['rule' => $rule, 'level' => $level, 'assignment' => $assignment['id']]; continue; }
@@ -103,6 +108,10 @@ final class PolicyComposer
                 $parts[$candidate['level']]['schedules'][$key] = $schedule;
             }
         }
+        $explain['time_change_lock'] = $timeLock === null ? null : ['value' => $timeLock[2], 'level' => $timeLock[3], 'assignment' => $timeLock[4]];
+        // Solo con true y solo a agentes que lo entienden (el compilador decide): ausente = desbloqueado. Entra al hash.
+        $lockOn = ($input['time_change_lock_supported'] ?? false) && $timeLock !== null && $timeLock[2];
+        if ($lockOn) { $parts[$timeLock[3]]['time_change_lock'] = true; }
         // Keep the first 30 distinct hosts in lexical order across all assignments.
         $managementHosts = array_slice(self::normalizeTargets(array_keys($hosts)), 0, 30);
         $parts['platform']['compiler'] = self::VERSION;
@@ -125,6 +134,7 @@ final class PolicyComposer
         if ($capture !== null) {
             $document->capture = (object) ['windows' => (bool) $capture['windows'], 'window_titles' => (bool) $capture['window_titles'], 'activity' => (bool) $capture['activity']];
         }
+        if ($lockOn) { $document->time_change_lock = true; }
         $validator->named('EffectivePolicy', self::versioned($document, 1));
         return $document;
     }

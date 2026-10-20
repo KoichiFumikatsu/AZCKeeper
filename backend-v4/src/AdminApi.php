@@ -946,7 +946,8 @@ final class AdminApi
         $a=$db->one('SELECT * FROM policy_assignments WHERE tenant_id=? AND policy_id=? ORDER BY id LIMIT 1',[$tenant,$r['id']]);
         $v=$db->one('SELECT document FROM policy_versions WHERE tenant_id=? AND policy_id=? AND policy_version=?',[$tenant,$r['id'],$r['version']]);
         if (!$a || !$v || $a['scope']==='global') { throw new ApiError(404,'resource_not_found'); }
-        return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'name'=>$r['name'],'target_type'=>$a['scope'],'target_id'=>Util::id($a['scope_target']),'enabled'=>(bool)$r['enabled'],'rules'=>json_decode($v['document'])->rules,'version'=>(int)$r['version']];
+        return ['id'=>Util::id($r['id']),'tenant_id'=>Util::id($r['tenant_id']),'name'=>$r['name'],'target_type'=>$a['scope'],'target_id'=>Util::id($a['scope_target']),'enabled'=>(bool)$r['enabled'],'rules'=>json_decode($v['document'])->rules,'version'=>(int)$r['version']]
+            +(isset(($doc=json_decode($v['document']))->time_change_lock) ? ['time_change_lock'=>(bool)$doc->time_change_lock] : []);
     }
     private function policyTarget(string $kind,string $target): void
     {
@@ -985,6 +986,10 @@ final class AdminApi
         if ($op==='listPolicies') { $this->access->requireFull(); return $this->page("SELECT p.* FROM policy_documents p WHERE p.tenant_id=? AND EXISTS (SELECT 1 FROM policy_assignments a WHERE a.tenant_id=p.tenant_id AND a.policy_id=p.id AND a.scope<>'global')",[$this->tenant],fn($x)=>$this->policyDto($x)); }
         if ($id) { $old=$this->row('policy_documents',$id); $dto=$this->policyDto($old); $this->policyTarget($dto['target_type'],Util::bin($dto['target_id'])); if ($op==='getPolicy') { return $this->result($dto); } $this->match($old); }
         $target=Util::bin($b->target_id); $this->policyTarget($b->target_type,$target); $this->validateRules($b->rules);
+        // time_change_lock (agente 4.0.28): bloquea el cambio manual de la hora en los equipos; solo un admin de toda la
+        // empresa lo cambia. Sin el campo al editar se conserva el valor anterior (el panel aun no lo muestra ni lo envia).
+        if (property_exists($b,'time_change_lock')) { $this->access->requireFull(); }
+        elseif (isset($dto['time_change_lock'])) { $b->time_change_lock=$dto['time_change_lock']; }
         if ($id) { $this->update('policy_documents',$id,['name'=>$b->name,'enabled'=>(int)$b->enabled]); }
         else { $id=Util::bin(Util::uuid()); $this->db->run('INSERT INTO policy_documents (tenant_id,id,name,enabled) VALUES (?,?,?,?)',[$this->tenant,$id,$b->name,(int)$b->enabled]); }
         $version=(int)$this->row('policy_documents',$id)['version'];

@@ -5,4 +5,6 @@ namespace Keeper.Shared.Contracts;
 public static class AgentDataFiles
 {
     public const string PolicyCache = "policy-cache.json";
+    // Lo que el bloqueo del cambio de hora quito o dio en la LSA (TimeChangeLock); el Bootstrapper lo devuelve al desinstalar.
+    public const string TimeChangeLock = "time-change-lock.json";
 }

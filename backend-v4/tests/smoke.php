@@ -52,6 +52,7 @@ require __DIR__ . '/productivity-batches.php';
 require __DIR__ . '/effective-rules.php';
 require __DIR__ . '/auth-locks.php';
 require __DIR__ . '/command-cancel.php';
+require __DIR__ . '/time-change-lock.php';
 
 use Keeper\{Config, Database, Util, Validator};
 
@@ -511,6 +512,7 @@ try {
     effectiveRulesApiTests($db);
     computerRenameTests($db);
     commandCancelTests($db);
+    timeChangeLockTests($db);
     // Al final y con el cupo de prelogin repuesto: sus 4 logins de fixture lo agotaban para panelAccountsTests.
     windowsSecurityTests($db);
     relocationTests($db);

@@ -5,6 +5,8 @@ namespace Keeper;
 final class PolicyCompiler
 {
     private const PLATFORM = '00000000-0000-4000-8000-000000000001';
+    /** Desde esta version el agente entiende time_change_lock (bloqueo del cambio manual de la hora). */
+    public const TIME_CHANGE_LOCK_MIN_AGENT = '4.0.28';
     private Validator $validator;
     public function __construct(private Database $db) { $this->validator = new Validator(); }
 
@@ -159,6 +161,8 @@ final class PolicyCompiler
             $has = static fn (string $f): bool => in_array($f, $functions, true);
             $capture = ['windows' => $has('productividad') || $has('cumplimiento'), 'window_titles' => $has('productividad') && $has('sitios'), 'activity' => $has('productividad') || $has('presencia')];
         }
+        // time_change_lock (2026-10-20): antes de 4.0.28 el agente rechazaria el campo y con el toda la politica.
+        $timeLock = $device === null || version_compare((string) ($d['agent_version'] ?? '0'), self::TIME_CHANGE_LOCK_MIN_AGENT, '>=');
         foreach ($rows as $row) {
             $document = json_decode($row['document'], false, 64, JSON_THROW_ON_ERROR);
             if (!isset($document->rules) || !is_array($document->rules)) { throw new \RuntimeException('Published policy requires rules'); }
@@ -170,6 +174,8 @@ final class PolicyCompiler
             // Una persona inactiva no recibe ninguna regla (tampoco las de nucleo); se valida la publicacion antes de vaciarla.
             if ($inactive) { $rules = []; }
             $hosts = $document->management_hosts ?? [];
+            $lock = $document->time_change_lock ?? null;
+            if ($lock !== null && !is_bool($lock)) { throw new \RuntimeException('Published policy time_change_lock must be boolean'); }
             $this->validator->check(['type' => 'array', 'maxItems' => 30, 'items' => ['type' => 'string', 'maxLength' => 255]], $hosts);
             foreach ($rules as $rule) {
                 if ($rule->schedule_id !== null && PolicyComposer::ruleAllowed($rule->kind, $functions)) {
@@ -177,9 +183,9 @@ final class PolicyCompiler
                     $ruleSchedules[$key] = $this->schedule($row['tenant_id'], Util::bin($rule->schedule_id), $dayHours);
                 }
             }
-            $assignments[] = ['id' => Util::id($row['id']), 'scope' => $row['scope'], 'priority' => (int) $row['priority'], 'rules' => $rules, 'management_hosts' => $hosts];
+            $assignments[] = ['id' => Util::id($row['id']), 'scope' => $row['scope'], 'priority' => (int) $row['priority'], 'rules' => $rules, 'management_hosts' => $hosts, 'time_change_lock' => $lock];
         }
-        return ['tenant_id' => Util::id($tenant), 'device_id' => Util::id($device??$userId), 'reported_version' => (int) $d['policy_version'], 'functions' => $functions, 'capture' => $capture, 'assignments' => $assignments, 'work_schedule' => $this->schedule($tenant, $org['schedule_id'], $dayHours), 'rule_schedules' => $ruleSchedules];
+        return ['tenant_id' => Util::id($tenant), 'device_id' => Util::id($device??$userId), 'reported_version' => (int) $d['policy_version'], 'functions' => $functions, 'capture' => $capture, 'time_change_lock_supported' => $timeLock, 'assignments' => $assignments, 'work_schedule' => $this->schedule($tenant, $org['schedule_id'], $dayHours), 'rule_schedules' => $ruleSchedules];
     }
 
     private function current(string $table, string $owner, string $tenant, string $id, string $at): ?array

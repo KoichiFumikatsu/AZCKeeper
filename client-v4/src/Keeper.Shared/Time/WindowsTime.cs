@@ -100,6 +100,8 @@ public sealed class WindowsTimeSystem(TimeSpan? timeout = null) : ITimeSystem
     public void SetSystemTime(DateTimeOffset utc)
     {
         // SYSTEM tiene SeSystemtimePrivilege pero deshabilitado: se habilita en el token del proceso antes de llamar.
+        // El bloqueo del cambio de hora (TimeChangeLock) nunca se lo quita a SYSTEM: si no lo tiene asignado en la LSA se le
+        // asigna antes de quitarselo a Administradores.
         using var self = Process.GetCurrentProcess();
         if (!OpenProcessToken(self.Handle, 0x0020 | 0x0008, out var token)) // ADJUST_PRIVILEGES | QUERY
             throw new System.ComponentModel.Win32Exception();
@@ -151,7 +153,7 @@ public sealed class WindowsTimeSystem(TimeSpan? timeout = null) : ITimeSystem
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr handle);
 
-    private static bool DomainJoined()
+    public static bool DomainJoined()
     {
         if (NetGetJoinInformation(null, out var name, out var status) != 0) return false;
         NetApiBufferFree(name);

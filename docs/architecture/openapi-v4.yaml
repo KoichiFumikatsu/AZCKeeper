@@ -20572,6 +20572,9 @@ components:
           items:
             $ref: '#/components/schemas/Rule'
           maxItems: 100
+        time_change_lock:
+          type: boolean
+          description: Bloquear el cambio manual de la hora en los equipos a los que llega esta política (agentes 4.0.28 o posteriores; nunca en equipos de dominio). El agente quita «Cambiar la hora del sistema» (SeSystemtimePrivilege) a Administradores y lo devuelve al apagarla; la zona horaria sigue libre. Sin el campo o false = no bloquea. Entre varias políticas que lo definen gana la de alcance más cercano (equipo > persona > área > sede > empresa) y, en el mismo alcance, la de mayor prioridad; si empatan, true. Hoy solo por la API (el panel aún no lo muestra; guardar la política desde el panel sin este campo lo quita).
     Policy:
       type: object
       additionalProperties: false
@@ -20615,6 +20618,9 @@ components:
         version:
           type: integer
           minimum: 1
+        time_change_lock:
+          type: boolean
+          description: Solo si la política lo define (ver PolicyInput.time_change_lock).
     EffectivePolicy:
       type: object
       additionalProperties: false
@@ -20693,6 +20699,9 @@ components:
             activity:
               type: boolean
           description: Qué captura el agente según las funciones de la persona. Solo se envía a agentes 4.0.15 o posteriores.
+        time_change_lock:
+          type: boolean
+          description: Bloquear el cambio manual de la hora (quitar SeSystemtimePrivilege a Administradores; SYSTEM y LOCAL SERVICE lo conservan; la zona horaria sigue libre). Solo se envía, y solo con true, a agentes 4.0.28 o posteriores (los anteriores rechazan campos desconocidos). Ausente = desbloqueado; el agente devuelve el derecho si lo había quitado. El agente nunca lo aplica en equipos de dominio.
       description: Sin PIN, secretos ni webhooks. Versión de toda la composición y compilador.
     Episode:
       type: object

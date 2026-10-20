@@ -7,7 +7,7 @@ namespace Keeper.Bootstrapper;
 
 public sealed class BootstrapApplication(IElevation elevation, IServiceControl services, ISystemPaths paths,
     IRegistryStore registry, Action<string> log, IHardeningRunner? hardening = null, IUpdateGuard? guard = null,
-    IRescueInstaller? rescue = null, ITimeSystem? time = null)
+    IRescueInstaller? rescue = null, ITimeSystem? time = null, IAccountRights? accountRights = null)
 {
     public const string ServiceName = "KeeperAgent";
     public const string ClaimedDocumentVariable = "KEEPER_CLAIMED_DOCUMENT";
@@ -91,6 +91,14 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
             DeleteValue(InstallerKey, "DisableMSI");
             DeleteValue(InstallerKey, "AlwaysInstallElevated");
             if (rescue is not null) Step("RESCATE: borrar tarea programada 'AZCKeeper Recovery'", rescue.Remove);
+            // Bloqueo del cambio de hora (4.0.28): el registro de lo que se quito vive en el directorio que se borra; se
+            // devuelve antes. Nunca hace fallar la desinstalacion.
+            if (accountRights is not null)
+            {
+                var lockState = Path.Combine(paths.InstallDirectory, "v4", AgentDataFiles.TimeChangeLock);
+                Step($"HORA: devolver SeSystemtimePrivilege a Administradores si Keeper lo quito (\"{lockState}\")",
+                    () => log(TimeChangeLockUninstall.Run(accountRights, lockState)));
+            }
             Step($"DELETE DIRECTORY \"{paths.InstallDirectory}\" (recursivo, si existe)", paths.DeleteInstallDirectory);
         }
         else

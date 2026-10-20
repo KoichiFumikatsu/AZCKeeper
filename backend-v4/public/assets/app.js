@@ -356,6 +356,7 @@ const sacStates = { off: 'Apagado', on: 'Activo', evaluation: 'En evaluación', 
 // Códigos del registro del agente con texto propio en la ficha (los demás se muestran tal cual).
 const agentLogCodes = {
   smart_app_control_disabled: 'Smart App Control desactivado (aplica al reiniciar)', smart_app_control_disable_failed: 'No se pudo desactivar Smart App Control',
+  time_change_locked: 'Cambio manual de la hora bloqueado (la zona horaria sigue libre)', time_change_unlocked: 'Cambio manual de la hora desbloqueado', time_change_lock_failed: 'No se pudo bloquear o desbloquear el cambio de hora',
   update_launch_failed: 'Windows no dejó arrancar el instalador de la actualización', update_apply_stalled: 'La actualización no terminó; se reintentará',
   command_cancelled: 'IT canceló una cuenta regresiva de reinicio o apagado', command_cancel_too_late: 'Llegó la cancelación, pero la orden ya se había ejecutado',
   legacy_k3_running: 'Keeper 3 (K3) está abierto en el equipo', legacy_k3_autostart: 'Keeper 3 (K3) arranca al iniciar sesión', legacy_k3_gone: 'Keeper 3 (K3) ya no corre ni arranca',

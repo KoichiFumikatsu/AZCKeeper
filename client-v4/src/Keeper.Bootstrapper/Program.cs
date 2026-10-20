@@ -33,7 +33,8 @@ try
     var code = new BootstrapApplication(new WindowsElevation(), new WindowsServiceControl(), paths,
         new WindowsRegistryStore(), Log, new WindowsHardeningRunner(paths, Log),
         options.SystemUpdate ? new WindowsUpdateGuard(paths.InstallDirectory, TimeSpan.FromMinutes(5), Log) : null,
-        options.SystemMode ? new WindowsRescueInstaller(paths.InstallDirectory, Log) : null, new WindowsTimeSystem()).Run(options, args);
+        options.SystemMode ? new WindowsRescueInstaller(paths.InstallDirectory, Log) : null, new WindowsTimeSystem(),
+        new WindowsAccountRights()).Run(options, args);
     Log($"exit {code}");
     return code;
 }

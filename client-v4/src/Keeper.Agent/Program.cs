@@ -124,6 +124,10 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         // no la corrige, la pone con la hora del servidor (fuera de dominio, con dos mediciones consistentes).
         if (OperatingSystem.IsWindows()) moduleList.Add(new TimeSync(new WindowsTimeSystem(), !registry.IsDryRun,
             serverClock, () => commands.PendingNotice is { Cancelled: false }));
+        // Bloqueo del cambio manual de la hora (4.0.28, time_change_lock de la politica; apagado por defecto). En dry-run
+        // no toca la LSA; nunca en dominio.
+        if (OperatingSystem.IsWindows()) moduleList.Add(new TimeChangeLockModule(registry.IsDryRun ? null : new WindowsAccountRights(),
+            WindowsTimeSystem.DomainJoined, Path.Combine(dataDirectory, AgentDataFiles.TimeChangeLock)));
         if (OperatingSystem.IsWindows()) moduleList.Add(new SessionSupervisor(new WindowsSessionLauncher(trust.BinaryHashes),
             Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), deviceLock, () => policy, () => commands.PendingNotice));
         await using var modules = new ModuleHost(moduleList, context);
