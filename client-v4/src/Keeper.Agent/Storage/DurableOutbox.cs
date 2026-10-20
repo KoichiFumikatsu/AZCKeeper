@@ -6,7 +6,7 @@ namespace Keeper.Agent.Storage;
 
 public sealed record OutboxEvent(Guid Id, Episode? Episode = null, LogEntry? Log = null,
     SyncRequestCommandResultsItem? Command = null, SecurityReport? Security = null,
-    ActivitySnapshot? Activity = null, DeviceInventory? Inventory = null);
+    ActivitySnapshot? Activity = null, DeviceInventory? Inventory = null, LocationPoint? Location = null);
 public sealed record PendingBatch(Guid IdempotencyKey, byte[] Body, IReadOnlyList<Guid> EventIds);
 public sealed record OutboxState(long Sequence, List<OutboxEvent> Events, List<OutboxEvent> Quarantine,
     PendingBatch? Pending);
@@ -51,6 +51,7 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
     private static string Sibling(string path, string name) =>
         Path.Combine(Path.GetDirectoryName(path) ?? "", $"{Path.GetFileNameWithoutExtension(path)}.{name}.json");
 
+    public Task EnqueueAsync(LocationPoint point, CancellationToken ct) { SessionProtocol.Validate(point); return EnqueueAsync(new OutboxEvent(point.EventId, Location: point), ct); }
     public Task EnqueueAsync(Episode episode, CancellationToken ct) =>
         EnqueueAsync(new OutboxEvent(episode.EventId, Episode: episode), ct);
     public Task EnqueueAsync(LogEntry log, CancellationToken ct) =>
@@ -98,6 +99,7 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
     public static OutboxEvent Corrected(OutboxEvent item, TimeSpan shift)
     {
         if (shift == TimeSpan.Zero) return item;
+        if (item.Location is { } location) item = item with { Location = location with { At = location.At + shift } };
         if (item.Episode is { } e) item = item with { Episode = e with { StartedAt = e.StartedAt + shift, EndedAt = e.EndedAt + shift } };
         if (item.Log is { } l) item = item with { Log = l with { At = l.At + shift } };
         if (item.Command is { } c) item = item with { Command = c with { Result = c.Result with { At = c.Result.At + shift } } };
@@ -164,6 +166,7 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
             state.Events.RemoveAll(e => e.Activity is not null && !latestPerDay.Contains(e.Id));
             var selected = new List<OutboxEvent>();
             var episodes = new List<Episode>();
+            var locations = new List<LocationPoint>();
             var logs = new List<LogEntry>();
             var commands = new List<SyncRequestCommandResultsItem>();
             SecurityReport? security = null;
@@ -173,7 +176,7 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
             {
                 ProtocolVersion = 1, Sequence = checked(state.Sequence + 1), PolicyVersion = policyVersion,
                 ReleaseId = null, Episodes = episodes, Logs = logs, CommandResults = commands, Security = security,
-                Activity = activity, Inventory = inventory
+                Activity = activity, Inventory = inventory, Locations = locations.Count == 0 ? null : locations
             }, ProtocolJson.Options);
             var body = Serialize();
             // El contrato lleva UN snapshot por sincronizacion, asi que si hay varios dias
@@ -184,9 +187,11 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
             foreach (var item in state.Events.Where(include).OrderByDescending(e => e.Command is not null || e.Security is not null))
             {
                 if (selected.Count == 200) break;
+                if (item.Location is not null && locations.Count == 100) continue;
                 if (item.Episode is not null && episodes.Count == 200 || item.Log is not null && logs.Count == 50 ||
                     item.Command is not null && commands.Count == 20 || item.Security is not null && security is not null
                     || item.Activity is not null && !ReferenceEquals(item, oldestActivity) || item.Inventory is not null && inventory is not null) continue;
+                if (item.Location is not null) locations.Add(item.Location);
                 if (item.Episode is not null) episodes.Add(item.Episode);
                 if (item.Log is not null) logs.Add(item.Log);
                 if (item.Command is not null) commands.Add(item.Command);
@@ -359,6 +364,7 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
         Guid? id = parts[0] switch
         {
             "episodes" when request.Episodes is { } list && Index(parts, list.Count) is { } i => list[i].EventId,
+            "locations" when request.Locations is { } points && Index(parts, points.Count) is { } n => points[n].EventId,
             "logs" when request.Logs is { } list && Index(parts, list.Count) is { } i => list[i].EventId,
             "command_results" when request.CommandResults is { } list && Index(parts, list.Count) is { } i => list[i].Result.EventId,
             "security" => request.Security?.EventId,
@@ -375,7 +381,7 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
     private static string Detail(string? pointer, string? rule, OutboxEvent item)
     {
         var kind = item.Episode is not null ? "episodes" : item.Log is not null ? "logs" : item.Command is not null ? "command_results"
-            : item.Security is not null ? "security" : item.Activity is not null ? "activity" : "inventory";
+            : item.Location is not null ? "locations" : item.Security is not null ? "security" : item.Activity is not null ? "activity" : "inventory";
         var where = pointer is null ? kind : pointer.Trim('/').Replace('/', '.');
         var text = new string($"{where}:{rule ?? "isolated"}".Select(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '.' or ':' or '-' ? c : '_').ToArray());
         if (text.Length > 80) text = text[..80];

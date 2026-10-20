@@ -99,6 +99,11 @@ public sealed class BootstrapApplication(IElevation elevation, IServiceControl s
                 Step($"HORA: devolver SeSystemtimePrivilege a Administradores si Keeper lo quito (\"{lockState}\")",
                     () => log(TimeChangeLockUninstall.Run(accountRights, lockState)));
             }
+            var locationState = Path.Combine(paths.InstallDirectory, "v4", "location-settings.json");
+            if (OperatingSystem.IsWindows() && File.Exists(locationState))
+                Step("UBICACION: restaurar configuración anterior", () =>
+                    new Keeper.Shared.Location.LocationSettingsStore(new Keeper.Shared.Location.WindowsLocationSettings(), locationState)
+                        .ApplyAsync(false, CancellationToken.None).GetAwaiter().GetResult());
             Step($"DELETE DIRECTORY \"{paths.InstallDirectory}\" (recursivo, si existe)", paths.DeleteInstallDirectory);
         }
         else

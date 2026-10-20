@@ -64,7 +64,8 @@ try {
         foreach ($entry in @(@{ Name = 'Keeper.Agent'; Directory = $agent }, @{ Name = 'Keeper.Session'; Directory = $agent }, @{ Name = 'Keeper.Bootstrapper'; Directory = $package })) {
             $executable = Join-Path $entry.Directory ($entry.Name + '.exe')
             if ((Get-Item -LiteralPath $executable).Length -lt 10MB) { throw "Bundle incompleto: $executable" }
-            $runtimeConfigPath = Join-Path $PSScriptRoot ("src/{0}/bin/Release/net8.0-windows/win-x64/{0}.runtimeconfig.json" -f $entry.Name)
+            $framework = if ($entry.Name -eq 'Keeper.Session') { 'net8.0-windows10.0.19041.0' } else { 'net8.0-windows' }
+            $runtimeConfigPath = Join-Path $PSScriptRoot ("src/{0}/bin/Release/{1}/win-x64/{0}.runtimeconfig.json" -f $entry.Name, $framework)
             $runtimeConfig = Get-Content -LiteralPath $runtimeConfigPath -Raw | ConvertFrom-Json
             if ($runtimeConfig.runtimeOptions.framework -or -not ($runtimeConfig.runtimeOptions.includedFrameworks | Where-Object name -EQ 'Microsoft.NETCore.App')) {
                 throw "El publish depende de un runtime externo: $executable"

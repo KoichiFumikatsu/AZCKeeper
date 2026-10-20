@@ -8,6 +8,13 @@ public sealed class SessionBuffer : IEventSink
     private readonly List<Episode> _episodes = [];
     private readonly List<LogEntry> _logs = [];
     private readonly Dictionary<DateOnly, ActivitySnapshot> _activity = [];
+    private readonly List<LocationPoint> _locations = [];
+    public Task EnqueueAsync(LocationPoint point, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested(); SessionProtocol.Validate(point);
+        if (_locations.All(p => p.EventId != point.EventId)) { if (_locations.Count >= 2) _locations.RemoveAt(0); _locations.Add(point); }
+        return Task.CompletedTask;
+    }
     public int LostEvents { get; private set; }
     public Task EnqueueAsync(Episode episode, CancellationToken ct)
     {
@@ -40,10 +47,11 @@ public sealed class SessionBuffer : IEventSink
 
     public void Acknowledge(IReadOnlyList<Guid> ids)
     {
+        _locations.RemoveAll(p => ids.Contains(p.EventId));
         _episodes.RemoveAll(e => ids.Contains(e.EventId)); _logs.RemoveAll(e => ids.Contains(e.EventId));
         foreach (var day in _activity.Where(p => ids.Contains(p.Value.SnapshotId)).Select(p => p.Key).ToArray()) _activity.Remove(day);
     }
-    public SessionResponse Response(Guid correlation, string? pin)
+    public SessionResponse Response(Guid correlation, string? pin, Guid? locationNetworkId = null)
     {
         if (LostEvents > 0 && _logs.Count < 100)
         {
@@ -52,6 +60,6 @@ public sealed class SessionBuffer : IEventSink
             LostEvents = 0;
         }
         return new(1, correlation, _episodes.Take(20).ToArray(), _logs.Take(20).ToArray(), pin,
-            _activity.OrderBy(p => p.Key).Select(p => p.Value).Take(7).ToArray());
+            _activity.OrderBy(p => p.Key).Select(p => p.Value).Take(7).ToArray(), _locations.Count == 0 ? null : _locations.ToArray(), locationNetworkId);
     }
 }

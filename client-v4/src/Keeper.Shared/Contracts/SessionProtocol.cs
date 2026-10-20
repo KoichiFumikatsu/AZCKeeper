@@ -6,7 +6,7 @@ namespace Keeper.Shared.Contracts;
 
 public sealed record SessionRequest(int ProtocolVersion, Guid CorrelationId, long? PolicyVersion,
     EffectivePolicy? Policy, bool Locked, bool PinAllowed, IReadOnlyList<Guid> Acknowledged, bool Shutdown = false,
-    PowerNotice? PowerNotice = null, PinStatus? PinStatus = null);
+    PowerNotice? PowerNotice = null, PinStatus? PinStatus = null, LocationCapture? Location = null);
 
 public sealed record PinStatus(int Attempts, DateTimeOffset? RetryAt);
 
@@ -19,7 +19,7 @@ public sealed record PinStatus(int Attempts, DateTimeOffset? RetryAt);
 public sealed record PowerNotice(PowerNoticeAction Action, DateTimeOffset Deadline, bool Cancelled = false);
 public enum PowerNoticeAction { Restart, Shutdown }
 public sealed record SessionResponse(int ProtocolVersion, Guid CorrelationId, IReadOnlyList<Episode> Episodes,
-    IReadOnlyList<LogEntry> Logs, string? Pin = null, IReadOnlyList<ActivitySnapshot>? Activity = null)
+    IReadOnlyList<LogEntry> Logs, string? Pin = null, IReadOnlyList<ActivitySnapshot>? Activity = null, IReadOnlyList<LocationPoint>? Locations = null, Guid? LocationNetworkId = null)
 {
     public override string ToString() => $"SessionResponse Version={ProtocolVersion} Correlation={CorrelationId}";
 }
@@ -46,6 +46,8 @@ public static class SessionProtocol
         }
         foreach (var log in response.Logs)
             if (log is null || log.EventId == Guid.Empty) throw new InvalidDataException("invalid_session_log");
+        if (response.Locations?.Count > 2) throw new InvalidDataException("invalid_session_locations");
+        foreach (var point in response.Locations ?? []) Validate(point);
         foreach (var activity in response.Activity ?? [])
             Validate(activity);
     }
@@ -98,6 +100,17 @@ public static class SessionProtocol
             || Sum(activity.WorkHoursLockedSeconds, activity.LunchLockedSeconds, activity.AfterHoursLockedSeconds) > (activity.LockedSeconds ?? 0) + 3)
             throw new InvalidDataException("breakdown_exceeds_total");
         if (activity.FirstActivityAt > activity.LastActivityAt) throw new InvalidDataException("invalid_session_activity");
+    }
+
+    public static void Validate(LocationPoint p)
+    {
+        if (p.EventId == Guid.Empty || p.NetworkId == Guid.Empty || !Enum.IsDefined(p.NetworkType) ||
+            p.WifiSsid?.Length > 128 || p.WifiBssid is { } b && !System.Text.RegularExpressions.Regex.IsMatch(b, "^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$") ||
+            p.NetworkType != LocationPointNetworkType.Wifi && (p.WifiSsid is not null || p.WifiBssid is not null))
+            throw new InvalidDataException("invalid_location_point");
+        var coords = new[] { p.Latitude, p.Longitude, p.AccuracyM };
+        if (coords.Any(x => x is not null) && (coords.Any(x => x is null || !double.IsFinite(x.Value)) || p.Latitude is < -90 or > 90 || p.Longitude is < -180 or > 180 || p.AccuracyM < 0))
+            throw new InvalidDataException("invalid_location_coordinates");
     }
 
     private static long? Sum(long? work, long? lunch, long? after)

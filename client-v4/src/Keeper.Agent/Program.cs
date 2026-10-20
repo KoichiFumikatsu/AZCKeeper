@@ -128,8 +128,15 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         // no toca la LSA; nunca en dominio.
         if (OperatingSystem.IsWindows()) moduleList.Add(new TimeChangeLockModule(registry.IsDryRun ? null : new WindowsAccountRights(),
             WindowsTimeSystem.DomainJoined, Path.Combine(dataDirectory, AgentDataFiles.TimeChangeLock)));
+        Keeper.Agent.Modules.Location.LocationModule? locationModule = null;
+        if (OperatingSystem.IsWindows())
+        {
+            locationModule = new Keeper.Agent.Modules.Location.LocationModule(registry.IsDryRun ? null :
+                new Keeper.Shared.Location.LocationSettingsStore(new Keeper.Shared.Location.WindowsLocationSettings(), Path.Combine(dataDirectory, "location-settings.json")), WindowsTimeSystem.DomainJoined);
+            moduleList.Add(locationModule);
+        }
         if (OperatingSystem.IsWindows()) moduleList.Add(new SessionSupervisor(new WindowsSessionLauncher(trust.BinaryHashes),
-            Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), deviceLock, () => policy, () => commands.PendingNotice));
+            Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), deviceLock, () => policy, () => commands.PendingNotice) { Location = locationModule });
         await using var modules = new ModuleHost(moduleList, context);
         hostReference = modules;
         await modules.InitAsync();

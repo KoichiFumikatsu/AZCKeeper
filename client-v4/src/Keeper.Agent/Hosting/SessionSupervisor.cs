@@ -16,6 +16,7 @@ public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, Devic
     public SessionSupervisor(WindowsSessionLauncher launcher, string sessionExe, DeviceLock deviceLock,
         Func<PolicyCoordinator?> policy, Func<PowerNotice?>? powerNotice = null) : this(new WindowsSessionSupervisorPlatform(launcher, sessionExe), deviceLock,
             policy, SessionTaskManagerPolicies.Windows(), powerNotice) { }
+    public Keeper.Agent.Modules.Location.LocationModule? Location { get; init; }
     public override string Name => "SessionSupervisor";
     private readonly Dictionary<int, Peer> _peers = [];
     private readonly Dictionary<int, DateTimeOffset> _retry = [];
@@ -109,10 +110,20 @@ public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, Devic
         var version = coordinator?.CurrentVersion;
         var projection = current is null || peer.Version == version ? null : current with { Rules = [], ManagementHosts = [], Composition = [] };
         var request = new SessionRequest(1, Guid.NewGuid(), version, projection, deviceLock.Locked, deviceLock.PinAllowed, peer.Acknowledged, shutdown,
-            shutdown ? null : powerNotice?.Invoke(), deviceLock.PinStatus);
+            shutdown ? null : powerNotice?.Invoke(), deviceLock.PinStatus, !shutdown && peer == _peers.OrderBy(p => p.Key).FirstOrDefault().Value ? Location?.Pending : null);
         var response = await peer.Connection.ExchangeAsync(request, timeout.Token);
         SessionProtocol.Validate(response, request.CorrelationId);
         var ack = new List<Guid>();
+        if (response.LocationNetworkId is { } network)
+        {
+            if (peer.LocationNetworkId is { } old && old != network) LocationNetwork.Changed();
+            peer.LocationNetworkId = network;
+        }
+        foreach (var point in response.Locations ?? [])
+        {
+            if (Location is not null) await Location.AcceptAsync(point, ct);
+            ack.Add(point.EventId);
+        }
         foreach (var episode in response.Episodes) { await Context.Outbox.EnqueueAsync(episode, ct); ack.Add(episode.EventId); }
         foreach (var log in response.Logs)
         {
@@ -163,6 +174,7 @@ public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, Devic
         public bool Verified { get; set; }
         public long? Version { get; set; }
         public IReadOnlyList<Guid> Acknowledged { get; set; } = [];
+        public Guid? LocationNetworkId { get; set; }
         public Task? Exchange { get; set; }
     }
 }

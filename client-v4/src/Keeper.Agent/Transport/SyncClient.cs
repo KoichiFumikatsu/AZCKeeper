@@ -134,7 +134,7 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
             throw new InvalidDataException("invalid_sync_response");
         // server_time llega en un 2xx a una peticion firmada: confirma el desfase de las firmas.
         signer.Clock?.Observe(response.ServerTime, confirmed: true);
-        await outbox.CompleteAsync(response.EpisodeAcks.Concat(response.LogAcks).Concat(response.CommandAcks)
+        await outbox.CompleteAsync(response.EpisodeAcks.Concat(response.LogAcks).Concat(response.CommandAcks).Concat(response.LocationAcks ?? [])
             .Concat(response.SecurityAck is null ? [] : new[] { response.SecurityAck })
             // Sin el ack de actividad la foto enviada nunca salia de la cola: se reenviaba la misma en cada sync y las
             // nuevas se acumulaban hasta llenarla (incidente 2026-09-30).
@@ -209,6 +209,7 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
         if (http.BaseAddress is not { Scheme: "https" } root || !root.AbsolutePath.EndsWith('/'))
             throw new InvalidOperationException("HTTPS API base must end in /v1/");
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(root, path));
+        if (path == "client/sync") request.Headers.TryAddWithoutValidation("X-Keeper-Network-ID", Keeper.Shared.Contracts.LocationNetwork.Current.ToString());
         request.Content = new ByteArrayContent(body);
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         if (authenticated) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token!.Token.AccessToken);

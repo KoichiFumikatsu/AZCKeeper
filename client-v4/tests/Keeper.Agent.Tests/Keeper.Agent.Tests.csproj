@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><IsTestProject>true</IsTestProject><IsPackable>false</IsPackable><TargetFramework>net8.0-windows</TargetFramework></PropertyGroup>
+  <PropertyGroup><IsTestProject>true</IsTestProject><IsPackable>false</IsPackable><TargetFramework>net8.0-windows10.0.19041.0</TargetFramework></PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Keeper.Agent/Keeper.Agent.csproj" />
     <ProjectReference Include="../../src/Keeper.Session/Keeper.Session.csproj" Aliases="session" />

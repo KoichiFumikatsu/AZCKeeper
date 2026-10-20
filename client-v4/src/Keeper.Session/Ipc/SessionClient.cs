@@ -17,6 +17,8 @@ public sealed class SessionClient(string pipeName, int agentPid, ModuleHost host
         if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid) || pid != agentPid)
             throw new UnauthorizedAccessException("unexpected_agent_process");
         long? version = null;
+        using var location = new Keeper.Session.Modules.Location.LocationTracker();
+        var locationActive = false;
         while (!ct.IsCancellationRequested)
         {
             var request = await SessionProtocol.ReadAsync<SessionRequest>(pipe, ct);
@@ -25,14 +27,16 @@ public sealed class SessionClient(string pipeName, int agentPid, ModuleHost host
             buffer.Acknowledge(request.Acknowledged);
             if (request.Policy is not null && request.PolicyVersion > (version ?? 0))
             {
+                locationActive = request.Policy.LocationTracking == true;
                 await host.ApplyPolicyAsync(request.Policy);
                 version = request.PolicyVersion;
             }
             await screen.SetStateAsync(request.Locked, request.PinAllowed, request.PinStatus);
             notice?.Set(request.Shutdown ? null : request.PowerNotice);
             await host.TickAsync(ct);
+            await location.PollAsync(request.Location, buffer, ct, locationActive && !request.Shutdown);
             if (request.Shutdown) await host.ShutdownAsync();
-            await SessionProtocol.WriteAsync(pipe, buffer.Response(request.CorrelationId, screen.TakePin()), ct);
+            await SessionProtocol.WriteAsync(pipe, buffer.Response(request.CorrelationId, screen.TakePin(), locationActive ? location.NetworkId : null), ct);
             if (request.Shutdown)
             {
                 var final = await SessionProtocol.ReadAsync<SessionRequest>(pipe, ct);
