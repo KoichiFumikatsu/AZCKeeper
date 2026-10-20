@@ -23,9 +23,23 @@ SHA-256 binario del secreto, tanto en `api_keys` como en `oauth_clients`, confor
 a sus columnas `BINARY(32)`. Los access tokens también se persisten solo hasheados.
 Enviar API key y Authorization juntos devuelve 400.
 
-El aprovisionamiento existente debe registrar la integración, su principal
-`principals.kind=integration`, los `integration_scopes` y la credencial. No se
-incluye creación/rotación de credenciales en esta superficie de lectura.
+Las credenciales se crean, rotan y revocan desde el panel, pantalla
+«Integraciones (API)» (solo plataforma: `integraciones.gestionar` es
+platform_only), con `GET/POST /v1/integrations`, `POST /v1/integrations/{id}/rotate`
+y `DELETE /v1/integrations/{id}` (`src/Integrations.php`, migración
+`0068_integration_credentials.sql`). Crear registra la integración, su principal
+`principals.kind=integration`, los `integration_scopes` y la credencial; el
+secreto se genera en el servidor y sale una sola vez (crear/rotar), con
+`Cache-Control: no-store`. Crear y rotar exigen reautenticación de menos de 5
+minutos. API key: 30 o 90 días; OAuth: 30, 90, 180 o 365. Solo se conceden scopes
+de funciones contratadas (`api`; `check-ins:write` con `puertas`). Rotar crea
+una credencial nueva (en OAuth también un `client_id` nuevo), deja la anterior
+viva como mucho 24 horas y renueva la caducidad de la integración. Revocar pone
+`active=FALSE`, `revoked_at` y sube `auth_version`: la key, el cliente y los
+access tokens ya emitidos responden 401 en la siguiente petición.
+`integrations.last_used_at` se actualiza como mucho una vez por minuto tras
+autenticar. Pruebas: `tests/integrations.php` (smoke, o
+`mysql-smoke.ps1 -IntegrationsOnly`) y `tests/integrations-panel.cjs`.
 La migración `0010_external_global_credentials.sql` exige unicidad global de
 `oauth_clients.client_id` y `api_keys.public_prefix`, conservando las claves
 compuestas existentes. El lookup usa ese identificador global; nunca un tenant

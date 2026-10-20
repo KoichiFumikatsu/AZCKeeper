@@ -4507,7 +4507,9 @@ paths:
       - admin
       operationId: listIntegrations
       summary: Leer credenciales sin secreto
-      description: Leer credenciales sin secreto
+      description: Credenciales de la API externa de la empresa (X-Tenant-ID), sin secretos ni hashes. Incluye los scopes
+        que la empresa puede conceder hoy (según sus funciones contratadas), las caducidades elegibles por tipo y la URL
+        de token OAuth. Solo plataforma (integraciones.gestionar es platform_only).
       security:
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
@@ -4530,7 +4532,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IntegrationPage'
+                $ref: '#/components/schemas/IntegrationList'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -4549,8 +4551,6 @@ paths:
           $ref: '#/components/responses/Unavailable'
       parameters:
       - $ref: '#/components/parameters/Tenant'
-      - $ref: '#/components/parameters/Cursor'
-      - $ref: '#/components/parameters/Limit'
       x-permission: integraciones.gestionar
       x-platform-only: true
     post:
@@ -4558,9 +4558,11 @@ paths:
       - admin
       operationId: createIntegration
       summary: Crear API key/cliente OAuth de empresa
-      description: Crear API key/cliente OAuth de empresa Autorización de acción/objeto obligatoria además de CSRF;
-        registrar auditoría. Solo actor con alcance empresa y permisos de lectura equivalentes a todos los scopes
-        concedidos; no delegar más acceso del propio.
+      description: 'Crea una API key (X-API-Key: <credential_id>.<secret>) o un cliente OAuth client_credentials de la
+        empresa. El secreto (32 bytes aleatorios, base64url) solo aparece en esta respuesta; se guarda su SHA-256.
+        Requiere reautenticación reciente (POST /auth/reauth, 5 minutos; si no, 403 reauth_required). Scopes de una
+        función no contratada: 422 feature_not_contracted:<función>. API key: 30 o 90 días; OAuth: 30, 90, 180 o 365.
+        Auditoría sin secreto.'
       security:
       - adminSession: []
         csrfToken: []
@@ -8918,9 +8920,10 @@ paths:
       - admin
       operationId: rotateIntegration
       summary: Rotar secreto; solapamiento máximo 24 h
-      description: Rotar secreto; solapamiento máximo 24 h Autorización de acción/objeto obligatoria además de CSRF;
-        registrar auditoría. Solo actor con alcance empresa y permisos de lectura equivalentes a todos los scopes
-        concedidos; no delegar más acceso del propio.
+      description: Emite un secreto nuevo (en OAuth también un client_id nuevo) que solo aparece en esta respuesta y
+        renueva la caducidad de la integración. La credencial vigente anterior sigue valiendo como mucho 24 horas
+        (previous_valid_until); las que ya estaban en solapamiento se revocan. Requiere reautenticación reciente. Una
+        integración revocada responde 409.
       security:
       - adminSession: []
         csrfToken: []
@@ -8971,16 +8974,24 @@ paths:
       parameters:
       - $ref: '#/components/parameters/Id'
       - $ref: '#/components/parameters/Tenant'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntegrationRotateInput'
       x-permission: integraciones.gestionar
       x-platform-only: true
+      x-max-body-bytes: 4096
   /integrations/{id}:
     delete:
       tags:
       - admin
       operationId: revokeIntegration
       summary: Revocar integración y tokens
-      description: Revocar integración y tokens Autorización de acción/objeto obligatoria además de CSRF; registrar
-        auditoría.
+      description: Apaga la integración, revoca sus API keys o clientes OAuth y sus access tokens vigentes y sube su
+        auth_version; la siguiente petición con cualquiera de ellos responde 401. Repetirlo no cambia nada (204).
+        Auditoría.
       security:
       - adminSession: []
         csrfToken: []
@@ -22215,20 +22226,22 @@ components:
       additionalProperties: false
       required:
       - name
-      - auth_type
       - scopes
-      - expires_at
       properties:
         name:
           type: string
-          maxLength: 120
+          minLength: 1
+          maxLength: 100
         auth_type:
           type: string
           enum:
           - api_key
           - oauth2
+          description: Por defecto api_key.
         scopes:
           type: array
+          minItems: 1
+          maxItems: 30
           items:
             type: string
             enum:
@@ -22246,10 +22259,50 @@ components:
             - notifications:read
             - expected-devices:write
             - check-ins:write
-          maxItems: 30
+        expires_in_days:
+          type: integer
+          enum:
+          - 30
+          - 90
+          - 180
+          - 365
+          description: Por defecto 90. La API key admite como máximo 90 (422 api_key_max_90_days).
+    IntegrationRotateInput:
+      type: object
+      additionalProperties: false
+      properties:
+        expires_in_days:
+          type: integer
+          enum:
+          - 30
+          - 90
+          - 180
+          - 365
+          description: Caducidad de la credencial nueva; por defecto 90.
+    IntegrationCredential:
+      type: object
+      additionalProperties: false
+      required:
+      - credential_id
+      - created_at
+      - expires_at
+      - revoked_at
+      properties:
+        credential_id:
+          type: string
+          maxLength: 160
+          description: Prefijo público de la API key o client_id OAuth; nunca el secreto.
+        created_at:
+          type: string
+          format: date-time
         expires_at:
           type: string
           format: date-time
+        revoked_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
     Integration:
       type: object
       additionalProperties: false
@@ -22259,8 +22312,15 @@ components:
       - name
       - auth_type
       - scopes
+      - created_at
       - expires_at
+      - revoked_at
+      - last_used_at
+      - created_by
       - active
+      - status
+      - credential_id
+      - credentials
       properties:
         id:
           type: string
@@ -22278,6 +22338,7 @@ components:
           - oauth2
         scopes:
           type: array
+          maxItems: 30
           items:
             type: string
             enum:
@@ -22295,12 +22356,47 @@ components:
             - notifications:read
             - expected-devices:write
             - check-ins:write
-          maxItems: 30
+        created_at:
+          type: string
+          format: date-time
         expires_at:
           type: string
           format: date-time
+        revoked_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        last_used_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: Última petición autenticada (precisión de un minuto).
+        created_by:
+          anyOf:
+          - type: string
+            maxLength: 254
+          - type: 'null'
         active:
           type: boolean
+        status:
+          type: string
+          enum:
+          - active
+          - expired
+          - revoked
+        credential_id:
+          anyOf:
+          - type: string
+            maxLength: 160
+          - type: 'null'
+          description: Credencial más reciente (prefijo de la API key o client_id).
+        credentials:
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/IntegrationCredential'
     IntegrationSecret:
       type: object
       additionalProperties: false
@@ -22308,16 +22404,93 @@ components:
       - integration
       - credential_id
       - secret
+      - api_key
+      - token_url
+      - previous_valid_until
       properties:
         integration:
           $ref: '#/components/schemas/Integration'
         credential_id:
           type: string
           maxLength: 160
+          description: Prefijo público (API key) o client_id (OAuth).
         secret:
           type: string
           maxLength: 512
           description: Solo una entrega, nunca recuperable.
+        api_key:
+          anyOf:
+          - type: string
+            maxLength: 704
+          - type: 'null'
+          description: 'Valor completo de X-API-Key (<credential_id>.<secret>); null en OAuth.'
+        token_url:
+          anyOf:
+          - type: string
+            maxLength: 300
+          - type: 'null'
+          description: URL de POST /v1/oauth/token (client_secret_basic); null en API key.
+        previous_valid_until:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: Solo al rotar, hasta cuándo sigue valiendo la credencial anterior (máximo 24 h).
+    IntegrationList:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - available_scopes
+      - expiry_days
+      - token_url
+      properties:
+        data:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/Integration'
+        available_scopes:
+          type: array
+          maxItems: 30
+          description: Scopes que la empresa puede conceder según sus funciones contratadas (api; check-ins:write con puertas).
+          items:
+            type: string
+            enum:
+            - dashboard:read
+            - team:read
+            - members:read
+            - devices:read
+            - activity:read
+            - activity-titles:read
+            - productivity:read
+            - presence:read
+            - location:read
+            - plans:read
+            - organization:read
+            - notifications:read
+            - expected-devices:write
+            - check-ins:write
+        expiry_days:
+          type: object
+          additionalProperties: false
+          required:
+          - api_key
+          - oauth2
+          properties:
+            api_key:
+              type: array
+              maxItems: 4
+              items:
+                type: integer
+            oauth2:
+              type: array
+              maxItems: 4
+              items:
+                type: integer
+        token_url:
+          type: string
+          maxLength: 300
     PublicKey:
       type: object
       additionalProperties: false

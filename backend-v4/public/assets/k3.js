@@ -14,6 +14,7 @@ import { canConfigureUnlockPin, mountUnlockPin } from './unlock-pin.js';
 import { canConfigureWindowsSecurity, mountWindowsSecurity } from './windows-security.js';
 import { mountNotifications } from './notifications.js';
 import { protectionPage } from './protection.js';
+import { mountIntegrations } from './integrations.js';
 import { SCOPE_LABEL, CHOICES, CHOICE_LABEL, NOTHING, unsupportedRules, describeRule, itemize as itemizeRules, parseDomains, ruleChoices, buildRules, policySaveError, rulesTab } from './policy-rules.js';
 
 // Pantallas con el diseño nuevo (orden de K3, estilo v4 índigo): Sedes, Organización y Asignaciones. Datos reales
@@ -4589,6 +4590,7 @@ async function start() {
     else if (page === 'onboarding') await onboardingPage({ tenant, content: $('page-content'), status: $('page-status') });
     else if (page === 'tenants') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await tenantsPage(); }
     else if (page === 'plans') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await plansPage(); }
+    else if (page === 'integrations') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await mountIntegrations({ tenant, content: $('page-content'), status: $('page-status'), action: $('page-action') }); }
     else if (page === 'portal-origins') { if (!session.is_platform_admin) throw Object.assign(new Error('Solo plataforma'), { status: 403 }); await portalOriginsPage(); }
     done();
   } catch (e) {

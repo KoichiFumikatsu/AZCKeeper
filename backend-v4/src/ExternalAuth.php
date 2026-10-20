@@ -19,6 +19,8 @@ final class ExternalAuth
         $rows = $this->db->run('SELECT g.scope_code FROM integration_scopes g JOIN scopes s ON s.code=g.scope_code WHERE g.tenant_id=? AND g.integration_id=? ORDER BY g.scope_code', [$c['tenant_id'], $c['integration_id']])->fetchAll();
         return array_values(array_intersect(array_column($rows, 'scope_code'), self::SCOPES));
     }
+    // Ultimo uso para el panel (Integraciones): como mucho una escritura por minuto y solo tras autenticar.
+    private function touch(array $c): void { $this->db->run('UPDATE integrations SET last_used_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=? AND (last_used_at IS NULL OR last_used_at<UTC_TIMESTAMP(6)-INTERVAL 1 MINUTE)',[$c['tenant_id'],$c['integration_id']]); }
     private function unknown(string $identity = 'unknown'): void { $this->limiter->take([['bootstrap','external:abuse:'.hash('sha256',$identity),5,5]]); }
 
     private function secretMatches(?array $credential, string $secret): bool
@@ -60,6 +62,7 @@ final class ExternalAuth
             $this->db->run('INSERT INTO oauth_access_tokens (tenant_id,id,client_id,integration_id,token_hash,auth_version,created_at,expires_at) VALUES (?,?,?,?,?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6)+INTERVAL 15 MINUTE)',[$c['tenant_id'],$id,$credential['id'],$c['integration_id'],hash('sha256',$token,true),$c['auth_version']]);
             foreach ($requested as $scope) { $this->db->run('INSERT INTO oauth_token_scopes (tenant_id,token_id,integration_id,scope_code) VALUES (?,?,?,?)',[$c['tenant_id'],$id,$c['integration_id'],$scope]); }
             (new Audit($this->db))->record($c,$r,'oauth.token_issued','integration',$c['integration_id'],['scopes']);
+            $this->touch($c);
             return ['access_token'=>$token,'token_type'=>'Bearer','expires_in'=>900,'scope'=>implode(' ',$requested)];
         });
         if ($result===null) { $this->unknown('oauth:'.$client); throw new OAuthError(401,'invalid_client'); }
@@ -96,6 +99,7 @@ final class ExternalAuth
         }
         if ($c===null || !$credential || !$this->valid($credential)) { $this->unknown($abuse); throw new ApiError(401,'invalid_credentials',['WWW-Authenticate'=>'Bearer realm="keeper-external"']); }
         $this->limiter->external($c);
+        $this->touch($c);
         $c['scopes']=$this->grants($c);
         if ($token) {
             $issued=array_column($this->db->run('SELECT scope_code FROM oauth_token_scopes WHERE tenant_id=? AND token_id=? AND integration_id=?',[$c['tenant_id'],$token['id'],$c['integration_id']])->fetchAll(),'scope_code');

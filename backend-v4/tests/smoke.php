@@ -10,6 +10,7 @@ require __DIR__ . '/k3-updates.php';
 require __DIR__ . '/admin-review.php';
 require __DIR__ . '/external.php';
 require __DIR__ . '/external-auth.php';
+require __DIR__ . '/integrations.php';
 require __DIR__ . '/activity-migration.php';
 require __DIR__ . '/hardening.php';
 require __DIR__ . '/unlock-pin.php';
@@ -184,6 +185,7 @@ try {
     if (getenv('KEEPER_TEST_ACTIVITY_ONLY')==='1') { activityMigrationTests($db); echo "A1 SMOKE PASS: $checks assertions\n"; exit(0); }
     if (getenv('KEEPER_TEST_UNLOCK_PIN_ONLY')==='1') { unlockPinTests($db); echo "UNLOCK PIN SMOKE PASS: $checks assertions\n"; exit(0); }
     if (getenv('KEEPER_TEST_WINDOWS_SECURITY_ONLY')==='1') { windowsSecurityTests($db); echo "WINDOWS SECURITY SMOKE PASS: $checks assertions\n"; exit(0); }
+    if (getenv('KEEPER_TEST_INTEGRATIONS_ONLY')==='1') { integrationsTests($db); echo "INTEGRATIONS SMOKE PASS: $checks assertions\n"; exit(0); }
     $user = $db->one('SELECT * FROM users WHERE tenant_id<>0x00000000000040008000000000000001 AND status=\'active\' LIMIT 1');
     check($user !== null, 'demo member seed');
     $key = keypair(); $token = enroll($db, $user, $key); policy($db, $token);
@@ -454,6 +456,7 @@ try {
     panelArchitectureTests($db);
     externalTests($db);
     externalAuthTests($db);
+    integrationsTests($db);
     activityMigrationTests($db);
     hardeningTests($db);
     unlockPinTests($db);
