@@ -60,7 +60,8 @@ function lockedSystemTests(Database $db): void
     $byDay = array_column($activity['data'], 'locked_seconds', 'day');
     check(($byDay[$day] ?? null) === 5400 && array_key_exists($older, $byDay) && $byDay[$older] === null && $activity['totals']['locked_seconds'] === 5400, 'person/day exposes locked_seconds ' . json_encode([$byDay, $activity['totals']['locked_seconds'] ?? 'missing']));
     $row = array_values(array_filter($activity['data'], fn ($r) => $r['day'] === $day))[0];
-    check($row['productivity_percent'] == 100 && $row['unclassified_percent'] == 0, 'Keeper.Session counts neither in productivity nor in unclassified % ' . json_encode([$row['productivity_percent'], $row['unclassified_percent']]));
+    // Formulas 2026-10-09: la ventana de sistema no es productiva ni neutral (no suma a P ni a N).
+    check($row['workday_productive_seconds'] === ($row['workday_expected_seconds'] > 0 ? 1800 : 0) && $row['workday_neutral_seconds'] === 0 && $row['unclassified_percent'] == 0, 'Keeper.Session counts neither in productivity nor in unclassified % ' . json_encode([$row['workday_expected_seconds'], $row['workday_productive_seconds'], $row['workday_neutral_seconds'], $row['unclassified_percent']]));
     $people = expect(adminRequest($company, 'GET', "/reports/people?from=$older&to=$to"), 200, 'people report with locked');
     $mine = array_values(array_filter($people['data'], fn ($p) => $p['user_id'] === $uid))[0] ?? null;
     check(($mine['totals']['locked_seconds'] ?? null) === 5400, 'people report exposes locked_seconds');

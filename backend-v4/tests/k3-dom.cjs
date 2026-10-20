@@ -59,7 +59,7 @@ async function open(route, entry) {
       }
       if (route === '/usuarios.php') {
         const table = c.w.document.querySelector('.people-list table');
-        assert.deepEqual([...table.querySelectorAll('thead th')].map(n => n.textContent).filter(Boolean), ['Nombre', 'Acciones', 'Conexión', 'Primer ingreso', 'Última vez en uso', 'Tiempo trabajado', 'Productividad', 'Focus /100']);
+        assert.deepEqual([...table.querySelectorAll('thead th')].map(n => n.textContent).filter(Boolean), ['Nombre', 'Acciones', 'Conexión', 'Primer ingreso', 'Última vez en uso', 'Tiempo trabajado', 'Productividad', 'Focus']);
         const actions = table.querySelector('tbody tr').children[2]; assert.deepEqual([...actions.querySelectorAll('a')].map(a => a.textContent), ['Ver', 'Editar']);
       }
       if (route.startsWith('/miembro.php') && !route.includes('tab=datos')) {

@@ -122,7 +122,8 @@ function externalTests(Database $db): void
     expect(externalRequest('/v1/users',$key['headers']+['X-Tenant-ID'=>Util::id($tenant)]),401,'API key cannot use administrative routes');
     foreach (['POST','PUT','PATCH','DELETE'] as $method) { expect(externalRequest('/ext/v1/plans',$bearer,$method),404,'external read only'); }
     $report=expect(externalRequest('/ext/v1/productivity'.$range,$bearer),200,'rollups');
-    check($report['series'][0]['active_seconds']===120 && $report['series'][1]['active_seconds']===60 && $report['series'][0]['focus_score']===66.5 && $report['series'][0]['productivity_percent']===75,'summary precedence, daily fallback, focus, productivity');
+    // Formulas 2026-10-09: el horario de la fixture no tiene dias laborables; sin jornada, productividad y focus son null.
+    check($report['series'][0]['active_seconds']===120 && $report['series'][1]['active_seconds']===60 && $report['series'][0]['workday_expected_seconds']===0 && $report['series'][0]['focus_score']===null && $report['series'][0]['productivity_percent']===null && $report['productivity_percent']===null,'summary precedence, daily fallback, focus, productivity');
     check($report['data_through']==='2026-09-10T22:00:00.000000Z','oldest contributing freshness');
     $dashboard=expect(externalRequest('/ext/v1/dashboard'.$range,$bearer),200,'tenant dashboard'); check($dashboard['active_seconds']===180 && $dashboard['total_members']===2 && $dashboard['online_members']===1,'fleet totals tenant only');
     $db->run('RENAME TABLE episodes TO external_test_hidden_episodes');

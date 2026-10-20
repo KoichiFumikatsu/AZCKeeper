@@ -23,6 +23,8 @@ const page = document.body.dataset.page;
 const el = (tag, text, className) => { const n = document.createElement(tag); if (text !== undefined && text !== null) n.textContent = text; if (className) n.className = className; return n; };
 const when = v => v ? new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(v)) : 'Sin registro';
 const pct = v => v === null || v === undefined || Number.isNaN(v) ? 'Sin dato' : `${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1 }).format(v)} %`;
+// Productividad sobre la jornada esperada (fórmula 2026-10-09): sin jornada en el período no hay porcentaje.
+const jornadaPct = (productive, expected) => expected > 0 ? pct(Math.min(100, 100 * productive / expected)) : 'Sin jornada en el período';
 const kinds = { firm: 'Firma', company: 'Empresa interna', site: 'Sede', area: 'Área', position: 'Cargo' };
 // Paises de las sedes (las remotas son "Remoto - <pais>"): de ahi sale el calendario de festivos de cada persona.
 const COUNTRIES = [['CO', 'Colombia'], ['US', 'Estados Unidos'], ['HN', 'Honduras'], ['MX', 'México'], ['PE', 'Perú'], ['EC', 'Ecuador'], ['PA', 'Panamá'], ['CR', 'Costa Rica'], ['GT', 'Guatemala'], ['SV', 'El Salvador'], ['ES', 'España'], ['DO', 'República Dominicana'], ['NI', 'Nicaragua'], ['VE', 'Venezuela'], ['BO', 'Bolivia'], ['CL', 'Chile'], ['AR', 'Argentina'], ['UY', 'Uruguay'], ['PY', 'Paraguay'], ['BR', 'Brasil'], ['PR', 'Puerto Rico'], ['CA', 'Canadá']];
@@ -192,13 +194,14 @@ async function sites() {
   const rows = siteList.map(site => {
     const members = users.filter(u => u.site_id === site.id && u.status === 'active');
     const devs = members.flatMap(u => byUser.get(u.id) || []);
-    const sum = members.reduce((acc, u) => { const t = totals.get(u.id); if (t) { acc.active += t.active_seconds; acc.productive += t.productive_seconds; } return acc; }, { active: 0, productive: 0 });
-    return { site, members: members.length, devices: devs.length, online: devs.filter(online).length, productivity: sum.active ? 100 * sum.productive / sum.active : null, hours: sum.active / 3600 };
+    // Productividad de la sede: tiempo productivo ÷ jornada esperada de sus personas (fórmula 2026-10-09), sumando, no promediando.
+    const sum = members.reduce((acc, u) => { const t = totals.get(u.id); if (t) { acc.active += t.active_seconds; acc.productive += t.workday_productive_seconds || 0; acc.expected += t.workday_expected_seconds || 0; } return acc; }, { active: 0, productive: 0, expected: 0 });
+    return { site, members: members.length, devices: devs.length, online: devs.filter(online).length, productive: sum.productive, expected: sum.expected, productivity: sum.expected ? Math.min(100, 100 * sum.productive / sum.expected) : null, hours: sum.active / 3600 };
   });
   const allDevs = (devices || []).filter(d => d.status === 'active');
   kpis([['Sedes activas', String(siteList.length)], ['Personas', String(users.filter(u => u.status === 'active').length)],
     ['Equipos en línea', devices ? `${allDevs.filter(online).length} / ${allDevs.length}` : 'Sin acceso', 'Con señal en los últimos 5 minutos'],
-    ['Productividad (7 días)', people ? pct(rows.reduce((a, r) => a + (r.productivity ?? 0) * r.hours, 0) / (rows.reduce((a, r) => a + (r.productivity === null ? 0 : r.hours), 0) || NaN)) : 'Sin acceso']]);
+    ['Productividad (7 días)', people ? jornadaPct(rows.reduce((a, r) => a + r.productive, 0), rows.reduce((a, r) => a + r.expected, 0)) : 'Sin acceso', 'Tiempo en apps productivas ÷ jornada esperada (horario menos almuerzo, festivos y ausencias)']]);
   const action = $('page-action'); action.textContent = 'Crear sede'; action.hidden = false;
   action.addEventListener('click', () => {
     const { dialog, body, ok, show } = dialogShell('Crear sede');
@@ -223,10 +226,10 @@ async function sites() {
   for (const r of rows) {
     const s = surface(r.site.name, cards); s.append(el('p', 'Operación de sede', 'eyebrow'));
     const big = el('p', devices ? `${r.online} ` : '—', 'kpi-inline'); big.append(el('small', devices ? `en línea / ${r.devices}` : 'sin acceso a equipos')); s.append(big);
-    s.append(el('p', `${placeOf(r.site)} · ${r.members} personas · productividad ${pct(r.productivity)}`, 'help'));
+    s.append(el('p', `${placeOf(r.site)} · ${r.members} personas · productividad ${jornadaPct(r.productive, r.expected)}`, 'help'));
   }
   table(surface('Detalle por sede'), 'Sedes', [['Sede', r => r.site.name], ['Ciudad', r => r.site.city || '—'], ['País', r => countryName(r.site.country_code)], ['Personas', r => String(r.members)], ['Equipos', r => String(r.devices)],
-    ['En línea', r => devices ? String(r.online) : '—'], ['Uso real, horas (7 días)', r => people ? r.hours.toFixed(1) : '—'], ['Productividad', r => people ? pct(r.productivity) : '—']], rows);
+    ['En línea', r => devices ? String(r.online) : '—'], ['Uso real, horas (7 días)', r => people ? r.hours.toFixed(1) : '—'], ['Productividad', r => people ? jornadaPct(r.productive, r.expected) : '—']], rows);
 }
 
 // Organización: una pestaña por tipo, activas por defecto y "+ Nueva …" con el tipo de la pestaña (revisión UX ORG-1/3/4/5).
@@ -1757,7 +1760,7 @@ async function people() {
   const firstByPerson = new Map((presence.value?.data || []).map(r => [r.user_id, r.first_activity]));
   const state = u => devices.status === 'fulfilled' ? connectionLabel(connectionState(devices.value.filter(d => d.user_id === u.id))) : 'Sin dato';
   const hours = v => typeof v === 'number' ? `${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1 }).format(v / 3600)} h` : 'Sin dato';
-  const score = v => typeof v === 'number' ? `${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1 }).format(v)} %` : 'Sin dato';
+  const score = v => typeof v === 'number' ? `${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1 }).format(v)} %` : v === null ? 'Sin jornada' : 'Sin dato';
   let list = users; const n = names(org);
   const personUrl = u => `/miembro.php?id=${encodeURIComponent(u.id)}&tab=datos`;
   const calendars = (calendarPage?.data || []).filter(c => c.active);
@@ -1790,7 +1793,7 @@ async function people() {
     const s = surface('Tu personal activo');
     s.classList.add('people-list');
     s.append(periodForm);
-    s.append(el('p', `Primer ingreso de hoy (${day}); última vez en uso, tiempo trabajado, productividad y focus del período elegido · ${tenantZone}. Conexión: en línea hasta 5 minutos, ausente hasta 15; después, desconectado. Los datos laborales, acceso y plan están en la ficha.`, 'help'));
+    s.append(el('p', `Primer ingreso de hoy (${day}); última vez en uso, tiempo trabajado, productividad y focus del período elegido (sobre la jornada esperada: horario menos almuerzo, festivos y ausencias; «Sin jornada» si no hubo días laborables) · ${tenantZone}. Conexión: en línea hasta 5 minutos, ausente hasta 15; después, desconectado. Los datos laborales, acceso y plan están en la ficha.`, 'help'));
     for (const [result, name] of [[activity, 'Tiempo y productividad'], [presence, 'Primer ingreso'], [devices, 'Conexión']]) {
       if (result.status === 'rejected') s.append(el('p', `${name}: ${errorMessage(result.reason)}`, 'error-message'));
     }
@@ -1838,7 +1841,7 @@ async function people() {
       ['Primer ingreso', u => firstByPerson.get(u.id) ? new Intl.DateTimeFormat('es-CO', { timeZone: tenantZone, timeStyle: 'short' }).format(new Date(firstByPerson.get(u.id))) : 'Sin registro'],
       ['Última vez en uso', u => when(lastByPerson.get(u.id))],
       ['Tiempo trabajado', u => hours(metricsByPerson.get(u.id)?.active_seconds)],
-      ['Productividad', u => score(metricsByPerson.get(u.id)?.productivity_percent)], ['Focus /100', u => score(metricsByPerson.get(u.id)?.focus_score).replace(' %', '')]],
+      ['Productividad', u => score(metricsByPerson.get(u.id)?.productivity_percent)], ['Focus', u => score(metricsByPerson.get(u.id)?.focus_score)]],
       list, { filters: [['Conexión', state], ['Empresa', u => n.get(u.company_id) || 'Sin empresa'], ['País', u => countryName(siteCountry(u))], ['Ciudad', u => org.find(o => o.id === u.site_id)?.city || '—'], ['Sede', u => n.get(u.site_id) || '—'], ['Área', u => n.get(u.area_id) || '—'], ['Cargo', u => n.get(u.position_id) || '—'], ['Estado', u => u.status === 'active' ? 'Activa' : 'Inactiva']],
         search: u => [u.display_name, u.email, u.document, n.get(u.position_id), n.get(u.company_id)], selection });
   };
@@ -3067,7 +3070,7 @@ async function absencesPage() {
   const render = () => {
     $('page-content').replaceChildren();
     const s = surface(onDay ? `Ausencias del ${fmt(`${onDay}T12:00:00`)}` : 'Ausencias (últimos 60 días y próximos 6 meses)');
-    s.append(el('p', owner ? `Las ausencias llegan de ${owner}: se registran allá.` : 'Un día cubierto por una ausencia no cuenta como ausencia ni tardanza, y no baja la productividad promedio.', owner ? 'notice' : 'help'));
+    s.append(el('p', owner ? `Las ausencias llegan de ${owner}: se registran allá.` : 'Las horas cubiertas por una ausencia salen de la jornada esperada: no cuentan como tardanza ni bajan la productividad ni el focus. Sirven también las de unas horas (una cita médica).', owner ? 'notice' : 'help'));
     if (onDay) {
       const note = el('p', `Mostrando solo las ausencias aprobadas de ese día (${tenantZone}). `, 'notice'); const all = el('button', 'Ver todas', 'link-button'); all.type = 'button';
       all.addEventListener('click', () => { onDay = null; history.replaceState(null, '', location.pathname); render(); }); note.append(all); s.append(note);
@@ -3130,10 +3133,10 @@ async function classificationPage() {
     const used = apps.filter(a => a.active_seconds_30d > 0 && effective(a) !== 'system');
     const totalUse = used.reduce((s, a) => s + a.active_seconds_30d, 0);
     const unclassUse = used.filter(a => effective(a) === 'unclassified').reduce((s, a) => s + a.active_seconds_30d, 0);
-    kpis([['Apps y sitios usados (30 días)', String(used.length)], ['Sin clasificar', String(used.filter(a => effective(a) === 'unclassified').length), 'Lo que no está clasificado no cuenta como productivo ni como distracción'],
+    kpis([['Apps y sitios usados (30 días)', String(used.length)], ['Sin clasificar', String(used.filter(a => effective(a) === 'unclassified').length), 'Lo que no está clasificado cuenta como neutro: suma al focus, no a la productividad'],
       ['Tiempo sin clasificar', totalUse ? pct(100 * unclassUse / totalUse) : 'Sin uso', 'Más de 20 % = indicadores poco confiables'], ['Excepciones por área o cargo', String(apps.reduce((s, a) => s + a.overrides.length, 0))]]);
     const s = surface('Clasificación');
-    s.append(el('p', 'Productiva suma a productividad y focus; poco productiva suma a distracción; neutra (explorador, configuración) no suma a ninguna; sistema (Keeper y la pantalla de bloqueo) queda fuera de todos los porcentajes. La base la pone Keeper; la empresa la cambia aquí, y un área o cargo puede tener su excepción (por ejemplo, Facebook productivo para Mercadeo). Los cambios recalculan los últimos 30 días.', 'help'));
+    s.append(el('p', 'Productividad = tiempo en apps productivas ÷ jornada esperada. Focus = tiempo en apps productivas, neutras (explorador, configuración) o sin clasificar ÷ jornada esperada. Poco productiva, sistema (Keeper y la pantalla de bloqueo), equipo sin uso o lejos del equipo en horario no suman al focus: eso es la distracción. La base la pone Keeper; la empresa la cambia aquí, y un área o cargo puede tener su excepción (por ejemplo, Facebook productivo para Mercadeo). Los cambios recalculan los últimos 30 días.', 'help'));
     table(s, 'Aplicaciones y sitios', [
       ['Aplicación o sitio', a => appName(a)],
       ['Uso (30 días)', a => a.active_seconds_30d ? `${(a.active_seconds_30d / 3600).toFixed(1)} h · ${a.people_30d} personas` : '—'],

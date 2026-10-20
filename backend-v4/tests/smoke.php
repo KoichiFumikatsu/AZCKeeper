@@ -29,6 +29,7 @@ require __DIR__ . '/day-split.php';
 require __DIR__ . '/simulated-input.php';
 require __DIR__ . '/locked-system.php';
 require __DIR__ . '/app-classification.php';
+require __DIR__ . '/productivity-formulas.php';
 require __DIR__ . '/policy-exceptions.php';
 require __DIR__ . '/ops.php';
 require __DIR__ . '/group-structure.php';
@@ -468,6 +469,7 @@ try {
     simulatedInputTests($db);
     lockedSystemTests($db);
     appClassificationTests($db);
+    productivityFormulaTests($db);
     policyExceptionTests();
     opsTests($db);
     groupStructureTests($db);

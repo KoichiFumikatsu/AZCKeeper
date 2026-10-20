@@ -2,7 +2,7 @@
 declare(strict_types=1);
 use Keeper\{Database,ProductivityWorker,Util};
 
-// Formulas (decision 2026-10-01) con un dia armado a mano:
+// Clasificacion y formulas (decision 2026-10-09) con un dia armado a mano (jornada 08:00-17:00 = 9 h):
 // 30 min alternando Word y Outlook (productivo, un solo bloque), 10 min Facebook en Chrome (poco productivo),
 // 5 min Explorador (neutro), 5 min una app desconocida (sin clasificar). Uso medido en ventanas = 50 min.
 function appClassificationTests(Database $db): void
@@ -35,7 +35,10 @@ function appClassificationTests(Database $db): void
     check((int) $d['window_active_seconds'] === 3000 && (int) $d['productive_seconds'] === 1800 && (int) $d['unproductive_seconds'] === 600 && (int) $d['unclassified_seconds'] === 300, 'day split by category ' . json_encode([$d['window_active_seconds'], $d['productive_seconds'], $d['unproductive_seconds'], $d['unclassified_seconds']]));
     check((int) $d['focus_block_seconds'] === 1800, 'Word+Outlook count as one 30-min focus block');
     $totals = expect(adminRequest($platform, 'GET', "/users/$uid/activity?from=$day&to=" . (new DateTimeImmutable($day))->modify('+1 day')->format('Y-m-d')), 200, 'activity report')['totals'];
-    check($totals['productivity_percent'] == 60 && $totals['distraction_percent'] == 20 && $totals['unclassified_percent'] == 10 && $totals['focus_score'] == 100, 'formulas: 60% productive, 20% distraction, 10% unclassified, focus 100 ' . json_encode([$totals['productivity_percent'], $totals['distraction_percent'], $totals['unclassified_percent'], $totals['focus_score']]));
+    // P = 30 min, N = 5 min neutro + 5 min sin clasificar, J = 9 h: productividad 5,56 %, focus 7,41 %, distraccion 92,59 %.
+    check($totals['workday_expected_seconds'] === 32400 && $totals['workday_productive_seconds'] === 1800 && $totals['workday_neutral_seconds'] === 600
+        && $totals['productivity_percent'] == 5.56 && $totals['focus_score'] == 7.41 && $totals['distraction_percent'] == 92.59 && $totals['unclassified_percent'] == 10,
+        'formulas over the expected workday ' . json_encode([$totals['workday_expected_seconds'], $totals['productivity_percent'], $totals['focus_score'], $totals['distraction_percent'], $totals['unclassified_percent']]));
 
     // Mercadeo: Facebook productivo para su area (excepcion). La empresa sigue viendolo como poco productivo.
     $over = expect(adminRequest($platform, 'POST', '/app-classification/overrides', ['key' => 'site:Facebook', 'category' => 'productive', 'area_id' => Util::id($u['area_id']), 'position_id' => null]), 200, 'area exception');

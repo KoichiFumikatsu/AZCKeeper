@@ -17085,29 +17085,47 @@ components:
                 minimum: 0
                 maximum: 100
               - type: 'null'
-              description: Uso en apps poco productivas ÷ uso.
+              description: >-
+                Distracción = 100 − focus = (jornada esperada − productivo − neutral) ÷ jornada esperada × 100: apps poco
+                productivas, equipo sin uso o lejos del equipo en horario. null = sin jornada en el período.
             unclassified_percent:
               anyOf:
               - type: number
                 minimum: 0
                 maximum: 100
               - type: 'null'
-              description: Uso en apps sin clasificar ÷ uso. Más de 20 % = dato poco confiable.
+              description: >-
+                Uso en apps sin clasificar ÷ uso medido. Cuenta como neutral en el focus; más de 20 % = productividad poco
+                confiable.
             productivity_percent:
               anyOf:
               - type: number
                 minimum: 0
                 maximum: 100
               - type: 'null'
+              description: >-
+                Productividad (decisión 2026-10-09) = tiempo en uso en apps y sitios productivos ÷ jornada esperada × 100,
+                entre 0 y 100. Jornada esperada = horario de los días laborables menos almuerzo y ausencias aprobadas, solo la
+                parte ya transcurrida; festivos, días sin horario y ausencias de día completo quedan fuera. Un día laborable
+                sin actividad cuenta como 0. Un período suma tiempos y jornadas (no promedia los días). null = sin jornada en
+                el período.
             focus_seconds:
               type: integer
               minimum: 0
+              description: >-
+                Trabajo profundo: tiempo productivo en bloques de 25 min o más (lo que antes del 2026-10-09 medía el focus).
+                No entra en la fórmula del focus.
             focus_score:
               anyOf:
               - type: number
                 minimum: 0
                 maximum: 100
               - type: 'null'
+              description: >-
+                Focus (decisión 2026-10-09) = (tiempo productivo + tiempo neutral) ÷ jornada esperada × 100, entre 0 y 100; lo
+                sin clasificar cuenta como neutral. Estar lejos del equipo en horario cuenta en contra salvo ausencia
+                registrada. null = sin jornada en el período. El focus anterior (bloques de 25 min) es focus_seconds, «Trabajo
+                profundo».
             context_switches:
               type: integer
               minimum: 0
@@ -17185,6 +17203,22 @@ components:
             days_with_activity:
               type: integer
               minimum: 0
+            workday_expected_seconds:
+              type: integer
+              minimum: 0
+              description: >-
+                Jornada esperada (J) en segundos: horario de los días laborables menos almuerzo y ausencias aprobadas, solo la
+                parte ya transcurrida. 0 = sin jornada.
+            workday_productive_seconds:
+              type: integer
+              minimum: 0
+              description: >-
+                Tiempo en uso en apps y sitios productivos (P) en días laborables; numerador de la productividad.
+            workday_neutral_seconds:
+              type: integer
+              minimum: 0
+              description: >-
+                Tiempo en uso en apps neutrales o sin clasificar (N) en días laborables; P + N es el numerador del focus.
     EnrollmentRequestInput:
       type: object
       additionalProperties: false
@@ -21495,6 +21529,11 @@ components:
             minimum: 0
             maximum: 100
           - type: 'null'
+          description: >-
+            Focus (decisión 2026-10-09) = (tiempo productivo + tiempo neutral) ÷ jornada esperada × 100, entre 0 y 100; lo
+            sin clasificar cuenta como neutral. Estar lejos del equipo en horario cuenta en contra salvo ausencia
+            registrada. null = sin jornada en el período. El focus anterior (bloques de 25 min) es focus_seconds, «Trabajo
+            profundo».
         window_active_seconds:
           type: integer
           minimum: 0
@@ -21508,20 +21547,30 @@ components:
             minimum: 0
             maximum: 100
           - type: 'null'
-          description: Uso en apps poco productivas ÷ uso.
+          description: >-
+            Distracción = 100 − focus = (jornada esperada − productivo − neutral) ÷ jornada esperada × 100: apps poco
+            productivas, equipo sin uso o lejos del equipo en horario. null = sin jornada en el período.
         unclassified_percent:
           anyOf:
           - type: number
             minimum: 0
             maximum: 100
           - type: 'null'
-          description: Uso en apps sin clasificar ÷ uso. Más de 20 % = dato poco confiable.
+          description: >-
+            Uso en apps sin clasificar ÷ uso medido. Cuenta como neutral en el focus; más de 20 % = productividad poco
+            confiable.
         productivity_percent:
           anyOf:
           - type: number
             minimum: 0
             maximum: 100
           - type: 'null'
+          description: >-
+            Productividad (decisión 2026-10-09) = tiempo en uso en apps y sitios productivos ÷ jornada esperada × 100,
+            entre 0 y 100. Jornada esperada = horario de los días laborables menos almuerzo y ausencias aprobadas, solo la
+            parte ya transcurrida; festivos, días sin horario y ausencias de día completo quedan fuera. Un día laborable
+            sin actividad cuenta como 0. Un período suma tiempos y jornadas (no promedia los días). null = sin jornada en
+            el período.
         simulated_seconds:
           anyOf:
           - type: integer
@@ -21538,10 +21587,32 @@ components:
           description: >-
             Tiempo con el equipo bloqueado (Windows o Keeper); no cuenta como en uso ni como inactivo.
             null = ningún equipo de la persona lo midió (agente anterior a 4.0.24).
+        workday_expected_seconds:
+          type: integer
+          minimum: 0
+          description: >-
+            Jornada esperada (J) en segundos: horario de los días laborables menos almuerzo y ausencias aprobadas, solo la
+            parte ya transcurrida. 0 = sin jornada.
+        workday_productive_seconds:
+          type: integer
+          minimum: 0
+          description: >-
+            Tiempo en uso en apps y sitios productivos (P) en días laborables; numerador de la productividad.
+        workday_neutral_seconds:
+          type: integer
+          minimum: 0
+          description: >-
+            Tiempo en uso en apps neutrales o sin clasificar (N) en días laborables; P + N es el numerador del focus.
     ProductivityReport:
       type: object
       additionalProperties: false
       required:
+      - productivity_percent
+      - focus_score
+      - distraction_percent
+      - workday_expected_seconds
+      - workday_productive_seconds
+      - workday_neutral_seconds
       - tenant_id
       - from
       - to
@@ -21586,6 +21657,54 @@ components:
           items:
             $ref: '#/components/schemas/ProductivityPoint'
           maxItems: 366
+        productivity_percent:
+          anyOf:
+          - type: number
+            minimum: 0
+            maximum: 100
+          - type: 'null'
+          description: >-
+            Productividad (decisión 2026-10-09) = tiempo en uso en apps y sitios productivos ÷ jornada esperada × 100,
+            entre 0 y 100. Jornada esperada = horario de los días laborables menos almuerzo y ausencias aprobadas, solo la
+            parte ya transcurrida; festivos, días sin horario y ausencias de día completo quedan fuera. Un día laborable
+            sin actividad cuenta como 0. Un período suma tiempos y jornadas (no promedia los días). null = sin jornada en
+            el período.
+        focus_score:
+          anyOf:
+          - type: number
+            minimum: 0
+            maximum: 100
+          - type: 'null'
+          description: >-
+            Focus (decisión 2026-10-09) = (tiempo productivo + tiempo neutral) ÷ jornada esperada × 100, entre 0 y 100; lo
+            sin clasificar cuenta como neutral. Estar lejos del equipo en horario cuenta en contra salvo ausencia
+            registrada. null = sin jornada en el período. El focus anterior (bloques de 25 min) es focus_seconds, «Trabajo
+            profundo».
+        distraction_percent:
+          anyOf:
+          - type: number
+            minimum: 0
+            maximum: 100
+          - type: 'null'
+          description: >-
+            Distracción = 100 − focus = (jornada esperada − productivo − neutral) ÷ jornada esperada × 100: apps poco
+            productivas, equipo sin uso o lejos del equipo en horario. null = sin jornada en el período.
+        workday_expected_seconds:
+          type: integer
+          minimum: 0
+          description: >-
+            Jornada esperada (J) en segundos: horario de los días laborables menos almuerzo y ausencias aprobadas, solo la
+            parte ya transcurrida. 0 = sin jornada.
+        workday_productive_seconds:
+          type: integer
+          minimum: 0
+          description: >-
+            Tiempo en uso en apps y sitios productivos (P) en días laborables; numerador de la productividad.
+        workday_neutral_seconds:
+          type: integer
+          minimum: 0
+          description: >-
+            Tiempo en uso en apps neutrales o sin clasificar (N) en días laborables; P + N es el numerador del focus.
     Dashboard:
       type: object
       additionalProperties: false
@@ -21632,12 +21751,23 @@ components:
             minimum: 0
             maximum: 100
           - type: 'null'
+          description: >-
+            Focus (decisión 2026-10-09) = (tiempo productivo + tiempo neutral) ÷ jornada esperada × 100, entre 0 y 100; lo
+            sin clasificar cuenta como neutral. Estar lejos del equipo en horario cuenta en contra salvo ausencia
+            registrada. null = sin jornada en el período. El focus anterior (bloques de 25 min) es focus_seconds, «Trabajo
+            profundo».
         productivity_percent:
           anyOf:
           - type: number
             minimum: 0
             maximum: 100
           - type: 'null'
+          description: >-
+            Productividad (decisión 2026-10-09) = tiempo en uso en apps y sitios productivos ÷ jornada esperada × 100,
+            entre 0 y 100. Jornada esperada = horario de los días laborables menos almuerzo y ausencias aprobadas, solo la
+            parte ya transcurrida; festivos, días sin horario y ausencias de día completo quedan fuera. Un día laborable
+            sin actividad cuenta como 0. Un período suma tiempos y jornadas (no promedia los días). null = sin jornada en
+            el período.
         weekly_output:
           type: array
           items:
@@ -21706,6 +21836,11 @@ components:
                   minimum: 0
                   maximum: 100
                 - type: 'null'
+                description: >-
+                  Focus (decisión 2026-10-09) = (tiempo productivo + tiempo neutral) ÷ jornada esperada × 100, entre 0 y 100; lo
+                  sin clasificar cuenta como neutral. Estar lejos del equipo en horario cuenta en contra salvo ausencia
+                  registrada. null = sin jornada en el período. El focus anterior (bloques de 25 min) es focus_seconds, «Trabajo
+                  profundo».
           maxItems: 20
         away_members:
           type: integer
@@ -21781,12 +21916,23 @@ components:
             minimum: 0
             maximum: 100
           - type: 'null'
+          description: >-
+            Focus (decisión 2026-10-09) = (tiempo productivo + tiempo neutral) ÷ jornada esperada × 100, entre 0 y 100; lo
+            sin clasificar cuenta como neutral. Estar lejos del equipo en horario cuenta en contra salvo ausencia
+            registrada. null = sin jornada en el período. El focus anterior (bloques de 25 min) es focus_seconds, «Trabajo
+            profundo».
         productivity_percent:
           anyOf:
           - type: number
             minimum: 0
             maximum: 100
           - type: 'null'
+          description: >-
+            Productividad (decisión 2026-10-09) = tiempo en uso en apps y sitios productivos ÷ jornada esperada × 100,
+            entre 0 y 100. Jornada esperada = horario de los días laborables menos almuerzo y ausencias aprobadas, solo la
+            parte ya transcurrida; festivos, días sin horario y ausencias de día completo quedan fuera. Un día laborable
+            sin actividad cuenta como 0. Un período suma tiempos y jornadas (no promedia los días). null = sin jornada en
+            el período.
     MemberDashboard:
       type: object
       additionalProperties: false
@@ -23290,29 +23436,47 @@ components:
             minimum: 0
             maximum: 100
           - type: 'null'
-          description: Uso en apps poco productivas ÷ uso.
+          description: >-
+            Distracción = 100 − focus = (jornada esperada − productivo − neutral) ÷ jornada esperada × 100: apps poco
+            productivas, equipo sin uso o lejos del equipo en horario. null = sin jornada en el período.
         unclassified_percent:
           anyOf:
           - type: number
             minimum: 0
             maximum: 100
           - type: 'null'
-          description: Uso en apps sin clasificar ÷ uso. Más de 20 % = dato poco confiable.
+          description: >-
+            Uso en apps sin clasificar ÷ uso medido. Cuenta como neutral en el focus; más de 20 % = productividad poco
+            confiable.
         productivity_percent:
           anyOf:
           - type: number
             minimum: 0
             maximum: 100
           - type: 'null'
+          description: >-
+            Productividad (decisión 2026-10-09) = tiempo en uso en apps y sitios productivos ÷ jornada esperada × 100,
+            entre 0 y 100. Jornada esperada = horario de los días laborables menos almuerzo y ausencias aprobadas, solo la
+            parte ya transcurrida; festivos, días sin horario y ausencias de día completo quedan fuera. Un día laborable
+            sin actividad cuenta como 0. Un período suma tiempos y jornadas (no promedia los días). null = sin jornada en
+            el período.
         focus_seconds:
           type: integer
           minimum: 0
+          description: >-
+            Trabajo profundo: tiempo productivo en bloques de 25 min o más (lo que antes del 2026-10-09 medía el focus).
+            No entra en la fórmula del focus.
         focus_score:
           anyOf:
           - type: number
             minimum: 0
             maximum: 100
           - type: 'null'
+          description: >-
+            Focus (decisión 2026-10-09) = (tiempo productivo + tiempo neutral) ÷ jornada esperada × 100, entre 0 y 100; lo
+            sin clasificar cuenta como neutral. Estar lejos del equipo en horario cuenta en contra salvo ausencia
+            registrada. null = sin jornada en el período. El focus anterior (bloques de 25 min) es focus_seconds, «Trabajo
+            profundo».
         context_switches:
           type: integer
           minimum: 0
@@ -23441,6 +23605,22 @@ components:
           - type: integer
             minimum: 0
           - type: 'null'
+        workday_expected_seconds:
+          type: integer
+          minimum: 0
+          description: >-
+            Jornada esperada (J) en segundos: horario de los días laborables menos almuerzo y ausencias aprobadas, solo la
+            parte ya transcurrida. 0 = sin jornada.
+        workday_productive_seconds:
+          type: integer
+          minimum: 0
+          description: >-
+            Tiempo en uso en apps y sitios productivos (P) en días laborables; numerador de la productividad.
+        workday_neutral_seconds:
+          type: integer
+          minimum: 0
+          description: >-
+            Tiempo en uso en apps neutrales o sin clasificar (N) en días laborables; P + N es el numerador del focus.
     ActivityReport:
       type: object
       additionalProperties: false
@@ -23504,29 +23684,47 @@ components:
                 minimum: 0
                 maximum: 100
               - type: 'null'
-              description: Uso en apps poco productivas ÷ uso.
+              description: >-
+                Distracción = 100 − focus = (jornada esperada − productivo − neutral) ÷ jornada esperada × 100: apps poco
+                productivas, equipo sin uso o lejos del equipo en horario. null = sin jornada en el período.
             unclassified_percent:
               anyOf:
               - type: number
                 minimum: 0
                 maximum: 100
               - type: 'null'
-              description: Uso en apps sin clasificar ÷ uso. Más de 20 % = dato poco confiable.
+              description: >-
+                Uso en apps sin clasificar ÷ uso medido. Cuenta como neutral en el focus; más de 20 % = productividad poco
+                confiable.
             productivity_percent:
               anyOf:
               - type: number
                 minimum: 0
                 maximum: 100
               - type: 'null'
+              description: >-
+                Productividad (decisión 2026-10-09) = tiempo en uso en apps y sitios productivos ÷ jornada esperada × 100,
+                entre 0 y 100. Jornada esperada = horario de los días laborables menos almuerzo y ausencias aprobadas, solo la
+                parte ya transcurrida; festivos, días sin horario y ausencias de día completo quedan fuera. Un día laborable
+                sin actividad cuenta como 0. Un período suma tiempos y jornadas (no promedia los días). null = sin jornada en
+                el período.
             focus_seconds:
               type: integer
               minimum: 0
+              description: >-
+                Trabajo profundo: tiempo productivo en bloques de 25 min o más (lo que antes del 2026-10-09 medía el focus).
+                No entra en la fórmula del focus.
             focus_score:
               anyOf:
               - type: number
                 minimum: 0
                 maximum: 100
               - type: 'null'
+              description: >-
+                Focus (decisión 2026-10-09) = (tiempo productivo + tiempo neutral) ÷ jornada esperada × 100, entre 0 y 100; lo
+                sin clasificar cuenta como neutral. Estar lejos del equipo en horario cuenta en contra salvo ausencia
+                registrada. null = sin jornada en el período. El focus anterior (bloques de 25 min) es focus_seconds, «Trabajo
+                profundo».
             context_switches:
               type: integer
               minimum: 0
@@ -23604,6 +23802,22 @@ components:
             days_with_activity:
               type: integer
               minimum: 0
+            workday_expected_seconds:
+              type: integer
+              minimum: 0
+              description: >-
+                Jornada esperada (J) en segundos: horario de los días laborables menos almuerzo y ausencias aprobadas, solo la
+                parte ya transcurrida. 0 = sin jornada.
+            workday_productive_seconds:
+              type: integer
+              minimum: 0
+              description: >-
+                Tiempo en uso en apps y sitios productivos (P) en días laborables; numerador de la productividad.
+            workday_neutral_seconds:
+              type: integer
+              minimum: 0
+              description: >-
+                Tiempo en uso en apps neutrales o sin clasificar (N) en días laborables; P + N es el numerador del focus.
     PresenceRow:
       type: object
       additionalProperties: false

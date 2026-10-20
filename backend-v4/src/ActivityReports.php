@@ -4,6 +4,8 @@ namespace Keeper;
 
 final class ActivityReports
 {
+    /** Tiempos que un periodo suma; las formulas dividen sumas, nunca promedian porcentajes diarios. */
+    private const SUM_FIELDS=['active_seconds','idle_seconds','call_seconds','productive_seconds','focus_seconds','context_switches','deep_work_seconds','distraction_seconds','window_active_seconds','unclassified_seconds',...ProductivityFormula::FIELDS];
     private const PERIOD_FIELDS=['work_hours_active_seconds','work_hours_idle_seconds','lunch_active_seconds','lunch_idle_seconds','after_hours_active_seconds','after_hours_idle_seconds','work_hours_locked_seconds','lunch_locked_seconds','after_hours_locked_seconds'];
     public function __construct(private Database $db,private array $c,private AdminAccess $access) {}
     private function range(bool $presence=false): array
@@ -77,6 +79,7 @@ final class ActivityReports
                 COALESCE(d.window_active_seconds,d.active_seconds,ed.active_seconds,0) window_active_seconds,COALESCE(d.unclassified_seconds,0) unclassified_seconds,
                 COALESCE(f.focus_seconds,0) focus_seconds,COALESCE(f.context_switches,0) context_switches,
                 COALESCE(f.deep_work_seconds,0) deep_work_seconds,COALESCE(f.distraction_seconds,0) distraction_seconds,
+                COALESCE(d.unproductive_seconds,f.distraction_seconds,0) unproductive_seconds,".ActivityCalendar::workday()." workday_seconds,
                 $expected expected_seconds,$first first_activity,$last last_activity,
                 COALESCE((SELECT m.minutes FROM punctuality_margins m WHERE m.tenant_id=a.tenant_id AND m.from_day<=c.day ORDER BY m.from_day DESC LIMIT 1),IF(EXISTS(SELECT 1 FROM punctuality_margins m WHERE m.tenant_id=a.tenant_id),-1,15)) margin_minutes,
                 $scheduled scheduled_at,$scheduledLocal scheduled_start,
@@ -86,13 +89,15 @@ final class ActivityReports
                 SUM(call_seconds) call_seconds,SUM(productive_seconds) productive_seconds,SUM(simulated_seconds) simulated_seconds,SUM(locked_seconds) locked_seconds,SUM(focus_seconds) focus_seconds,
                 SUM(window_active_seconds) window_active_seconds,SUM(unclassified_seconds) unclassified_seconds,
                 SUM(context_switches) context_switches,SUM(deep_work_seconds) deep_work_seconds,SUM(distraction_seconds) distraction_seconds,
-                MAX(expected_seconds) expected_seconds,MIN(first_activity) first_activity,MAX(last_activity) last_activity,MAX(margin_minutes) margin_minutes,
+                SUM(unproductive_seconds) unproductive_seconds,MAX(workday_seconds) workday_seconds,MAX(expected_seconds) expected_seconds,MIN(first_activity) first_activity,MAX(last_activity) last_activity,MAX(margin_minutes) margin_minutes,
                 MIN(scheduled_start) scheduled_start,MIN(IF(expected_seconds>0,scheduled_at,NULL)) scheduled_at_utc,MIN(first_activity_time) first_activity_time,AVG(productivity_pct) productivity_pct,AVG(constancy_pct) constancy_pct,
                 SUM(deep_work_sessions) deep_work_sessions,MAX(longest_focus_streak_seconds) longest_focus_streak_seconds,
                 IF(MAX(expected_seconds)=0 OR MIN(first_activity) IS NULL,NULL,TIMESTAMPDIFF(MINUTE,MIN(first_activity),MIN(IF(expected_seconds>0,scheduled_at,NULL)))) punctuality_minutes,
                 TIMESTAMPDIFF(SECOND,MIN(first_activity),MIN(IF(expected_seconds>0,scheduled_at,NULL))) early_seconds,
                 IF(MAX(expected_seconds)=0 OR MIN(first_activity) IS NULL,NULL,GREATEST(0,TIMESTAMPDIFF(SECOND,MIN(IF(expected_seconds>0,scheduled_at,NULL)),MIN(first_activity)))) late_seconds
                 FROM activity_report_data GROUP BY day,user_id,display_name ORDER BY day,display_name,user_id')->fetchAll();
+            // Jornada de cada (dia, persona): J, P y N de las formulas (ProductivityFormula); un periodo las suma.
+            $rows=array_map(static fn($r)=>$r+ProductivityFormula::day((int)$r['workday_seconds'],(int)$r['productive_seconds'],(int)$r['window_active_seconds'],(int)$r['unproductive_seconds']),$rows);
             $data=array_map(fn($row)=>$this->day($row,$op==='getPresenceReport'),$rows);
             if ($op==='getAdminDashboard') { return $this->dashboard($rows,$from,$to); }
             if ($op==='getPresenceReport') { return AdminApi::response(['from'=>$from,'to'=>$to,'data'=>$data]); }
@@ -102,7 +107,7 @@ final class ActivityReports
                 foreach ($rows as $row) {
                     $key=$row['user_id'];
                     $people[$key]??=['user_id'=>Util::id($key),'display_name'=>$row['display_name'],'last'=>null,'sums'=>[]];
-                    foreach (['active_seconds','idle_seconds','call_seconds','productive_seconds','focus_seconds','context_switches','deep_work_seconds','distraction_seconds','window_active_seconds','unclassified_seconds'] as $field) { $people[$key]['sums'][$field]=($people[$key]['sums'][$field]??0)+(int)$row[$field]; }
+                    foreach (self::SUM_FIELDS as $field) { $people[$key]['sums'][$field]=($people[$key]['sums'][$field]??0)+(int)$row[$field]; }
                     $people[$key]['rows'][]=$row;
                     if ($row['last_activity']!==null && ($people[$key]['last']===null || $row['last_activity']>$people[$key]['last'])) { $people[$key]['last']=$row['last_activity']; }
                 }
@@ -110,7 +115,7 @@ final class ActivityReports
                 return AdminApi::response(['from'=>$from,'to'=>$to,'data'=>array_map(fn($p)=>['user_id'=>$p['user_id'],'display_name'=>$p['display_name'],'last_activity'=>$p['last']===null?null:Util::time($p['last']),'totals'=>$this->metrics($p['sums'])+self::measured($p['rows'])],array_values($people))]);
             }
             $sums=[];
-            foreach (['active_seconds','idle_seconds','call_seconds','productive_seconds','focus_seconds','context_switches','deep_work_seconds','distraction_seconds','window_active_seconds','unclassified_seconds'] as $field) { $sums[$field]=array_sum(array_column($rows,$field)); }
+            foreach (self::SUM_FIELDS as $field) { $sums[$field]=array_sum(array_column($rows,$field)); }
             return AdminApi::response(['user_id'=>Util::id($user),'from'=>$from,'to'=>$to,'data'=>$data,'totals'=>$this->metrics($sums)+self::measured($rows)]);
         } finally { $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_report_data'); $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_calendar'); }
     }
@@ -140,7 +145,7 @@ final class ActivityReports
             (SELECT MAX(d.last_seen_at) FROM devices d WHERE d.tenant_id=a.tenant_id AND d.user_id=a.id AND d.status='active') last_seen_at,
             (SELECT GROUP_CONCAT(d.hostname ORDER BY d.hostname SEPARATOR ', ') FROM devices d WHERE d.tenant_id=a.tenant_id AND d.user_id=a.id AND d.status='active') devices
             FROM (SELECT u.*,u.id user_id FROM users u) a WHERE a.tenant_id=? AND a.status='active' AND $scope ORDER BY a.display_name,a.id",[$this->c['tenant_id'],...$args])->fetchAll();
-        $sum=static function(array $list): array { $out=[]; foreach (['active_seconds','idle_seconds','productive_seconds','window_active_seconds','focus_seconds'] as $field) { $out[$field]=array_sum(array_column($list,$field)); } return $out; };
+        $sum=static function(array $list): array { $out=[]; foreach (self::SUM_FIELDS as $field) { $out[$field]=array_sum(array_column($list,$field)); } return $out; };
         $totals=$this->metrics($sum($rows)); $byUser=[]; $byDay=[];
         foreach ($rows as $row) { $byUser[$row['user_id']][]=$row; $byDay[$row['day']][]=$row; }
         $roster=[]; $areas=[]; $sites=[]; $activeSites=[]; $counts=['online'=>0,'away'=>0,'offline'=>0];
@@ -159,7 +164,7 @@ final class ActivityReports
                 'devices'=>$member['devices']??'','last_seen_at'=>$member['last_seen_at']===null?null:Util::time($member['last_seen_at'])];
         }
         usort($roster,static fn($a,$b)=>array_search($a['connection_status'],['online','away','offline'])<=>array_search($b['connection_status'],['online','away','offline']) ?: strcmp($a['display_name'],$b['display_name']));
-        $series=[]; foreach ($byDay as $day=>$list) { $m=$this->metrics($sum($list)); $series[]=['day'=>$day,'active_seconds'=>$m['active_seconds'],'idle_seconds'=>$m['idle_seconds'],'productivity_percent'=>$m['productivity_percent'],'focus_score'=>$m['focus_score']]; }
+        $series=[]; foreach ($byDay as $day=>$list) { $m=$this->metrics($sum($list)); $series[]=['day'=>$day,'active_seconds'=>$m['active_seconds'],'idle_seconds'=>$m['idle_seconds'],'productivity_percent'=>$m['productivity_percent'],'focus_score'=>$m['focus_score'],'distraction_percent'=>$m['distraction_percent']]+array_intersect_key($m,array_flip(ProductivityFormula::FIELDS)); }
         $workload=[]; foreach ($areas as $area=>$seconds) { $workload[]=['area_id'=>$area,'active_seconds'=>$seconds]; }
         return AdminApi::response(['tenant_id'=>Util::id($this->c['tenant_id']),'from'=>$from,'to'=>$to,'generated_at'=>Util::now(),'data_through'=>null,'timezone'=>$this->c['timezone'],
             'online_members'=>$counts['online'],'away_members'=>$counts['away'],'offline_members'=>$counts['offline'],'total_members'=>count($members),'active_sites'=>count($activeSites),'total_sites'=>count($sites),
@@ -187,15 +192,12 @@ final class ActivityReports
     private function metrics(array $r): array
     {
         $out=[];
-        foreach (['active_seconds','idle_seconds','call_seconds','productive_seconds','focus_seconds','context_switches','deep_work_seconds','distraction_seconds','window_active_seconds','unclassified_seconds'] as $field) { $out[$field]=(int)($r[$field]??0); }
-        // Formulas (decision 2026-10-01). Base = uso medido en ventanas (misma medicion que el numerador); los dias
-        // importados de K3 no la tienen y usan el uso total.
-        $base=$out['window_active_seconds']>0?$out['window_active_seconds']:$out['active_seconds'];
-        $out['productivity_percent']=$base>0?round(min(100,100*$out['productive_seconds']/$base),2):null;
-        $out['distraction_percent']=$base>0?round(min(100,100*$out['distraction_seconds']/$base),2):null;
+        foreach (self::SUM_FIELDS as $field) { $out[$field]=(int)($r[$field]??0); }
+        // Formulas (decision 2026-10-09, ProductivityFormula): productividad = P/J, focus = (P+N)/J, distraccion =
+        // 100 - focus, sobre la jornada esperada J. focus_seconds sigue siendo el trabajo en bloques de 25 min o mas
+        // («Trabajo profundo» en el panel). Sin clasificar: parte del uso medido, solo como aviso de confiabilidad.
+        $out+=ProductivityFormula::percents($out);
         $out['unclassified_percent']=$out['window_active_seconds']>0?round(min(100,100*$out['unclassified_seconds']/$out['window_active_seconds']),2):null;
-        // Focus = tiempo productivo en bloques de 25 min o mas / tiempo productivo.
-        $out['focus_score']=$out['productive_seconds']>0?round(min(100,100*$out['focus_seconds']/$out['productive_seconds']),2):null;
         return $out;
     }
     private function day(array $r,bool $presence): array

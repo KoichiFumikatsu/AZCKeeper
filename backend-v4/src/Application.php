@@ -31,6 +31,8 @@ final class Application
                 $response = $this->limiter->externalQueries($c, function () use ($db,$c,$r): array {
                     // Escrituras externas: equipos esperados (expected-devices:write) y entradas por puerta (check-ins:write).
                     if ($r->method === 'POST') { return $db->transaction(fn () => $this->ok((new ExternalApi($db, $c, $r, $this->validator))->dispatch(), 200, ['Cache-Control'=>'no-store'])); }
+                    // Metricas por periodo (ExternalMetrics): sus tablas temporales se crean antes; dentro solo se llenan.
+                    if (isset($_GET['from'])) { ProductivityFormula::prepare($db); }
                     $db->run('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
                     return $db->transaction(fn () => $this->ok((new ExternalApi($db, $c, $r, $this->validator))->dispatch(), 200, ['Cache-Control'=>'private, max-age=30', 'Vary'=>'Authorization, X-API-Key']));
                 });

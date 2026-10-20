@@ -1067,28 +1067,23 @@ final class AdminApi
         if (isset($_GET['company_id'])) { $id=Util::bin($_GET['company_id']); $this->org($id,'company'); $this->access->requireFilter('company',$id); $filters.=' AND a.company_id=?'; $fargs[]=$id; }
         if (isset($_GET['country'])) { $filters.=' AND EXISTS (SELECT 1 FROM org_units cs WHERE cs.tenant_id=a.tenant_id AND cs.id=a.site_id AND cs.country_code=?)'; $fargs[]=$_GET['country']; }
         if (isset($_GET['city'])) { $this->access->requireFilter('city',trim($_GET['city'])); $filters.=' AND EXISTS (SELECT 1 FROM org_units cy WHERE cy.tenant_id=a.tenant_id AND cy.id=a.site_id AND cy.city=?)'; $fargs[]=trim($_GET['city']); }
-        $base="FROM %s x JOIN user_assignments a ON a.tenant_id=x.tenant_id AND a.id=x.user_assignment_id AND a.user_id=x.user_id JOIN users u ON u.tenant_id=x.tenant_id AND u.id=x.user_id WHERE x.tenant_id=? AND x.day>=? AND x.day<? AND $scope$filters";
-        $params=[$this->tenant,$from,$to,...$args,...$fargs];
-        $summary=$this->db->run('SELECT x.day,SUM(x.active_seconds) active_seconds,SUM(x.idle_seconds) idle_seconds,SUM(x.productive_seconds) productive_seconds,SUM(COALESCE(x.window_active_seconds,x.active_seconds)) window_active_seconds,SUM(COALESCE(x.unproductive_seconds,0)) unproductive_seconds,SUM(x.unclassified_seconds) unclassified_seconds,SUM(x.simulated_seconds) simulated_seconds,SUM(x.locked_seconds) locked_seconds,SUM(x.expected_seconds) expected_seconds,MIN(x.calculated_at) calculated_at,MIN(x.data_through) data_through,GROUP_CONCAT(DISTINCT x.calculation_version) calculation_version '.sprintf($base,'day_summary').' GROUP BY x.day ORDER BY x.day',$params)->fetchAll();
-        $episodes=$this->db->run("SELECT x.day,SUM(x.active_seconds) active_seconds,SUM(x.idle_seconds) idle_seconds,SUM(IF(x.category='productive',x.active_seconds,0)) productive_seconds,MIN(x.calculated_at) calculated_at,MIN(x.data_through) data_through,GROUP_CONCAT(DISTINCT x.calculation_version) calculation_version ".sprintf($base,'episode_daily').' GROUP BY x.day ORDER BY x.day',$params)->fetchAll();
-        $focus=$this->db->run('SELECT x.day,AVG(x.focus_score) score,MIN(x.calculated_at) calculated_at,MIN(x.data_through) data_through '.sprintf($base,'focus_daily').' GROUP BY x.day',$params)->fetchAll();
-        $rows=[]; foreach ($episodes as $row) { $rows[$row['day']]=$row; } foreach ($summary as $row) { $rows[$row['day']]=$row; } ksort($rows);
-        $scores=array_column($focus,'score','day'); $series=[]; $calculated=null; $through=null; $versions=[]; $active=0; $expected=0;
-        foreach ($rows as $day=>$row) {
-            $a=(int)$row['active_seconds']; $i=(int)$row['idle_seconds'];
-            if (isset($row['expected_seconds'])) { $active+=$a; $expected+=(int)$row['expected_seconds']; }
-            // Productividad y distraccion sobre el uso medido en ventanas (misma medicion que el numerador).
-            $w=(int)($row['window_active_seconds']??$a);
-            $series[]=['day'=>$day,'active_seconds'=>$a,'idle_seconds'=>$i,'focus_score'=>isset($scores[$day])?(float)$scores[$day]:null,'productivity_percent'=>$w>0?min(100,round(100*(int)$row['productive_seconds']/$w,2)):null,
-                'distraction_percent'=>$w>0&&isset($row['unproductive_seconds'])?min(100,round(100*(int)$row['unproductive_seconds']/$w,2)):null,
-                'unclassified_percent'=>$w>0&&isset($row['unclassified_seconds'])&&$row['unclassified_seconds']!==null?min(100,round(100*(int)$row['unclassified_seconds']/$w,2)):null,
-                'simulated_seconds'=>isset($row['simulated_seconds'])?(int)$row['simulated_seconds']:null,
-                'locked_seconds'=>isset($row['locked_seconds'])?(int)$row['locked_seconds']:null];
+        // Una fila por (dia, persona) del calendario, con los dias laborables sin actividad en cero (ProductivityFormula).
+        ProductivityFormula::facts($this->db,$this->tenant,$from,$to," AND $scope$filters",[...$args,...$fargs]);
+        try { $rows=$this->db->run('SELECT x.day,'.ProductivityFormula::sums().' FROM workday_facts x GROUP BY x.day ORDER BY x.day')->fetchAll(); }
+        finally { $this->db->run('DROP TEMPORARY TABLE IF EXISTS workday_facts'); }
+        $series=[]; $calculated=null; $through=null; $versions=[]; $active=0; $expected=0; $period=array_fill_keys(ProductivityFormula::FIELDS,0);
+        foreach ($rows as $row) {
+            $series[]=ProductivityFormula::point($row,$row['day']);
+            foreach (ProductivityFormula::FIELDS as $field) { $period[$field]+=(int)$row[$field]; }
+            if (!$row['measured']) { continue; }
+            // Registro vs. jornada: como antes, solo sobre los dias con datos calculados.
+            $active+=(int)$row['summary_active_seconds']; $expected+=(int)$row['summary_expected_seconds'];
             $calculated=$calculated===null?$row['calculated_at']:min($calculated,$row['calculated_at']); $through=$through===null?$row['data_through']:min($through,$row['data_through']);
-            foreach (explode(',',$row['calculation_version']) as $version) { $versions[$version]=true; }
+            foreach (explode(',',$row['versions'].','.($row['focus_versions']??'')) as $version) { if ($version!=='') { $versions[$version]=true; } }
         }
-        foreach ($focus as $row) { if ($calculated!==null) { $calculated=min($calculated,$row['calculated_at']); $through=min($through,$row['data_through']); } }
-        return self::response(['tenant_id'=>Util::id($this->tenant),'from'=>$from,'to'=>$to,'timezone'=>$this->c['timezone'],'calculated_at'=>$calculated===null?null:Util::time($calculated),'data_through'=>$through===null?null:Util::time($through),'calculation_version'=>count($versions)===1?substr(array_key_first($versions),0,80):($versions?'mixed':'unavailable'),'coverage_percent'=>$expected>0?min(100,round(100*$active/$expected,2)):0,'series'=>$series]);
+        // Periodo: suma de tiempos / suma de jornadas (no promedio de porcentajes diarios).
+        return self::response(['tenant_id'=>Util::id($this->tenant),'from'=>$from,'to'=>$to,'timezone'=>$this->c['timezone'],'calculated_at'=>$calculated===null?null:Util::time($calculated),'data_through'=>$through===null?null:Util::time($through),'calculation_version'=>count($versions)===1?substr(array_key_first($versions),0,80):($versions?'mixed':'unavailable'),'coverage_percent'=>$expected>0?min(100,round(100*$active/$expected,2)):0]
+            +ProductivityFormula::percents($period)+$period+['series'=>$series]);
     }
     private function auditPage(): array
     {

@@ -58,7 +58,7 @@ const destination = process.env.KEEPER_SHOTS || path.join(require('os').tmpdir()
       }
       if (screen === 'personas') {
         await page.getByRole('columnheader', { name: 'Primer ingreso', exact: true }).waitFor();
-        assert.deepEqual((await page.locator('.people-list thead th').allTextContents()).filter(Boolean), ['Nombre', 'Acciones', 'Conexión', 'Primer ingreso', 'Última vez en uso', 'Tiempo trabajado', 'Productividad', 'Focus /100']);
+        assert.deepEqual((await page.locator('.people-list thead th').allTextContents()).filter(Boolean), ['Nombre', 'Acciones', 'Conexión', 'Primer ingreso', 'Última vez en uso', 'Tiempo trabajado', 'Productividad', 'Focus']);
         assert.ok(await page.locator('.people-list .table-wrap').evaluate(e => e.scrollWidth <= e.clientWidth + 1), 'Personas sin desplazamiento horizontal a 1366 px');
         for (const action of ['Ver', 'Editar']) {
           const box = await page.locator('.people-list tbody').getByRole('link', { name: action, exact: true }).first().boundingBox();

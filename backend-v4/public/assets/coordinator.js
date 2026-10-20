@@ -12,6 +12,17 @@ const fmt = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1 });
 const numeric = v => typeof v === 'number' && Number.isFinite(v);
 const percent = v => numeric(v) ? `${fmt.format(v)} %` : 'Sin dato';
 const hours = v => numeric(v) ? `${fmt.format(v / 3600)} h` : 'Sin dato';
+// Productividad, focus y distracción (decisión 2026-10-09): el servidor solo responde null cuando no hubo jornada
+// esperada (festivos, fines de semana, ausencias de día completo o días que aún no empiezan).
+const ratio = (v, period = true) => numeric(v) ? percent(v) : (period ? 'Sin jornada en el período' : 'Sin jornada');
+const FORMULA_HELP = 'Productividad = tiempo en apps productivas ÷ jornada esperada. Focus = (tiempo productivo + tiempo en apps neutras o sin clasificar) ÷ jornada esperada. Distracción = lo que falta para 100 %: apps poco productivas, equipo sin uso o lejos del equipo en horario. Jornada esperada = horario de los días laborables menos almuerzo, festivos y ausencias registradas; hoy cuenta solo hasta ahora. Un día laborable sin actividad cuenta como 0 %.';
+// Varias filas (personas, días o semanas) se combinan sumando tiempos y jornadas, nunca promediando porcentajes.
+function jornada(list) {
+  const s = list.reduce((a, r) => ({ j: a.j + (r.workday_expected_seconds || 0), p: a.p + (r.workday_productive_seconds || 0), n: a.n + (r.workday_neutral_seconds || 0) }), { j: 0, p: 0, n: 0 });
+  if (!s.j) return { productivity_percent: null, focus_score: null, distraction_percent: null, workday_expected_seconds: 0, workday_productive_seconds: s.p, workday_neutral_seconds: s.n };
+  const focus = Math.min(100, 100 * (s.p + s.n) / s.j);
+  return { productivity_percent: Math.min(100, 100 * s.p / s.j), focus_score: focus, distraction_percent: 100 - focus, workday_expected_seconds: s.j, workday_productive_seconds: s.p, workday_neutral_seconds: s.n };
+}
 const names = { tenant: 'Empresa', global: 'Global', site: 'Sede', area: 'Área', user: 'Persona', device: 'Equipo', active: 'Activo', inactive: 'Inactivo', revoked: 'Revocado', decommissioned: 'Retirado', a_tiempo: 'A tiempo', tarde: 'Tarde', temprano: 'Temprano', actividad_sin_hora: 'Actividad sin hora registrada', sin_actividad: 'Sin actividad', sin_conectarse: 'Sin conectarse hoy', no_laborable: 'No laborable', allow: 'Permitir', deny: 'Denegar', require: 'Exigir', instalado: 'Instalado', enrolado: 'Enrolado', escrow_ok: 'Respaldo verificado', degradado: 'Degradado', pendiente_reinicio: 'Pendiente de reinicio', completo: 'Completo', excepcion: 'Excepción' };
 const label = v => names[v] || v || 'Sin dato';
 const link = (text, href) => { const a = el('a', text); a.href = href; return a; };
@@ -58,7 +69,7 @@ function csvButton(parent, name, columns, records) {
   }; parent.append(button);
 }
 function chart(parent, series, unit = 'día') {
-  if (!series.some(r => numeric(r.productivity_percent) || numeric(r.focus_score))) { empty(parent, 'Sin mediciones de productividad o focus para dibujar la tendencia.'); return; }
+  if (!series.some(r => numeric(r.productivity_percent) || numeric(r.focus_score))) { empty(parent, 'Sin jornada en el período: no hay días laborables para dibujar la tendencia.'); return; }
   const svgEl = (tag, attrs = {}, text) => { const n = document.createElementNS('http://www.w3.org/2000/svg', tag); Object.entries(attrs).forEach(([k, v]) => n.setAttribute(k, v)); if (text !== undefined) n.textContent = text; return n; };
   const svg = svgEl('svg', { viewBox: '0 0 760 250', role: 'img', 'aria-label': `Productividad y focus por ${unit}. Escala de 0 a 100. Los huecos indican datos ausentes.`, class: 'trend-chart' });
   svg.append(svgEl('title', {}, `Productividad y focus por ${unit}`));
@@ -70,7 +81,7 @@ function chart(parent, series, unit = 'día') {
   }
   svg.append(svgEl('text', { x: 42, y: 240 }, series[0].day), svgEl('text', { x: 738, y: 240, 'text-anchor': 'end' }, series.at(-1).day));
   const frame = el('div', undefined, 'chart-frame'); frame.tabIndex = 0; frame.setAttribute('role', 'region'); frame.setAttribute('aria-label', 'Gráfico de tendencia; desplazable en pantallas pequeñas'); frame.append(svg);
-  parent.append(frame, el('p', `Línea continua índigo oscuro: productividad (%) · Línea discontinua índigo claro: focus (/100). Cada punto representa ${unit === 'día' ? 'un día' : 'una semana'}; los huecos indican ausencia de datos.`, 'help'));
+  parent.append(frame, el('p', `Línea continua índigo oscuro: productividad (%) · Línea discontinua índigo claro: focus (%). Cada punto representa ${unit === 'día' ? 'un día' : 'una semana'}; los huecos son días sin jornada (festivos, fines de semana, ausencias).`, 'help'));
 }
 const COUNTRY_NAMES = { CO: 'Colombia', US: 'Estados Unidos', HN: 'Honduras', MX: 'México', PE: 'Perú', EC: 'Ecuador', PA: 'Panamá', CR: 'Costa Rica', GT: 'Guatemala', SV: 'El Salvador', ES: 'España', DO: 'República Dominicana', NI: 'Nicaragua', VE: 'Venezuela', BO: 'Bolivia', CL: 'Chile', AR: 'Argentina', UY: 'Uruguay', PY: 'Paraguay', BR: 'Brasil', PR: 'Puerto Rico', CA: 'Canadá' };
 // Día ISO (AAAA-MM-DD) en texto: «1 oct 2026». Es un día calendario, no un instante: se formatea en UTC.
@@ -212,7 +223,7 @@ export async function coordinator(ctx) {
     return { controls, narrow, describe };
   }
   function selected(controls) { return Object.fromEntries(Object.entries(controls).filter(([, v]) => v.value).map(([k, v]) => [k, v.value])); }
-  const productColumns = [['Día', 'day'], ['En uso', r => hours(r.active_seconds)], ['Encendido sin uso', r => hours(r.idle_seconds)], ['Bloqueado (h)', r => numeric(r.locked_seconds) ? fmt.format(r.locked_seconds / 3600) : 'Sin dato'], ['Productividad', r => percent(r.productivity_percent)], ['Focus /100', r => numeric(r.focus_score) ? fmt.format(r.focus_score) : 'Sin dato'], ['Entrada simulada (h)', r => numeric(r.simulated_seconds) ? fmt.format(r.simulated_seconds / 3600) : 'Sin dato']];
+  const productColumns = [['Día', 'day'], ['En uso', r => hours(r.active_seconds)], ['Encendido sin uso', r => hours(r.idle_seconds)], ['Bloqueado (h)', r => numeric(r.locked_seconds) ? fmt.format(r.locked_seconds / 3600) : 'Sin dato'], ['Jornada esperada', r => hours(r.workday_expected_seconds)], ['Productividad', r => ratio(r.productivity_percent, false)], ['Focus', r => ratio(r.focus_score, false)], ['Distracción', r => ratio(r.distraction_percent, false)], ['Entrada simulada (h)', r => numeric(r.simulated_seconds) ? fmt.format(r.simulated_seconds / 3600) : 'Sin dato']];
   // Agente 4.0.22+: entrada que Windows registra sin teclado ni ratón físicos (jiggler, DWService); ya va en "sin uso".
   function simulatedNotice(p, seconds) {
     if (numeric(seconds) && seconds > 1800) p.append(el('p', `Entrada simulada en el período: ${hours(seconds)}. Windows registró actividad sin teclado ni ratón físicos (un "mouse jiggler" o control remoto como DWService); ese tiempo se cuenta como encendido sin uso, no como uso real.`, 'notice'));
@@ -224,18 +235,18 @@ export async function coordinator(ctx) {
   }
   function productivity(p, data) {
     const series = rows(data, 'series');
-    // Promedio diario: media simple de los días con dato (no es un ratio del período ponderado por horas).
-    const avg = field => { const values = series.filter(r => numeric(r[field])); return values.length ? values.reduce((a, r) => a + r[field], 0) / values.length : null; };
-    const daysWith = field => series.filter(r => numeric(r[field])).length;
+    // Del período: el servidor suma tiempos y jornadas de todos los días antes de dividir (no promedia días).
+    const period = numeric(data.workday_expected_seconds) ? data : jornada(series);
+    const productiveH = hours(period.workday_productive_seconds), focusH = hours((period.workday_productive_seconds || 0) + (period.workday_neutral_seconds || 0)), expectedH = hours(period.workday_expected_seconds);
     // Etiquetas con su formula: "horas activas" se leia como "equipo encendido" y la cobertura no se entendia.
     metrics(p, [['Uso real', series.length ? hours(series.reduce((a, r) => a + r.active_seconds, 0)) : 'Sin datos', `Suma del período: tiempo con teclado o ratón en uso. Equipo encendido y registrando: ${series.length ? hours(series.reduce((a, r) => a + r.active_seconds + r.idle_seconds, 0)) : 'sin datos'}.`],
-      ['Promedio diario de productividad', percent(avg('productivity_percent')), `Suma de la productividad de cada día con dato ÷ días con dato (${daysWith('productivity_percent')}). La de cada día = uso en apps productivas ÷ uso total de ese día. Todos los días pesan igual, aunque uno tenga más horas que otro; los días sin dato no cuentan.`],
-      ['Promedio diario de distracción', percent(avg('distraction_percent')), `Suma de la distracción de cada día con dato ÷ días con dato (${daysWith('distraction_percent')}). La de cada día = uso en apps poco productivas ÷ uso total de ese día.`],
-      ['Focus: promedio diario', numeric(avg('focus_score')) ? `${fmt.format(avg('focus_score'))} /100` : 'Sin dato', `Suma del focus de cada día con dato ÷ días con dato (${daysWith('focus_score')}). El de cada día = tiempo productivo en bloques de 25 min o más sin distraerse ÷ tiempo productivo. Responde: ¿el trabajo fue sostenido o a ratos?`],
+      ['Productividad del período', ratio(period.productivity_percent), `Tiempo en apps y sitios productivos (${productiveH}) ÷ jornada esperada (${expectedH}). Suma de todo el período, no promedio de días. Jornada esperada = horario de los días laborables menos almuerzo, festivos y ausencias registradas; un día laborable sin actividad cuenta como 0 %.`],
+      ['Focus del período', ratio(period.focus_score), `Tiempo productivo más tiempo en apps neutras o sin clasificar (${focusH}) ÷ jornada esperada (${expectedH}). Estar lejos del equipo en horario baja el focus, salvo ausencia registrada.`],
+      ['Distracción del período', ratio(period.distraction_percent), 'Lo que falta para 100 % de focus: tiempo en apps poco productivas, con el equipo sin uso o lejos del equipo durante la jornada.'],
       ['Registro vs. jornada', series.length ? percent(data.coverage_percent) : 'Sin datos', 'Tiempo con el equipo encendido y Keeper registrando ÷ horas de jornada esperadas (horario menos festivos y ausencias). Bajo = equipos apagados o sin reportar.']]);
     simulatedNotice(p, series.reduce((a, r) => a + (numeric(r.simulated_seconds) ? r.simulated_seconds : 0), 0));
-    const unclassified = avg('unclassified_percent');
-    if (numeric(unclassified) && unclassified > 20) { const n = el('p', undefined, 'notice'); n.append(`El ${percent(unclassified)} del uso está en apps sin clasificar: productividad y distracción son poco confiables. `, link('Clasificar aplicaciones', '/clasificacion.php')); p.append(n); }
+    const measured = series.filter(r => numeric(r.unclassified_percent)); const unclassified = measured.length ? measured.reduce((a, r) => a + r.unclassified_percent, 0) / measured.length : null;
+    if (numeric(unclassified) && unclassified > 20) { const n = el('p', undefined, 'notice'); n.append(`El ${percent(unclassified)} del uso está en apps sin clasificar: cuentan como neutras (suman al focus, no a la productividad), así que la productividad puede estar subestimada. `, link('Clasificar aplicaciones', '/clasificacion.php')); p.append(n); }
     // La API responde con el fin excluido; se muestra el último día incluido.
     p.append(el('p', `Del ${dayText(data.from)} al ${dayText(dayBefore(data.to))} (ambos incluidos) · Zona horaria: ${data.timezone || ctx.timezone} · Datos hasta: ${time(data.data_through)}`, 'help')); chart(p, series);
     return series;
@@ -280,7 +291,7 @@ export async function coordinator(ctx) {
         if (run !== cycle || !alive()) return;
         const arrivals = el('ul', undefined, 'arrival-counts');
         for (const [state, name] of [['a_tiempo', 'A tiempo'], ['tarde', 'Tarde'], ['temprano', 'Temprano'], ['sin_actividad', 'Sin actividad']]) arrivals.append(el('li', `${name}: ${presence ? rows(presence).filter(r => r.status === state).length : 'No disponible'}`));
-        metrics(body, [['Activos / total', `${current.online_members} / ${current.total_members}`], ['Sedes activas', `${current.active_sites ?? '—'} / ${current.total_sites ?? '—'}`, 'Activas / total'], ['Productividad en tiempo real', percent(current.productivity_percent), 'Hoy · consulta cada 60 segundos'], ['Focus en tiempo real', numeric(current.focus_score) ? `${fmt.format(current.focus_score)} /100` : 'Sin dato', 'Hoy · sujeto al cálculo de productividad'], ['Llegadas', arrivals], ['Horas de hoy', hours(current.active_seconds)], ['Primer ingreso', presence ? time(rows(presence).map(r => r.first_activity).filter(Boolean).sort()[0]) : 'No disponible']]);
+        metrics(body, [['Activos / total', `${current.online_members} / ${current.total_members}`], ['Sedes activas', `${current.active_sites ?? '—'} / ${current.total_sites ?? '—'}`, 'Activas / total'], ['Productividad en tiempo real', ratio(current.productivity_percent), 'Hoy, sobre la jornada transcurrida hasta ahora · consulta cada 60 segundos'], ['Focus en tiempo real', ratio(current.focus_score), 'Hoy, sobre la jornada transcurrida hasta ahora · sujeto al cálculo de productividad'], ['Llegadas', arrivals], ['Horas de hoy', hours(current.active_seconds)], ['Primer ingreso', presence ? time(rows(presence).map(r => r.first_activity).filter(Boolean).sort()[0]) : 'No disponible']]);
         await section(body, 'Problemas reportados', async p => {
           const problems = await api('GET', '/dashboard/problems');
           pagedTable(p, 'Problemas en tu alcance', [['Problema', r => link(r.label, r.device_id ? `/equipo.php?id=${r.device_id}` : r.user_id ? `/miembro.php?id=${r.user_id}` : '/admin/salud.php')], ['Persona', r => r.display_name || 'Empresa'], ['Equipo', r => r.hostname || '—']], rows(problems), 20);
@@ -289,11 +300,11 @@ export async function coordinator(ctx) {
         live.append(el('p', 'En línea: señal hasta hace 5 minutos · Ausente: entre 5 y 15 minutos · Desconectado: más de 15 minutos. Es conexión del equipo, no prueba de presencia humana.', 'help'));
         pagedTable(live, 'Personal y equipos', [['Persona', memberLink], ['Equipo', r => r.devices || 'Sin equipo activo'], ['Conexión', r => connectionLabel(r.connection_status)], ['Última señal', r => time(r.last_seen_at)]], data.roster, 20);
         if (data.total_members > data.roster.length) live.append(link(`Ver las ${data.total_members} personas`, '/usuarios.php'));
-        const pulse = panel(body, 'Productividad y focus del período'); chart(pulse, data.weekly_output);
+        const pulse = panel(body, 'Productividad y focus del período'); chart(pulse, data.weekly_output); pulse.append(el('p', FORMULA_HELP, 'help'));
         pulse.append(link('Ver detalle de productividad', '/reportes.php'));
         const ranked = rows(await report('people', range, f)).sort((a, b) => b.totals.active_seconds - a.totals.active_seconds).slice(0, 5);
         const top = panel(body, 'Top personas del período');
-        pagedTable(top, 'Personas por tiempo en uso', [['Persona', memberLink], ['Tiempo en uso', r => hours(r.totals.active_seconds)], ['Productividad', r => percent(r.totals.productivity_percent)], ['Focus', r => percent(r.totals.focus_score)]], ranked);
+        pagedTable(top, 'Personas por tiempo en uso', [['Persona', memberLink], ['Tiempo en uso', r => hours(r.totals.active_seconds)], ['Productividad', r => ratio(r.totals.productivity_percent)], ['Focus', r => ratio(r.totals.focus_score)]], ranked);
         await apps(body, range, f);
       } catch (e) { if (run === cycle) error(body, e); }
       finally { if (run === cycle) submit.disabled = false; }
@@ -325,7 +336,7 @@ export async function coordinator(ctx) {
         const cols = [['Persona', memberLink]];
         if (![401, 403].includes(org.error?.status)) cols.push(['Área', u => orgName(org, u.area_id)], ['Sede', u => orgName(org, u.site_id)]);
         if (devices.data) cols.push(['Equipos', u => devices.data.filter(d => d.user_id === u.id && d.status === 'active').map(d => d.hostname).join(', ') || 'Sin equipo activo']);
-        if (visible) cols.push(['Productividad', u => u.pending ? 'Consultando…' : u.failure ? (u.failure.status === 403 ? 'No disponible' : `Error: ${errorMessage(u.failure)}`) : percent(u.metric?.totals.productivity_percent)], ['Focus /100', u => u.pending ? 'Consultando…' : numeric(u.metric?.totals.focus_score) ? fmt.format(u.metric.totals.focus_score) : 'Sin dato'], ['Última actividad (7 días)', u => u.metric ? time(u.metric.last_activity) : 'No disponible']);
+        if (visible) cols.push(['Productividad', u => u.pending ? 'Consultando…' : u.failure ? (u.failure.status === 403 ? 'No disponible' : `Error: ${errorMessage(u.failure)}`) : (u.metric ? ratio(u.metric.totals.productivity_percent) : 'Sin dato')], ['Focus', u => u.pending ? 'Consultando…' : u.metric ? ratio(u.metric.totals.focus_score) : 'Sin dato'], ['Última actividad (7 días)', u => u.metric ? time(u.metric.last_activity) : 'No disponible']);
         pagedTable(grid, 'Directorio de personas', cols, enriched);
       }; draw();
       if (reportsDenied) return;
@@ -408,17 +419,18 @@ export async function coordinator(ctx) {
             ]); order.querySelector('option').remove(); order.value = 'productivity_percent';
             const direction = selector(bar, 'Orden', 'ranking-direction', [{ id: 'desc', name: 'Mayor a menor' }, { id: 'asc', name: 'Menor a mayor' }]); direction.querySelector('option').remove(); direction.value = 'desc';
             const view = el('div'); p.append(bar, view);
-            const columns = [['Persona', memberLink], ['Área actual', 'area'], ['Productividad', r => percent(r.productivity_percent)], ['Focus', r => percent(r.focus_score)], ['Constancia', r => percent(r.constancy_pct)], ['Trabajo profundo', r => hours(r.deep_work_seconds)], ['Cambios', 'context_switches'], ['Días con actividad', 'days_with_activity']];
+            const columns = [['Persona', memberLink], ['Área actual', 'area'], ['Productividad', r => ratio(r.productivity_percent)], ['Focus', r => ratio(r.focus_score)], ['Constancia', r => percent(r.constancy_pct)], ['Trabajo profundo', r => hours(r.deep_work_seconds)], ['Cambios', 'context_switches'], ['Días con actividad', 'days_with_activity']];
             const draw = () => {
               const key = order.value, sign = direction.value === 'asc' ? 1 : -1;
               const sorted = [...data].sort((a, b) => a[key] == null ? (b[key] == null ? 0 : 1) : b[key] == null ? -1 : sign * (typeof a[key] === 'string' ? a[key].localeCompare(b[key], 'es') : a[key] - b[key]));
               view.replaceChildren(); pagedTable(view, 'Personas por productividad', columns, sorted, 25); csvButton(view, `ranking-${from}-${last}`, columns, sorted);
             }; order.onchange = direction.onchange = draw; draw();
             const areas = new Map();
-            for (const r of data) { if (!areas.has(r.area)) areas.set(r.area, { area: r.area, people: 0, active: 0, productive: 0, base: 0, focus: 0 }); const a = areas.get(r.area); a.people++; a.active += r.active_seconds; a.productive += r.productive_seconds; a.base += r.window_active_seconds || r.active_seconds; a.focus += r.focus_seconds; }
-            const ranked = [...areas.values()].map(a => ({ ...a, productivity: a.base ? Math.min(100, 100 * a.productive / a.base) : null, score: a.productive ? Math.min(100, 100 * a.focus / a.productive) : null })).sort((a, b) => (b.productivity ?? -1) - (a.productivity ?? -1));
-            pagedTable(p, 'Ranking por área actual', [['Área', 'area'], ['Personas', 'people'], ['Tiempo en uso', a => hours(a.active)], ['Productividad', a => percent(a.productivity)], ['Focus', a => percent(a.score)]], ranked, 25);
-            p.append(el('p', 'El área corresponde a la asignación actual. Constancia solo se muestra cuando existe una medición; no se sustituye por cero.', 'help'));
+            for (const r of data) { if (!areas.has(r.area)) areas.set(r.area, { area: r.area, people: 0, active: 0, rows: [] }); const a = areas.get(r.area); a.people++; a.active += r.active_seconds; a.rows.push(r); }
+            // Por área: suma de tiempos ÷ suma de jornadas de sus personas (no promedio de porcentajes).
+            const ranked = [...areas.values()].map(a => { const j = jornada(a.rows); return { ...a, productivity: j.productivity_percent, score: j.focus_score }; }).sort((a, b) => (b.productivity ?? -1) - (a.productivity ?? -1));
+            pagedTable(p, 'Ranking por área actual', [['Área', 'area'], ['Personas', 'people'], ['Tiempo en uso', a => hours(a.active)], ['Productividad', a => ratio(a.productivity)], ['Focus', a => ratio(a.score)]], ranked, 25);
+            p.append(el('p', `${FORMULA_HELP} «Trabajo profundo» es el tiempo productivo en bloques de 25 minutos o más. El área corresponde a la asignación actual. Constancia solo se muestra cuando existe una medición; no se sustituye por cero.`, 'help'));
           }),
           section(trendTab, 'Tendencia de 8 semanas', async p => {
             const start = shiftDay(range.to, -56), middle = shiftDay(range.to, -28);
@@ -426,12 +438,11 @@ export async function coordinator(ctx) {
             const daily = chunks.flatMap(c => c.series), weekly = [];
             for (let i = 0; i < 8; i++) {
               const day = shiftDay(start, i * 7), end = shiftDay(day, 7), days = daily.filter(d => d.day >= day && d.day < end);
-              const mean = key => { const values = days.map(d => d[key]).filter(numeric); return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null; };
-              weekly.push({ day, productivity_percent: mean('productivity_percent'), focus_score: mean('focus_score') });
+              weekly.push({ day, ...jornada(days) });
             }
-            p.append(el('p', `Ocho períodos de siete días hasta ${dayText(last)}. Cada punto es el promedio de los días medidos de esa semana; los huecos indican ausencia de mediciones.`, 'help'));
+            p.append(el('p', `Ocho períodos de siete días hasta ${dayText(last)}. Cada punto suma los tiempos y la jornada esperada de esa semana (no promedia sus días); los huecos son semanas sin jornada.`, 'help'));
             chart(p, weekly, 'semana');
-            pagedTable(p, 'Promedio semanal', [['Semana desde', 'day'], ['Productividad', r => percent(r.productivity_percent)], ['Focus', r => percent(r.focus_score)]], weekly);
+            pagedTable(p, 'Por semana', [['Semana desde', 'day'], ['Jornada esperada', r => hours(r.workday_expected_seconds)], ['Productividad', r => ratio(r.productivity_percent)], ['Focus', r => ratio(r.focus_score)]], weekly);
           }),
           apps(appsTab, range, values, true, fresh),
           section(presenceTab, 'Presencia', async p => {
@@ -480,7 +491,7 @@ export async function coordinator(ctx) {
       const canActivity = ![401, 403].includes(act.error?.status);
       if (activeTab === 'resumen' && act.data) {
         rows(act.data); const days = act.data.data, t = act.data.totals; if (!t) throw invalid(); const punctual = days.filter(d => ['a_tiempo', 'temprano', 'tarde'].includes(d.status));
-        metrics(kpis, [['Primera actividad del período', time(days.map(d => d.first_activity).filter(Boolean).sort()[0])], ['Horas activas', days.length ? hours(t.active_seconds) : 'Sin datos'], ['Productividad', percent(t.productivity_percent)], ['Focus /100', numeric(t.focus_score) ? fmt.format(t.focus_score) : 'Sin dato'], ['Puntualidad', punctual.length ? percent(punctual.filter(d => d.status !== 'tarde').length * 100 / punctual.length) : 'Sin dato', 'Sobre días laborables con actividad']]);
+        metrics(kpis, [['Primera actividad del período', time(days.map(d => d.first_activity).filter(Boolean).sort()[0])], ['Horas activas', days.length ? hours(t.active_seconds) : 'Sin datos'], ['Productividad', ratio(t.productivity_percent), FORMULA_HELP], ['Focus', ratio(t.focus_score), 'Tiempo productivo más tiempo en apps neutras o sin clasificar ÷ jornada esperada.'], ['Puntualidad', punctual.length ? percent(punctual.filter(d => d.status !== 'tarde').length * 100 / punctual.length) : 'Sin dato', 'Sobre días laborables con actividad']]);
       } else if (activeTab === 'resumen' && canActivity) error(kpis, act.error);
       else if (!canActivity) kpis.append(el('p', 'Tu cuenta no puede consultar la actividad de esta persona (requiere el permiso de ver reportes).', 'notice'));
       function tab(key, title) {
@@ -490,7 +501,7 @@ export async function coordinator(ctx) {
         const summary = tab('resumen', 'Resumen');
         if (devices.data) details(summary, [['Conexión', connectionLabel(connectionState(devices.data))], ['Equipos activos', devices.data.filter(d => d.status === 'active').map(d => `${d.hostname} · v${d.agent_version} · Visto: ${time(d.last_seen_at)}`).join(', ') || 'Sin equipo activo']]); else dependency(summary, devices, 'Equipos');
         if (schedules.data) { const s = schedules.data.find(s => s.id === (u.effective_schedule_id || u.schedule_id)); details(summary, [['Horario', s ? `${s.name} · ${s.start_local}–${s.end_local} · ${s.timezone}` : 'Sin horario disponible'], ['Días', s ? s.days.map(d => ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'][d - 1]).join(', ') : 'Sin dato']]); } else dependency(summary, schedules, 'Horario');
-        if (act.data) { simulatedNotice(summary, act.data.totals.simulated_seconds); chart(summary, act.data.data); details(summary, [['Trabajo profundo', hours(act.data.totals.deep_work_seconds)], ['Distracción', hours(act.data.totals.distraction_seconds)], ['Cambios de contexto', act.data.totals.context_switches]]); }
+        if (act.data) { simulatedNotice(summary, act.data.totals.simulated_seconds); chart(summary, act.data.data); details(summary, [['Trabajo profundo (bloques de 25 min o más)', hours(act.data.totals.deep_work_seconds)], ['En apps poco productivas', hours(act.data.totals.distraction_seconds)], ['Cambios de contexto', act.data.totals.context_switches]]); }
         if (act.data) {
           const t = act.data.totals;
           metrics(summary, [['En uso', hours(t.active_seconds)], ['Inactivo', hours(t.idle_seconds)], ['Bloqueado', hours(t.locked_seconds)], ['Entrada simulada', hours(t.simulated_seconds)], ['Constancia', percent(t.constancy_pct)]]);
