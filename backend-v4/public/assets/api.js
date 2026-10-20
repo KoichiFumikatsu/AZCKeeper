@@ -81,6 +81,15 @@ export async function api(method, path, { body, tenant = tenantId, idempotencyKe
     await new Promise(resolve => setTimeout(resolve, wait * 1000 + Math.random() * 500));
     response = await send();
   }
+  // El token CSRF vive por pestaña (sessionStorage) y queda atado a la sesión con la que se pidió: si la persona vuelve a
+  // entrar en otra pestaña, la cookie compartida cambia y esta pestaña manda un token viejo. El servidor rechaza antes de
+  // tocar nada, así que se pide el token de la sesión actual y se reintenta una sola vez.
+  if (response.status === 403 && !['GET', 'HEAD'].includes(method) && path !== '/auth/csrf' && document.body.dataset.page !== 'login') {
+    const peek = await response.clone().json().catch(() => ({}));
+    if (peek.code === 'csrf_invalid') {
+      try { await refreshCsrf(); headers['X-CSRF-Token'] = csrf; response = await send(); } catch { /* Se muestra el error original. */ }
+    }
+  }
   // Una contraseña mal escrita al confirmar (reautenticación o cambio de contraseña) devuelve 401 pero la sesión sigue
   // viva: solo se muestra el error. Cualquier otro 401 es sesión vencida y vuelve al login.
   const confirming = path === '/auth/reauth' || path === '/auth/password';
