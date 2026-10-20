@@ -23,6 +23,7 @@ require __DIR__ . '/data-sync.php';
 require __DIR__ . '/one-import.php';
 require __DIR__ . '/company-groups.php';
 require __DIR__ . '/role-rules.php';
+require __DIR__ . '/role-cutoff.php';
 require __DIR__ . '/doors.php';
 require __DIR__ . '/absences.php';
 require __DIR__ . '/day-split.php';
@@ -465,6 +466,7 @@ try {
     oneImportTests($db);
     companyGroupTests($db);
     roleRulesTests($db);
+    roleCutoffTests($db);
     doorEventTests($db);
     absenceTests($db);
     daySplitTests($db);
