@@ -35,7 +35,7 @@ final class RoleRules
     }
 
     /**
-     * Recalcula los roles puestos por reglas en toda la empresa. Devuelve [añadidos, quitados].
+     * Recalcula los roles puestos por reglas en toda la empresa. Devuelve [añadidos, quitados, ids de los afectados].
      * $by: quien hizo el cambio desde el panel. Un rol que la regla le daria a alguien por ese cambio pasa por su
      * delegacion (§4); si no podria darlo, 403 (con la persona y el rol) y no cambia nada. Sin $by (sync, sistema) o
      * con la plataforma, la regla aplica en toda la empresa.
@@ -51,11 +51,12 @@ final class RoleRules
         foreach ($db->run('SELECT p.* FROM panel_role_rules p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id AND r.active=TRUE AND r.assignable_by_rule=TRUE WHERE p.tenant_id=? AND p.active=TRUE ORDER BY p.created_at', [$tenant])->fetchAll() as $rule) {
             foreach (self::matching($db, $tenant, $rule) as $user) { $desired[bin2hex($user)] ??= [$user, $rule['role_id'], $rule['id']]; }
         }
-        $added = 0; $removed = 0;
+        $added = 0; $removed = 0; $affected = [];
         foreach ($db->run("SELECT user_id FROM access_grants WHERE tenant_id=? AND source='rule' AND user_id IS NOT NULL", [$tenant])->fetchAll() as $row) {
             if (isset($desired[bin2hex($row['user_id'])])) { continue; }
             if ($only && !$concerns($row['user_id'], null, AccessGrants::forUser($db, $tenant, $row['user_id']), null)) { continue; }
             AccessGrants::revertToDefault($db, $tenant, $row['user_id']); $removed++;
+            $affected[bin2hex($row['user_id'])] = $row['user_id'];
         }
         foreach ($desired as [$user, $role, $rule]) {
             $g = AccessGrants::forUser($db, $tenant, $user);
@@ -65,8 +66,11 @@ final class RoleRules
             if ($by !== null && ($g === null || $g['role_id'] !== $role)) { self::delegate($db, $tenant, $by, $user, $role, $scope); }
             AccessGrants::setForUser($db, $tenant, $user, $role, $scope, 'rule', $rule);
             $added++;
+            $affected[bin2hex($user)] = $user;
         }
-        return [$added, $removed];
+        // Tercer elemento: ids binarios de las personas que esta recomputacion acaba de cambiar (anadidas o revertidas).
+        // Quien edita un rol las re-autentica una por una; setForUser/revertToDefault no invalidan sesiones por si mismas.
+        return [$added, $removed, array_values($affected)];
     }
 
     /** Delegacion de un rol que una regla le daria a $user; el 403 dice a quien y que rol (Problem.errors, en español). */

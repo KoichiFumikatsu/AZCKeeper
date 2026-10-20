@@ -546,13 +546,18 @@ final class AdminApi
         }
         return [$where,$args];
     }
+    // Invalida SOLO a esta persona: sube users.auth_version (sus equipos) y admin_accounts (su panel), y revoca sus
+    // sesiones abiertas. NO toca tenants.auth_version: ese contador lo comparten TODAS las sesiones de equipo del cliente
+    // (Auth::context lo persiste en device_sessions), asi que subirlo aqui forzaria el re-login simultaneo de todos los
+    // equipos por editar a una sola persona. El panel no depende de el para refrescar permisos (se recomputan por peticion
+    // desde access_grants, y la sesion del panel la gobierna admin_accounts.auth_version), solo lo usa como clave de cache
+    // de cursores y digest.
     private function invalidateUser(string $id): void
     {
         $this->db->run('UPDATE users SET auth_version=auth_version+1 WHERE tenant_id=? AND id=?',[$this->tenant,$id]);
         $this->db->run('UPDATE admin_accounts SET auth_version=auth_version+1 WHERE tenant_id=? AND user_id=?',[$this->tenant,$id]);
         $this->db->run('UPDATE admin_sessions s JOIN admin_accounts a ON a.tenant_id=s.tenant_id AND a.id=s.admin_id SET s.revoked_at=UTC_TIMESTAMP(6) WHERE a.tenant_id=? AND a.user_id=? AND s.revoked_at IS NULL',[$this->tenant,$id]);
         $this->db->run('UPDATE device_sessions SET revoked_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND user_id=? AND revoked_at IS NULL',[$this->tenant,$id]);
-        $this->db->run('UPDATE tenants SET auth_version=auth_version+1 WHERE tenant_id=?',[$this->tenant]);
     }
     private function assignment(string $id,array $v): void
     {
@@ -624,7 +629,10 @@ final class AdminApi
         }
         // Las reglas por cargo solo miran a esta persona y a sus jefes (antes y despues, por la regla «manages»).
         $focus=array_values(array_filter([$id,$old['reports_to_user_id']??null,$this->row('users',$id)['reports_to_user_id']]));
-        RoleRules::apply($this->db,$this->tenant,$this->access,fn(string $user):bool=>in_array($user,$focus,true));
+        [,,$affected]=RoleRules::apply($this->db,$this->tenant,$this->access,fn(string $user):bool=>in_array($user,$focus,true));
+        // Un jefe que gana o pierde el rol «manages» por este cambio tambien se re-autentica (a la persona editada ya la
+        // invalido invalidateUser arriba; al crearla no tiene sesiones). Antes lo cubria el bump de tenant; ahora, persona a persona.
+        foreach ($affected as $user) { if ($user!==$id) { $this->invalidateUser($user); } }
         $this->audit('user',$id,array_keys(get_object_vars($b))); $this->dirty($this->userDevices($id));
         return $this->result($this->userDto($this->row('users',$id)),$op==='createUser'?201:200);
     }
@@ -732,10 +740,17 @@ final class AdminApi
             $id=Util::bin(Util::uuid()); $this->db->run("INSERT INTO roles (tenant_id,id,name,active,assignable_by_rule) VALUES (?,?,?,?,?)",[$this->tenant,$id,$b->name,(int)$b->active,(int)($b->assignable_by_rule??false)]);
         }
         foreach ($b->permissions as $permission) { $this->db->run('INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)',[$this->tenant,$id,$permission]); }
-        foreach ($this->db->run('SELECT user_id FROM access_grants WHERE tenant_id=? AND role_id=? AND user_id IS NOT NULL',[$this->tenant,$id])->fetchAll() as $user) { $this->invalidateUser($user['user_id']); }
-        $this->db->run('UPDATE tenants SET auth_version=auth_version+1 WHERE tenant_id=?',[$this->tenant]);
+        // Los roles son RBAC de administradores del panel; los equipos no los consumen. Editar/crear un rol NO debe forzar
+        // el re-login de las sesiones de equipo del cliente (no se sube tenants.auth_version): solo se re-autentica a cada
+        // persona afectada. Quienes ya tenian el rol (concesion directa o por regla) salen en este bucle sobre access_grants.
+        $invalidated=[];
+        foreach ($this->db->run('SELECT user_id FROM access_grants WHERE tenant_id=? AND role_id=? AND user_id IS NOT NULL',[$this->tenant,$id])->fetchAll() as $user) { $this->invalidateUser($user['user_id']); $invalidated[bin2hex($user['user_id'])]=true; }
         // Lo que cambia por este rol: quienes lo recibirian por regla o lo tenian (al desactivarlo caen en otra regla).
-        RoleRules::apply($this->db,$this->tenant,$this->access,fn(string $user,?string $role,?array $grant):bool=>$role===$id || ($grant['role_id']??null)===$id);
+        [,,$affected]=RoleRules::apply($this->db,$this->tenant,$this->access,fn(string $user,?string $role,?array $grant):bool=>$role===$id || ($grant['role_id']??null)===$id);
+        // Y quienes ganan o pierden el rol al recomputar reglas (p. ej. reactivar un rol asignable se lo da a quien cumple
+        // una regla y no lo tenia: ese no estaba en access_grants arriba). setForUser/revertToDefault no invalidan por si
+        // mismas, por eso se hace aqui, evitando duplicar a los que ya salieron en el bucle anterior.
+        foreach ($affected as $user) { if (!isset($invalidated[bin2hex($user)])) { $this->invalidateUser($user); $invalidated[bin2hex($user)]=true; } }
         $this->audit('role',$id,array_keys(get_object_vars($b))); return $this->result($this->roleDto($this->row('roles',$id)),$op==='createRole'?201:200);
     }
     /** Un rol nunca incluye permisos de funciones que el cliente no compro (§4), ni siquiera si lo guarda superadmin. */
