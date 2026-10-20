@@ -156,8 +156,9 @@ export async function mountIntegrations({ tenant, content, status, action }) {
       try {
         const r = await withReauth(() => api('POST', '/integrations', { tenant, body: { name: name.value.trim(), auth_type: type.value, scopes, expires_in_days: Number(expiry.value) } }), REAUTH_TEXT);
         if (r === canceled) { show('No se creó: hay que confirmar tu contraseña.'); ok.disabled = false; return; }
-        dialog.close(); await reload(); say(`Credencial «${r.integration.name}» creada.`);
-        showIntegrationSecret(r);
+        // El secreto se muestra antes de recargar: si la recarga falla, no se pierde (solo se ve esta vez).
+        dialog.close(); showIntegrationSecret(r); say(`Credencial «${r.integration.name}» creada.`);
+        reload().catch(e => say(errorMessage(e)));
       } catch (e) {
         show(e.problem?.detail === 'name_in_use' ? 'Ya hay una credencial activa con ese nombre.' : e.problem?.detail === 'api_key_max_90_days' ? 'Una API key dura como máximo 90 días.' : errorMessage(e));
         ok.disabled = false;
@@ -178,8 +179,8 @@ export async function mountIntegrations({ tenant, content, status, action }) {
       try {
         const r = await withReauth(() => api('POST', `/integrations/${i.id}/rotate`, { tenant, body: { expires_in_days: Number(expiry.value) } }), REAUTH_TEXT);
         if (r === canceled) { show('No se rotó: hay que confirmar tu contraseña.'); ok.disabled = false; return; }
-        dialog.close(); await reload(); say(`Clave de «${i.name}» rotada.`);
-        showIntegrationSecret(r, { rotated: true });
+        dialog.close(); showIntegrationSecret(r, { rotated: true }); say(`Clave de «${i.name}» rotada.`);
+        reload().catch(e => say(errorMessage(e)));
       } catch (e) { show(errorMessage(e)); ok.disabled = false; }
     });
     dialog.showModal();
