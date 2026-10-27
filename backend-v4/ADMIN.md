@@ -147,6 +147,91 @@ dotnet test client-v4/tests/Keeper.Agent.Tests/Keeper.Agent.Tests.csproj -c Rele
 node backend-v4/tests/windows-security-panel.cjs
 ```
 
+### Apagado programado (2026-10-27, agente 4.0.30)
+
+Programaciones de **apagar o reiniciar** equipos a una fecha/hora (`once`) o cada semana (`weekly`, días ISO 1-7),
+con alcance (empresa, sede, área, persona, equipo) y excepciones. **Decide el agente en el equipo**, no una orden
+encolada: el servidor solo envía en cada sync la lista ya resuelta para ese equipo (alcance menos excepciones,
+`status=active`, vigentes) en `SyncResponse.power_schedules`, y el agente devuelve resultados en
+`SyncRequest.power_schedule_runs` (idempotentes por `event_id`; el servidor confirma en `power_schedule_acks`).
+El panel está en **Apagado programado** (`apagado-programado.php`, `assets/power-schedules.js`) y en «Programar
+apagado» de la ficha del equipo (abre el formulario prellenado: `once`, ese equipo).
+
+| Operación | Ruta bajo `/v1` | Uso |
+|---|---|---|
+| GET | `/admin/power-schedules` | Lista (máx. 500); sin alcance total solo ve las que caen completas en su alcance |
+| POST | `/admin/power-schedules` | Crea; `ETag` = `"<version>"` |
+| GET | `/admin/power-schedules/{id}` | Detalle con destinos y exclusiones |
+| PATCH | `/admin/power-schedules/{id}` | Edita/pausa/reanuda (`status`); exige `If-Match` (412 `version_conflict`) |
+| DELETE | `/admin/power-schedules/{id}` | Borra (el panel pide confirmación escrita) |
+| GET | `/admin/power-schedules/{id}/runs` | Última ejecución por equipo: `hostname`, `occurrence_at`, `outcome`, `detail`, `reported_at` |
+
+Permisos: todas las operaciones exigen `equipos.apagar`; las programaciones `restart` exigen además
+`equipos.reiniciar` (al cambiar de acción, ambos). Cada alcance/excepción debe estar dentro del alcance de quien lo
+crea (`403 permission_denied`, detalle `scope_denied`); `tenant` como destino solo con alcance total. Crear, editar,
+pausar y borrar se auditan (tipo `power_schedule`). La función contratada `comandos` es la que habilita apagar/reiniciar
+por orden (`COMMAND_FEATURES`); el código de `PowerSchedules.php` no la comprueba (pendiente de decidir).
+
+Versión mínima del agente: **4.0.30** (`PowerSchedules::MIN_AGENT`); los anteriores no reciben `power_schedules`
+(rechazarían el campo) y sus `power_schedule_runs`, si llegaran, se ignoran. Migración `0070_power_schedules.sql`
+(`power_schedules`, `power_schedule_targets`, `power_schedule_runs`).
+
+| Campo | Rango | Defecto |
+|---|---|---|
+| `name` | 1-80 | — |
+| `action` | `shutdown` / `restart` | `shutdown` |
+| `recurrence` | `once` (`run_on`) / `weekly` (`days`) | — |
+| `time_local` | `HH:MM`, zona de la empresa (`tenants.timezone`) | — |
+| `valid_from` / `valid_until` | fechas; `valid_until` solo `weekly`; en `once`, `valid_from` = `run_on` | hoy / sin fin |
+| `message` | 0-280, sin caracteres de control | «TI programó el apagado/reinicio de este equipo.» |
+| `idle_minutes` | 5-120 | 15 |
+| `notice_minutes` | 1-30 | 10 |
+| `postpone_minutes` | `null` (sin posponer) o 15-240 | 60 |
+| `window_minutes` | 0-720 | 180 |
+| `status` | `active` / `paused` | `active` |
+
+Reglas del agente:
+- **Sin uso → ejecuta**: sin sesiones de usuario, o todas con inactividad ≥ `idle_minutes` (el bloqueo por TI no cuenta como
+  uso), apaga/reinicia sin preguntar (`executed_idle`). En los 2 primeros minutos tras encender, «sin sesiones» cuenta como en uso.
+- **En uso → aviso**: ventana con el mensaje de TI, cuenta regresiva `notice_minutes`, «Posponer N min» (**una sola vez**)
+  y «Apagar/Reiniciar ahora». Al posponer, el plazo pasa a ahora + `postpone_minutes`; a `notice_minutes` de ese plazo
+  aparece una **tarjeta compacta** abajo a la derecha, sin Posponer; al llegar a 0 se ejecuta.
+- **Ventana de suspensión**: si el equipo despierta dentro de `window_minutes` de la hora, aplica la misma lógica; fuera, se
+  salta (`skipped_suspended`). Equipo apagado antes de la hora: `not_needed`. La hora de arranque se toma del más
+  reciente entre `TickCount64` y el último evento 27 de Kernel-Boot en frío, para que el **inicio rápido** de Windows
+  (arranque híbrido) no haga pasar un equipo encendido por suspendido.
+- **Editada después de la hora**: una ocurrencia anterior al `updated_at` de la versión vigente no se ejecuta ni se reporta.
+- **Mismo minuto**: dos programaciones coincidentes para un equipo ejecutan una vez; gana `restart` y la otra queda `replaced` (`same_minute`).
+- **Orden manual** de apagar/reiniciar **gana** a la programada: `replaced` (`manual_command`).
+- Reloj local con desfase > 5 min: las ocurrencias se calculan con la hora del servidor (`ServerClock`).
+
+| `outcome` | Texto en el panel |
+|---|---|
+| `executed_idle` | Apagado sin uso |
+| `executed_after_notice` | Ejecutado tras aviso |
+| `postponed` | Pospuesto |
+| `executed_by_person` | La persona lo ejecutó |
+| `cancelled_by_it` | Cancelado por TI (pausada, editada o borrada con la ocurrencia en curso) |
+| `replaced` | Reemplazado por orden manual |
+| `skipped_suspended` | No ejecutado: equipo suspendido |
+| `not_needed` | No necesario (equipo apagado) |
+| `unsupported` | No soportado: actualizar agente (también el dry-run `device_actions_dry_run`) |
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File backend-v4/tests/mysql-smoke.ps1 -DebugResponses
+node backend-v4/tests/power-schedules-panel.cjs
+dotnet test client-v4/Keeper.sln -maxcpucount:1 -nodeReuse:false
+```
+
+Notas operativas:
+- **No hay vuelta atrás del backend** una vez desplegados agentes 4.0.30: el contrato exige `updated_at` en cada
+  programación enviada (el agente lo necesita para la regla «editada después de la hora»). No se puede volver a una
+  versión del backend anterior al commit `77b9060`, que lo añadió.
+- Despliegue gradual: backend + migración + panel (sin efecto hasta que haya agentes 4.0.30) → agente al anillo piloto →
+  todos → primera programación real en una sola sede. La **prueba real** en un equipo (`once` a ~5 min) sigue pendiente:
+  `Keeper.Agent.IntegrationHarness` solo cubre login/sync/política con un `fixture.json` fijo y no sirve programaciones.
+- Un equipo recibe las programaciones en su siguiente sync; si estaba apagado, al encender.
+
 ### K3 residual en equipos v4 (2026-10-08)
 
 Tras la release puente K3 → v4, el agente (módulo `LegacyK3`, siguiente versión tras 4.0.20) revisa al arrancar y cada

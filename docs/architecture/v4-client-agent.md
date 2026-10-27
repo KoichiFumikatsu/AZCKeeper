@@ -352,6 +352,58 @@ Screenshots y paquetes no se envían dentro del lote de telemetría. Agent conse
 
 «Remoto» aquí cubre administración, comandos, bloqueo y screenshots. Si posteriormente se requiere escritorio interactivo con video/input, necesita protocolo, permisos y presupuesto propios; no se promete que WSS de comandos lo implemente automáticamente.
 
+## 8.1 Apagado y reinicio programados (módulo `PowerScheduler`, 4.0.30)
+
+Decide el **agente**, no una orden del servidor. Código: `Modules/Devices/PowerScheduler.cs` (+ `PowerSchedulerState.cs`,
+`PowerScheduleCalendar.cs`), `Hosting/WindowsBootClock.cs`, `SessionSupervisor` y `PowerNoticeWindow` en la sesión.
+
+**Entradas.** (1) `SyncResponse.power_schedules`: lista ya resuelta para este equipo (sin excepciones), cada una con
+`id`, `version`, `updated_at`, acción, recurrencia, `time_local`, zona, `message` e `idle/notice/postpone/window`;
+`null` = no cambia nada, lista vacía = TI las quitó. (2) Reloj: `Context.Clock` y, si `ServerClock` confirma un desfase
+> 5 min, la hora del servidor para calcular ocurrencias (los plazos del aviso siguen en hora de Windows porque la
+sesión cuenta con su reloj). (3) Inactividad de las sesiones (`SessionSupervisor.IdleSeconds()`; una sesión sin par
+verificado da `null` y cuenta como en uso). (4) Orden manual vigente (`manualNotice`) y hora de arranque
+(`WindowsBootClock`: el más reciente entre `TickCount64` y el último evento 27 de Kernel-Boot en frío; ignora el
+arranque híbrido del Inicio rápido).
+
+**Estado.** `power-schedules.json` en ProgramData, escritura atómica: última lista (`Schedules` + `ReceivedAt`),
+ocurrencia en curso (`Active`: `RunId`, `Deadline`, `Postponed`, `Started`, `Outcome`), `Done` (14 días) y `Unsent`
+(resultados sin encolar). Un archivo ilegible se aparta como `.corrupt` y se empieza vacío; un fallo de escritura se
+loguea una vez y no impide la ejecución.
+
+**Flujo (tick cada 30 s; cada segundo con aviso en curso).**
+1. Por programación se toma la última ocurrencia (`PowerScheduleCalendar.Latest`). Se descarta si ya está en `Done`, si es
+   anterior a `updated_at` (editada después de la hora) o si su ventana ya estaba cerrada al recibir la versión.
+2. Arranque posterior a la hora → `not_needed`; fuera de `window_minutes` → `skipped_suspended`.
+3. Coincidencias en el mismo minuto: una ejecución, gana `restart`; el resto `replaced` (`same_minute`).
+4. Orden manual vigente → `replaced` (`manual_command`). Sin sesiones o todas ≥ `idle_minutes` → ejecuta (`executed_idle`);
+   en uso → `Active` con plazo = ahora + `notice_minutes`.
+5. Con `Active`: «Ahora» → `executed_by_person`; «Posponer» (solo si hay `postpone_minutes` y no se pospuso) → plazo = ahora +
+   `postpone_minutes`, resultado `postponed` (no cierra la ocurrencia); plazo vencido → `executed_after_notice`. Plazo
+   vencido hace > 2 min (suspensión): dentro de la ventana (más lo pospuesto) se rearma la cuenta completa, si no
+   `skipped_suspended`. Pausa/edición/borrado en el sync → `cancelled_by_it` y aviso «TI canceló…» durante 60 s.
+6. `Started=true` se guarda **antes** de llamar a `shutdown.exe` (`IDeviceActions`): un corte nunca repite. Al reiniciar el
+   agente con `Started` se reporta el resultado guardado.
+
+**IPC con la sesión (`SessionProtocol`).** `SessionResponse.idle_seconds` (segundos desde la última entrada; con el equipo
+bloqueado por TI manda el tope de un año, así no cuenta como uso) y `power_choice {run_id, kind: postpone|now}`.
+`PowerNotice` gana `message` (≤ 280), `postpone_minutes` (muestra «Posponer N»), `compact` (tarjeta abajo a la derecha, sin
+Posponer, tras posponer) y `run_id`. Un aviso inválido se ignora y se loguea `SessionClient/power_notice_invalid`. Varias
+sesiones: basta una activa; la elección de cualquiera aplica al `RunId`. `SelectNotice`: manual vigente > programado >
+manual «TI canceló».
+
+**Resultados.** Cada outcome es un `PowerScheduleRunReport(event_id, schedule_id, occurrence_at, outcome, detail ≤ 100)` que
+entra en el outbox duradero (`power_run`) y viaja como `power_schedule_runs` en el sync; el servidor deduplica por `event_id`
+y por (`schedule_id`, `device_id`, `occurrence_at`) y confirma con `power_schedule_acks`.
+
+**Fallos.** Si el outbox rechaza, los resultados quedan en `Unsent` y se reintentan en cada tick (log
+`power_schedule_enqueue_failed`). Si la acción falla: outcome `unsupported` con `detail` = código (p. ej.
+`device_actions_dry_run`) o `action_failed:<Tipo>`, y log `power_schedule_failed`. Un error al aplicar la lista no tumba el
+resto de la respuesta del sync.
+
+**Pruebas.** Reloj simulado y acción inyectada (nunca apaga Windows) en `Keeper.Agent.Tests`. Pendiente: prueba real en un
+equipo con una programación `once` a ~5 min; `Keeper.Agent.IntegrationHarness` no sirve programaciones (spec §4).
+
 ## 9. Mapeo K3 → v4
 
 Rutas bajo `AZCKeeper_Client/`, salvo indicación. Reusar significa extraer lógica contrastada y adaptarla al contrato; no mover el god object completo al servicio.
