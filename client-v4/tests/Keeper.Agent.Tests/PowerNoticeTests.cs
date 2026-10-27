@@ -1,6 +1,10 @@
 extern alias session;
 using PowerNoticeText = session::Keeper.Session.Modules.UI.PowerNoticeText;
 using PowerNoticeChoices = session::Keeper.Session.Modules.UI.PowerNoticeChoices;
+using PowerNoticeLayout = session::Keeper.Session.Modules.UI.PowerNoticeLayout;
+using PowerNoticeGate = session::Keeper.Session.Ipc.PowerNoticeGate;
+using SessionClientRules = session::Keeper.Session.Ipc.SessionClientRules;
+using IInputIdleSource = session::Keeper.Session.Modules.Activity.IInputIdleSource;
 using Keeper.Agent.Hosting;
 using Keeper.Agent.Modules.Devices;
 using Keeper.Agent.Modules.Security;
@@ -225,14 +229,14 @@ public sealed class PowerNoticeTests
         Assert.Equal(countdown, PowerNoticeText.Countdown(TimeSpan.FromSeconds(seconds)));
     }
 
-    private static async Task<(SessionSupervisor Supervisor, FakePlatform Platform, ModuleHost Host, TestClock Clock, DeviceLock Lock)> StartSupervisorAsync(Action<PowerChoice>? onChoice)
+    private static async Task<(SessionSupervisor Supervisor, FakePlatform Platform, ModuleHost Host, TestClock Clock, DeviceLock Lock)> StartSupervisorAsync(Action<PowerChoice>? onChoice, int failVerify = 0)
     {
         var clock = new TestClock();
         var directory = new TestDirectory();
         var context = Samples.Context(clock);
         var deviceLock = new DeviceLock(directory.File("lock"));
         await deviceLock.InitAsync(context);
-        var platform = new FakePlatform();
+        var platform = new FakePlatform { FailVerify = failVerify };
         var supervisor = new SessionSupervisor(platform, deviceLock, () => null,
             new SessionTaskManagerPolicies(() => [], _ => new ScreenLockTests.FakeRegistry())) { OnPowerChoice = onChoice };
         var host = new ModuleHost([supervisor], context);
@@ -249,6 +253,31 @@ public sealed class PowerNoticeTests
         Assert.All(platform.Connections.Values, c => c.IdleSeconds = 30);
         for (var i = 0; i < 3; i++) { clock.Advance(TimeSpan.FromSeconds(1)); await host.TickAsync(default); }
         Assert.Equal(new long?[] { 30, 30 }, supervisor.IdleSeconds());
+        await deviceLock.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task ElSupervisorNoCuentaLaInactividadDeSesionesSinVerificar()
+    {
+        var (supervisor, platform, host, clock, deviceLock) = await StartSupervisorAsync(null, failVerify: 2);
+        await using var _ = host;
+        Assert.All(platform.Connections.Values, c => c.IdleSeconds = 30);
+        for (var i = 0; i < 3; i++) { clock.Advance(TimeSpan.FromSeconds(1)); await host.TickAsync(default); }
+        Assert.Equal(new long?[] { 30 }, supervisor.IdleSeconds());
+        await deviceLock.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task UnCallbackDeEleccionQueFallaNoRompeElIntercambio()
+    {
+        var calls = 0;
+        var (supervisor, platform, host, clock, deviceLock) = await StartSupervisorAsync(_ => { calls++; throw new InvalidOperationException("boom"); });
+        await using var _ = host;
+        Assert.All(platform.Connections.Values, c => c.IdleSeconds = 12);
+        platform.Connections[1].NextChoice = new PowerChoice(Guid.NewGuid(), PowerChoiceKind.Now);
+        for (var i = 0; i < 3; i++) { clock.Advance(TimeSpan.FromSeconds(1)); await host.TickAsync(default); }
+        Assert.Equal(1, calls);
+        Assert.Equal(new long?[] { 12, 12 }, supervisor.IdleSeconds());
         await deviceLock.ShutdownAsync();
     }
 
@@ -296,8 +325,11 @@ public sealed class PowerNoticeTests
         choices.Pick(PowerChoiceKind.Postpone);
         Assert.False(choices.ButtonsVisible);
         choices.Pick(PowerChoiceKind.Now); // ignorado: ya eligio
-        Assert.Equal(new PowerChoice(run, PowerChoiceKind.Postpone), choices.Take());
-        Assert.Null(choices.Take());
+        var expected = new PowerChoice(run, PowerChoiceKind.Postpone);
+        Assert.Equal(expected, choices.Peek());
+        Assert.Equal(expected, choices.Peek()); // Peek no consume
+        choices.Commit(expected);
+        Assert.Null(choices.Peek());
         choices.Update(Offer(run)); // el mismo aviso repetido no vuelve a ofrecerse
         Assert.False(choices.ButtonsVisible);
         choices.Update(Offer(Guid.NewGuid())); // otra ejecucion si
@@ -311,10 +343,10 @@ public sealed class PowerNoticeTests
         var run = Guid.NewGuid();
         choices.Update(Offer(run)); choices.Pick(PowerChoiceKind.Now);
         choices.Update(null);
-        Assert.Null(choices.Take());
+        Assert.Null(choices.Peek());
         choices.Update(Offer(run)); choices.Pick(PowerChoiceKind.Now);
         choices.Update(Offer(Guid.NewGuid()));
-        Assert.Null(choices.Take());
+        Assert.Null(choices.Peek());
         var other = Guid.NewGuid();
         choices.Update(Offer(other, cancelled: true));
         Assert.False(choices.ButtonsVisible);
@@ -324,6 +356,85 @@ public sealed class PowerNoticeTests
         Assert.False(choices.ButtonsVisible);
         choices.Update(Offer(Guid.NewGuid(), postpone: null));
         Assert.False(choices.ButtonsVisible);
+    }
+
+    [Fact]
+    public void SiLaEscrituraFallaLaEleccionSigueSiendoPendienteYNoSeReofrece()
+    {
+        var choices = new PowerNoticeChoices();
+        var run = Guid.NewGuid();
+        choices.Update(Offer(run));
+        choices.Pick(PowerChoiceKind.Postpone);
+        var first = choices.Peek();
+        Assert.NotNull(first); // escritura fallida: no hay Commit
+        choices.Update(Offer(run)); // el agente repite el aviso
+        Assert.False(choices.ButtonsVisible);
+        Assert.Equal(first, choices.Peek()); // reintento en el siguiente intercambio
+        choices.Commit(first!);
+        Assert.Null(choices.Peek());
+        Assert.False(choices.ButtonsVisible);
+    }
+
+    [Fact]
+    public void ConfirmarUnaEleccionDistintaNoBorraLaPendiente()
+    {
+        var choices = new PowerNoticeChoices();
+        var run = Guid.NewGuid();
+        choices.Update(Offer(run));
+        choices.Pick(PowerChoiceKind.Now);
+        choices.Commit(new PowerChoice(run, PowerChoiceKind.Postpone));
+        Assert.Equal(new PowerChoice(run, PowerChoiceKind.Now), choices.Peek());
+    }
+
+    private sealed class FakeIdle(Func<TimeSpan> get) : IInputIdleSource
+    {
+        public TimeSpan GetIdleTime() => get();
+    }
+
+    [Fact]
+    public void LaInactividadDeLaSesionBloqueadaEsUnAnoYWindowsSinRespuestaEsNull()
+    {
+        Assert.Equal(31_536_000L, SessionClientRules.IdleSeconds(true, new FakeIdle(() => throw new System.ComponentModel.Win32Exception(5))));
+        Assert.Null(SessionClientRules.IdleSeconds(false, new FakeIdle(() => throw new System.ComponentModel.Win32Exception(5))));
+        Assert.Equal(90L, SessionClientRules.IdleSeconds(false, new FakeIdle(() => TimeSpan.FromSeconds(90.9))));
+        Assert.Equal(31_536_000L, SessionClientRules.IdleSeconds(false, new FakeIdle(() => TimeSpan.FromDays(4000))));
+        Assert.Equal(0L, SessionClientRules.IdleSeconds(false, new FakeIdle(() => TimeSpan.FromSeconds(-5))));
+    }
+
+    [Fact]
+    public void UnAvisoInvalidoSeIgnoraYDejaUnWarnPorAvisoDistinto()
+    {
+        var gate = new PowerNoticeGate();
+        var good = new PowerNotice(PowerNoticeAction.Restart, DateTimeOffset.UnixEpoch.AddHours(1), false, "Hasta el lunes", 15, false, Guid.NewGuid());
+        Assert.Same(good, gate.Filter(good, false, out var none));
+        Assert.Null(none);
+        var bad = good with { Message = "a\nb" };
+        Assert.Null(gate.Filter(bad, false, out var warn));
+        Assert.NotNull(warn);
+        Assert.Equal(LogEntryLevel.Warn, warn!.Level);
+        Assert.True(SessionProtocol.IsAccepted(warn));
+        Assert.Null(gate.Filter(bad, false, out var again)); // mismo aviso: sin otro warn
+        Assert.Null(again);
+        Assert.Null(gate.Filter(bad with { Message = "x\ty" }, false, out var other));
+        Assert.NotNull(other);
+        Assert.Null(gate.Filter(good with { PostponeMinutes = 0 }, false, out _));
+        Assert.Null(gate.Filter(good, true, out _)); // cierre: sin aviso
+        Assert.Same(good, gate.Filter(good, false, out _)); // uno valido vuelve a mostrarse
+    }
+
+    [Theory]
+    [InlineData(14f, 584)]
+    [InlineData(10f, 352)]
+    public void LaAlturaDelMensajeCreceConElTextoYCabeHastaElMaximoDeTi(float points, int width)
+    {
+        using var font = new System.Drawing.Font("Segoe UI", points);
+        var sentence = PowerNoticeText.Message(PowerNoticeAction.Restart, TimeSpan.FromMinutes(10));
+        var full = PowerNoticeText.Message(PowerNoticeAction.Restart, TimeSpan.FromMinutes(10), string.Concat(Enumerable.Repeat("Mensaje de TI ", 20))[..279] + "m");
+        var small = PowerNoticeLayout.MessageHeight(sentence, font, width);
+        var big = PowerNoticeLayout.MessageHeight(full, font, width);
+        Assert.True(big > small);
+        // Tope de cada modo: grande 520 - 210 fijos = 310; compacta 300 - 104 fijos = 196.
+        Assert.True(big <= (points > 12 ? 310 : 196), $"{big}");
     }
 
     [Fact]
@@ -343,8 +454,9 @@ public sealed class PowerNoticeTests
     private sealed class FakePlatform : ISessionSupervisorPlatform
     {
         public Dictionary<int, FakeConnection> Connections { get; } = [];
+        public int FailVerify { get; init; }
         public IReadOnlyList<InteractiveSession> Enumerate() => [new(1, "a"), new(2, "b")];
-        public ISupervisedSession Connect(InteractiveSession session, CancellationToken ct) => Connections[session.Id] = new FakeConnection();
+        public ISupervisedSession Connect(InteractiveSession session, CancellationToken ct) => Connections[session.Id] = new FakeConnection { VerifyFails = session.Id == FailVerify };
         public void CloseExistingTaskManagers(IReadOnlyList<InteractiveSession> sessions) { }
     }
 
@@ -356,7 +468,8 @@ public sealed class PowerNoticeTests
         public long? IdleSeconds { get; set; }
         public PowerChoice? NextChoice { get; set; }
         private PowerChoice? Take() { var c = NextChoice; NextChoice = null; return c; }
-        public void Verify() { }
+        public bool VerifyFails { get; init; }
+        public void Verify() { if (VerifyFails) throw new UnauthorizedAccessException("unverified"); }
         public Task<SessionResponse> ExchangeAsync(SessionRequest request, CancellationToken ct)
         {
             Requests.Add(request);

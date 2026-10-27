@@ -20,6 +20,7 @@ public sealed class SessionClient(string pipeName, int agentPid, ModuleHost host
         long? version = null;
         using var location = new Keeper.Session.Modules.Location.LocationTracker();
         var locationActive = false;
+        var gate = new PowerNoticeGate();
         while (!ct.IsCancellationRequested)
         {
             var request = await SessionProtocol.ReadAsync<SessionRequest>(pipe, ct);
@@ -33,13 +34,17 @@ public sealed class SessionClient(string pipeName, int agentPid, ModuleHost host
                 version = request.PolicyVersion;
             }
             await screen.SetStateAsync(request.Locked, request.PinAllowed, request.PinStatus);
-            if (request.PowerNotice is { } incoming) SessionProtocol.Validate(incoming);
-            notice?.Set(request.Shutdown ? null : request.PowerNotice);
+            var accepted = gate.Filter(request.PowerNotice, request.Shutdown, out var invalidWarn);
+            notice?.Set(accepted);
+            if (invalidWarn is not null) await buffer.EnqueueAsync(invalidWarn, ct);
             await host.TickAsync(ct);
             await location.PollAsync(request.Location, buffer, ct, locationActive && !request.Shutdown);
             if (request.Shutdown) await host.ShutdownAsync();
+            // Peek/commit: la eleccion de la persona solo se descarta cuando la respuesta se escribio; si falla, sigue pendiente.
+            var choice = notice?.PeekChoice();
             await SessionProtocol.WriteAsync(pipe, buffer.Response(request.CorrelationId, screen.TakePin(), locationActive ? location.NetworkId : null,
-                IdleSeconds(), notice?.TakeChoice()), ct);
+                SessionClientRules.IdleSeconds(locked(), idle), choice), ct);
+            if (choice is not null) notice?.CommitChoice(choice);
             if (request.Shutdown)
             {
                 var final = await SessionProtocol.ReadAsync<SessionRequest>(pipe, ct);
@@ -48,13 +53,6 @@ public sealed class SessionClient(string pipeName, int agentPid, ModuleHost host
                 return;
             }
         }
-    }
-    // Bloqueado = sin uso (spec 3): un ano. Si Windows no responde, null (desconocido): el planificador lo trata como «en uso».
-    private long? IdleSeconds()
-    {
-        if (locked()) return SessionProtocol.MaxIdleSeconds;
-        try { return Math.Clamp((long)idle.GetIdleTime().TotalSeconds, 0, SessionProtocol.MaxIdleSeconds); }
-        catch (System.ComponentModel.Win32Exception) { return null; }
     }
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetNamedPipeServerProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint pid);

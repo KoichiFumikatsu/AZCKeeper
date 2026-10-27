@@ -81,6 +81,7 @@ public static class SessionProtocol
         {
             ("Presence", "first_login" or "late_login") => log.Fields is null,
             ("SessionBuffer", "buffer_full") => log.Fields is null,
+            ("SessionClient", "power_notice_invalid") => log.Fields is null,
             ("ActivityTracker", "capture_gap" or "simulated_input") => log.Fields is null,
             ("ActivityTracker", "simulated_input_end" or "physical_input_unavailable") => log.Fields is null ||
                 log.Fields is { ControlId: null, CommandId: null, Attempt: null, ErrorCode: { Length: > 0 and <= 80 } code } &&

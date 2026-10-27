@@ -138,10 +138,15 @@ public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, Devic
         }
         foreach (var activity in response.Activity ?? []) { await Context.Outbox.EnqueueAsync(activity, ct); ack.Add(activity.SnapshotId); }
         peer.Idle = response.IdleSeconds;
-        if (response.PowerChoice is { } choice) OnPowerChoice?.Invoke(choice);
-        if (response.Pin is not null) await deviceLock.ValidatePinAsync(response.Pin, ct);
         peer.Acknowledged = ack;
         peer.Version = version;
+        if (response.PowerChoice is { } choice)
+        {
+            // Un callback que falla no debe romper el intercambio (el acuse ya quedo registrado arriba).
+            try { OnPowerChoice?.Invoke(choice); }
+            catch (Exception ex) { Context.Log($"SessionSupervisor power_choice_callback_failed: {ex.GetType().Name}: {ex.Message}"); }
+        }
+        if (response.Pin is not null) await deviceLock.ValidatePinAsync(response.Pin, ct);
         if (shutdown) await peer.Connection.SendAsync(request with { Policy = null, Acknowledged = ack }, timeout.Token);
     }
     private static string RejectedCode(LogEntry log)

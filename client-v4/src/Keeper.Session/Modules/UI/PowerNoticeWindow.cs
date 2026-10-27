@@ -5,11 +5,11 @@ namespace Keeper.Session.Modules.UI;
 // Textos del aviso de reinicio/apagado. Separados de la ventana para probarlos sin WinForms.
 public static class PowerNoticeText
 {
-    // message: texto de TI (opcional), va de primer parrafo antes de la frase de la cuenta regresiva.
+    // message: texto de TI (opcional), va de primera linea antes de la frase de la cuenta regresiva.
     public static string Message(PowerNoticeAction action, TimeSpan remaining, string? message = null)
     {
         var sentence = Sentence(action, remaining);
-        return string.IsNullOrWhiteSpace(message) ? sentence : $"{message.Trim()}{Environment.NewLine}{Environment.NewLine}{sentence}";
+        return string.IsNullOrWhiteSpace(message) ? sentence : $"{message.Trim()}{Environment.NewLine}{sentence}";
     }
 
     private static string Sentence(PowerNoticeAction action, TimeSpan remaining)
@@ -37,8 +37,8 @@ public static class PowerNoticeText
 }
 
 // Estado de «Posponer»/«ahora» de un aviso, sin WinForms para poder probarlo. La opcion se ofrece una sola vez por RunId
-// (Pick la consume y Take la entrega una vez); si el aviso cambia de orden, se cancela o pasa a tarjeta compacta, se
-// descarta cualquier eleccion pendiente. Pick corre en el hilo de UI y Take en el del canal de sesion.
+// (Pick la consume; Peek/Commit la entregan); si el aviso cambia de orden, se cancela o pasa a tarjeta compacta, se
+// descarta cualquier eleccion pendiente. Pick corre en el hilo de UI y Peek/Commit en el del canal de sesion.
 public sealed class PowerNoticeChoices
 {
     private readonly object _gate = new();
@@ -70,10 +70,26 @@ public sealed class PowerNoticeChoices
         }
     }
 
-    public PowerChoice? Take()
+    // Entrega en dos tiempos: Peek no consume y Commit descarta la eleccion solo cuando el envio al agente termino bien;
+    // si la escritura falla, la eleccion sigue pendiente para el siguiente intercambio (los botones no se vuelven a ofrecer).
+    public PowerChoice? Peek()
     {
-        lock (_gate) { var choice = _pending; _pending = null; return choice; }
+        lock (_gate) return _pending;
     }
+
+    public void Commit(PowerChoice sent)
+    {
+        lock (_gate) { if (_pending == sent) _pending = null; }
+    }
+}
+
+// Altura del texto del aviso, sin Form para poder probarla. Mide con el mismo ajuste de linea que el Label.
+public static class PowerNoticeLayout
+{
+    private const TextFormatFlags Flags = TextFormatFlags.WordBreak | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix | TextFormatFlags.Left;
+
+    public static int MessageHeight(string text, Font font, int width) =>
+        TextRenderer.MeasureText(text, font, new Size(Math.Max(1, width), int.MaxValue), Flags).Height + 6;
 }
 
 // Aviso previo a un reinicio o apagado ordenado por IT (agente 4.0.17+): siempre encima, grande y centrado en la pantalla
@@ -85,8 +101,9 @@ public sealed class PowerNoticeWindow(Control dispatcher) : IDisposable
 {
     private readonly PowerNoticeChoices _choices = new();
 
-    // Lo llama el canal de sesion en cada respuesta: devuelve la eleccion pendiente una sola vez.
-    public PowerChoice? TakeChoice() => _choices.Take();
+    // Lo llama el canal de sesion: PeekChoice antes de escribir la respuesta y CommitChoice solo si la escritura termino.
+    public PowerChoice? PeekChoice() => _choices.Peek();
+    public void CommitChoice(PowerChoice sent) => _choices.Commit(sent);
 
     private NoticeForm? _form;
     private PowerNotice? _notice;
@@ -126,8 +143,8 @@ public sealed class PowerNoticeWindow(Control dispatcher) : IDisposable
         private static readonly Font LargeCount = new("Segoe UI", 48, FontStyle.Bold), SmallCount = new("Segoe UI", 20, FontStyle.Bold);
         private static readonly Font LargeButton = new("Segoe UI", 11), SmallButton = new("Segoe UI", 9);
         private readonly Label _title = new() { AutoSize = false, Dock = DockStyle.Top, Height = 44, ForeColor = Color.White, Font = TitleFont };
-        private readonly Label _message = new() { AutoSize = false, Dock = DockStyle.Top, ForeColor = Color.White };
-        private readonly Label _countdown = new() { AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.White };
+        private readonly Label _message = new() { AutoSize = false, AutoEllipsis = false, UseMnemonic = false, Dock = DockStyle.Fill, ForeColor = Color.White };
+        private readonly Label _countdown = new() { AutoSize = false, Dock = DockStyle.Bottom, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.White };
         private readonly Button _toggle = new() { Dock = DockStyle.Right, FlatStyle = FlatStyle.Flat, ForeColor = Color.White, BackColor = Color.FromArgb(0, 84, 133), Cursor = Cursors.Hand, TabStop = false };
         private readonly System.Windows.Forms.Timer _timer = new() { Interval = 500 };
         private PowerNotice? _notice;
@@ -150,7 +167,7 @@ public sealed class PowerNoticeWindow(Control dispatcher) : IDisposable
             bottom.Controls.Add(_toggle); bottom.Controls.Add(_now); bottom.Controls.Add(_postpone);
             _postpone.Click += (_, _) => { _choices.Pick(PowerChoiceKind.Postpone); ApplyChoices(); };
             _now.Click += (_, _) => { _choices.Pick(PowerChoiceKind.Now); ApplyChoices(); };
-            Controls.Add(_countdown); Controls.Add(bottom); Controls.Add(_message); Controls.Add(_title);
+            Controls.Add(_message); Controls.Add(_countdown); Controls.Add(bottom); Controls.Add(_title);
             _toggle.Click += (_, _) => { if (_notice?.Cancelled == true) { _dismiss(); return; } _compact = !_compact; ApplyMode(); };
             _timer.Tick += (_, _) => Render();
             FormClosing += (_, e) => { if (e.CloseReason == CloseReason.UserClosing) e.Cancel = true; };
@@ -173,18 +190,30 @@ public sealed class PowerNoticeWindow(Control dispatcher) : IDisposable
         {
             SuspendLayout();
             _title.Visible = !_compact;
-            _message.Font = _compact ? SmallText : LargeText; _message.Height = _compact ? 48 : 70;
-            _countdown.Font = _compact ? SmallCount : LargeCount;
+            _message.Font = _compact ? SmallText : LargeText;
+            _countdown.Font = _compact ? SmallCount : LargeCount; _countdown.Height = _compact ? 44 : 84;
             _toggle.Text = _notice?.Cancelled == true ? "Cerrar" : _compact ? "Ampliar" : "Minimizar"; _toggle.Width = _compact ? 96 : 130;
             _toggle.Font = _compact ? SmallButton : LargeButton;
             Padding = _compact ? new Padding(14, 10, 14, 10) : new Padding(28, 22, 28, 20);
-            Size = _compact ? new Size(380, 160) : new Size(640, 320);
-            var area = (Screen.PrimaryScreen ?? Screen.AllScreens[0]).WorkingArea;
-            Location = _compact
-                ? new Point(area.Right - Width - 16, area.Bottom - Height - 16)
-                : new Point(area.Left + (area.Width - Width) / 2, area.Top + (area.Height - Height) / 2);
+            Fit();
             ResumeLayout();
             ApplyChoices();
+        }
+
+        // Ajusta el alto al texto medido (sin recortarlo) dentro de un maximo; compacta ancla abajo a la derecha, grande centra.
+        private void Fit()
+        {
+            var width = _compact ? 380 : 640;
+            var fixedHeight = Padding.Vertical + (_compact ? 0 : _title.Height) + _countdown.Height + 40;
+            var minHeight = _compact ? 160 : 320;
+            var maxHeight = _compact ? 300 : 520;
+            var text = PowerNoticeLayout.MessageHeight(_message.Text, _message.Font, width - Padding.Horizontal);
+            var size = new Size(width, Math.Clamp(fixedHeight + text, minHeight, maxHeight));
+            var area = (Screen.PrimaryScreen ?? Screen.AllScreens[0]).WorkingArea;
+            var location = _compact
+                ? new Point(area.Right - size.Width - 16, area.Bottom - size.Height - 16)
+                : new Point(area.Left + (area.Width - size.Width) / 2, area.Top + (area.Height - size.Height) / 2);
+            if (Size != size || Location != location) { Size = size; Location = location; }
         }
 
         // Aparece sin quitarle el foco a lo que la persona esta escribiendo.
@@ -218,13 +247,15 @@ public sealed class PowerNoticeWindow(Control dispatcher) : IDisposable
             if (_notice.Cancelled)
             {
                 _title.Text = PowerNoticeText.CancelledTitle(_notice.Action);
-                _message.Text = PowerNoticeText.CancelledMessage(_notice.Action);
+                var cancelled = PowerNoticeText.CancelledMessage(_notice.Action);
+                if (_message.Text != cancelled) { _message.Text = cancelled; Fit(); }
                 _countdown.Text = "";
                 return;
             }
             var remaining = _notice.Deadline - DateTimeOffset.UtcNow;
             _title.Text = _notice.Action == PowerNoticeAction.Restart ? "Reinicio programado" : "Apagado programado";
-            _message.Text = PowerNoticeText.Message(_notice.Action, remaining, _notice.Message);
+            var text = PowerNoticeText.Message(_notice.Action, remaining, _notice.Message);
+            if (_message.Text != text) { _message.Text = text; Fit(); }
             _countdown.Text = PowerNoticeText.Countdown(remaining);
         }
 
