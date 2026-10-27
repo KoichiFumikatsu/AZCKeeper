@@ -8,7 +8,7 @@ using Keeper.Shared.Contracts;
 namespace Keeper.Session.Ipc;
 
 public sealed class SessionClient(string pipeName, int agentPid, ModuleHost host, SessionBuffer buffer, LockScreen screen,
-    IInputIdleSource idle, Func<bool> locked, PowerNoticeWindow? notice = null)
+    IInputIdleSource idle, Func<bool> windowsLocked, Func<bool> inCall, PowerNoticeWindow? notice = null)
 {
     public async Task RunAsync(CancellationToken ct)
     {
@@ -43,7 +43,7 @@ public sealed class SessionClient(string pipeName, int agentPid, ModuleHost host
             // Peek/commit: la eleccion de la persona solo se descarta cuando la respuesta se escribio; si falla, sigue pendiente.
             var choice = notice?.PeekChoice();
             await SessionProtocol.WriteAsync(pipe, buffer.Response(request.CorrelationId, screen.TakePin(), locationActive ? location.NetworkId : null,
-                SessionClientRules.IdleSeconds(locked(), idle), choice), ct);
+                SessionClientRules.IdleSeconds(windowsLocked(), screen.LockRequested, inCall(), idle), choice), ct);
             if (choice is not null) notice?.CommitChoice(choice);
             if (request.Shutdown)
             {

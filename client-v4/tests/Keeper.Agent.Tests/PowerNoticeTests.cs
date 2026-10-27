@@ -419,13 +419,37 @@ public sealed class PowerNoticeTests
     }
 
     [Fact]
-    public void LaInactividadDeLaSesionBloqueadaEsUnAnoYWindowsSinRespuestaEsNull()
+    public void LaInactividadDeLaSesionBloqueadaPorTiEsUnAnoYWindowsSinRespuestaEsNull()
     {
-        Assert.Equal(31_536_000L, SessionClientRules.IdleSeconds(true, new FakeIdle(() => throw new System.ComponentModel.Win32Exception(5))));
-        Assert.Null(SessionClientRules.IdleSeconds(false, new FakeIdle(() => throw new System.ComponentModel.Win32Exception(5))));
-        Assert.Equal(90L, SessionClientRules.IdleSeconds(false, new FakeIdle(() => TimeSpan.FromSeconds(90.9))));
-        Assert.Equal(31_536_000L, SessionClientRules.IdleSeconds(false, new FakeIdle(() => TimeSpan.FromDays(4000))));
-        Assert.Equal(0L, SessionClientRules.IdleSeconds(false, new FakeIdle(() => TimeSpan.FromSeconds(-5))));
+        var broken = new FakeIdle(() => throw new System.ComponentModel.Win32Exception(5));
+        Assert.Equal(31_536_000L, SessionClientRules.IdleSeconds(windowsLocked: false, itLocked: true, inCall: false, broken));
+        Assert.Null(SessionClientRules.IdleSeconds(false, false, false, broken));
+        Assert.Equal(90L, SessionClientRules.IdleSeconds(false, false, false, new FakeIdle(() => TimeSpan.FromSeconds(90.9))));
+        Assert.Equal(31_536_000L, SessionClientRules.IdleSeconds(false, false, false, new FakeIdle(() => TimeSpan.FromDays(4000))));
+        Assert.Equal(0L, SessionClientRules.IdleSeconds(false, false, false, new FakeIdle(() => TimeSpan.FromSeconds(-5))));
+    }
+
+    // Win+L no es «sin uso»: la persona bloquea para ir a almorzar o a una reunion. Viaja la inactividad real de Windows
+    // (bloqueada mas de idle_minutes cuenta sola como sin uso); solo el bloqueo de TI (DeviceLock) es «sin uso» inmediato.
+    [Fact]
+    public void ElBloqueoDeWindowsEnviaLaInactividadRealYElDeTiUnAno()
+    {
+        var idle = new FakeIdle(() => TimeSpan.FromSeconds(120));
+        Assert.Equal(120L, SessionClientRules.IdleSeconds(windowsLocked: true, itLocked: false, inCall: false, idle));
+        Assert.Equal(31_536_000L, SessionClientRules.IdleSeconds(windowsLocked: false, itLocked: true, inCall: false, idle));
+        Assert.Equal(31_536_000L, SessionClientRules.IdleSeconds(windowsLocked: true, itLocked: true, inCall: false, idle));
+        Assert.Equal(7200L, SessionClientRules.IdleSeconds(windowsLocked: true, itLocked: false, inCall: false, new FakeIdle(() => TimeSpan.FromHours(2))));
+    }
+
+    // Una llamada (Teams/Zoom/telefono) es uso aunque no se toque teclado ni raton.
+    [Fact]
+    public void EnLlamadaLaInactividadEsCero()
+    {
+        var idle = new FakeIdle(() => TimeSpan.FromHours(1));
+        Assert.Equal(0L, SessionClientRules.IdleSeconds(windowsLocked: false, itLocked: false, inCall: true, idle));
+        Assert.Equal(0L, SessionClientRules.IdleSeconds(windowsLocked: true, itLocked: false, inCall: true, idle));
+        Assert.Equal(0L, SessionClientRules.IdleSeconds(false, false, true, new FakeIdle(() => throw new System.ComponentModel.Win32Exception(5))));
+        Assert.Equal(31_536_000L, SessionClientRules.IdleSeconds(windowsLocked: false, itLocked: true, inCall: true, idle));
     }
 
     [Fact]

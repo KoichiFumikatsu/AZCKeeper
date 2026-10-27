@@ -46,7 +46,8 @@ internal static class Program
             // Raw Input: solo teclado/raton fisico cuenta como uso (4.0.22). Si no registra, el tracker mide como antes.
             using var physical = new WindowsPhysicalInputSource();
             physical.Start();
-            // Bloqueado (4.0.24): pantalla de bloqueo de Windows o bloqueo de Keeper ordenado por el agente.
+            // Bloqueado (4.0.24): pantalla de bloqueo de Windows o bloqueo de Keeper ordenado por el agente (solo actividad;
+            // el apagado programado distingue ambos en SessionClientRules.IdleSeconds).
             var idleSource = new WindowsInputIdleSource();
             Func<bool> isLocked = () => sessionLock.IsLocked || screen.LockRequested;
             var activity = new ActivityTracker(idleSource, () => calls.IsInCall, statePath: activityState, physical: physical, locked: isLocked);
@@ -54,7 +55,8 @@ internal static class Program
             await using var modules = new ModuleHost([calls, activity, new WindowTracker(foreground, activity), new PresenceTracker(presenceFile), screen],
                 new ModuleContext(sink, TimeProvider.System, _ => { }, stopping.Token));
             await modules.InitAsync();
-            try { await new SessionClient(args[0], agentPid, modules, sink, screen, idleSource, isLocked, notice).RunAsync(stopping.Token); }
+            try { await new SessionClient(args[0], agentPid, modules, sink, screen, idleSource,
+                () => sessionLock.IsLocked, () => calls.IsInCall, notice).RunAsync(stopping.Token); }
             catch (Exception ex) when (ex is IOException or OperationCanceledException or UnauthorizedAccessException) { }
         });
         _ = task.ContinueWith(_ => dispatcher.BeginInvoke(Application.Exit), TaskScheduler.Default);

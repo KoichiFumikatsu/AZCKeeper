@@ -7,10 +7,14 @@ namespace Keeper.Session.Ipc;
 // Reglas puras del canal de sesion, separadas de SessionClient para probarlas sin tuberia.
 public static class SessionClientRules
 {
-    // Bloqueado = sin uso (spec 3): un ano. Si Windows no responde, null (desconocido): el planificador lo trata como «en uso».
-    public static long? IdleSeconds(bool locked, IInputIdleSource idle)
+    // Solo el bloqueo de TI (DeviceLock, LockScreen.LockRequested) es «sin uso» inmediato (spec 3): un ano. El bloqueo de
+    // Windows (Win+L) envia la inactividad real: bloqueada mas de idle_minutes cuenta sola como sin uso. En llamada = en uso (0).
+    // Si Windows no responde, null (desconocido): el planificador lo trata como «en uso».
+    public static long? IdleSeconds(bool windowsLocked, bool itLocked, bool inCall, IInputIdleSource idle)
     {
-        if (locked) return SessionProtocol.MaxIdleSeconds;
+        _ = windowsLocked;
+        if (itLocked) return SessionProtocol.MaxIdleSeconds;
+        if (inCall) return 0;
         try { return Math.Clamp((long)idle.GetIdleTime().TotalSeconds, 0, SessionProtocol.MaxIdleSeconds); }
         catch (System.ComponentModel.Win32Exception) { return null; }
     }
