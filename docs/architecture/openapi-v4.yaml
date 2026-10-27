@@ -14646,6 +14646,349 @@ paths:
               $ref: '#/components/schemas/AbsencePatch'
       x-permission: usuarios.editar
       x-max-body-bytes: 8192
+  /admin/power-schedules:
+    get:
+      tags:
+      - admin
+      operationId: listPowerSchedules
+      summary: Programaciones de apagado
+      description: Apagados y reinicios programados de la empresa.
+      security:
+      - adminSession: []
+      x-tenant-boundary: Tenant validado contra sesión; alcance de empresa completa.
+      x-resources:
+      - PowerSchedule
+      responses:
+        '200':
+          description: Programaciones
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PowerScheduleList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      x-permission: equipos.ver
+    post:
+      tags:
+      - admin
+      operationId: createPowerSchedule
+      summary: Crear programación de apagado
+      description: Crea una programación de apagado o reinicio con su alcance y exclusiones.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant validado contra sesión; alcance de empresa completa.
+      x-resources:
+      - PowerSchedule
+      responses:
+        '201':
+          description: Programación creada
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PowerSchedule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PowerScheduleInput'
+      x-permission: equipos.apagar
+      x-max-body-bytes: 16384
+  /admin/power-schedules/{id}:
+    get:
+      tags:
+      - admin
+      operationId: getPowerSchedule
+      summary: Leer programación de apagado
+      description: Detalle de una programación con su alcance.
+      security:
+      - adminSession: []
+      x-tenant-boundary: Tenant validado contra sesión; alcance de empresa completa.
+      x-resources:
+      - PowerSchedule
+      responses:
+        '200':
+          description: Programación
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PowerSchedule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/Id'
+      x-permission: equipos.ver
+    patch:
+      tags:
+      - admin
+      operationId: patchPowerSchedule
+      summary: Editar programación de apagado
+      description: Edita, pausa o reactiva una programación. Requiere If-Match.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant validado contra sesión; alcance de empresa completa.
+      x-resources:
+      - PowerSchedule
+      responses:
+        '200':
+          description: Programación actualizada
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PowerSchedule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PowerScheduleInput'
+      x-permission: equipos.apagar
+      x-max-body-bytes: 16384
+    delete:
+      tags:
+      - admin
+      operationId: deletePowerSchedule
+      summary: Eliminar programación de apagado
+      description: Elimina la programación y su historial de ejecuciones.
+      security:
+      - adminSession: []
+        csrfToken: []
+      x-tenant-boundary: Tenant validado contra sesión; alcance de empresa completa.
+      x-resources:
+      - PowerSchedule
+      responses:
+        '204':
+          description: Programación eliminada
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/IfMatch'
+      x-permission: equipos.apagar
+  /admin/power-schedules/{id}/runs:
+    get:
+      tags:
+      - admin
+      operationId: listPowerScheduleRuns
+      summary: Ejecuciones de una programación
+      description: Resultado reportado por cada equipo en cada ocurrencia.
+      security:
+      - adminSession: []
+      x-tenant-boundary: Tenant validado contra sesión; alcance de empresa completa.
+      x-resources:
+      - PowerSchedule
+      responses:
+        '200':
+          description: Ejecuciones
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+            X-RateLimit-Scope:
+              $ref: '#/components/headers/X-RateLimit-Scope'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PowerScheduleRunList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/Id'
+      x-permission: equipos.ver
   /app-classification:
     get:
       tags:
@@ -15523,6 +15866,134 @@ components:
       properties:
         disable_smart_app_control:
           type: boolean
+    PowerScheduleTarget:
+      type: object
+      additionalProperties: false
+      required: [kind, id]
+      properties:
+        kind: {type: string, enum: [tenant, site, area, user, device]}
+        id: {type: string, format: uuid}
+    PowerScheduleInput:
+      type: object
+      additionalProperties: false
+      description: Programación de apagado/reinicio. En PATCH todos los campos son opcionales.
+      properties:
+        name: {type: string, minLength: 1, maxLength: 80}
+        action: {type: string, enum: [shutdown, restart]}
+        recurrence: {type: string, enum: [once, weekly]}
+        days: {type: array, items: {type: integer, minimum: 1, maximum: 7}, maxItems: 7, uniqueItems: true}
+        time_local: {type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'}
+        run_on:
+          anyOf:
+          - {type: string, format: date}
+          - type: 'null'
+        valid_from: {type: string, format: date}
+        valid_until:
+          anyOf:
+          - {type: string, format: date}
+          - type: 'null'
+        targets: {type: array, items: {$ref: '#/components/schemas/PowerScheduleTarget'}, minItems: 1, maxItems: 200}
+        exclusions: {type: array, items: {$ref: '#/components/schemas/PowerScheduleTarget'}, maxItems: 200}
+        message: {type: string, maxLength: 280}
+        idle_minutes: {type: integer, minimum: 5, maximum: 120}
+        notice_minutes: {type: integer, minimum: 1, maximum: 30}
+        postpone_minutes:
+          anyOf:
+          - {type: integer, minimum: 15, maximum: 240}
+          - type: 'null'
+        window_minutes: {type: integer, minimum: 0, maximum: 720}
+        status: {type: string, enum: [active, paused]}
+    PowerSchedule:
+      type: object
+      additionalProperties: false
+      required: [id, name, action, recurrence, days, time_local, run_on, valid_from, valid_until, targets, exclusions, message, idle_minutes, notice_minutes, postpone_minutes, window_minutes, status, version, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        action: {type: string, enum: [shutdown, restart]}
+        recurrence: {type: string, enum: [once, weekly]}
+        days: {type: array, items: {type: integer}}
+        time_local: {type: string}
+        run_on:
+          anyOf:
+          - {type: string, format: date}
+          - type: 'null'
+        valid_from: {type: string, format: date}
+        valid_until:
+          anyOf:
+          - {type: string, format: date}
+          - type: 'null'
+        targets: {type: array, items: {$ref: '#/components/schemas/PowerScheduleTarget'}}
+        exclusions: {type: array, items: {$ref: '#/components/schemas/PowerScheduleTarget'}}
+        message: {type: string}
+        idle_minutes: {type: integer}
+        notice_minutes: {type: integer}
+        postpone_minutes:
+          anyOf:
+          - {type: integer}
+          - type: 'null'
+        window_minutes: {type: integer}
+        status: {type: string, enum: [active, paused]}
+        version: {type: integer}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    PowerScheduleList:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: {type: array, items: {$ref: '#/components/schemas/PowerSchedule'}}
+    PowerScheduleRun:
+      type: object
+      additionalProperties: false
+      required: [device_id, hostname, occurrence_at, outcome, detail, reported_at]
+      properties:
+        device_id: {type: string, format: uuid}
+        hostname: {type: string}
+        occurrence_at: {type: string, format: date-time}
+        outcome: {type: string, enum: [executed_idle, executed_after_notice, postponed, executed_by_person, cancelled_by_it, replaced, skipped_suspended, not_needed, unsupported]}
+        detail:
+          anyOf:
+          - {type: string}
+          - type: 'null'
+        reported_at: {type: string, format: date-time}
+    PowerScheduleRunList:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: {type: array, items: {$ref: '#/components/schemas/PowerScheduleRun'}}
+    PowerScheduleDirective:
+      type: object
+      additionalProperties: false
+      description: Programación ya resuelta para este equipo (sin listas de alcance). Solo agentes >= 4.0.30.
+      required: [id, version, action, recurrence, time_local, valid_from, timezone, message, idle_minutes, notice_minutes, window_minutes]
+      properties:
+        id: {type: string, format: uuid}
+        version: {type: integer}
+        action: {type: string, enum: [shutdown, restart]}
+        recurrence: {type: string, enum: [once, weekly]}
+        days: {type: array, items: {type: integer, minimum: 1, maximum: 7}, maxItems: 7}
+        time_local: {type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'}
+        run_on: {type: string, format: date}
+        valid_from: {type: string, format: date}
+        valid_until: {type: string, format: date}
+        timezone: {type: string, maxLength: 64}
+        message: {type: string, maxLength: 280}
+        idle_minutes: {type: integer}
+        notice_minutes: {type: integer}
+        postpone_minutes: {type: integer}
+        window_minutes: {type: integer}
+    PowerScheduleRunReport:
+      type: object
+      additionalProperties: false
+      required: [event_id, schedule_id, occurrence_at, outcome]
+      properties:
+        event_id: {type: string, format: uuid}
+        schedule_id: {type: string, format: uuid}
+        occurrence_at: {type: string, format: date-time}
+        outcome: {type: string, enum: [executed_idle, executed_after_notice, postponed, executed_by_person, cancelled_by_it, replaced, skipped_suspended, not_needed, unsupported]}
+        detail: {type: string, maxLength: 100}
     WindowsSecurityDirective:
       type: object
       additionalProperties: false
@@ -22903,6 +23374,11 @@ components:
           maxItems: 100
           items:
             $ref: '#/components/schemas/LocationPoint'
+        power_schedule_runs:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/PowerScheduleRunReport'
     SyncResponse:
       type: object
       additionalProperties: false
@@ -22924,6 +23400,17 @@ components:
           $ref: '#/components/schemas/UnlockPinVerifier'
         windows_security:
           $ref: '#/components/schemas/WindowsSecurityDirective'
+        power_schedules:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/PowerScheduleDirective'
+        power_schedule_acks:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            format: uuid
         relocation:
           type: string
           maxLength: 16384
