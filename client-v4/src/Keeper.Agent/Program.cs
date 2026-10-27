@@ -106,7 +106,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
             () => sessions?.IdleSeconds() ?? [], () => commands.PendingNotice, OperatingSystem.IsWindows()
                 ? new WindowsBootClock(PowerScheduler.SystemBootTimeUtc, WindowsBootClock.ReadSystemLog, TimeProvider.System, Log).BootTimeUtc
                 : PowerScheduler.SystemBootTimeUtc)
-            { ServerOffset = () => serverClock.Confirmed };
+            { ServerOffset = () => serverClock.Confirmed, NoticeDelivered = run => sessions?.NoticeDelivered(run) == true };
         using var updateHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         var updater = new UpdateManager(Path.Combine(dataDirectory, "staging"), trust.ReleaseKeys, trust.InstalledSequence, trust.Channel,
             registry.IsDryRun ? null : new WindowsReleaseDownloader(updateHttp),

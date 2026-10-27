@@ -26,6 +26,22 @@ public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, Devic
     /// </summary>
     public IReadOnlyList<long?> IdleSeconds() => !_enumerated ? [null]
         : _sessions.Select(s => _peers.TryGetValue(s.Id, out var p) && p.Verified ? p.Idle : null).ToArray();
+    /// <summary>
+    /// Alguna sesion verificada completo un intercambio con el aviso de ese RunId (sin cancelar): el planificador solo
+    /// apaga tras la cuenta regresiva si la persona pudo verla. Se recuerdan los ultimos RunId entregados.
+    /// </summary>
+    public bool NoticeDelivered(Guid runId) { lock (_delivered) return _delivered.Contains(runId); }
+    private readonly List<Guid> _delivered = [];
+    private void MarkDelivered(PowerNotice? notice)
+    {
+        if (notice is not { Cancelled: false, RunId: { } run }) return;
+        lock (_delivered)
+        {
+            if (_delivered.Contains(run)) return;
+            _delivered.Add(run);
+            if (_delivered.Count > 16) _delivered.RemoveAt(0);
+        }
+    }
     public override string Name => "SessionSupervisor";
     private readonly Dictionary<int, Peer> _peers = [];
     private readonly Dictionary<int, DateTimeOffset> _retry = [];
@@ -124,6 +140,8 @@ public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, Devic
             shutdown ? null : powerNotice?.Invoke(), deviceLock.PinStatus, !shutdown && peer == _peers.OrderBy(p => p.Key).FirstOrDefault().Value ? Location?.Pending : null);
         var response = await peer.Connection.ExchangeAsync(request, timeout.Token);
         SessionProtocol.Validate(response, request.CorrelationId);
+        // Solo se intercambia con pares verificados (TickAsync verifica antes del primer intercambio).
+        MarkDelivered(request.PowerNotice);
         var ack = new List<Guid>();
         if (response.LocationNetworkId is { } network)
         {

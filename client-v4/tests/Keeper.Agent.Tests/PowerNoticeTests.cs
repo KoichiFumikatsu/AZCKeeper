@@ -230,7 +230,7 @@ public sealed class PowerNoticeTests
     }
 
     private static async Task<(SessionSupervisor Supervisor, FakePlatform Platform, ModuleHost Host, TestClock Clock, DeviceLock Lock)> StartSupervisorAsync(Action<PowerChoice>? onChoice,
-        int failVerify = 0, int pending = 0, bool tick = true)
+        int failVerify = 0, int pending = 0, bool tick = true, Func<PowerNotice?>? notice = null)
     {
         var clock = new TestClock();
         var directory = new TestDirectory();
@@ -239,7 +239,7 @@ public sealed class PowerNoticeTests
         await deviceLock.InitAsync(context);
         var platform = new FakePlatform { FailVerify = failVerify, Pending = pending };
         var supervisor = new SessionSupervisor(platform, deviceLock, () => null,
-            new SessionTaskManagerPolicies(() => [], _ => new ScreenLockTests.FakeRegistry())) { OnPowerChoice = onChoice };
+            new SessionTaskManagerPolicies(() => [], _ => new ScreenLockTests.FakeRegistry()), notice) { OnPowerChoice = onChoice };
         var host = new ModuleHost([supervisor], context);
         await host.InitAsync();
         if (tick) await host.TickAsync(default);
@@ -291,6 +291,47 @@ public sealed class PowerNoticeTests
         platform.Sessions = [];
         await host.TickAsync(default);
         Assert.Empty(supervisor.IdleSeconds());
+        await deviceLock.ShutdownAsync();
+    }
+
+    // I5: el planificador solo apaga tras el aviso si alguna sesion verificada lo recibio (intercambio completado).
+    [Fact]
+    public async Task ElSupervisorRegistraElAvisoEntregadoAUnaSesionVerificada()
+    {
+        var run = Guid.NewGuid();
+        PowerNotice? current = null;
+        var (supervisor, platform, host, clock, deviceLock) = await StartSupervisorAsync(null, notice: () => current);
+        await using var _ = host;
+        Assert.False(supervisor.NoticeDelivered(run));
+        current = new PowerNotice(PowerNoticeAction.Shutdown, clock.GetUtcNow().AddMinutes(5), false, null, 15, false, run);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await host.TickAsync(default);
+        Assert.True(supervisor.NoticeDelivered(run));
+        Assert.False(supervisor.NoticeDelivered(Guid.NewGuid()));
+        await deviceLock.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task UnAvisoSinSesionVerificadaNoCuentaComoEntregado()
+    {
+        var run = Guid.NewGuid();
+        var notice = new PowerNotice(PowerNoticeAction.Shutdown, DateTimeOffset.UtcNow.AddMinutes(5), false, null, 15, false, run);
+        var (supervisor, platform, host, clock, deviceLock) = await StartSupervisorAsync(null, pending: 1, failVerify: 2, notice: () => notice);
+        await using var _ = host;
+        for (var i = 0; i < 3; i++) { clock.Advance(TimeSpan.FromSeconds(1)); await host.TickAsync(default); }
+        Assert.False(supervisor.NoticeDelivered(run));
+        await deviceLock.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task UnAvisoCanceladoNoCuentaComoEntregado()
+    {
+        var run = Guid.NewGuid();
+        var notice = new PowerNotice(PowerNoticeAction.Shutdown, DateTimeOffset.UtcNow.AddMinutes(5), true, null, null, false, run);
+        var (supervisor, platform, host, clock, deviceLock) = await StartSupervisorAsync(null, notice: () => notice);
+        await using var _ = host;
+        for (var i = 0; i < 2; i++) { clock.Advance(TimeSpan.FromSeconds(1)); await host.TickAsync(default); }
+        Assert.False(supervisor.NoticeDelivered(run));
         await deviceLock.ShutdownAsync();
     }
 

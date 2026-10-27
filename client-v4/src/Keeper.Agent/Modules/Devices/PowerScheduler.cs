@@ -10,6 +10,8 @@ namespace Keeper.Agent.Modules.Devices;
 /// Apagado/reinicio programado (4.0.30). A la hora de cada programación (o al despertar dentro de window_minutes): sin
 /// sesiones o todas inactivas ≥ idle_minutes ejecuta; si alguna está en uso (o no se sabe) avisa con cuenta regresiva,
 /// «Posponer» una sola vez y «ahora». Cada ocurrencia termina en un resultado que viaja por la cola como power_schedule_runs.
+/// Tras el aviso solo se ejecuta si alguna sesión verificada lo recibió; si el equipo se reinició durante el aviso no se
+/// vuelve a ejecutar; sin lista del servidor en 24 h la lista guardada se descarta.
 /// </summary>
 public sealed class PowerScheduler(string statePath, IDeviceActions actions, Func<IReadOnlyList<long?>> idleSeconds,
     Func<PowerNotice?> manualNotice, Func<DateTimeOffset> bootTimeUtc) : ModuleBase
@@ -22,6 +24,8 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
     public static readonly TimeSpan DoneRetention = TimeSpan.FromDays(14);
     // Recién encendido, el SessionSupervisor aún no ve a la persona que inicia sesión: «sin sesiones» cuenta como en uso.
     public static readonly TimeSpan BootGrace = TimeSpan.FromMinutes(2);
+    // Sin un sync con power_schedules en este plazo (backend revertido, equipo sin red) la lista guardada deja de valer.
+    public static readonly TimeSpan ListExpiry = TimeSpan.FromHours(24);
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _choiceLock = new();
     private PowerChoice? _choice;
@@ -40,6 +44,9 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
     // Hora del servidor menos hora de Windows (ServerClock.Confirmed). Con más de 5 min de desfase las ocurrencias se
     // calculan con la hora del servidor; los plazos del aviso siguen en hora de Windows.
     public Func<TimeSpan>? ServerOffset { get; init; }
+    /// <summary>Alguna sesión verificada recibió el aviso de ese RunId (SessionSupervisor.NoticeDelivered). Sin esto, ningún
+    /// aviso cuenta como visto y al vencer no se apaga.</summary>
+    public Func<Guid, bool>? NoticeDelivered { get; init; }
 
     public static DateTimeOffset SystemBootTimeUtc() => DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
 
@@ -52,6 +59,13 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
     {
         await base.InitAsync(ctx);
         _state = await LoadAsync(ctx.StoppingToken);
+        // Estado de un agente anterior sin hora de recepción: las 24 h cuentan desde ahora (se guarda ya, para que un reinicio
+        // diario sin red no las renueve).
+        if (_state.ListReceivedAt is null && _state.Schedules.Count > 0)
+        {
+            _state = _state with { ListReceivedAt = ctx.Clock.GetUtcNow() };
+            await SaveAsync(ctx.StoppingToken);
+        }
         // Corte con shutdown.exe ya iniciado: no se repite, se reporta lo que se iba a reportar.
         if (_state.Active is { Started: true } started) await FinishAsync(started, started.Outcome ?? Outcome.ExecutedIdle, null, ctx.StoppingToken);
         else await FlushAsync(ctx.StoppingToken);
@@ -64,7 +78,11 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
         if (schedules is null) return;
         await _gate.WaitAsync(ct);
         var local = Context.Clock.GetUtcNow();
-        try { await ApplyOfferAsync(schedules, local, ct); }
+        try
+        {
+            _state = _state with { ListReceivedAt = local };
+            await ApplyOfferAsync(schedules, local, ct);
+        }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         // Llamado desde OnResponse del sync: un fallo local no debe tumbar el resto de la respuesta.
         catch (Exception ex) { Context.Log($"apagado programado warn: no se pudo aplicar la lista ({ex.GetType().Name}: {ex.Message})"); }
@@ -110,6 +128,11 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
             _lastEvaluation = local;
             PowerChoice? choice;
             lock (_choiceLock) { choice = _choice; _choice = null; }
+            if (_state.ListReceivedAt is { } received && local - received >= ListExpiry && _state.Schedules.Count > 0)
+            {
+                Context.Log("apagado programado: sin lista del servidor en 24 h, se descarta la lista guardada");
+                await ApplyOfferAsync([], local, ct);
+            }
             if (_state.Active is { } active) await ContinueAsync(active, choice, local, ct);
             else await StartDueAsync(local, ct);
         }
@@ -163,12 +186,27 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
             await FinishAsync(active, active.Started ? active.Outcome ?? Outcome.ExecutedIdle : Outcome.CancelledByIt, null, ct);
             return;
         }
+        // Encendido después de la hora (una ocurrencia nunca se activa si el equipo encendió después): la persona u otra
+        // cosa lo reinició o apagó durante el aviso, o se ejecutó y power-schedules.json no se pudo guardar. No se repite.
+        if (bootTimeUtc() + (CalendarNow(local) - local) > active.Occurrence)
+        {
+            Context.Log($"apagado programado {active.ScheduleId}: el equipo se reinició durante el aviso; no se repite");
+            await FinishAsync(active, Outcome.ExecutedByPerson, "restarted_during_notice", ct);
+            return;
+        }
         if (manualNotice() is { Cancelled: false })
         {
             await FinishAsync(active, Outcome.Replaced, "manual_command", ct);
             return;
         }
-        if (choice is { } c && c.RunId == active.RunId)
+        var matching = choice is { } picked && picked.RunId == active.RunId;
+        if (!active.Delivered && (matching || NoticeDelivered?.Invoke(active.RunId) == true))
+        {
+            active = active with { Delivered = true };
+            _state = _state with { Active = active };
+            await SaveAsync(ct);
+        }
+        if (matching && choice is { } c)
         {
             if (c.Kind == PowerChoiceKind.Now) { await ExecuteAsync(active, Outcome.ExecutedByPerson, ct); return; }
             // Una sola vez: la sesión vuelve a ofrecer el botón tras reiniciarse, aquí se ignora.
@@ -191,6 +229,13 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
                 _state = _state with { Active = active with { Deadline = local.AddMinutes(s.NoticeMinutes) } };
                 await SaveAsync(ct);
             }
+            return;
+        }
+        // Nadie pudo ver la cuenta regresiva (sesión sin Keeper.Session verificado): no se apaga a ciegas.
+        if (!active.Delivered)
+        {
+            Context.Log($"apagado programado {active.ScheduleId}: ninguna sesión recibió el aviso; no se ejecuta");
+            await FinishAsync(active, Outcome.NotNeeded, "no_session_ui", ct);
             return;
         }
         await ExecuteAsync(active, Outcome.ExecutedAfterNotice, ct);

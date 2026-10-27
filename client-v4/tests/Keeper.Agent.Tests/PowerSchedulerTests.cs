@@ -34,6 +34,8 @@ public sealed class PowerSchedulerTests
         public DateTimeOffset Boot { get; set; } = Occurrence.AddHours(-10);
         public Func<DateTimeOffset>? BootClock { get; set; }
         public TimeSpan Offset { get; set; }
+        // Alguna sesión verificada recibió el aviso de ese RunId (SessionSupervisor.NoticeDelivered).
+        public bool Delivered { get; set; } = true;
         public ModuleContext Context { get; }
         public PowerScheduler Scheduler { get; private set; } = null!;
         public MemoryEvents Events => (MemoryEvents)Context.Outbox;
@@ -56,7 +58,7 @@ public sealed class PowerSchedulerTests
         {
             Scheduler = new PowerScheduler(Directory.File("power-schedules.json"), Actions, () => Idle, () => Manual, () => BootClock?.Invoke() ?? Boot)
             {
-                ServerOffset = () => Offset
+                ServerOffset = () => Offset, NoticeDelivered = _ => Delivered
             };
             await Scheduler.InitAsync(Context);
         }
@@ -698,5 +700,192 @@ public sealed class PowerSchedulerTests
         var result = await outbox.RejectPendingAsync("/power_schedule_runs/0/outcome", "enum", default);
         Assert.Equal(RejectionKind.Quarantined, result.Kind);
         Assert.Equal(run, Assert.Single(await outbox.InspectQuarantineAsync()).Event.PowerRun);
+    }
+
+    // I5: un aviso que ninguna sesión verificada recibió (sesión sin Keeper.Session, recién encendido) no apaga.
+    [Fact]
+    public async Task AvisoQueNingunaSesionRecibioNoApaga()
+    {
+        var s = Friday();
+        using var rig = await Rig.StartAsync(s);
+        rig.Idle = [null];
+        rig.Delivered = false;
+        rig.At(Occurrence);
+        await rig.TickAsync();
+        Assert.NotNull(rig.Scheduler.PendingNotice);
+        rig.Clock.Advance(TimeSpan.FromMinutes(10));
+        await rig.TickAsync();
+        Assert.Empty(rig.Actions.Executed);
+        var run = Assert.Single(rig.Runs);
+        AssertRun(run, s, PowerScheduleRunReportOutcome.NotNeeded);
+        Assert.Equal("no_session_ui", run.Detail);
+        Assert.Null(rig.Scheduler.PendingNotice);
+        Assert.False(rig.Scheduler.CountdownActive);
+        rig.Clock.Advance(TimeSpan.FromMinutes(30));
+        await rig.TickAsync();
+        Assert.Empty(rig.Actions.Executed);
+        Assert.Single(rig.Runs);
+    }
+
+    // La entrega queda guardada: tras reiniciarse el agente (supervisor nuevo, sin memoria) el aviso visto sigue valiendo.
+    [Fact]
+    public async Task AvisoEntregadoSobreviveAlReinicioDelAgente()
+    {
+        var s = Friday();
+        using var rig = await Rig.StartAsync(s);
+        rig.Idle = [30];
+        rig.Delivered = false;
+        rig.At(Occurrence);
+        await rig.TickAsync();
+        rig.Delivered = true;
+        rig.Clock.Advance(TimeSpan.FromSeconds(1));
+        await rig.TickAsync();
+        rig.Delivered = false;
+        await rig.RestartAgentAsync();
+        rig.Clock.Advance(TimeSpan.FromMinutes(10));
+        await rig.TickAsync();
+        Assert.Equal([DeviceAction.Shutdown], rig.Actions.Executed);
+        AssertRun(Assert.Single(rig.Runs), s, PowerScheduleRunReportOutcome.ExecutedAfterNotice);
+    }
+
+    // Sin usuarios pasada la gracia de arranque sigue apagando sin aviso (no hay a quién avisar).
+    [Fact]
+    public async Task SinUsuariosNoNecesitaEntregarAviso()
+    {
+        var s = Friday();
+        using var rig = await Rig.StartAsync(s);
+        rig.Idle = [];
+        rig.Delivered = false;
+        rig.At(Occurrence);
+        await rig.TickAsync();
+        Assert.Equal([DeviceAction.Shutdown], rig.Actions.Executed);
+        AssertRun(Assert.Single(rig.Runs), s, PowerScheduleRunReportOutcome.ExecutedIdle);
+    }
+
+    // Sábado 19:00 Bogotá = 2026-11-01 00:00Z, 25 h después de Before.
+    private static readonly DateTimeOffset SaturdayOccurrence = Occurrence.AddDays(1);
+    private static PowerScheduleDirective Saturday() => Friday() with { Days = [6] };
+
+    // I3: sin una lista del servidor en 24 h la lista guardada se descarta (backend revertido o equipo sin red).
+    [Fact]
+    public async Task SinListaDelServidorEn24HorasSeDescarta()
+    {
+        var s = Saturday();
+        using var rig = await Rig.StartAsync(s);
+        rig.At(Before.AddHours(12));
+        await rig.Scheduler.OfferAsync(null, default); // campo ausente (servidor anterior): no renueva
+        await rig.TickAsync();
+        rig.At(Before.AddHours(24).AddMinutes(1));
+        await rig.TickAsync();
+        rig.At(SaturdayOccurrence);
+        await rig.TickAsync();
+        Assert.Empty(rig.Actions.Executed);
+        Assert.Empty(rig.Runs);
+    }
+
+    [Fact]
+    public async Task UnaListaRecibidaRenuevaLas24Horas()
+    {
+        var s = Saturday();
+        using var rig = await Rig.StartAsync(s);
+        rig.At(Before.AddHours(12));
+        await rig.Scheduler.OfferAsync([s], default);
+        rig.At(Before.AddHours(24).AddMinutes(1));
+        await rig.TickAsync();
+        await rig.RestartAgentAsync(); // la hora de recepción se guarda
+        rig.At(SaturdayOccurrence);
+        await rig.TickAsync();
+        Assert.Equal([DeviceAction.Shutdown], rig.Actions.Executed);
+    }
+
+    [Fact]
+    public async Task ListaVencidaDuranteElAvisoLoCancela()
+    {
+        var s = Saturday();
+        using var rig = await Rig.StartAsync(s);
+        rig.At(SaturdayOccurrence.AddHours(-24).AddMinutes(5));
+        await rig.Scheduler.OfferAsync([s], default);
+        rig.Idle = [30];
+        rig.At(SaturdayOccurrence);
+        await rig.TickAsync();
+        Assert.True(rig.Scheduler.CountdownActive);
+        rig.Clock.Advance(TimeSpan.FromMinutes(6));
+        await rig.TickAsync();
+        Assert.False(rig.Scheduler.CountdownActive);
+        Assert.True(rig.Scheduler.PendingNotice!.Cancelled);
+        var run = Assert.Single(rig.Runs);
+        Assert.Equal(PowerScheduleRunReportOutcome.CancelledByIt, run.Outcome);
+        rig.Clock.Advance(TimeSpan.FromMinutes(10));
+        await rig.TickAsync();
+        Assert.Empty(rig.Actions.Executed);
+    }
+
+    // Estado de un agente anterior (sin hora de recepción): las 24 h cuentan desde que arranca el agente.
+    [Fact]
+    public async Task EstadoSinHoraDeRecepcionCuentaDesdeElArranque()
+    {
+        var s = Saturday();
+        using var rig = new Rig();
+        var state = new PowerSchedulerState([new PowerScheduleEntry(s, Before)], null, [], []);
+        await File.WriteAllBytesAsync(rig.Directory.File("power-schedules.json"), JsonSerializer.SerializeToUtf8Bytes(state, ProtocolJson.Options));
+        rig.At(SaturdayOccurrence.AddHours(-23));
+        await rig.RestartAgentAsync();
+        rig.At(SaturdayOccurrence);
+        await rig.TickAsync();
+        Assert.Equal([DeviceAction.Shutdown], rig.Actions.Executed);
+        rig.At(SaturdayOccurrence.AddDays(7)); // ningún sync en una semana: la del sábado siguiente ya no corre
+        await rig.TickAsync();
+        Assert.Single(rig.Actions.Executed);
+    }
+
+    // I4: la persona (u otra cosa) reinició el equipo durante el aviso: no se vuelve a avisar ni a ejecutar.
+    [Fact]
+    public async Task ReinicioManualDuranteElAvisoNoSeEjecutaOtraVez()
+    {
+        var s = Friday();
+        using var rig = await Rig.StartAsync(s);
+        rig.Idle = [30];
+        rig.At(Occurrence);
+        await rig.TickAsync();
+        rig.Boot = Occurrence.AddMinutes(3);
+        rig.At(Occurrence.AddMinutes(4));
+        await rig.RestartAgentAsync();
+        await rig.TickAsync();
+        Assert.Empty(rig.Actions.Executed);
+        var run = Assert.Single(rig.Runs);
+        AssertRun(run, s, PowerScheduleRunReportOutcome.ExecutedByPerson);
+        Assert.Equal("restarted_during_notice", run.Detail);
+        Assert.Null(rig.Scheduler.PendingNotice);
+        rig.Clock.Advance(TimeSpan.FromMinutes(30));
+        await rig.TickAsync();
+        Assert.Empty(rig.Actions.Executed);
+        Assert.Single(rig.Runs);
+    }
+
+    // T7(d): si power-schedules.json no se puede guardar, el reinicio ejecutado no deja un aviso viejo que reinicie otra vez.
+    [Fact]
+    public async Task GuardarFallandoNoProvocaReiniciosRepetidos()
+    {
+        var s = Friday(PowerScheduleDirectiveAction.Restart);
+        using var rig = await Rig.StartAsync(s);
+        rig.Idle = [30];
+        rig.At(Occurrence);
+        await rig.TickAsync();
+        rig.Clock.Advance(TimeSpan.FromSeconds(1));
+        await rig.TickAsync();
+        using (new FileStream(rig.Directory.File("power-schedules.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            rig.Clock.Advance(TimeSpan.FromMinutes(10));
+            await rig.TickAsync();
+            Assert.Equal([DeviceAction.Restart], rig.Actions.Executed);
+            for (var boot = 1; boot <= 3; boot++)
+            {
+                rig.Boot = Occurrence.AddMinutes(10 + 5 * boot);
+                rig.At(rig.Boot.AddMinutes(4));
+                await rig.RestartAgentAsync(); // lee el aviso viejo (Started=false): el archivo no se pudo actualizar
+                for (var i = 0; i < 25; i++) { rig.Clock.Advance(TimeSpan.FromMinutes(1)); await rig.TickAsync(); }
+            }
+        }
+        Assert.Equal([DeviceAction.Restart], rig.Actions.Executed);
     }
 }
