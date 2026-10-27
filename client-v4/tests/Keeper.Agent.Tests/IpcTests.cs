@@ -30,6 +30,42 @@ public sealed class IpcTests
         Assert.Single(result.Episodes);
     }
 
+    [Fact]
+    public void InactividadYEleccionViajanYSeOmitenSiSonNulas()
+    {
+        var run = Guid.NewGuid();
+        var response = new SessionResponse(1, Guid.NewGuid(), [], [], IdleSeconds: 42, PowerChoice: new PowerChoice(run, PowerChoiceKind.Postpone));
+        var json = JsonSerializer.Serialize(response, ProtocolJson.Options);
+        Assert.Contains("\"idle_seconds\":42", json);
+        Assert.Contains($"\"power_choice\":{{\"run_id\":\"{run}\",\"kind\":\"postpone\"}}", json);
+        Assert.Equal(response.PowerChoice, JsonSerializer.Deserialize<SessionResponse>(json, ProtocolJson.Options)!.PowerChoice);
+        var plain = JsonSerializer.Serialize(new SessionResponse(1, Guid.NewGuid(), [], []), ProtocolJson.Options);
+        Assert.DoesNotContain("idle_seconds", plain);
+        Assert.DoesNotContain("power_choice", plain);
+    }
+
+    [Theory]
+    [InlineData(-1L, false)]
+    [InlineData(31_536_001L, false)]
+    [InlineData(0L, true)]
+    [InlineData(31_536_000L, true)]
+    public void ValidaElRangoDeInactividad(long idle, bool valid)
+    {
+        var id = Guid.NewGuid();
+        var response = new SessionResponse(1, id, [], [], IdleSeconds: idle);
+        if (valid) SessionProtocol.Validate(response, id);
+        else Assert.Throws<InvalidDataException>(() => SessionProtocol.Validate(response, id));
+    }
+
+    [Fact]
+    public void RechazaUnaEleccionSinOrden()
+    {
+        var id = Guid.NewGuid();
+        Assert.Throws<InvalidDataException>(() => SessionProtocol.Validate(
+            new SessionResponse(1, id, [], [], PowerChoice: new PowerChoice(Guid.Empty, PowerChoiceKind.Now)), id));
+        SessionProtocol.Validate(new SessionResponse(1, id, [], [], PowerChoice: new PowerChoice(Guid.NewGuid(), PowerChoiceKind.Now)), id);
+    }
+
     [Theory]
     [InlineData(-1)]
     [InlineData(0)]

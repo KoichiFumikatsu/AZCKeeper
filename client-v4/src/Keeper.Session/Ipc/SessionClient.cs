@@ -1,13 +1,14 @@
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using Keeper.Agent.Hosting;
+using Keeper.Session.Modules.Activity;
 using Keeper.Session.Modules.UI;
 using Keeper.Shared.Contracts;
 
 namespace Keeper.Session.Ipc;
 
 public sealed class SessionClient(string pipeName, int agentPid, ModuleHost host, SessionBuffer buffer, LockScreen screen,
-    PowerNoticeWindow? notice = null)
+    IInputIdleSource idle, Func<bool> locked, PowerNoticeWindow? notice = null)
 {
     public async Task RunAsync(CancellationToken ct)
     {
@@ -32,11 +33,13 @@ public sealed class SessionClient(string pipeName, int agentPid, ModuleHost host
                 version = request.PolicyVersion;
             }
             await screen.SetStateAsync(request.Locked, request.PinAllowed, request.PinStatus);
+            if (request.PowerNotice is { } incoming) SessionProtocol.Validate(incoming);
             notice?.Set(request.Shutdown ? null : request.PowerNotice);
             await host.TickAsync(ct);
             await location.PollAsync(request.Location, buffer, ct, locationActive && !request.Shutdown);
             if (request.Shutdown) await host.ShutdownAsync();
-            await SessionProtocol.WriteAsync(pipe, buffer.Response(request.CorrelationId, screen.TakePin(), locationActive ? location.NetworkId : null), ct);
+            await SessionProtocol.WriteAsync(pipe, buffer.Response(request.CorrelationId, screen.TakePin(), locationActive ? location.NetworkId : null,
+                IdleSeconds(), notice?.TakeChoice()), ct);
             if (request.Shutdown)
             {
                 var final = await SessionProtocol.ReadAsync<SessionRequest>(pipe, ct);
@@ -45,6 +48,13 @@ public sealed class SessionClient(string pipeName, int agentPid, ModuleHost host
                 return;
             }
         }
+    }
+    // Bloqueado = sin uso (spec 3): un ano. Si Windows no responde, null (desconocido): el planificador lo trata como «en uso».
+    private long? IdleSeconds()
+    {
+        if (locked()) return SessionProtocol.MaxIdleSeconds;
+        try { return Math.Clamp((long)idle.GetIdleTime().TotalSeconds, 0, SessionProtocol.MaxIdleSeconds); }
+        catch (System.ComponentModel.Win32Exception) { return null; }
     }
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetNamedPipeServerProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint pid);

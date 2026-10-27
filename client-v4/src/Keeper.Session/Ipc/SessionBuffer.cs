@@ -51,7 +51,8 @@ public sealed class SessionBuffer : IEventSink
         _episodes.RemoveAll(e => ids.Contains(e.EventId)); _logs.RemoveAll(e => ids.Contains(e.EventId));
         foreach (var day in _activity.Where(p => ids.Contains(p.Value.SnapshotId)).Select(p => p.Key).ToArray()) _activity.Remove(day);
     }
-    public SessionResponse Response(Guid correlation, string? pin, Guid? locationNetworkId = null)
+    public SessionResponse Response(Guid correlation, string? pin, Guid? locationNetworkId = null,
+        long? idleSeconds = null, PowerChoice? powerChoice = null)
     {
         if (LostEvents > 0 && _logs.Count < 100)
         {
@@ -60,6 +61,7 @@ public sealed class SessionBuffer : IEventSink
             LostEvents = 0;
         }
         return new(1, correlation, _episodes.Take(20).ToArray(), _logs.Take(20).ToArray(), pin,
-            _activity.OrderBy(p => p.Key).Select(p => p.Value).Take(7).ToArray(), _locations.Count == 0 ? null : _locations.ToArray(), locationNetworkId);
+            _activity.OrderBy(p => p.Key).Select(p => p.Value).Take(7).ToArray(), _locations.Count == 0 ? null : _locations.ToArray(), locationNetworkId,
+            idleSeconds, powerChoice);
     }
 }

@@ -16,10 +16,18 @@ public sealed record PinStatus(int Attempts, DateTimeOffset? RetryAt);
 /// Cancelled (4.0.27): IT cancelo la orden; la ventana dice «IT cancelo el reinicio/apagado» sin cuenta regresiva y se
 /// puede cerrar. El agente lo envia un rato (CommandExecutor.CancelledNoticeFor) y luego deja de enviarlo.
 /// </summary>
-public sealed record PowerNotice(PowerNoticeAction Action, DateTimeOffset Deadline, bool Cancelled = false);
+/// <remarks>
+/// Message: texto de TI (&lt;= 280, sin control). PostponeMinutes: si viene, la ventana ofrece «Posponer N» (una vez por RunId).
+/// Compact: tarjeta chica abajo a la derecha, sin boton de posponer (aviso tras posponer). RunId identifica la ejecucion.
+/// </remarks>
+public sealed record PowerNotice(PowerNoticeAction Action, DateTimeOffset Deadline, bool Cancelled = false,
+    string? Message = null, long? PostponeMinutes = null, bool Compact = false, Guid? RunId = null);
 public enum PowerNoticeAction { Restart, Shutdown }
+public enum PowerChoiceKind { Postpone, Now }
+public sealed record PowerChoice(Guid RunId, PowerChoiceKind Kind);
 public sealed record SessionResponse(int ProtocolVersion, Guid CorrelationId, IReadOnlyList<Episode> Episodes,
-    IReadOnlyList<LogEntry> Logs, string? Pin = null, IReadOnlyList<ActivitySnapshot>? Activity = null, IReadOnlyList<LocationPoint>? Locations = null, Guid? LocationNetworkId = null)
+    IReadOnlyList<LogEntry> Logs, string? Pin = null, IReadOnlyList<ActivitySnapshot>? Activity = null, IReadOnlyList<LocationPoint>? Locations = null, Guid? LocationNetworkId = null,
+    long? IdleSeconds = null, PowerChoice? PowerChoice = null)
 {
     public override string ToString() => $"SessionResponse Version={ProtocolVersion} Correlation={CorrelationId}";
 }
@@ -27,6 +35,13 @@ public sealed record SessionResponse(int ProtocolVersion, Guid CorrelationId, IR
 public static class SessionProtocol
 {
     public const int MaxFrameBytes = 128 * 1024;
+    /// <summary>Un año: tope de IdleSeconds y valor que la sesion manda con el equipo bloqueado (no cuenta como uso).</summary>
+    public const long MaxIdleSeconds = 31_536_000;
+    public static void Validate(PowerNotice notice)
+    {
+        if (notice.Message is { } m && (m.Length > 280 || m.Any(char.IsControl)) || notice.PostponeMinutes is <= 0 or > 1440)
+            throw new InvalidDataException("invalid_power_notice");
+    }
     public static void Validate(SessionResponse response, Guid correlation)
     {
         if (response.ProtocolVersion != 1 || response.CorrelationId != correlation || response.Episodes is null ||
@@ -46,6 +61,9 @@ public static class SessionProtocol
         }
         foreach (var log in response.Logs)
             if (log is null || log.EventId == Guid.Empty) throw new InvalidDataException("invalid_session_log");
+        if (response.IdleSeconds is < 0 or > MaxIdleSeconds) throw new InvalidDataException("invalid_session_idle");
+        if (response.PowerChoice is { } choice && (choice.RunId == Guid.Empty || !Enum.IsDefined(choice.Kind)))
+            throw new InvalidDataException("invalid_session_power_choice");
         if (response.Locations?.Count > 2) throw new InvalidDataException("invalid_session_locations");
         foreach (var point in response.Locations ?? []) Validate(point);
         foreach (var activity in response.Activity ?? [])

@@ -1,5 +1,6 @@
 extern alias session;
 using PowerNoticeText = session::Keeper.Session.Modules.UI.PowerNoticeText;
+using PowerNoticeChoices = session::Keeper.Session.Modules.UI.PowerNoticeChoices;
 using Keeper.Agent.Hosting;
 using Keeper.Agent.Modules.Devices;
 using Keeper.Agent.Modules.Security;
@@ -224,6 +225,121 @@ public sealed class PowerNoticeTests
         Assert.Equal(countdown, PowerNoticeText.Countdown(TimeSpan.FromSeconds(seconds)));
     }
 
+    private static async Task<(SessionSupervisor Supervisor, FakePlatform Platform, ModuleHost Host, TestClock Clock, DeviceLock Lock)> StartSupervisorAsync(Action<PowerChoice>? onChoice)
+    {
+        var clock = new TestClock();
+        var directory = new TestDirectory();
+        var context = Samples.Context(clock);
+        var deviceLock = new DeviceLock(directory.File("lock"));
+        await deviceLock.InitAsync(context);
+        var platform = new FakePlatform();
+        var supervisor = new SessionSupervisor(platform, deviceLock, () => null,
+            new SessionTaskManagerPolicies(() => [], _ => new ScreenLockTests.FakeRegistry())) { OnPowerChoice = onChoice };
+        var host = new ModuleHost([supervisor], context);
+        await host.InitAsync();
+        await host.TickAsync(default);
+        return (supervisor, platform, host, clock, deviceLock);
+    }
+
+    [Fact]
+    public async Task ElSupervisorGuardaLaInactividadDeCadaSesion()
+    {
+        var (supervisor, platform, host, clock, deviceLock) = await StartSupervisorAsync(null);
+        await using var _ = host;
+        Assert.All(platform.Connections.Values, c => c.IdleSeconds = 30);
+        for (var i = 0; i < 3; i++) { clock.Advance(TimeSpan.FromSeconds(1)); await host.TickAsync(default); }
+        Assert.Equal(new long?[] { 30, 30 }, supervisor.IdleSeconds());
+        await deviceLock.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task LaEleccionDeLaPersonaLlegaAlAgenteUnaVez()
+    {
+        var choices = new List<PowerChoice>();
+        var (_, platform, host, clock, deviceLock) = await StartSupervisorAsync(choices.Add);
+        await using var _ = host;
+        var choice = new PowerChoice(Guid.NewGuid(), PowerChoiceKind.Postpone);
+        platform.Connections[1].NextChoice = choice;
+        for (var i = 0; i < 3; i++) { clock.Advance(TimeSpan.FromSeconds(1)); await host.TickAsync(default); }
+        for (var i = 0; i < 3; i++) { clock.Advance(TimeSpan.FromSeconds(1)); await host.TickAsync(default); }
+        Assert.Equal([choice], choices);
+        await deviceLock.ShutdownAsync();
+    }
+
+    [Fact]
+    public void TextosConMensajeDeTiYPosponer()
+    {
+        var text = PowerNoticeText.Message(PowerNoticeAction.Restart, TimeSpan.FromMinutes(10), "Hasta el lunes");
+        Assert.StartsWith("Hasta el lunes", text);
+        Assert.EndsWith("El equipo se reiniciará en 10 minutos por orden de IT. Guarda tu trabajo.", text);
+        Assert.Equal("El equipo se apagará ahora por orden de IT.", PowerNoticeText.Message(PowerNoticeAction.Shutdown, TimeSpan.Zero, null));
+        Assert.Equal("El equipo se apagará ahora por orden de IT.", PowerNoticeText.Message(PowerNoticeAction.Shutdown, TimeSpan.Zero, "  "));
+        Assert.Equal("Posponer 15 min", PowerNoticeText.PostponeLabel(15));
+        Assert.Equal("Posponer 1 h", PowerNoticeText.PostponeLabel(60));
+        Assert.Equal("Posponer 2 h", PowerNoticeText.PostponeLabel(120));
+        Assert.Equal("Posponer 90 min", PowerNoticeText.PostponeLabel(90));
+        Assert.Equal("Apagar ahora", PowerNoticeText.NowLabel(PowerNoticeAction.Shutdown));
+        Assert.Equal("Reiniciar ahora", PowerNoticeText.NowLabel(PowerNoticeAction.Restart));
+    }
+
+    private static PowerNotice Offer(Guid? run, bool compact = false, bool cancelled = false, long? postpone = 15) =>
+        new(PowerNoticeAction.Restart, DateTimeOffset.UnixEpoch.AddHours(1), cancelled, null, postpone, compact, run);
+
+    [Fact]
+    public void ElBotonPosponerSoloSeOfreceUnaVezPorOrdenYSeTomaUnaVez()
+    {
+        var choices = new PowerNoticeChoices();
+        var run = Guid.NewGuid();
+        Assert.False(choices.ButtonsVisible);
+        choices.Update(Offer(run));
+        Assert.True(choices.ButtonsVisible);
+        choices.Pick(PowerChoiceKind.Postpone);
+        Assert.False(choices.ButtonsVisible);
+        choices.Pick(PowerChoiceKind.Now); // ignorado: ya eligio
+        Assert.Equal(new PowerChoice(run, PowerChoiceKind.Postpone), choices.Take());
+        Assert.Null(choices.Take());
+        choices.Update(Offer(run)); // el mismo aviso repetido no vuelve a ofrecerse
+        Assert.False(choices.ButtonsVisible);
+        choices.Update(Offer(Guid.NewGuid())); // otra ejecucion si
+        Assert.True(choices.ButtonsVisible);
+    }
+
+    [Fact]
+    public void LaEleccionPendienteSeDescartaSiElAvisoCambiaOSeCancela()
+    {
+        var choices = new PowerNoticeChoices();
+        var run = Guid.NewGuid();
+        choices.Update(Offer(run)); choices.Pick(PowerChoiceKind.Now);
+        choices.Update(null);
+        Assert.Null(choices.Take());
+        choices.Update(Offer(run)); choices.Pick(PowerChoiceKind.Now);
+        choices.Update(Offer(Guid.NewGuid()));
+        Assert.Null(choices.Take());
+        var other = Guid.NewGuid();
+        choices.Update(Offer(other, cancelled: true));
+        Assert.False(choices.ButtonsVisible);
+        choices.Update(Offer(other, compact: true));
+        Assert.False(choices.ButtonsVisible);
+        choices.Update(Offer(null));
+        Assert.False(choices.ButtonsVisible);
+        choices.Update(Offer(Guid.NewGuid(), postpone: null));
+        Assert.False(choices.ButtonsVisible);
+    }
+
+    [Fact]
+    public void ElAvisoAmpliadoViajaPorElCanal()
+    {
+        var run = Guid.NewGuid();
+        var notice = new PowerNotice(PowerNoticeAction.Shutdown, DateTimeOffset.FromUnixTimeSeconds(1700000300), false, "Hasta el lunes", 15, true, run);
+        var json = System.Text.Json.JsonSerializer.Serialize(new SessionRequest(1, Guid.NewGuid(), null, null, false, false, [], PowerNotice: notice), ProtocolJson.Options);
+        Assert.Contains("\"postpone_minutes\":15", json);
+        Assert.Equal(notice, System.Text.Json.JsonSerializer.Deserialize<SessionRequest>(json, ProtocolJson.Options)!.PowerNotice);
+        SessionProtocol.Validate(notice);
+        Assert.Throws<InvalidDataException>(() => SessionProtocol.Validate(notice with { Message = new string('a', 281) }));
+        Assert.Throws<InvalidDataException>(() => SessionProtocol.Validate(notice with { Message = "a\nb" }));
+        Assert.Throws<InvalidDataException>(() => SessionProtocol.Validate(notice with { PostponeMinutes = 0 }));
+    }
+
     private sealed class FakePlatform : ISessionSupervisorPlatform
     {
         public Dictionary<int, FakeConnection> Connections { get; } = [];
@@ -237,11 +353,14 @@ public sealed class PowerNoticeTests
         public bool HasExited => false;
         public Task Connecting => Task.CompletedTask;
         public List<SessionRequest> Requests { get; } = [];
+        public long? IdleSeconds { get; set; }
+        public PowerChoice? NextChoice { get; set; }
+        private PowerChoice? Take() { var c = NextChoice; NextChoice = null; return c; }
         public void Verify() { }
         public Task<SessionResponse> ExchangeAsync(SessionRequest request, CancellationToken ct)
         {
             Requests.Add(request);
-            return Task.FromResult(new SessionResponse(1, request.CorrelationId, [], []));
+            return Task.FromResult(new SessionResponse(1, request.CorrelationId, [], [], IdleSeconds: IdleSeconds, PowerChoice: Take()));
         }
         public Task SendAsync(SessionRequest request, CancellationToken ct) => Task.CompletedTask;
         public void Dispose() { }

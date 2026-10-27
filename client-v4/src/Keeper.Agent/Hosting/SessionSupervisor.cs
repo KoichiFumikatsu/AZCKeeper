@@ -17,6 +17,10 @@ public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, Devic
         Func<PolicyCoordinator?> policy, Func<PowerNotice?>? powerNotice = null) : this(new WindowsSessionSupervisorPlatform(launcher, sessionExe), deviceLock,
             policy, SessionTaskManagerPolicies.Windows(), powerNotice) { }
     public Keeper.Agent.Modules.Location.LocationModule? Location { get; init; }
+    /// <summary>La persona eligio «Posponer» o «Apagar/Reiniciar ahora» en el aviso; el planificador (Task 7) decide.</summary>
+    public Action<PowerChoice>? OnPowerChoice { get; init; }
+    /// <summary>Inactividad (segundos) por sesion verificada; null = sin dato (el planificador lo trata como «en uso»).</summary>
+    public IReadOnlyList<long?> IdleSeconds() => _peers.Values.Where(p => p.Verified).Select(p => p.Idle).ToArray();
     public override string Name => "SessionSupervisor";
     private readonly Dictionary<int, Peer> _peers = [];
     private readonly Dictionary<int, DateTimeOffset> _retry = [];
@@ -133,6 +137,8 @@ public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, Devic
             ack.Add(log.EventId);
         }
         foreach (var activity in response.Activity ?? []) { await Context.Outbox.EnqueueAsync(activity, ct); ack.Add(activity.SnapshotId); }
+        peer.Idle = response.IdleSeconds;
+        if (response.PowerChoice is { } choice) OnPowerChoice?.Invoke(choice);
         if (response.Pin is not null) await deviceLock.ValidatePinAsync(response.Pin, ct);
         peer.Acknowledged = ack;
         peer.Version = version;
@@ -175,6 +181,7 @@ public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, Devic
         public long? Version { get; set; }
         public IReadOnlyList<Guid> Acknowledged { get; set; } = [];
         public Guid? LocationNetworkId { get; set; }
+        public long? Idle { get; set; }
         public Task? Exchange { get; set; }
     }
 }
