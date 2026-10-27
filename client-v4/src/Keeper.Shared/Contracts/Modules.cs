@@ -21,6 +21,7 @@ public sealed record ModuleContext(IEventSink Outbox, TimeProvider Clock,
 public interface IEventSink
 {
     Task EnqueueAsync(LocationPoint point, CancellationToken ct) => throw new NotSupportedException("location_sink_unavailable");
+    Task EnqueueAsync(PowerScheduleRunReport run, CancellationToken ct) => throw new NotSupportedException("power_schedule_sink_unavailable");
     Task EnqueueAsync(Episode episode, CancellationToken ct);
     Task EnqueueAsync(LogEntry log, CancellationToken ct);
     Task EnqueueAsync(SyncRequestCommandResultsItem result, CancellationToken ct);

@@ -6,7 +6,8 @@ namespace Keeper.Agent.Storage;
 
 public sealed record OutboxEvent(Guid Id, Episode? Episode = null, LogEntry? Log = null,
     SyncRequestCommandResultsItem? Command = null, SecurityReport? Security = null,
-    ActivitySnapshot? Activity = null, DeviceInventory? Inventory = null, LocationPoint? Location = null);
+    ActivitySnapshot? Activity = null, DeviceInventory? Inventory = null, LocationPoint? Location = null,
+    PowerScheduleRunReport? PowerRun = null);
 public sealed record PendingBatch(Guid IdempotencyKey, byte[] Body, IReadOnlyList<Guid> EventIds);
 public sealed record OutboxState(long Sequence, List<OutboxEvent> Events, List<OutboxEvent> Quarantine,
     PendingBatch? Pending);
@@ -52,6 +53,7 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
         Path.Combine(Path.GetDirectoryName(path) ?? "", $"{Path.GetFileNameWithoutExtension(path)}.{name}.json");
 
     public Task EnqueueAsync(LocationPoint point, CancellationToken ct) { SessionProtocol.Validate(point); return EnqueueAsync(new OutboxEvent(point.EventId, Location: point), ct); }
+    public Task EnqueueAsync(PowerScheduleRunReport run, CancellationToken ct) => EnqueueAsync(new OutboxEvent(run.EventId, PowerRun: run), ct);
     public Task EnqueueAsync(Episode episode, CancellationToken ct) =>
         EnqueueAsync(new OutboxEvent(episode.EventId, Episode: episode), ct);
     public Task EnqueueAsync(LogEntry log, CancellationToken ct) =>
@@ -167,6 +169,7 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
             var selected = new List<OutboxEvent>();
             var episodes = new List<Episode>();
             var locations = new List<LocationPoint>();
+            var runs = new List<PowerScheduleRunReport>();
             var logs = new List<LogEntry>();
             var commands = new List<SyncRequestCommandResultsItem>();
             SecurityReport? security = null;
@@ -176,7 +179,8 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
             {
                 ProtocolVersion = 1, Sequence = checked(state.Sequence + 1), PolicyVersion = policyVersion,
                 ReleaseId = null, Episodes = episodes, Logs = logs, CommandResults = commands, Security = security,
-                Activity = activity, Inventory = inventory, Locations = locations.Count == 0 ? null : locations
+                Activity = activity, Inventory = inventory, Locations = locations.Count == 0 ? null : locations,
+                PowerScheduleRuns = runs.Count == 0 ? null : runs
             }, ProtocolJson.Options);
             var body = Serialize();
             // El contrato lleva UN snapshot por sincronizacion, asi que si hay varios dias
@@ -184,14 +188,16 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
             // de lo contrario un dia viejo nunca saldria de la cola.
             var oldestActivity = state.Events.Where(e => e.Activity is not null && include(e))
                 .OrderBy(e => e.Activity!.Day).ThenBy(e => e.Activity!.Sequence).FirstOrDefault();
-            foreach (var item in state.Events.Where(include).OrderByDescending(e => e.Command is not null || e.Security is not null))
+            foreach (var item in state.Events.Where(include).OrderByDescending(e => e.Command is not null || e.Security is not null || e.PowerRun is not null))
             {
                 if (selected.Count == 200) break;
                 if (item.Location is not null && locations.Count == 100) continue;
+                if (item.PowerRun is not null && runs.Count == 100) continue;
                 if (item.Episode is not null && episodes.Count == 200 || item.Log is not null && logs.Count == 50 ||
                     item.Command is not null && commands.Count == 20 || item.Security is not null && security is not null
                     || item.Activity is not null && !ReferenceEquals(item, oldestActivity) || item.Inventory is not null && inventory is not null) continue;
                 if (item.Location is not null) locations.Add(item.Location);
+                if (item.PowerRun is not null) runs.Add(item.PowerRun);
                 if (item.Episode is not null) episodes.Add(item.Episode);
                 if (item.Log is not null) logs.Add(item.Log);
                 if (item.Command is not null) commands.Add(item.Command);
@@ -365,6 +371,7 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
         {
             "episodes" when request.Episodes is { } list && Index(parts, list.Count) is { } i => list[i].EventId,
             "locations" when request.Locations is { } points && Index(parts, points.Count) is { } n => points[n].EventId,
+            "power_schedule_runs" when request.PowerScheduleRuns is { } runs && Index(parts, runs.Count) is { } r => runs[r].EventId,
             "logs" when request.Logs is { } list && Index(parts, list.Count) is { } i => list[i].EventId,
             "command_results" when request.CommandResults is { } list && Index(parts, list.Count) is { } i => list[i].Result.EventId,
             "security" => request.Security?.EventId,
@@ -381,7 +388,7 @@ public sealed partial class DurableOutbox(string path, int maxBytes = 16 * 1024 
     private static string Detail(string? pointer, string? rule, OutboxEvent item)
     {
         var kind = item.Episode is not null ? "episodes" : item.Log is not null ? "logs" : item.Command is not null ? "command_results"
-            : item.Location is not null ? "locations" : item.Security is not null ? "security" : item.Activity is not null ? "activity" : "inventory";
+            : item.Location is not null ? "locations" : item.PowerRun is not null ? "power_schedule_runs" : item.Security is not null ? "security" : item.Activity is not null ? "activity" : "inventory";
         var where = pointer is null ? kind : pointer.Trim('/').Replace('/', '.');
         var text = new string($"{where}:{rule ?? "isolated"}".Select(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '.' or ':' or '-' ? c : '_').ToArray());
         if (text.Length > 80) text = text[..80];

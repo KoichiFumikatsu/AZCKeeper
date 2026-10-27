@@ -135,6 +135,8 @@ public sealed class SyncClient(HttpClient http, HttpMessageSigner signer, Guid d
         // server_time llega en un 2xx a una peticion firmada: confirma el desfase de las firmas.
         signer.Clock?.Observe(response.ServerTime, confirmed: true);
         await outbox.CompleteAsync(response.EpisodeAcks.Concat(response.LogAcks).Concat(response.CommandAcks).Concat(response.LocationAcks ?? [])
+            // El servidor confirma los resultados del apagado programado solo con el event_id (tambien los de una programacion borrada).
+            .Concat((response.PowerScheduleAcks ?? []).Select(id => new Ack { EventId = id, Status = AckStatus.Accepted, Retryable = false }))
             .Concat(response.SecurityAck is null ? [] : new[] { response.SecurityAck })
             // Sin el ack de actividad la foto enviada nunca salia de la cola: se reenviaba la misma en cada sync y las
             // nuevas se acumulaban hasta llenarla (incidente 2026-09-30).

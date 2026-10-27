@@ -91,11 +91,18 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         if (deviceId != Guid.Empty && claimedDocument is not null && OperatingSystem.IsWindows()) InstallerClaimedDocument.Scrub(Log);
         var pinPath = Path.Combine(dataDirectory, "pin-verifier.dpapi");
         var deviceLock = new DeviceLock(Path.Combine(dataDirectory, "device-lock.json"), PinVerifier.LoadProtected(pinPath), pinPath);
+        var deviceActions = new WindowsDeviceActions(!registry.IsDryRun);
         var commands = new CommandExecutor(Path.Combine(dataDirectory, "commands.json"), deviceId, deviceLock,
-            new WindowsDeviceActions(!registry.IsDryRun),
+            deviceActions,
             OperatingSystem.IsWindows() ? new WindowsComputerNamer(!registry.IsDryRun) : null,
             OperatingSystem.IsWindows() && !registry.IsDryRun ? new WindowsHardeningLauncher(AppContext.BaseDirectory, dataDirectory, trust.BinaryHashes) : null,
             OperatingSystem.IsWindows() && !registry.IsDryRun ? new WindowsSessionLogoff(new WindowsSessionLauncher(trust.BinaryHashes), Log) : null)
+            { ServerOffset = () => serverClock.Confirmed };
+        // Apagado/reinicio programado (4.0.30): pregunta la inactividad a las sesiones verificadas (sin SessionSupervisor no
+        // hay sesiones a las que avisar); una orden manual con aviso gana a la programada.
+        SessionSupervisor? sessions = null;
+        var powerScheduler = new PowerScheduler(Path.Combine(dataDirectory, "power-schedules.json"), deviceActions,
+            () => sessions?.IdleSeconds() ?? [], () => commands.PendingNotice, PowerScheduler.SystemBootTimeUtc)
             { ServerOffset = () => serverClock.Confirmed };
         using var updateHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         var updater = new UpdateManager(Path.Combine(dataDirectory, "staging"), trust.ReleaseKeys, trust.InstalledSequence, trust.Channel,
@@ -114,7 +121,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
             ? Math.Clamp(hours, 6, 720) : 24;
         var moduleList = new List<IModule> { new WebEnforcer(registry), new UsbEnforcer(registry),
             new InstallEnforcer(registry, loadOptions: () => AppLockerOptions.FromEnvironment(Environment.GetEnvironmentVariable)),
-            new DownloadEnforcer(registry), deviceLock, commands, legacyK3, inventory, updater, smartAppControl,
+            new DownloadEnforcer(registry), deviceLock, commands, powerScheduler, legacyK3, inventory, updater, smartAppControl,
             HardeningStatusModule.FromFile(Path.Combine(dataDirectory, "hardening", "state.json")),
             new RestorePointModule(new WindowsRestorePointService(!registry.IsDryRun), Path.Combine(dataDirectory, "restore-point.json"),
                 TimeSpan.FromHours(restorePointHours), TimeSpan.FromHours(6)),
@@ -123,7 +130,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         // regresiva de reinicio/apagado; cada salto de hora que ve corrige tambien el desfase de las firmas. Si W32Time
         // no la corrige, la pone con la hora del servidor (fuera de dominio, con dos mediciones consistentes).
         if (OperatingSystem.IsWindows()) moduleList.Add(new TimeSync(new WindowsTimeSystem(), !registry.IsDryRun,
-            serverClock, () => commands.PendingNotice is { Cancelled: false }));
+            serverClock, () => commands.PendingNotice is { Cancelled: false } || powerScheduler.CountdownActive));
         // Bloqueo del cambio manual de la hora (4.0.28, time_change_lock de la politica; apagado por defecto). En dry-run
         // no toca la LSA; nunca en dominio.
         if (OperatingSystem.IsWindows()) moduleList.Add(new TimeChangeLockModule(registry.IsDryRun ? null : new WindowsAccountRights(),
@@ -135,8 +142,9 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
                 new Keeper.Shared.Location.LocationSettingsStore(new Keeper.Shared.Location.WindowsLocationSettings(), Path.Combine(dataDirectory, "location-settings.json")), WindowsTimeSystem.DomainJoined);
             moduleList.Add(locationModule);
         }
-        if (OperatingSystem.IsWindows()) moduleList.Add(new SessionSupervisor(new WindowsSessionLauncher(trust.BinaryHashes),
-            Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), deviceLock, () => policy, () => commands.PendingNotice) { Location = locationModule });
+        if (OperatingSystem.IsWindows()) moduleList.Add(sessions = new SessionSupervisor(new WindowsSessionLauncher(trust.BinaryHashes),
+            Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), deviceLock, () => policy, () => commands.PendingNotice ?? powerScheduler.PendingNotice)
+            { Location = locationModule, OnPowerChoice = powerScheduler.Choose });
         await using var modules = new ModuleHost(moduleList, context);
         hostReference = modules;
         await modules.InitAsync();
@@ -171,6 +179,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
                     {
                         if (response.UnlockPin is not null) await deviceLock.TryApplyVerifierAsync(response.UnlockPin, tenant, ct);
                         await commands.AcceptAsync(response.Commands, tenant, ct);
+                        await powerScheduler.OfferAsync(response.PowerSchedules, ct);
                         updater.Offer(response.Release);
                         await smartAppControl.TryApplyAsync(response.WindowsSecurity, ct);
                         await relocation!.OfferAsync(response.Relocation, tenant, ct);

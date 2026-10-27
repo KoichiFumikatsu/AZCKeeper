@@ -59,11 +59,13 @@ internal sealed class MemoryEvents : IEventSink
     public List<SyncRequestCommandResultsItem> CommandResults { get; } = [];
     public List<SecurityReport> SecurityReports { get; } = [];
     public List<ActivitySnapshot> Activity { get; } = [];
+    public List<PowerScheduleRunReport> PowerRuns { get; } = [];
     public Task EnqueueAsync(Episode episode, CancellationToken ct) => Task.CompletedTask;
     public Task EnqueueAsync(LogEntry log, CancellationToken ct) { Logs.Add(log); return Task.CompletedTask; }
     public Task EnqueueAsync(SyncRequestCommandResultsItem result, CancellationToken ct) { CommandResults.Add(result); return Task.CompletedTask; }
     public Task EnqueueAsync(SecurityReport report, CancellationToken ct) { SecurityReports.Add(report); return Task.CompletedTask; }
     public Task EnqueueAsync(ActivitySnapshot activity, CancellationToken ct) { Activity.Add(activity); return Task.CompletedTask; }
+    public Task EnqueueAsync(PowerScheduleRunReport run, CancellationToken ct) { PowerRuns.Add(run); return Task.CompletedTask; }
 }
 
 internal static class Samples
