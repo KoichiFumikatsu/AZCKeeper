@@ -25,7 +25,7 @@ final class PowerSchedules
     {
         return match ($op) {
             'listPowerSchedules' => $this->list(),
-            'getPowerSchedule' => AdminApi::response($this->dto($this->load($id, false, true)), 200, $this->etag($this->load($id, false))),
+            'getPowerSchedule' => $this->get($id),
             'createPowerSchedule' => $this->save(null, $b),
             'patchPowerSchedule' => $this->save($id, $b),
             'deletePowerSchedule' => $this->delete($id),
@@ -35,12 +35,54 @@ final class PowerSchedules
 
     private function etag(array $s): array { return ['ETag' => '"' . $s['version'] . '"']; }
 
-    // Como las politicas (listPolicies): son configuracion de la empresa, asi que listarlas exige alcance total.
+    private function get(string $id): array
+    {
+        $s = $this->load($id, false, true);
+        return AdminApi::response($this->dto($s), 200, $this->etag($s));
+    }
+
+    /** Alcance total ve todo; el resto, solo programaciones cuyos destinos y exclusiones caen todos en su alcance. Los destinos se cargan por lotes, no una consulta por fila. */
     private function list(): array
     {
-        $this->access->requireFull();
         $rows = $this->db->run('SELECT * FROM power_schedules WHERE tenant_id=? ORDER BY created_at DESC, id LIMIT 500', [$this->tenant])->fetchAll();
-        return AdminApi::response(['data' => array_map(fn ($s) => $this->dto($s), $rows)]);
+        $targets = $this->targetsFor(array_column($rows, 'id'));
+        if (!$this->access->full()) {
+            $allowed = $this->allowedRefs(array_merge([], ...array_values($targets)));
+            $rows = array_values(array_filter($rows, function ($s) use ($targets, $allowed) {
+                foreach ($targets[$s['id']] ?? [] as $t) { if (!isset($allowed[$t['kind'] . '|' . bin2hex($t['ref_id'])])) { return false; } }
+                return true;
+            }));
+        }
+        return AdminApi::response(['data' => array_map(fn ($s) => $this->dto($s, $targets[$s['id']] ?? []), $rows)]);
+    }
+
+    /** Destinos y exclusiones de varias programaciones en una sola consulta, agrupados por schedule_id. */
+    private function targetsFor(array $ids): array
+    {
+        if (!$ids) { return []; }
+        $out = [];
+        foreach ($this->db->run('SELECT schedule_id, kind, ref_id, excluded FROM power_schedule_targets WHERE tenant_id=? AND schedule_id IN (' . implode(',', array_fill(0, count($ids), '?')) . ') ORDER BY kind, ref_id',
+            [$this->tenant, ...$ids])->fetchAll() as $t) { $out[$t['schedule_id']][] = $t; }
+        return $out;
+    }
+
+    /** Destinos (filas kind/ref_id) dentro del alcance del administrador, resueltos por lotes: clave "kind|hex(ref_id)". */
+    private function allowedRefs(array $rows): array
+    {
+        $byKind = [];
+        foreach ($rows as $t) { $byKind[$t['kind']][$t['ref_id']] = true; }
+        $ok = [];
+        [$where, $args] = $this->access->usersSql('u');
+        foreach (['user' => 'SELECT u.id FROM users u WHERE u.tenant_id=? AND u.id IN (%s) AND ',
+                  'device' => 'SELECT d.id FROM devices d JOIN users u ON u.tenant_id=d.tenant_id AND u.id=d.user_id WHERE d.tenant_id=? AND d.id IN (%s) AND '] as $kind => $sql) {
+            $refs = array_keys($byKind[$kind] ?? []);
+            if (!$refs) { continue; }
+            foreach ($this->db->run(sprintf($sql, implode(',', array_fill(0, count($refs), '?'))) . "($where)", [$this->tenant, ...$refs, ...$args])->fetchAll() as $r) { $ok[$kind . '|' . bin2hex($r['id'])] = true; }
+        }
+        foreach (['site', 'area'] as $kind) {
+            foreach (array_keys($byKind[$kind] ?? []) as $ref) { if ($this->access->allowsUnitTarget($kind, $ref)) { $ok[$kind . '|' . bin2hex($ref)] = true; } }
+        }
+        return $ok;   // 'tenant' nunca: exige alcance total, y quien lo tiene no pasa por aqui.
     }
 
     /** $manage: quien no tiene alcance total solo ve y toca programaciones cuyos destinos y exclusiones caen todos en su alcance. */
@@ -49,7 +91,7 @@ final class PowerSchedules
         $s = $this->db->one('SELECT * FROM power_schedules WHERE tenant_id=? AND id=?' . ($lock ? ' FOR UPDATE' : ''), [$this->tenant, $id]);
         if (!$s) { throw new ApiError(404, 'resource_not_found'); }
         if ($manage && !$this->access->full()) {
-            foreach ($this->db->run('SELECT kind, ref_id FROM power_schedule_targets WHERE tenant_id=? AND schedule_id=?', [$this->tenant, $id])->fetchAll() as $t) { $this->checkTarget($t['kind'], $t['ref_id']); }
+            foreach ($this->db->run('SELECT kind, ref_id FROM power_schedule_targets WHERE tenant_id=? AND schedule_id=?', [$this->tenant, $id])->fetchAll() as $t) { $this->checkTarget($t['kind'], $t['ref_id'], false); }
         }
         return $s;
     }
@@ -79,6 +121,8 @@ final class PowerSchedules
             $v['days'] = []; $v['valid_until'] = null;
         }
         foreach (['valid_from', 'valid_until', 'run_on'] as $k) { if ($v[$k] !== null) { $this->date($v[$k]); } }
+        // Una sola vez: la vigencia es el dia de la ejecucion; se guarda asi para que la fila sea coherente (valid_from = run_on).
+        if ($v['recurrence'] === 'once') { $v['valid_from'] = $v['run_on']; }
         if ($v['valid_until'] !== null && $v['valid_until'] < $v['valid_from']) { throw new ApiError(422, 'validation_failed', [], 'invalid_range'); }
         if (preg_match('/\p{Cc}/u', (string) $v['message'])) { throw new ApiError(422, 'validation_failed'); }
         // El permiso del contrato es equipos.apagar; reiniciar exige ademas el suyo (y cambiar de reinicio a apagado, ambos).
@@ -88,6 +132,13 @@ final class PowerSchedules
         $targets = array_map(fn ($t) => (object) $t, $v['targets']);
         $excl = array_map(fn ($t) => (object) $t, $v['exclusions']);
         if (!$targets) { throw new ApiError(422, 'validation_failed'); }
+        // Un destino no puede repetirse ni estar a la vez como destino y exclusion.
+        $seen = [];
+        foreach (array_merge($targets, $excl) as $t) {
+            $key = $t->kind . '|' . strtolower($t->id);
+            if (isset($seen[$key])) { throw new ApiError(422, 'validation_failed', [], 'duplicate_target'); }
+            $seen[$key] = true;
+        }
         foreach (array_merge($targets, $excl) as $t) { $this->checkTarget($t->kind, Util::bin($t->id)); }
 
         $mask = 0;
@@ -107,7 +158,7 @@ final class PowerSchedules
         $this->db->run('DELETE FROM power_schedule_targets WHERE tenant_id=? AND schedule_id=?', [$this->tenant, $id]);
         foreach ([[$targets, 0], [$excl, 1]] as [$list, $ex]) {
             foreach ($list as $t) {
-                $this->db->run('INSERT IGNORE INTO power_schedule_targets (tenant_id,id,schedule_id,kind,ref_id,excluded) VALUES (?,?,?,?,?,?)',
+                $this->db->run('INSERT INTO power_schedule_targets (tenant_id,id,schedule_id,kind,ref_id,excluded) VALUES (?,?,?,?,?,?)',
                     [$this->tenant, Util::bin(Util::uuid()), $id, $t->kind, Util::bin($t->id), $ex]);
             }
         }
@@ -117,7 +168,7 @@ final class PowerSchedules
     }
 
     // Mismo criterio que AdminApi::policyTarget(): empresa exige alcance total; persona/equipo dentro del alcance; sede/area activas y permitidas.
-    private function checkTarget(string $kind, string $ref): void
+    private function checkTarget(string $kind, string $ref, bool $write = true): void
     {
         if (!in_array($kind, self::KINDS, true)) { throw new ApiError(422, 'validation_failed'); }
         if ($kind === 'tenant') {
@@ -132,15 +183,17 @@ final class PowerSchedules
             $this->access->user($d['user_id']);
             return;
         }
-        if (!$this->db->one('SELECT 1 FROM org_units WHERE tenant_id=? AND id=? AND kind=? AND active=1', [$this->tenant, $ref, $kind])) { throw new ApiError(422, 'validation_failed'); }
+        // Al leer, una sede/area desactivada despues sigue visible; solo escribir exige que este activa.
+        if ($write && !$this->db->one('SELECT 1 FROM org_units WHERE tenant_id=? AND id=? AND kind=? AND active=1', [$this->tenant, $ref, $kind])) { throw new ApiError(422, 'validation_failed'); }
         if (!$this->access->allowsUnitTarget($kind, $ref)) { throw new ApiError(403, 'permission_denied', [], 'scope_denied'); }
     }
 
     private function delete(string $id): array
     {
         $old = $this->load($id, true, true);
-        if ($this->r->header('if-match') !== '"' . $old['version'] . '"') { throw new ApiError(412, 'version_conflict'); }
+        // Permiso antes que If-Match: sin permiso no se revela nada (ni la version).
         if (!$this->access->has(self::permissionFor($old['action']))) { throw new ApiError(403, 'permission_denied'); }
+        if ($this->r->header('if-match') !== '"' . $old['version'] . '"') { throw new ApiError(412, 'version_conflict'); }
         $this->db->run('DELETE FROM power_schedules WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
         (new Audit($this->db))->record($this->c, $this->r, $this->r->operation['operationId'], 'power_schedule', $id, ['deleted']);
         return ['status' => 204, 'json' => '', 'headers' => []];
@@ -157,16 +210,17 @@ final class PowerSchedules
             LEFT JOIN users u ON u.tenant_id=d.tenant_id AND u.id=d.user_id
             WHERE r.tenant_id=? AND r.schedule_id=? AND ($scope)
             AND NOT EXISTS (SELECT 1 FROM power_schedule_runs n WHERE n.tenant_id=r.tenant_id AND n.schedule_id=r.schedule_id AND n.device_id=r.device_id
-                AND (n.occurrence_at>r.occurrence_at OR (n.occurrence_at=r.occurrence_at AND n.reported_at>r.reported_at)))
+                AND (n.occurrence_at>r.occurrence_at OR (n.occurrence_at=r.occurrence_at AND (n.reported_at>r.reported_at OR (n.reported_at=r.reported_at AND n.id>r.id)))))
             ORDER BY d.hostname, r.device_id LIMIT 1000", [$this->tenant, $id, ...$args])->fetchAll();
         return AdminApi::response(['data' => array_map(fn ($x) => ['device_id' => Util::id($x['device_id']), 'hostname' => $x['hostname'],
             'occurrence_at' => Util::time($x['occurrence_at']), 'outcome' => $x['outcome'], 'detail' => $x['detail'],
             'reported_at' => Util::time($x['reported_at'])], $rows)]);
     }
 
-    private function dto(array $s): array
+    /** $t: filas de destinos ya cargadas (listado); null las consulta (fila suelta). */
+    private function dto(array $s, ?array $t = null): array
     {
-        $t = $this->db->run('SELECT kind, ref_id, excluded FROM power_schedule_targets WHERE tenant_id=? AND schedule_id=? ORDER BY kind, ref_id', [$this->tenant, $s['id']])->fetchAll();
+        $t ??= $this->db->run('SELECT kind, ref_id, excluded FROM power_schedule_targets WHERE tenant_id=? AND schedule_id=? ORDER BY kind, ref_id', [$this->tenant, $s['id']])->fetchAll();
         $map = fn (bool $ex) => array_values(array_map(fn ($x) => ['kind' => $x['kind'], 'id' => Util::id($x['ref_id'])],
             array_filter($t, fn ($x) => (bool) $x['excluded'] === $ex)));
         $days = [];

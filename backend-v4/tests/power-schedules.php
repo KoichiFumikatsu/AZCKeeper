@@ -43,7 +43,8 @@ function powerScheduleAdminTests(Database $db): void
     check(adminRequest($scoped, 'POST', $path, $base)[1]['detail'] === 'scope_denied', 'tenant target needs full scope');
     expect(adminRequest($scoped, 'POST', $path, array_merge($base, ['targets' => [['kind' => 'user', 'id' => Util::id($a['id'])]]])), 404, 'user outside scope hidden');
     $own = expect(adminRequest($scoped, 'POST', $path, array_merge($base, ['targets' => [['kind' => 'user', 'id' => Util::id($scopedMember['id'])]]])), 201, 'own user target allowed');
-    expect(adminRequest($scoped, 'GET', $path), 403, 'scoped admin cannot list tenant config');
+    $scopedList = expect(adminRequest($scoped, 'GET', $path), 200, 'scoped admin lists');
+    check(array_column($scopedList['data'], 'id') === [$own['id']], 'scoped list only shows in-scope schedules');
     expect(adminRequest($scoped, 'GET', "$path/" . $s['id']), 403, 'scoped admin cannot read tenant-wide schedule');
     expect(adminRequest($scoped, 'PATCH', "$path/" . $s['id'], ['status' => 'paused'], ['if-match' => '"1"']), 403, 'scoped admin cannot patch tenant-wide schedule');
     expect(adminRequest($scoped, 'DELETE', "$path/" . $s['id'], null, ['if-match' => '"1"']), 403, 'scoped admin cannot delete tenant-wide schedule');
@@ -75,5 +76,68 @@ function powerScheduleAdminTests(Database $db): void
     expect(adminRequest($both, 'GET', "$path/" . $s['id']), 404, 'deleted is gone');
     check((int) $db->one('SELECT COUNT(*) n FROM power_schedule_runs WHERE tenant_id=? AND schedule_id=?', [$tenant, Util::bin($s['id'])])['n'] === 0, 'runs cascade');
     check((int) $db->one("SELECT COUNT(*) n FROM audit_log WHERE tenant_id=? AND resource_type='power_schedule'", [$tenant])['n'] >= 5, 'audited');
+
+    // --- Ronda de correcciones 1: alcance por sede/area, exclusiones, reemplazo de destinos, permisos y duplicados ---
+    accessResetPreloginQuota();
+    $siteId = Util::id($a['site_id']); $areaId = Util::id($a['area_id']);
+    $outSite = Util::bin(Util::uuid()); $outArea = Util::bin(Util::uuid());
+    $db->run("INSERT INTO org_units (tenant_id,id,kind,name) VALUES (?,?,'site','PS otra sede')", [$tenant, $outSite]);
+    $db->run("INSERT INTO org_units (tenant_id,id,kind,name) VALUES (?,?,'area','PS otra area')", [$tenant, $outArea]);
+    $outSiteId = Util::id($outSite); $outAreaId = Util::id($outArea);
+    $siteAdmin = adminFixture($db, adminMember($db, $a), ['equipos.ver', 'equipos.apagar'], false, 'site', [$a['site_id']]);
+    $otherSiteAdmin = adminFixture($db, adminMember($db, $a), ['equipos.ver', 'equipos.apagar'], false, 'site', [$outSite]);
+    $areaAdmin = adminFixture($db, adminMember($db, $a), ['equipos.ver', 'equipos.apagar'], false, 'area', [$a['area_id']]);
+    $restartOnly = adminFixture($db, adminMember($db, $a), ['equipos.ver', 'equipos.reiniciar']);
+    $t = fn (string $kind, string $id) => ['kind' => $kind, 'id' => $id];
+    $with = fn (array $over) => array_merge($base, $over);
+
+    $siteOk = adminRequest($siteAdmin, 'POST', $path, $with(['name' => 'Sede propia', 'targets' => [$t('site', $siteId)]]));
+    check($siteOk[0] === 201 && ($siteOk[2]['etag'] ?? null) === '"' . $siteOk[1]['version'] . '"', 'site admin creates for own site; ETag matches version');
+    check(adminRequest($siteAdmin, 'POST', $path, $with(['targets' => [$t('site', $outSiteId)]]))[1]['detail'] === 'scope_denied', 'site admin: other site denied');
+    check(adminRequest($siteAdmin, 'POST', $path, $with(['targets' => [$t('site', $siteId)], 'exclusions' => [$t('site', $outSiteId)]]))[1]['detail'] === 'scope_denied', 'exclusion outside scope denied');
+    expect(adminRequest($siteAdmin, 'POST', $path, $with(['targets' => [$t('site', $siteId)], 'exclusions' => [$t('user', Util::id($a['id']))]])), 201, 'exclusion inside scope allowed');
+    $areaOk = expect(adminRequest($areaAdmin, 'POST', $path, $with(['name' => 'Area propia', 'targets' => [$t('area', $areaId)]])), 201, 'area admin own area');
+    check(adminRequest($areaAdmin, 'POST', $path, $with(['targets' => [$t('area', $outAreaId)]]))[1]['detail'] === 'scope_denied', 'area admin: other area denied');
+
+    $key2 = keypair(); $token2 = enroll($db, $a, $key2); policy($db, $token2);
+    expect(adminRequest($siteAdmin, 'POST', $path, $with(['targets' => [$t('device', $token2['device_id'])]])), 201, 'device target in scope');
+    expect(adminRequest($otherSiteAdmin, 'POST', $path, $with(['targets' => [$t('device', $token2['device_id'])]])), 404, 'device target out of scope hidden');
+
+    // Listado filtrado: la programacion de la sede propia se ve; las de empresa, mixtas o con exclusion fuera, no.
+    $mixed = expect(adminRequest($both, 'POST', $path, $with(['name' => 'Mixta', 'targets' => [$t('site', $siteId), $t('site', $outSiteId)]])), 201, 'mixed targets by full admin');
+    $exOut = expect(adminRequest($both, 'POST', $path, $with(['name' => 'Excl fuera', 'targets' => [$t('site', $siteId)], 'exclusions' => [$t('site', $outSiteId)]])), 201, 'exclusion outside by full admin');
+    $siteList = array_column(expect(adminRequest($siteAdmin, 'GET', $path), 200, 'site admin list')['data'], 'id');
+    check(in_array($siteOk[1]['id'], $siteList, true) && !in_array($off['id'], $siteList, true) && !in_array($mixed['id'], $siteList, true) && !in_array($exOut['id'], $siteList, true), 'site admin list excludes out-of-scope schedules');
+    check(!in_array($areaOk['id'], $siteList, true), 'site admin does not see area-scoped schedule');
+    expect(adminRequest($siteAdmin, 'GET', "$path/" . $mixed['id']), 403, 'site admin cannot read mixed schedule');
+
+    // PATCH reemplaza destinos y exclusiones.
+    $rep = expect(adminRequest($both, 'PATCH', "$path/" . $mixed['id'], ['targets' => [$t('user', Util::id($a['id']))], 'exclusions' => [$t('site', $outSiteId)]], ['if-match' => '"' . $mixed['version'] . '"']), 200, 'replace targets');
+    check($rep['targets'] === [$t('user', Util::id($a['id']))] && $rep['exclusions'] === [$t('site', $outSiteId)], 'old targets gone, new present');
+    $patchRes = adminRequest($both, 'PATCH', "$path/" . $mixed['id'], ['status' => 'paused'], ['if-match' => '"' . $rep['version'] . '"']);
+    check($patchRes[0] === 200 && $patchRes[2]['etag'] === '"' . $patchRes[1]['version'] . '"', 'PATCH ETag matches version');
+
+    // Duplicados.
+    foreach ([[[$t('site', $siteId), $t('site', $siteId)], []], [[$t('site', $siteId)], [$t('site', $siteId)]]] as [$tg, $ex]) {
+        $dup = adminRequest($both, 'POST', $path, $with(['targets' => $tg, 'exclusions' => $ex]));
+        check($dup[0] === 422 && $dup[1]['detail'] === 'duplicate_target', 'duplicate target rejected');
+    }
+
+    // Permisos por accion en delete/create.
+    $rs = expect(adminRequest($both, 'POST', $path, $with(['name' => 'Reinicio', 'action' => 'restart'])), 201, 'restart schedule by full admin');
+    expect(adminRequest($offOnly, 'DELETE', "$path/" . $rs['id'], null, ['if-match' => '"999"']), 403, 'delete restart without reiniciar: 403 before If-Match');
+    expect(adminRequest($offOnly, 'DELETE', "$path/" . $rs['id'], null, ['if-match' => '"' . $rs['version'] . '"']), 403, 'delete restart without reiniciar');
+    expect(adminRequest($restartOnly, 'POST', $path, $with(['action' => 'restart'])), 403, 'reiniciar alone cannot create (contract needs apagar)');
+    expect(adminRequest($restartOnly, 'POST', $path, $base), 403, 'reiniciar alone cannot create shutdown');
+
+    // 'once' guarda valid_from = run_on.
+    $o2 = expect(adminRequest($both, 'POST', $path, $with(['recurrence' => 'once', 'days' => [], 'run_on' => '2026-12-24', 'valid_from' => '2026-11-01', 'name' => 'Una'])), 201, 'once consistent');
+    check($o2['valid_from'] === '2026-12-24', 'once stores valid_from = run_on');
+
+    // Otra empresa: el id no existe para ella.
+    $foreign = adminFixture($db, adminMember($db, secondTenant($db)), ['equipos.ver', 'equipos.apagar', 'equipos.reiniciar']);
+    expect(adminRequest($foreign, 'GET', "$path/" . $own['id']), 404, 'cross-tenant get');
+    expect(adminRequest($foreign, 'PATCH', "$path/" . $own['id'], ['status' => 'paused'], ['if-match' => '"1"']), 404, 'cross-tenant patch');
+    expect(adminRequest($foreign, 'DELETE', "$path/" . $own['id'], null, ['if-match' => '"1"']), 404, 'cross-tenant delete');
     echo 'PASS power schedules (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
