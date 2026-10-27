@@ -202,6 +202,13 @@ final class Application
                 if (version_compare($c['agent_version'], '4.0.19', '>=')) {
                     $response['windows_security'] = (new WindowsSecurity($db, $c, $r))->clientSettings();
                 }
+                // Apagado programado: solo agentes >= 4.0.30 (los anteriores rechazan campos desconocidos y dejarian de sincronizar).
+                // Un agente viejo que enviara power_schedule_runs se ignora: ni se guardan ni se confirman.
+                if (version_compare($c['agent_version'], PowerSchedules::MIN_AGENT, '>=')) {
+                    $power = new PowerSchedules($db, $c, null, $r);
+                    if (!empty($b->power_schedule_runs)) { $response['power_schedule_acks'] = $power->ingestRuns($c['device_id'], $b->power_schedule_runs); }
+                    $response['power_schedules'] = $power->clientSchedules($c['device_id']);
+                }
                 // Desde 4.0.24: mudanza de servidor firmada que aplica a este equipo (el agente la verifica y decide).
                 if (($relocation = (new Relocations($db))->deliver($c)) !== null) { $response['relocation'] = $relocation; }
                 // Una release no verificable (p. ej. release-keys.json desalineado) se RETIENE, no tumba el sync:

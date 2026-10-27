@@ -217,6 +217,71 @@ final class PowerSchedules
             'reported_at' => Util::time($x['reported_at'])], $rows)]);
     }
 
+    /**
+     * Programaciones activas y vigentes que aplican a este equipo: incluidas por algun alcance y sin ninguna exclusion.
+     * Equipo -> persona por device_assignments vigente (o devices.user_id); persona -> sede/area por user_assignments vigente (o users),
+     * como PolicyCompiler::snapshot(). Si hay asignaciones pero ninguna cubre ahora (el compilador lanza), no se envia nada.
+     * La directiva no lleva alcance ni exclusiones.
+     */
+    public function clientSchedules(string $device): array
+    {
+        $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s.u');
+        $d = $this->db->one('SELECT user_id FROM devices WHERE tenant_id=? AND id=?', [$this->tenant, $device]);
+        if (!$d) { return []; }
+        $assignment = $this->current('device_assignments', 'device_id', $device, $now);
+        if ($assignment === false) { return []; }
+        $userId = $assignment['user_id'] ?? $d['user_id'];
+        $org = $this->current('user_assignments', 'user_id', $userId, $now);
+        if ($org === false) { return []; }
+        $org ??= $this->db->one('SELECT site_id, area_id FROM users WHERE tenant_id=? AND id=?', [$this->tenant, $userId]);
+        $today = (new \DateTimeImmutable('now', new \DateTimeZone($this->c['timezone'])))->format('Y-m-d');
+        $match = "(t.kind='tenant' AND t.ref_id=s.tenant_id) OR (t.kind='device' AND t.ref_id=?) OR (t.kind='user' AND t.ref_id=?) OR (t.kind='site' AND t.ref_id<=>?) OR (t.kind='area' AND t.ref_id<=>?)";
+        $args = [$device, $userId, $org['site_id'] ?? null, $org['area_id'] ?? null];
+        $rows = $this->db->run("SELECT s.* FROM power_schedules s WHERE s.tenant_id=? AND s.status='active'
+            AND ((s.recurrence='once' AND s.run_on>=DATE_SUB(?, INTERVAL 1 DAY)) OR (s.recurrence='weekly' AND s.valid_from<=DATE_ADD(?, INTERVAL 7 DAY) AND (s.valid_until IS NULL OR s.valid_until>=DATE_SUB(?, INTERVAL 1 DAY))))
+            AND EXISTS (SELECT 1 FROM power_schedule_targets t WHERE t.tenant_id=s.tenant_id AND t.schedule_id=s.id AND t.excluded=FALSE AND ($match))
+            AND NOT EXISTS (SELECT 1 FROM power_schedule_targets t WHERE t.tenant_id=s.tenant_id AND t.schedule_id=s.id AND t.excluded=TRUE AND ($match))
+            ORDER BY s.created_at, s.id LIMIT 50", [$this->tenant, $today, $today, $today, ...$args, ...$args])->fetchAll();
+        return array_map(function ($s) {
+            $dto = $this->dto($s, []);   // sin consultar destinos: la directiva no los lleva
+            $out = ['id' => $dto['id'], 'version' => $dto['version'], 'action' => $dto['action'], 'recurrence' => $dto['recurrence'], 'time_local' => $dto['time_local'],
+                'valid_from' => $dto['valid_from'], 'timezone' => $this->c['timezone'],
+                'message' => $dto['message'] !== '' ? $dto['message'] : ($dto['action'] === 'restart' ? 'TI programó el reinicio de este equipo.' : 'TI programó el apagado de este equipo.'),
+                'idle_minutes' => $dto['idle_minutes'], 'notice_minutes' => $dto['notice_minutes'], 'window_minutes' => $dto['window_minutes']];
+            if ($dto['days']) { $out['days'] = $dto['days']; }
+            if ($dto['run_on'] !== null) { $out['run_on'] = $dto['run_on']; }
+            if ($dto['valid_until'] !== null) { $out['valid_until'] = $dto['valid_until']; }
+            if ($dto['postpone_minutes'] !== null) { $out['postpone_minutes'] = $dto['postpone_minutes']; }
+            return $out;
+        }, $rows);
+    }
+
+    /** Asignacion vigente de la tabla; null si no hay ninguna fila (se usa el fallback); false si hay filas pero ninguna cubre ahora. */
+    private function current(string $table, string $owner, string $id, string $at): array|null|false
+    {
+        $row = $this->db->one("SELECT * FROM $table WHERE tenant_id=? AND $owner=? AND starts_at<=? AND (ends_at IS NULL OR ends_at>?)", [$this->tenant, $id, $at, $at]);
+        if ($row) { return $row; }
+        return $this->db->one("SELECT 1 x FROM $table WHERE tenant_id=? AND $owner=? LIMIT 1", [$this->tenant, $id]) ? false : null;
+    }
+
+    /**
+     * Resultados del agente: idempotentes por event_id y por (programacion, equipo, ocurrencia, resultado) —INSERT IGNORE cubre ambas
+     * UNIQUE—; una programacion de otra empresa o borrada se confirma sin guardar. Devuelve los event_id confirmados.
+     */
+    public function ingestRuns(string $device, array $runs): array
+    {
+        $acks = [];
+        foreach ($runs as $x) {
+            $sid = Util::bin($x->schedule_id);
+            if ($this->db->one('SELECT 1 FROM power_schedules WHERE tenant_id=? AND id=?', [$this->tenant, $sid])) {
+                $this->db->run('INSERT IGNORE INTO power_schedule_runs (tenant_id,id,schedule_id,device_id,occurrence_at,outcome,detail,event_id) VALUES (?,?,?,?,?,?,?,?)',
+                    [$this->tenant, Util::bin(Util::uuid()), $sid, $device, Util::sqlTime($x->occurrence_at), $x->outcome, $x->detail ?? null, Util::bin($x->event_id)]);
+            }
+            $acks[] = strtolower($x->event_id);
+        }
+        return $acks;
+    }
+
     /** $t: filas de destinos ya cargadas (listado); null las consulta (fila suelta). */
     private function dto(array $s, ?array $t = null): array
     {

@@ -141,3 +141,110 @@ function powerScheduleAdminTests(Database $db): void
     expect(adminRequest($foreign, 'DELETE', "$path/" . $own['id'], null, ['if-match' => '"1"']), 404, 'cross-tenant delete');
     echo 'PASS power schedules (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
+
+// Apagado programado: resolucion por equipo en /client/sync, version minima del agente y resultados idempotentes.
+function powerScheduleSyncTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    accessResetPreloginQuota();
+    $a = secondTenant($db); $tenant = $a['tenant_id']; $tenantId = Util::id($tenant);
+    $admin = adminFixture($db, adminMember($db, $a), ['equipos.ver', 'equipos.apagar', 'equipos.reiniciar']);
+    $key = keypair(); $token = enroll($db, $a, $key); policy($db, $token);
+    $device = $token['device_id']; $deviceId = Util::bin($device);
+    $seq = 0;
+    $sync = static function (array $identity, array $session, array $extra = []) use (&$seq) {
+        return expect(request('POST', '/client/sync', ['protocol_version' => 1, 'sequence' => ++$seq, 'policy_version' => 1, 'release_id' => null] + $extra,
+            $identity, $session['access_token'], Util::uuid()), 200, 'power schedule sync');
+    };
+    $setVersion = fn (string $v) => $db->run('UPDATE devices SET agent_version=? WHERE tenant_id=? AND id=?', [$v, $tenant, $deviceId]);
+    $ids = fn (array $r) => array_column($r['power_schedules'] ?? [], 'id');
+    $path = '/admin/power-schedules';
+    $base = ['name' => 'Todos', 'recurrence' => 'weekly', 'days' => [1, 5], 'time_local' => '19:00', 'valid_from' => '2026-01-01',
+        'targets' => [['kind' => 'tenant', 'id' => $tenantId]], 'message' => 'Hasta el lunes'];
+    $s = expect(adminRequest($admin, 'POST', $path, $base), 201, 'create');
+
+    $setVersion('4.0.29');
+    $old = $sync($key, $token);
+    check(!array_key_exists('power_schedules', $old), 'agent 4.0.29 never receives power_schedules');
+    $oldRun = ['event_id' => Util::uuid(), 'schedule_id' => $s['id'], 'occurrence_at' => '2026-10-30T00:00:00.000000Z', 'outcome' => 'executed_idle'];
+    $old = $sync($key, $token, ['power_schedule_runs' => [$oldRun]]);
+    check(!array_key_exists('power_schedule_acks', $old) && !array_key_exists('power_schedules', $old), 'agent 4.0.29 gets no acks');
+    check((int) $db->one('SELECT COUNT(*) n FROM power_schedule_runs WHERE tenant_id=?', [$tenant])['n'] === 0, 'old agent runs not ingested');
+
+    $setVersion('4.0.30');
+    $got = $sync($key, $token)['power_schedules'];
+    check(count($got) === 1 && $got[0]['id'] === $s['id'] && $got[0]['version'] === 1 && $got[0]['days'] === [1, 5] && $got[0]['timezone'] === 'America/Bogota'
+        && $got[0]['message'] === 'Hasta el lunes' && $got[0]['action'] === 'shutdown' && $got[0]['time_local'] === '19:00' && $got[0]['valid_from'] === '2026-01-01', 'resolved directive');
+    check($got[0]['idle_minutes'] === 15 && $got[0]['notice_minutes'] === 10 && $got[0]['postpone_minutes'] === 60 && $got[0]['window_minutes'] === 180, 'defaults in directive');
+    check(!array_key_exists('targets', $got[0]) && !array_key_exists('exclusions', $got[0]) && !array_key_exists('name', $got[0]) && !array_key_exists('run_on', $got[0]) && !array_key_exists('valid_until', $got[0]), 'no target lists or absent optional keys');
+
+    // Excepcion por equipo gana sobre la empresa.
+    expect(adminRequest($admin, 'PATCH', "$path/" . $s['id'], ['exclusions' => [['kind' => 'device', 'id' => $device]]], ['if-match' => '"1"']), 200, 'exclude device');
+    check($sync($key, $token)['power_schedules'] === [], 'excluded device gets nothing');
+    expect(adminRequest($admin, 'PATCH', "$path/" . $s['id'], ['exclusions' => []], ['if-match' => '"2"']), 200, 'include again');
+    check($ids($sync($key, $token)) === [$s['id']], 'included again');
+
+    // Pausada: no se envia.
+    expect(adminRequest($admin, 'PATCH', "$path/" . $s['id'], ['status' => 'paused'], ['if-match' => '"3"']), 200, 'pause');
+    check($sync($key, $token)['power_schedules'] === [], 'paused schedule not sent');
+    expect(adminRequest($admin, 'PATCH', "$path/" . $s['id'], ['status' => 'active'], ['if-match' => '"4"']), 200, 'resume');
+
+    // Vencida: no se envia; una sola vez de hoy si, de hace 10 dias no.
+    $expired = expect(adminRequest($admin, 'POST', $path, array_merge($base, ['name' => 'Vencida', 'valid_from' => '2025-01-01', 'valid_until' => '2025-02-01'])), 201, 'expired');
+    $today = new \DateTimeImmutable('now', new \DateTimeZone('America/Bogota'));
+    $onceToday = expect(adminRequest($admin, 'POST', $path, array_merge($base, ['name' => 'Hoy', 'recurrence' => 'once', 'days' => [], 'run_on' => $today->format('Y-m-d')])), 201, 'once today');
+    $oncePast = expect(adminRequest($admin, 'POST', $path, array_merge($base, ['name' => 'Pasada', 'recurrence' => 'once', 'days' => [], 'run_on' => $today->modify('-10 days')->format('Y-m-d')])), 201, 'once past');
+    $r = $sync($key, $token);
+    check(in_array($onceToday['id'], $ids($r), true) && !in_array($expired['id'], $ids($r), true) && !in_array($oncePast['id'], $ids($r), true), 'expired and past schedules not sent; today once sent');
+    $once = array_column($r['power_schedules'], null, 'id')[$onceToday['id']];
+    check($once['run_on'] === $today->format('Y-m-d') && $once['recurrence'] === 'once', 'once directive carries run_on');
+    foreach ([$expired, $onceToday, $oncePast] as $x) { expect(adminRequest($admin, 'DELETE', "$path/" . $x['id'], null, ['if-match' => '"1"']), 204, 'cleanup'); }
+
+    // Mensaje vacio: texto por defecto segun la accion.
+    $e1 = expect(adminRequest($admin, 'POST', $path, array_merge($base, ['name' => 'Sin msg', 'message' => ''])), 201, 'empty message');
+    $e2 = expect(adminRequest($admin, 'POST', $path, array_merge($base, ['name' => 'Reinicio', 'message' => '', 'action' => 'restart'])), 201, 'empty restart message');
+    $by = array_column($sync($key, $token)['power_schedules'], null, 'id');
+    check($by[$e1['id']]['message'] === 'TI programó el apagado de este equipo.' && $by[$e2['id']]['message'] === 'TI programó el reinicio de este equipo.' && $by[$e2['id']]['action'] === 'restart', 'default message text');
+    foreach ([$e1, $e2] as $x) { expect(adminRequest($admin, 'DELETE', "$path/" . $x['id'], null, ['if-match' => '"1"']), 204, 'cleanup'); }
+
+    // Alcance por sede: el equipo cuya persona esta en la sede lo recibe; el de otra sede no.
+    $outSite = Util::bin(Util::uuid());
+    $db->run("INSERT INTO org_units (tenant_id,id,kind,name) VALUES (?,?,'site','PS sync otra sede')", [$tenant, $outSite]);
+    $member = adminMember($db, $a);
+    $db->run('UPDATE users SET site_id=? WHERE tenant_id=? AND id=?', [$outSite, $tenant, $member['id']]);
+    $key2 = keypair(); $token2 = enroll($db, $member, $key2); policy($db, $token2);
+    $db->run("UPDATE devices SET agent_version='4.0.30' WHERE tenant_id=? AND id=?", [$tenant, Util::bin($token2['device_id'])]);
+    $siteS = expect(adminRequest($admin, 'POST', $path, array_merge($base, ['name' => 'Sede', 'targets' => [['kind' => 'site', 'id' => Util::id($a['site_id'])]]])), 201, 'site schedule');
+    check(in_array($siteS['id'], $ids($sync($key, $token)), true), 'site member device receives site schedule');
+    $other = $ids($sync($key2, $token2));
+    check(!in_array($siteS['id'], $other, true) && in_array($s['id'], $other, true), 'device of other site misses site schedule, gets tenant one');
+    expect(adminRequest($admin, 'DELETE', "$path/" . $siteS['id'], null, ['if-match' => '"1"']), 204, 'cleanup site');
+
+    // Resultados idempotentes por event_id y por (programacion, equipo, ocurrencia, resultado).
+    $ev = Util::uuid();
+    $run = ['event_id' => $ev, 'schedule_id' => $s['id'], 'occurrence_at' => '2026-10-30T00:00:00.000000Z', 'outcome' => 'executed_idle'];
+    $r1 = $sync($key, $token, ['power_schedule_runs' => [$run]]);
+    check($r1['power_schedule_acks'] === [$ev], 'run acked');
+    $r2 = $sync($key, $token, ['power_schedule_runs' => [$run]]);
+    check($r2['power_schedule_acks'] === [$ev], 'duplicate acked');
+    $ev2 = Util::uuid();
+    $r3 = $sync($key, $token, ['power_schedule_runs' => [['event_id' => $ev2] + $run]]);
+    check($r3['power_schedule_acks'] === [$ev2], 'same outcome with another event_id acked, no 500');
+    check((int) $db->one('SELECT COUNT(*) n FROM power_schedule_runs WHERE tenant_id=? AND schedule_id=?', [$tenant, Util::bin($s['id'])])['n'] === 1, 'no duplicate row');
+    $runs = expect(adminRequest($admin, 'GET', "$path/" . $s['id'] . '/runs'), 200, 'runs');
+    check(count($runs['data']) === 1 && $runs['data'][0]['outcome'] === 'executed_idle' && $runs['data'][0]['device_id'] === $device
+        && $runs['data'][0]['occurrence_at'] === '2026-10-30T00:00:00.000000Z', 'run visible in panel');
+    $ev3 = Util::uuid();
+    $r4 = $sync($key, $token, ['power_schedule_runs' => [['event_id' => $ev3, 'outcome' => 'postponed', 'detail' => 'persona'] + $run]]);
+    check($r4['power_schedule_acks'] === [$ev3] && (int) $db->one('SELECT COUNT(*) n FROM power_schedule_runs WHERE tenant_id=? AND schedule_id=?', [$tenant, Util::bin($s['id'])])['n'] === 2, 'other outcome stored');
+
+    // Programacion ajena o inexistente: se confirma sin guardar.
+    $b = secondTenant($db); $foreignAdmin = adminFixture($db, adminMember($db, $b), ['equipos.ver', 'equipos.apagar']);
+    $foreign = expect(adminRequest($foreignAdmin, 'POST', $path, array_merge($base, ['targets' => [['kind' => 'tenant', 'id' => Util::id($b['tenant_id'])]]])), 201, 'foreign schedule');
+    $evF = Util::uuid(); $evG = Util::uuid();
+    $r5 = $sync($key, $token, ['power_schedule_runs' => [['event_id' => $evF, 'schedule_id' => $foreign['id']] + $run, ['event_id' => $evG, 'schedule_id' => Util::uuid()] + $run]]);
+    check($r5['power_schedule_acks'] === [$evF, $evG], 'foreign and unknown schedules acked');
+    check((int) $db->one('SELECT COUNT(*) n FROM power_schedule_runs WHERE event_id IN (?,?)', [Util::bin($evF), Util::bin($evG)])['n'] === 0, 'foreign run not stored');
+    check(!array_key_exists('power_schedule_acks', $sync($key, $token)), 'no acks key without runs');
+    echo 'PASS power schedule sync (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}
