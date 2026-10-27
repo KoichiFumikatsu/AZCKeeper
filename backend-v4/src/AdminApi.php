@@ -178,6 +178,7 @@ final class AdminApi
             'getDashboardProblems','getUserWindows','getUserTimeline'=>(new PanelActivity($this->db,$this->c,$this->access))->dispatch($op,$id),
             'getTenantUnlockPin','setTenantUnlockPin','revealTenantUnlockPin'=>(new UnlockPin($this->db,$this->c,$this->r))->admin($this->access),
             'getTenantWindowsSecurity','setTenantWindowsSecurity'=>(new WindowsSecurity($this->db,$this->c,$this->r))->admin($this->access),
+            'listPowerSchedules','getPowerSchedule','createPowerSchedule','patchPowerSchedule','deletePowerSchedule','listPowerScheduleRuns'=>(new PowerSchedules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getTenantHardening','setTenantHardening','revealTenantHardening','getDeviceHardening','createHardeningCommand'=>(new Hardening($this->db,$this->c,$this->r))->admin($this->access),
             'listHolidays','createHoliday','getHoliday','putHoliday','deleteHoliday','listHolidayCalendars','createHolidayCalendar','getHolidayCalendar','putHolidayCalendar','assignHolidayCalendar','listHolidaySocieties','createHolidaySociety','getHolidaySociety','putHolidaySociety','deleteHolidaySociety',
             'listSuspiciousApps','createSuspiciousApp','getSuspiciousApp','putSuspiciousApp','deleteSuspiciousApp','reviewDualJobAlert','reviewSuspiciousDetection','listDualJobAlerts','listSuspiciousDetections','listComplianceSignals',

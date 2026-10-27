@@ -14,6 +14,7 @@ require __DIR__ . '/activity-migration.php';
 require __DIR__ . '/hardening.php';
 require __DIR__ . '/unlock-pin.php';
 require __DIR__ . '/windows-security.php';
+require __DIR__ . '/power-schedules.php';
 require __DIR__ . '/relocations.php';
 require __DIR__ . '/legacy-k3.php';
 require __DIR__ . '/intake.php';
@@ -186,6 +187,7 @@ try {
     if (getenv('KEEPER_TEST_ACTIVITY_ONLY')==='1') { activityMigrationTests($db); echo "A1 SMOKE PASS: $checks assertions\n"; exit(0); }
     if (getenv('KEEPER_TEST_UNLOCK_PIN_ONLY')==='1') { unlockPinTests($db); echo "UNLOCK PIN SMOKE PASS: $checks assertions\n"; exit(0); }
     if (getenv('KEEPER_TEST_WINDOWS_SECURITY_ONLY')==='1') { windowsSecurityTests($db); echo "WINDOWS SECURITY SMOKE PASS: $checks assertions\n"; exit(0); }
+    if (getenv('KEEPER_TEST_POWER_SCHEDULE_ONLY')==='1') { powerScheduleAdminTests($db); echo "POWER SCHEDULE SMOKE PASS: $checks assertions\n"; exit(0); }
     $user = $db->one('SELECT * FROM users WHERE tenant_id<>0x00000000000040008000000000000001 AND status=\'active\' LIMIT 1');
     check($user !== null, 'demo member seed');
     $key = keypair(); $token = enroll($db, $user, $key); policy($db, $token);
@@ -522,6 +524,7 @@ try {
     locationTests($db);
     // Al final y con el cupo de prelogin repuesto: sus 4 logins de fixture lo agotaban para panelAccountsTests.
     windowsSecurityTests($db);
+    powerScheduleAdminTests($db);
     relocationTests($db);
     legacyK3Tests($db);
     // Al final: recalcula todos los dias de la base para comparar el calculo nuevo con el anterior.
