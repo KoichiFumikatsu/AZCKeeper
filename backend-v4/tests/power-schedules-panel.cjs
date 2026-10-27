@@ -9,6 +9,9 @@ const deviceId = '00000000-0000-4000-8000-0000000000d1';
 const scheduleId = '00000000-0000-4000-8000-0000000000a1';
 const calls = [];
 let rejectFirstPost = true;
+let access = { platform: true, permissions: [] };
+let catalogDenied = false;
+let tenantFails = false;
 let rows = [{ id: scheduleId, name: 'Cierre viernes', action: 'shutdown', recurrence: 'weekly', days: [5], time_local: '19:00', run_on: null, valid_from: '2026-10-01', valid_until: null,
   targets: [{ kind: 'tenant', id: tenant }], exclusions: [], message: '', idle_minutes: 15, notice_minutes: 10, postpone_minutes: 60, window_minutes: 180, status: 'active', version: 1, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z' }];
 const json = (res, status, body) => { res.statusCode = status; res.setHeader('Content-Type', status >= 400 ? 'application/problem+json' : 'application/json'); res.end(body === undefined ? '' : JSON.stringify(body)); };
@@ -18,6 +21,9 @@ const server = http.createServer(async (req, res) => {
     const input = raw ? JSON.parse(raw) : null;
     const url = new URL(req.url, 'http://x'); const p = url.pathname.slice(3);
     calls.push({ method: req.method, path: p, tenant: req.headers['x-tenant-id'], ifMatch: req.headers['if-match'], input });
+    if (p === '/me/access') return json(res, 200, access);
+    if (p === `/tenants/${tenant}` && tenantFails) return json(res, 500, { code: 'internal_error' });
+    if (catalogDenied && (p === '/organization' || p === '/users' || p === `/tenants/${tenant}/devices`)) return json(res, 403, { code: 'forbidden' });
     if (p === `/tenants/${tenant}`) return json(res, 200, { id: tenant, name: 'Demo', timezone: 'America/Bogota' });
     if (p === '/organization') return json(res, 200, { data: [{ id: '00000000-0000-4000-8000-0000000000b1', kind: 'site', name: 'Sede Cali', active: true }], next_cursor: null });
     if (p === '/users') return json(res, 200, { data: [{ id: '00000000-0000-4000-8000-0000000000c1', display_name: 'Ana Pérez', status: 'active' }], next_cursor: null });
@@ -87,6 +93,7 @@ const sent = method => calls.filter(c => c.method === method && c.path.startsWit
     assert.deepEqual(body, { name: 'Reinicio de lunes', action: 'restart', recurrence: 'weekly', days: [1], time_local: '07:30', run_on: null, valid_from: body.valid_from, valid_until: null,
       targets: [{ kind: 'device', id: deviceId }], exclusions: [], message: '', idle_minutes: 15, notice_minutes: 10, postpone_minutes: 60, window_minutes: 180, status: 'active' });
     assert.match(body.valid_from, /^\d{4}-\d{2}-\d{2}$/);
+    assert.equal(body.valid_from, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date()));
     await page.getByRole('row').filter({ hasText: 'Reinicio de lunes' }).getByText('Lunes 07:30', { exact: true }).waitFor();
 
     // Pausar: PATCH solo con status y If-Match con la versión.
@@ -121,7 +128,59 @@ const sent = method => calls.filter(c => c.method === method && c.path.startsWit
     assert.equal(await pre.getByLabel(/^Frecuencia/).inputValue(), 'once');
     assert.equal(await pre.getByLabel('Nombre', { exact: true }).inputValue(), 'Apagado de PC-01');
     await pre.getByText('Equipo: PC-01', { exact: true }).waitFor();
+    // Permisos por acción: sin equipos.reiniciar no se ofrece «Reiniciar»; sin ninguno no hay «Nueva programación».
+    access = { platform: false, permissions: [{ code: 'equipos.apagar', scopes: ['tenant'] }] };
+    const limited = await browser.newPage(); limited.on('pageerror', e => errors.push(e.message));
+    await limited.goto(base); await limited.waitForFunction(() => window.ready);
+    await limited.getByRole('button', { name: 'Nueva programación', exact: true }).click();
+    const lim = limited.getByRole('dialog', { name: 'Nueva programación' });
+    assert.deepEqual(await lim.getByLabel(/^Acción/).locator('option').allTextContents(), ['Apagar']);
+    await limited.close();
+    access = { platform: false, permissions: [{ code: 'equipos.reiniciar', scopes: ['tenant'] }] };
+    const restartOnly = await browser.newPage(); restartOnly.on('pageerror', e => errors.push(e.message));
+    await restartOnly.goto(base); await restartOnly.waitForFunction(() => window.ready);
+    await restartOnly.getByRole('button', { name: 'Nueva programación', exact: true }).click();
+    assert.deepEqual(await restartOnly.getByRole('dialog', { name: 'Nueva programación' }).getByLabel(/^Acción/).locator('option').allTextContents(), ['Reiniciar']);
+    await restartOnly.close();
+    // Editar una programación de una acción que la cuenta no gestiona: solo lectura y Guardar deshabilitado.
+    rows = [{ ...rows[0] ?? {}, id: scheduleId, name: 'Cierre viernes', action: 'shutdown', recurrence: 'weekly', days: [5], time_local: '19:00', valid_from: '2026-10-01', valid_until: null, run_on: null,
+      targets: [{ kind: 'tenant', id: tenant }], exclusions: [], message: '', idle_minutes: 15, notice_minutes: 10, postpone_minutes: 60, window_minutes: 180, status: 'active', version: 1 }];
+    const editor = await browser.newPage(); editor.on('pageerror', e => errors.push(e.message));
+    await editor.goto(base); await editor.waitForFunction(() => window.ready);
+    await editor.getByRole('button', { name: 'Editar Cierre viernes', exact: true }).click();
+    const ed = editor.getByRole('dialog', { name: 'Editar programación' });
+    assert.equal(await ed.getByLabel(/^Acción/).isDisabled(), true);
+    assert.equal(await ed.getByRole('button', { name: 'Guardar', exact: true }).isDisabled(), true);
+    await ed.getByText('Tu cuenta no tiene permiso para apagar equipos: puedes ver esta programación, pero no cambiarla.', { exact: true }).waitFor();
+    await editor.close();
+    access = { platform: false, permissions: [{ code: 'equipos.ver', scopes: ['tenant'] }] };
+    const none = await browser.newPage(); none.on('pageerror', e => errors.push(e.message));
+    await none.goto(base); await none.waitForFunction(() => window.ready);
+    await none.getByRole('row').filter({ hasText: 'Cierre viernes' }).waitFor();
+    assert.equal(await none.getByRole('button', { name: 'Nueva programación', exact: true }).count(), 0);
+    assert.equal(await none.locator('#page-action').isHidden(), true);
+    await none.close();
+
+    // Catálogo sin permiso (403): nota visible en vez del texto de «no hay».
+    access = { platform: true, permissions: [] }; catalogDenied = true;
+    const denied = await browser.newPage(); denied.on('pageerror', e => errors.push(e.message));
+    await denied.goto(base); await denied.waitForFunction(() => window.ready);
+    await denied.getByRole('button', { name: 'Nueva programación', exact: true }).first().click();
+    const den = denied.getByRole('dialog', { name: 'Nueva programación' });
+    const picker = den.getByRole('group', { name: 'Aplica a' });
+    await picker.getByLabel(/^Tipo/).selectOption('site');
+    await picker.getByText('No tienes permiso para listar sedes.', { exact: true }).waitFor();
+    assert.equal(await picker.getByText(/No hay sedes/).count(), 0);
+    await denied.close(); catalogDenied = false;
+
+    // Zona horaria de la empresa no disponible: se dice que son UTC.
+    tenantFails = true;
+    const noZone = await browser.newPage(); noZone.on('pageerror', e => errors.push(e.message));
+    await noZone.goto(base); await noZone.waitForFunction(() => window.ready);
+    await noZone.getByText('Zona horaria de la empresa no disponible; horas en UTC.').first().waitFor();
+    assert.equal(await noZone.getByText('hora de la empresa (UTC)').count(), 0);
+    await noZone.close(); tenantFails = false;
     assert.deepEqual(errors, []);
-    console.log('PASS Chromium panel apagado programado: list, validation, 422 detail, POST body, pause with If-Match, runs, typed delete, ?equipo= prefill, tenant header.');
+    console.log('PASS Chromium panel apagado programado: list, validation, 422 detail, POST body, pause with If-Match, runs, typed delete, ?equipo= prefill, tenant header, per-action permissions, catalog 403 note, UTC fallback, tenant-zone today.');
   } finally { await browser.close(); await new Promise(r => server.close(r)); }
 })().catch(e => { console.error(e); server.close(); process.exitCode = 1; });

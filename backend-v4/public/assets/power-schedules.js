@@ -1,5 +1,6 @@
 import { api, errorMessage } from './api.js';
 import { wireDialog, confirmBox } from './dialogs.js';
+import { loadAccess } from './nav-access.js';
 
 // «Apagado programado» (docs/superpowers/specs/2026-10-27-apagado-programado-design.md): lista de programaciones de
 // apagado o reinicio, formulario de alta/edición y resultados por equipo. La API (/admin/power-schedules) decide qué se
@@ -37,7 +38,19 @@ export function saveError(error) {
 }
 
 const pad = n => String(n).padStart(2, '0');
-const today = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+// «Hoy» en la zona horaria de la empresa (no la del navegador de quien administra).
+const todayIn = zone => {
+  try { const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date()).map(x => [x.type, x.value])); return `${p.year}-${p.month}-${p.day}`; }
+  catch { const d = new Date(); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; }
+};
+const PLURAL = { site: 'sedes', area: 'áreas', user: 'personas', device: 'equipos' };
+
+/** Qué acciones puede gestionar la cuenta (equipos.apagar / equipos.reiniciar). Sin datos de acceso, decide la API. */
+export function actionPermissions(access) {
+  if (!access || access.platform) return { shutdown: true, restart: true };
+  const has = code => !!access.permissions?.some(p => p.code === code);
+  return { shutdown: has('equipos.apagar'), restart: has('equipos.reiniciar') };
+}
 const shortDate = iso => { const [, m, d] = String(iso || '').split('-'); return m && d ? `${d}/${m}` : '—'; };
 
 /** «Viernes 19:00», «Lun, Mié, Vie 19:00», «Todos los días 19:00», «Una vez 30/10 18:00». */
@@ -58,10 +71,12 @@ async function allPages(path) {
   return out;
 }
 async function optional(promise) { try { return await promise; } catch (e) { if ([401, 403].includes(e.status)) return null; throw e; } }
+const noPerms = { shutdown: true, restart: true };
 
 // Catálogo de destinos (sedes, áreas, personas, equipos). Lo que la cuenta no puede listar queda vacío: la API valida.
 async function loadCatalog(tenant) {
   const [org, users, devices] = await Promise.all([optional(allPages('/organization')), optional(allPages('/users')), optional(allPages(`/tenants/${tenant}/devices`))]);
+  const denied = new Set([...(org ? [] : ['site', 'area']), ...(users ? [] : ['user']), ...(devices ? [] : ['device'])]);
   const who = new Map((users || []).map(u => [u.id, u.display_name]));
   const items = {
     site: (org || []).filter(o => o.kind === 'site' && o.active).map(o => [o.id, o.name]),
@@ -71,7 +86,7 @@ async function loadCatalog(tenant) {
   };
   const names = new Map([...(org || []).map(o => [o.id, o.name]), ...(users || []).map(u => [u.id, u.display_name]), ...(devices || []).map(d => [d.id, d.hostname])]);
   for (const list of Object.values(items)) list.sort((a, b) => a[1].localeCompare(b[1], 'es'));
-  return { items, names, tenant };
+  return { items, names, tenant, denied };
 }
 
 // Lista editable de destinos: tipo + elemento + «Agregar»; cada uno se puede quitar. kinds = tipos permitidos.
@@ -84,6 +99,7 @@ function targetPicker(parent, { legend, help, kinds, initial, catalog, preset })
   const kindLabel = el('label', 'Tipo'); kindLabel.append(kind);
   const item = el('select'); const itemLabel = el('label', 'Cuál'); itemLabel.append(item);
   bar.append(kindLabel, itemLabel);
+  const note = el('p', '', 'help'); note.hidden = true;
   const add = button('Agregar', undefined);
   const label = t => t.kind === 'tenant' ? KIND_LABEL.tenant : `${KIND_LABEL[t.kind]}: ${catalog.names.get(t.id) || preset?.label?.[t.id] || '(fuera de tu lista)'}`;
   const renderList = () => {
@@ -99,15 +115,16 @@ function targetPicker(parent, { legend, help, kinds, initial, catalog, preset })
     item.replaceChildren();
     const taken = new Set(chosen.map(t => `${t.kind}:${t.id}`));
     if (kind.value === 'tenant') { item.append(new Option(KIND_LABEL.tenant, catalog.tenant)); item.disabled = true; add.disabled = taken.has(`tenant:${catalog.tenant}`); return; }
-    item.disabled = false;
+    item.disabled = false; note.hidden = true;
     const options = (catalog.items[kind.value] || []).filter(([id]) => !taken.has(`${kind.value}:${id}`));
+    if (catalog.denied?.has(kind.value)) { note.textContent = `No tienes permiso para listar ${PLURAL[kind.value]}.`; note.hidden = false; item.append(new Option(`${PLURAL[kind.value][0].toUpperCase()}${PLURAL[kind.value].slice(1)} no disponibles`, '')); add.disabled = true; return; }
     if (!options.length) item.append(new Option(`No hay ${KIND_LABEL[kind.value].toLowerCase()}s para agregar`, ''));
     options.forEach(([id, text]) => item.append(new Option(text, id)));
     add.disabled = !options.length;
   };
   kind.addEventListener('change', fillItems);
   add.addEventListener('click', () => { if (!item.value) return; chosen.push({ kind: kind.value, id: item.value }); renderList(); fillItems(); });
-  box.append(list, bar, add); parent.append(box); renderList(); fillItems();
+  box.append(list, bar, note, add); parent.append(box); renderList(); fillItems();
   return { get: () => chosen.map(t => ({ kind: t.kind, id: t.id })) };
 }
 
@@ -118,11 +135,12 @@ const numberInput = (value, min, max) => { const i = el('input'); i.type = 'numb
  * Diálogo de alta o edición. preset: valores iniciales al crear (p. ej. { recurrence: 'once', targets: [{ kind: 'device', id }], label: { id: 'nombre' } }).
  * Con `schedule` edita esa programación. onSaved(programación) se llama al guardar.
  */
-export async function openPowerScheduleDialog({ tenant, schedule = null, preset = {}, onSaved = () => {}, catalog = null }) {
+export async function openPowerScheduleDialog({ tenant, schedule = null, preset = {}, onSaved = () => {}, catalog = null, perms = noPerms, zone = 'UTC', zoneKnown = false }) {
   catalog = catalog || await loadCatalog(tenant);
   const s = schedule || {};
-  const v = { name: '', action: 'shutdown', recurrence: 'weekly', days: [], time_local: '19:00', run_on: null, valid_from: today(), valid_until: null, targets: [], exclusions: [],
+  const v = { name: '', action: 'shutdown', recurrence: 'weekly', days: [], time_local: '19:00', run_on: null, valid_from: todayIn(zone), valid_until: null, targets: [], exclusions: [],
     message: '', idle_minutes: 15, notice_minutes: 10, postpone_minutes: 60, window_minutes: 180, status: 'active', ...preset, ...s };
+  if (!schedule && perms[v.action] === false) v.action = Object.keys(ACTION_LABEL).find(k => perms[k]) || v.action;
   const dialog = el('dialog', undefined, 'power-dialog'); const form = el('form'); form.noValidate = true;
   form.append(el('h2', schedule ? 'Editar programación' : 'Nueva programación'));
   const body = el('div', undefined, 'dialog-body'); form.append(body);
@@ -134,7 +152,11 @@ export async function openPowerScheduleDialog({ tenant, schedule = null, preset 
   const show = (text, focus) => { error.textContent = text; error.hidden = false; focus?.focus?.(); };
 
   const name = field(body, 'Nombre', el('input')); name.maxLength = 80; name.value = v.name; name.placeholder = 'Ej.: Apagado de oficina, viernes noche';
-  const action = field(body, 'Acción', el('select')); Object.entries(ACTION_LABEL).forEach(([k, t]) => action.append(new Option(t, k))); action.value = v.action;
+  const action = field(body, 'Acción', el('select')); const canManage = perms[v.action] !== false;
+  if (canManage) Object.entries(ACTION_LABEL).filter(([k]) => perms[k]).forEach(([k, t]) => action.append(new Option(t, k)));
+  else action.append(new Option(ACTION_LABEL[v.action] || v.action, v.action));
+  action.value = v.action;
+  if (!canManage || action.options.length < 2) action.disabled = true;
   const recurrence = field(body, 'Frecuencia', el('select')); recurrence.append(new Option('Una sola vez', 'once'), new Option('Cada semana', 'weekly')); recurrence.value = v.recurrence;
 
   const weekly = el('div'); body.append(weekly);
@@ -149,8 +171,8 @@ export async function openPowerScheduleDialog({ tenant, schedule = null, preset 
   const validFrom = field(grid, 'Vigente desde', el('input')); validFrom.type = 'date'; validFrom.value = v.valid_from;
   const validUntil = field(grid, 'Hasta (opcional)', el('input')); validUntil.type = 'date'; validUntil.value = v.valid_until || '';
   const once = el('div'); body.append(once);
-  const runOn = field(once, 'Fecha', el('input')); runOn.type = 'date'; runOn.value = v.run_on || today();
-  const time = field(body, 'Hora (zona horaria de la empresa)', el('input')); time.type = 'time'; time.value = v.time_local;
+  const runOn = field(once, 'Fecha', el('input')); runOn.type = 'date'; runOn.value = v.run_on || todayIn(zone);
+  const time = field(body, zoneKnown ? 'Hora (zona horaria de la empresa)' : 'Hora (UTC)', el('input'), zoneKnown ? undefined : 'Zona horaria de la empresa no disponible; horas en UTC.'); time.type = 'time'; time.value = v.time_local;
   const syncFrequency = () => { weekly.hidden = recurrence.value !== 'weekly'; once.hidden = recurrence.value !== 'once'; };
   recurrence.addEventListener('change', syncFrequency); syncFrequency();
 
@@ -168,6 +190,7 @@ export async function openPowerScheduleDialog({ tenant, schedule = null, preset 
   const windowMin = field(body, 'Ventana para ejecutar (minutos)', numberInput(v.window_minutes, 0, 720), 'Si el equipo estaba apagado a la hora indicada, se ejecuta si se enciende dentro de esta ventana (0 a 720).');
   const status = field(body, 'Estado', el('select')); status.append(new Option('Activa', 'active'), new Option('Pausada', 'paused')); status.value = v.status;
   body.append(el('p', NOTICE_TEXT, 'notice'));
+  if (!canManage) { ok.disabled = true; body.append(el('p', `Tu cuenta no tiene permiso para ${v.action === 'restart' ? 'reiniciar' : 'apagar'} equipos: puedes ver esta programación, pero no cambiarla.`, 'error-text')); }
 
   form.addEventListener('submit', async ev => {
     ev.preventDefault(); error.hidden = true;
@@ -193,6 +216,7 @@ export async function openPowerScheduleDialog({ tenant, schedule = null, preset 
       targets: chosen, exclusions: exclusions.get(), message: message.value.trim(),
       idle_minutes: idleMinutes, notice_minutes: noticeMinutes, postpone_minutes: postponeMinutes, window_minutes: windowMinutes, status: status.value,
     };
+    if (!canManage) return;
     ok.disabled = true;
     try {
       const saved = schedule ? await api('PATCH', `/admin/power-schedules/${schedule.id}`, { body: payload, ifMatch: schedule.version }) : await api('POST', '/admin/power-schedules', { body: payload });
@@ -204,7 +228,7 @@ export async function openPowerScheduleDialog({ tenant, schedule = null, preset 
 }
 
 // Resultados por equipo de una programación.
-async function showRuns(schedule, zone) {
+async function showRuns(schedule, zone, zoneKnown) {
   const dialog = el('dialog', undefined, 'power-dialog'); const form = el('form'); form.noValidate = true;
   form.append(el('h2', `Resultados: ${schedule.name}`));
   const body = el('div', undefined, 'dialog-body'); form.append(body);
@@ -219,7 +243,7 @@ async function showRuns(schedule, zone) {
     body.replaceChildren();
     if (!runs.length) { body.append(el('p', 'Todavía no hay resultados: aparecen cuando los equipos reportan lo que hicieron en cada ejecución.', 'notice')); return; }
     const fmt = new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short', timeZone: zone });
-    const t = el('table'); t.append(el('caption', `${runs.length} resultado${runs.length === 1 ? '' : 's'} · hora de la empresa (${zone})`));
+    const t = el('table'); t.append(el('caption', `${runs.length} resultado${runs.length === 1 ? '' : 's'} · ${zoneKnown ? `hora de la empresa (${zone})` : 'zona horaria de la empresa no disponible; horas en UTC'}`));
     const head = el('tr'); ['Equipo', 'Ocurrencia', 'Resultado'].forEach(h => { const th = el('th', h); th.scope = 'col'; head.append(th); }); const thead = el('thead'); thead.append(head); t.append(thead);
     const tbody = el('tbody');
     for (const r of runs) {
@@ -232,23 +256,26 @@ async function showRuns(schedule, zone) {
 
 export async function powerSchedulesPage({ tenant, content, status, action }) {
   const setStatus = text => { if (status) status.textContent = text; };
-  let zone = 'UTC';
-  try { const t = await api('GET', `/tenants/${tenant}`); if (t.timezone) zone = t.timezone; } catch { /* la zona es informativa */ }
-  const [list, catalog] = await Promise.all([api('GET', '/admin/power-schedules'), loadCatalog(tenant)]);
+  let zone = 'UTC', zoneKnown = false;
+  try { const t = await api('GET', `/tenants/${tenant}`); if (t.timezone) { zone = t.timezone; zoneKnown = true; } } catch { /* la zona es informativa */ }
+  const [list, catalog, access] = await Promise.all([api('GET', '/admin/power-schedules'), loadCatalog(tenant), loadAccess()]);
+  const perms = actionPermissions(access); const canCreate = perms.shutdown || perms.restart;
   let rows = list.data;
   const fail = failure => { setStatus(''); const p = el('p', saveError(failure), 'error-text'); p.setAttribute('role', 'alert'); content.prepend(p); setTimeout(() => p.remove(), 8000); };
-  const open = (opts = {}) => openPowerScheduleDialog({ tenant, catalog, ...opts, onSaved: saved => {
+  const open = (opts = {}) => openPowerScheduleDialog({ tenant, catalog, perms, zone, zoneKnown, ...opts, onSaved: saved => {
     rows = opts.schedule ? rows.map(r => r.id === saved.id ? saved : r) : [saved, ...rows]; render(); setStatus(opts.schedule ? 'Programación guardada.' : 'Programación creada.');
   } });
 
   const render = () => {
     content.replaceChildren();
     const surface = el('section', undefined, 'surface'); const head = el('div', undefined, 'section-head'); head.append(el('h2', 'Programaciones')); surface.append(head);
-    surface.append(el('p', `${NOTICE_TEXT} Las horas se leen en la zona horaria de la empresa (${zone}).`, 'help'));
+    surface.append(el('p', `${NOTICE_TEXT} ${zoneKnown ? `Las horas se leen en la zona horaria de la empresa (${zone}).` : 'Zona horaria de la empresa no disponible; horas en UTC.'}`, 'help'));
     content.append(surface);
     if (!rows.length) {
       const box = el('div', undefined, 'empty'); box.append(el('h2', 'Sin programaciones'), el('p', 'Crea una programación para apagar o reiniciar equipos a una hora fija, una vez o cada semana.'));
-      box.append(button('Nueva programación', 'primary', () => open())); surface.append(box); return;
+      if (canCreate) box.append(button('Nueva programación', 'primary', () => open()));
+      else box.append(el('p', 'Tu cuenta no tiene permiso para apagar ni reiniciar equipos.', 'help'));
+      surface.append(box); return;
     }
     const t = el('table'); t.append(el('caption', `Programaciones · ${rows.length}`));
     const head2 = el('tr'); ['Nombre', 'Acción', 'Cuándo', 'Aplica a', 'Estado', 'Acciones'].forEach(h => { const th = el('th', h); th.scope = 'col'; head2.append(th); });
@@ -261,7 +288,7 @@ export async function powerSchedulesPage({ tenant, content, status, action }) {
         button(r.status === 'active' ? 'Pausar' : 'Reanudar', 'link-button', async () => {
           try { const saved = await api('PATCH', `/admin/power-schedules/${r.id}`, { body: { status: r.status === 'active' ? 'paused' : 'active' }, ifMatch: r.version }); rows = rows.map(x => x.id === r.id ? saved : x); render(); setStatus(saved.status === 'active' ? 'Programación reanudada.' : 'Programación pausada.'); } catch (failure) { fail(failure); }
         }),
-        button('Ver resultados', 'link-button', () => showRuns(r, zone)),
+        button('Ver resultados', 'link-button', () => showRuns(r, zone, zoneKnown)),
         button('Borrar', 'link-button', async () => {
           if (!await confirmBox({ title: 'Borrar programación', message: `¿Borrar «${r.name}»? Los equipos dejan de ejecutarla en su próxima sincronización (unos 2 minutos).`, okText: 'Borrar programación', danger: true, typed: r.name, typedLabel: 'Escribe el nombre de la programación para confirmar' })) return;
           try { await api('DELETE', `/admin/power-schedules/${r.id}`, { ifMatch: r.version }); rows = rows.filter(x => x.id !== r.id); render(); setStatus('Programación borrada.'); } catch (failure) { fail(failure); }
@@ -275,11 +302,11 @@ export async function powerSchedulesPage({ tenant, content, status, action }) {
     t.append(tbody); const wrap = el('div', undefined, 'table-wrap'); wrap.tabIndex = 0; wrap.append(t); surface.append(wrap);
   };
 
-  if (action) { action.textContent = 'Nueva programación'; action.hidden = false; action.addEventListener('click', () => open()); }
+  if (action) { action.textContent = 'Nueva programación'; action.hidden = !canCreate; if (canCreate) action.addEventListener('click', () => open()); }
   render(); setStatus('Programaciones cargadas.');
   // Desde la ficha del equipo (?equipo=<uuid>): formulario de una sola vez, ese equipo y el nombre ya puesto.
   const device = new URLSearchParams(location.search).get('equipo');
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(device || '')) {
+  if (canCreate && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(device || '')) {
     let hostname = catalog.names.get(device);
     if (!hostname) { try { hostname = (await api('GET', `/devices/${device}`)).hostname; } catch { /* sin nombre */ } }
     await open({ preset: { recurrence: 'once', targets: [{ kind: 'device', id: device }], label: { [device]: hostname }, name: hostname ? `Apagado de ${hostname}` : '' } });
