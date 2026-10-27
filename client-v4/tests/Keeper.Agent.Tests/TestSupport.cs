@@ -65,7 +65,12 @@ internal sealed class MemoryEvents : IEventSink
     public Task EnqueueAsync(SyncRequestCommandResultsItem result, CancellationToken ct) { CommandResults.Add(result); return Task.CompletedTask; }
     public Task EnqueueAsync(SecurityReport report, CancellationToken ct) { SecurityReports.Add(report); return Task.CompletedTask; }
     public Task EnqueueAsync(ActivitySnapshot activity, CancellationToken ct) { Activity.Add(activity); return Task.CompletedTask; }
-    public Task EnqueueAsync(PowerScheduleRunReport run, CancellationToken ct) { PowerRuns.Add(run); return Task.CompletedTask; }
+    public Exception? PowerRunFailure { get; set; }
+    public Task EnqueueAsync(PowerScheduleRunReport run, CancellationToken ct)
+    {
+        if (PowerRunFailure is not null) throw PowerRunFailure;
+        PowerRuns.Add(run); return Task.CompletedTask;
+    }
 }
 
 internal static class Samples

@@ -247,7 +247,9 @@ final class PowerSchedules
             $out = ['id' => $dto['id'], 'version' => $dto['version'], 'action' => $dto['action'], 'recurrence' => $dto['recurrence'], 'time_local' => $dto['time_local'],
                 'valid_from' => $dto['valid_from'], 'timezone' => $this->c['timezone'],
                 'message' => $dto['message'] !== '' ? $dto['message'] : ($dto['action'] === 'restart' ? 'TI programó el reinicio de este equipo.' : 'TI programó el apagado de este equipo.'),
-                'idle_minutes' => $dto['idle_minutes'], 'notice_minutes' => $dto['notice_minutes'], 'window_minutes' => $dto['window_minutes']];
+                'idle_minutes' => $dto['idle_minutes'], 'notice_minutes' => $dto['notice_minutes'], 'window_minutes' => $dto['window_minutes'],
+                // Version vigente (UTC): el agente ignora sin reportar una ocurrencia anterior a la ultima edicion.
+                'updated_at' => $dto['updated_at']];
             if ($dto['days']) { $out['days'] = $dto['days']; }
             if ($dto['run_on'] !== null) { $out['run_on'] = $dto['run_on']; }
             if ($dto['valid_until'] !== null) { $out['valid_until'] = $dto['valid_until']; }

@@ -1,5 +1,5 @@
 {
-  "source_sha256": "477e32ea4425010c89ca5bc7e8b70106288dc1dc9a6d736358792a7f0b072375",
+  "source_sha256": "679d6132607259bd3edc128eefcc9a4263c7e1ff10587467d4590b498cae9bfa",
   "paths": {
     "/me": {
       "get": {
@@ -34269,7 +34269,8 @@
         "message",
         "idle_minutes",
         "notice_minutes",
-        "window_minutes"
+        "window_minutes",
+        "updated_at"
       ],
       "properties": {
         "id": {
@@ -34337,6 +34338,11 @@
         },
         "window_minutes": {
           "type": "integer"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Última edición (UTC). El agente ignora sin reportar una ocurrencia anterior."
         }
       }
     },

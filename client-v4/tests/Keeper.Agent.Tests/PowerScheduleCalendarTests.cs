@@ -9,7 +9,7 @@ public class PowerScheduleCalendarTests
     {
         Id = Guid.NewGuid(), Version = 1, Action = PowerScheduleDirectiveAction.Shutdown, Recurrence = PowerScheduleDirectiveRecurrence.Weekly,
         Days = [.. days], TimeLocal = "19:00", ValidFrom = new DateOnly(2026, 10, 1), Timezone = "America/Bogota", Message = "m",
-        IdleMinutes = 15, NoticeMinutes = 10, WindowMinutes = 180,
+        IdleMinutes = 15, NoticeMinutes = 10, WindowMinutes = 180, UpdatedAt = DateTimeOffset.UnixEpoch,
     };
 
     [Fact]

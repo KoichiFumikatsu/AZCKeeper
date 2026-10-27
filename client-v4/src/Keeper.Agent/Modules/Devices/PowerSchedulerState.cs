@@ -12,8 +12,9 @@ public sealed record PowerSchedulerState(IReadOnlyList<PowerScheduleEntry> Sched
     public static PowerSchedulerState Empty { get; } = new([], null, [], []);
 }
 
-/// <summary>ReceivedAt: cuándo llegó esta versión (hora del calendario). Una ocurrencia anterior no se ejecuta ni se
-/// reporta: una programación creada o editada después de su hora no apaga el equipo de golpe.</summary>
+/// <summary>ReceivedAt: cuándo llegó esta versión (hora del calendario). La regla de «editada después de la hora» usa
+/// Directive.UpdatedAt (servidor); ReceivedAt solo evita reportar una ocurrencia cuya ventana ya había cerrado cuando la
+/// versión llegó (primer sync, agente recién actualizado): el agente nunca tuvo ocasión de atenderla.</summary>
 public sealed record PowerScheduleEntry(PowerScheduleDirective Directive, DateTimeOffset ReceivedAt);
 
 /// <summary>

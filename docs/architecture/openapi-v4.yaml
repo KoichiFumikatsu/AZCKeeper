@@ -15967,7 +15967,7 @@ components:
       type: object
       additionalProperties: false
       description: Programación ya resuelta para este equipo (sin listas de alcance). Solo agentes >= 4.0.30.
-      required: [id, version, action, recurrence, time_local, valid_from, timezone, message, idle_minutes, notice_minutes, window_minutes]
+      required: [id, version, action, recurrence, time_local, valid_from, timezone, message, idle_minutes, notice_minutes, window_minutes, updated_at]
       properties:
         id: {type: string, format: uuid}
         version: {type: integer}
@@ -15984,6 +15984,7 @@ components:
         notice_minutes: {type: integer}
         postpone_minutes: {type: integer}
         window_minutes: {type: integer}
+        updated_at: {type: string, format: date-time, description: Última edición (UTC). El agente ignora sin reportar una ocurrencia anterior.}
     PowerScheduleRunReport:
       type: object
       additionalProperties: false

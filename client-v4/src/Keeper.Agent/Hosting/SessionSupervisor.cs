@@ -19,13 +19,19 @@ public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, Devic
     public Keeper.Agent.Modules.Location.LocationModule? Location { get; init; }
     /// <summary>La persona eligio «Posponer» o «Apagar/Reiniciar ahora» en el aviso; el planificador (Task 7) decide.</summary>
     public Action<PowerChoice>? OnPowerChoice { get; init; }
-    /// <summary>Inactividad (segundos) por sesion verificada; null = sin dato (el planificador lo trata como «en uso»).</summary>
-    public IReadOnlyList<long?> IdleSeconds() => _peers.Values.Where(p => p.Verified).Select(p => p.Idle).ToArray();
+    /// <summary>
+    /// Inactividad (segundos) por cada sesion de usuario enumerada; null = sin dato (sin par, par sin verificar o sin
+    /// respuesta aun: el planificador lo trata como «en uso»). Antes de la primera enumeracion: un null (desconocido).
+    /// Lista vacia solo si de verdad no hay sesiones de usuario.
+    /// </summary>
+    public IReadOnlyList<long?> IdleSeconds() => !_enumerated ? [null]
+        : _sessions.Select(s => _peers.TryGetValue(s.Id, out var p) && p.Verified ? p.Idle : null).ToArray();
     public override string Name => "SessionSupervisor";
     private readonly Dictionary<int, Peer> _peers = [];
     private readonly Dictionary<int, DateTimeOffset> _retry = [];
     private DateTimeOffset _scan;
     private IReadOnlyList<InteractiveSession> _sessions = [];
+    private bool _enumerated;
     private readonly Dictionary<string, string> _protectionErrors = [];
     public override ModuleSnapshot Snapshot() => base.Snapshot() with
     {
@@ -59,6 +65,7 @@ public sealed class SessionSupervisor(ISessionSupervisorPlatform platform, Devic
             _scan = now.AddSeconds(10);
             var sessions = platform.Enumerate();
             _sessions = sessions;
+            _enumerated = true;
             Protect("session_taskmgr_policy_failed", () => taskManagers.Reconcile(sessions.Select(s => s.Sid).ToArray(), deviceLock.Locked));
             foreach (var id in _peers.Keys.Where(id => !sessions.Any(s => s.Id == id)).ToArray()) Remove(id);
             foreach (var session in sessions)

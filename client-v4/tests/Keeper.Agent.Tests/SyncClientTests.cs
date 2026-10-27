@@ -566,6 +566,35 @@ public sealed class SyncClientTests
         Assert.Empty((await outbox.InspectAsync()).Events);
     }
 
+    // Apagado programado: el servidor confirma los resultados solo con el event_id (power_schedule_acks).
+    [Fact]
+    public async Task PowerScheduleAcksRemoveTheRunsFromTheOutbox()
+    {
+        using var directory = new TestDirectory();
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var outbox = new DurableOutbox(directory.File("outbox.json"));
+        PowerScheduleRunReport Run() => new() { EventId = Guid.NewGuid(), ScheduleId = Guid.NewGuid(), OccurrenceAt = DateTimeOffset.UnixEpoch,
+            Outcome = PowerScheduleRunReportOutcome.ExecutedIdle };
+        var acked = Run();
+        var pending = Run();
+        await outbox.EnqueueAsync(acked, default);
+        await outbox.EnqueueAsync(pending, default);
+        var clock = new TestClock();
+        await using var host = new ModuleHost([], Samples.Context(clock));
+        var policy = new PolicyCoordinator(new MemoryPolicyStore(), host, Samples.Device);
+        using var handler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("challenges", StringComparison.Ordinal))
+                return Task.FromResult(Json(new Challenge { Nonce = "server-challenge", ExpiresAt = clock.GetUtcNow().AddMinutes(1) }));
+            if (request.RequestUri.AbsolutePath.EndsWith("login", StringComparison.Ordinal)) return Task.FromResult(Json(Token()));
+            return Task.FromResult(Json(Response(clock) with { Policy = Samples.Policy(), PowerScheduleAcks = [acked.EventId] }));
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://keeper.test/v1/") };
+        using var signer = new HttpMessageSigner(key);
+        await new SyncClient(http, signer, Samples.Device, outbox, policy, clock).ExecuteAsync(default);
+        Assert.Equal(pending, Assert.Single((await outbox.InspectAsync()).Events).PowerRun);
+    }
+
     [Fact]
     public async Task RateLimitHasNoInlineRetryAndPreservesOutbox()
     {

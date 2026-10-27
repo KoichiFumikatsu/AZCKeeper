@@ -20,6 +20,8 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
     public static readonly TimeSpan NoticeGrace = TimeSpan.FromMinutes(2);
     public static readonly TimeSpan SkewThreshold = TimeSpan.FromMinutes(5);
     public static readonly TimeSpan DoneRetention = TimeSpan.FromDays(14);
+    // Recién encendido, el SessionSupervisor aún no ve a la persona que inicia sesión: «sin sesiones» cuenta como en uso.
+    public static readonly TimeSpan BootGrace = TimeSpan.FromMinutes(2);
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _choiceLock = new();
     private PowerChoice? _choice;
@@ -27,6 +29,8 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
     private (PowerNotice Notice, DateTimeOffset Until)? _cancelled;
     private DateTimeOffset? _lastEvaluation;
     private volatile PowerNotice? _notice;
+    private bool _flushFailing;
+    private bool _saveFailing;
 
     public override string Name => "PowerScheduler";
     /// <summary>Aviso para las sesiones; null mientras una ocurrencia pospuesta aún no está a notice_minutes del plazo.</summary>
@@ -38,6 +42,11 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
     public Func<TimeSpan>? ServerOffset { get; init; }
 
     public static DateTimeOffset SystemBootTimeUtc() => DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
+
+    /// <summary>Aviso para las sesiones: manual vigente > programado > manual «TI canceló» (60 s que no deben tapar una
+    /// cuenta regresiva programada en curso).</summary>
+    public static PowerNotice? SelectNotice(PowerNotice? manual, PowerNotice? scheduled) =>
+        manual is { Cancelled: false } ? manual : scheduled ?? manual;
 
     public override async Task InitAsync(ModuleContext ctx)
     {
@@ -55,26 +64,31 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
         if (schedules is null) return;
         await _gate.WaitAsync(ct);
         var local = Context.Clock.GetUtcNow();
-        try
-        {
-            var now = CalendarNow(local);
-            var previous = _state.Schedules.ToDictionary(e => e.Directive.Id);
-            var entries = schedules.DistinctBy(s => s.Id).Select(s => previous.TryGetValue(s.Id, out var old) && old.Directive.Version == s.Version
-                ? old with { Directive = s } : new PowerScheduleEntry(s, now)).ToList();
-            _state = _state with { Schedules = entries };
-            // Pausada, editada o borrada con la ocurrencia en curso: se cancela (si el aviso estaba a la vista, «TI canceló»).
-            if (_state.Active is { Started: false } active && !entries.Any(e => e.Directive.Id == active.ScheduleId && e.Directive.Version == active.Version))
-            {
-                if (previous.TryGetValue(active.ScheduleId, out var old) && Visible(active, old.Directive, local) is { } shown)
-                    _cancelled = (new PowerNotice(shown.Action, shown.Deadline, Cancelled: true), local + CancelledNoticeFor);
-                Context.Log($"apagado programado {active.ScheduleId}: cancelado por IT durante la ocurrencia {active.Occurrence:O}");
-                Record(active.ScheduleId, active.Occurrence, Outcome.CancelledByIt, null);
-                _state = _state with { Active = null };
-            }
-            _lastEvaluation = null;
-            await CommitAsync(ct);
-        }
+        try { await ApplyOfferAsync(schedules, local, ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        // Llamado desde OnResponse del sync: un fallo local no debe tumbar el resto de la respuesta.
+        catch (Exception ex) { Context.Log($"apagado programado warn: no se pudo aplicar la lista ({ex.GetType().Name}: {ex.Message})"); }
         finally { RefreshNotice(local); _gate.Release(); }
+    }
+
+    private async Task ApplyOfferAsync(IReadOnlyList<PowerScheduleDirective> schedules, DateTimeOffset local, CancellationToken ct)
+    {
+        var now = CalendarNow(local);
+        var previous = _state.Schedules.ToDictionary(e => e.Directive.Id);
+        var entries = schedules.DistinctBy(s => s.Id).Select(s => previous.TryGetValue(s.Id, out var old) && old.Directive.Version == s.Version
+            ? old with { Directive = s } : new PowerScheduleEntry(s, now)).ToList();
+        _state = _state with { Schedules = entries };
+        // Pausada, editada o borrada con la ocurrencia en curso: se cancela (si el aviso estaba a la vista, «TI canceló»).
+        if (_state.Active is { Started: false } active && !entries.Any(e => e.Directive.Id == active.ScheduleId && e.Directive.Version == active.Version))
+        {
+            if (previous.TryGetValue(active.ScheduleId, out var old) && Visible(active, old.Directive, local) is { } shown)
+                _cancelled = (new PowerNotice(shown.Action, shown.Deadline, Cancelled: true), local + CancelledNoticeFor);
+            Context.Log($"apagado programado {active.ScheduleId}: cancelado por IT durante la ocurrencia {active.Occurrence:O}");
+            Record(active.ScheduleId, active.Occurrence, Outcome.CancelledByIt, null);
+            _state = _state with { Active = null };
+        }
+        _lastEvaluation = null;
+        await CommitAsync(ct);
     }
 
     /// <summary>Elección de una sesión; se aplica en el siguiente tick (cada segundo con aviso activo).</summary>
@@ -85,10 +99,14 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
         ct.ThrowIfCancellationRequested();
         var local = Context.Clock.GetUtcNow();
         var busy = _state.Active is not null || _cancelled is not null;
-        if (!busy && _lastEvaluation is { } last && local >= last && local - last < EvaluateEvery) return;
+        var evaluate = busy || _lastEvaluation is not { } last || local < last || local - last >= EvaluateEvery;
+        if (!evaluate && _state.Unsent.Count == 0) return;
         await _gate.WaitAsync(ct);
         try
         {
+            // Resultados que la cola no aceptó antes: se reintentan en cada tick.
+            if (_state.Unsent.Count > 0) await FlushAsync(ct);
+            if (!evaluate) return;
             _lastEvaluation = local;
             PowerChoice? choice;
             lock (_choiceLock) { choice = _choice; _choice = null; }
@@ -107,7 +125,10 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
         foreach (var entry in _state.Schedules)
         {
             var s = entry.Directive;
-            if (PowerScheduleCalendar.Latest(s, now) is not { } occurrence || occurrence < entry.ReceivedAt
+            // Anterior a la última edición de TI (updated_at del servidor): no apaga de golpe ni se reporta. Si esta versión
+            // llegó con la ventana ya cerrada (primer sync, agente recién actualizado) el agente nunca pudo atenderla.
+            if (PowerScheduleCalendar.Latest(s, now) is not { } occurrence || occurrence < s.UpdatedAt
+                || (occurrence < entry.ReceivedAt && !PowerScheduleCalendar.InWindow(s, occurrence, entry.ReceivedAt))
                 || _state.Done.Contains(new PowerScheduleDone(s.Id, occurrence))) continue;
             if (boot > occurrence) { Record(s.Id, occurrence, Outcome.NotNeeded, null); changed = true; }
             else if (!PowerScheduleCalendar.InWindow(s, occurrence, now)) { Record(s.Id, occurrence, Outcome.SkippedSuspended, null); changed = true; }
@@ -123,7 +144,7 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
             var (s, occurrence) = group[0];
             var active = new PowerScheduleActive(Guid.NewGuid(), s.Id, s.Version, occurrence, s.Action, null, false, false);
             if (manualNotice() is { Cancelled: false }) Record(s.Id, occurrence, Outcome.Replaced, "manual_command");
-            else if (Idle(s)) { await ExecuteAsync(active, Outcome.ExecutedIdle, ct); return; }
+            else if (Idle(s, now - boot)) { await ExecuteAsync(active, Outcome.ExecutedIdle, ct); return; }
             else
             {
                 _state = _state with { Active = active with { Deadline = local.AddMinutes(s.NoticeMinutes) } };
@@ -190,9 +211,10 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
         if (failure is not null) await ReportAsync("power_schedule_failed", ct, LogEntryLevel.Warn, failure);
     }
 
+    // NotSupportedException con código (device_actions_dry_run): ese código; un fallo real: action_failed:<Tipo>.
     private static string FailureCode(Exception ex) =>
         ex is NotSupportedException && ex.Message.Length is > 0 and <= 80 && ex.Message.All(ch => char.IsAsciiLetterOrDigit(ch) || ch == '_')
-            && char.IsAsciiLetter(ex.Message[0]) ? ex.Message : ex.GetType().Name;
+            && char.IsAsciiLetter(ex.Message[0]) ? ex.Message : $"action_failed:{ex.GetType().Name}";
 
     private Task FinishAsync(PowerScheduleActive active, Outcome outcome, string? detail, CancellationToken ct)
     {
@@ -215,7 +237,14 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
         };
     }
 
-    private bool Idle(PowerScheduleDirective s) => idleSeconds().All(x => x is { } seconds && seconds >= s.IdleMinutes * 60);
+    // Lista vacía = de verdad no hay sesiones de usuario (el supervisor da null por cada sesión sin par verificado),
+    // salvo en los primeros 2 min tras encender.
+    private bool Idle(PowerScheduleDirective s, TimeSpan sinceBoot)
+    {
+        var idle = idleSeconds();
+        if (idle.Count == 0 && sinceBoot < BootGrace) return false;
+        return idle.All(x => x is { } seconds && seconds >= s.IdleMinutes * 60);
+    }
 
     private PowerScheduleDirective? Find(Guid id) => _state.Schedules.FirstOrDefault(e => e.Directive.Id == id)?.Directive;
 
@@ -244,20 +273,44 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
         await FlushAsync(ct);
     }
 
-    // Si la cola falla, los resultados quedan en Unsent y se reintentan en el siguiente cambio o arranque.
+    // Si la cola falla, los resultados quedan en Unsent y se reintentan en cada tick (la cola deduplica por event_id).
     private async Task FlushAsync(CancellationToken ct)
     {
         if (_state.Unsent.Count == 0) return;
-        foreach (var run in _state.Unsent) await Context.Outbox.EnqueueAsync(run, ct);
+        try
+        {
+            foreach (var run in _state.Unsent) await Context.Outbox.EnqueueAsync(run, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            if (_flushFailing) return;
+            _flushFailing = true;
+            Context.Log($"apagado programado warn: resultados sin encolar ({ex.GetType().Name}: {ex.Message}); se reintentan");
+            try { await ReportAsync("power_schedule_enqueue_failed", ct, LogEntryLevel.Warn, ex.GetType().Name); }
+            catch (Exception report) when (report is not OperationCanceledException || !ct.IsCancellationRequested) { }
+            return;
+        }
+        _flushFailing = false;
         _state = _state with { Unsent = [] };
         await SaveAsync(ct);
     }
 
-    private Task SaveAsync(CancellationToken ct)
+    // Un fallo de escritura no corta la ejecución (el apagado debe ocurrir igual); se registra una vez por racha.
+    private async Task SaveAsync(CancellationToken ct)
     {
         var horizon = CalendarNow(Context.Clock.GetUtcNow()) - DoneRetention;
         if (_state.Done.Any(d => d.Occurrence < horizon)) _state = _state with { Done = _state.Done.Where(d => d.Occurrence >= horizon).ToList() };
-        return AtomicFile.WriteAsync(statePath, JsonSerializer.SerializeToUtf8Bytes(_state, ProtocolJson.Options), ct);
+        try
+        {
+            await AtomicFile.WriteAsync(statePath, JsonSerializer.SerializeToUtf8Bytes(_state, ProtocolJson.Options), ct);
+            _saveFailing = false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            if (!_saveFailing) Context.Log($"apagado programado warn: power-schedules.json no se pudo guardar ({ex.GetType().Name}: {ex.Message})");
+            _saveFailing = true;
+        }
     }
 
     // Un archivo ilegible se aparta (no se borra) y se empieza vacío: la lista vuelve con el siguiente sync.
@@ -271,8 +324,14 @@ public sealed class PowerScheduler(string statePath, IDeviceActions actions, Fun
         }
         catch (JsonException)
         {
-            File.Move(statePath, $"{statePath}.corrupt", overwrite: true);
+            try { File.Move(statePath, $"{statePath}.corrupt", overwrite: true); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             Context.Log("apagado programado warn: power-schedules.json ilegible, apartado como .corrupt");
+            return PowerSchedulerState.Empty;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Context.Log($"apagado programado warn: power-schedules.json no se pudo leer ({ex.GetType().Name}: {ex.Message}); se empieza vacío");
             return PowerSchedulerState.Empty;
         }
     }

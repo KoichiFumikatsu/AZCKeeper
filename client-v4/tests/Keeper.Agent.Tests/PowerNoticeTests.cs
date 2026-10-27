@@ -229,19 +229,20 @@ public sealed class PowerNoticeTests
         Assert.Equal(countdown, PowerNoticeText.Countdown(TimeSpan.FromSeconds(seconds)));
     }
 
-    private static async Task<(SessionSupervisor Supervisor, FakePlatform Platform, ModuleHost Host, TestClock Clock, DeviceLock Lock)> StartSupervisorAsync(Action<PowerChoice>? onChoice, int failVerify = 0)
+    private static async Task<(SessionSupervisor Supervisor, FakePlatform Platform, ModuleHost Host, TestClock Clock, DeviceLock Lock)> StartSupervisorAsync(Action<PowerChoice>? onChoice,
+        int failVerify = 0, int pending = 0, bool tick = true)
     {
         var clock = new TestClock();
         var directory = new TestDirectory();
         var context = Samples.Context(clock);
         var deviceLock = new DeviceLock(directory.File("lock"));
         await deviceLock.InitAsync(context);
-        var platform = new FakePlatform { FailVerify = failVerify };
+        var platform = new FakePlatform { FailVerify = failVerify, Pending = pending };
         var supervisor = new SessionSupervisor(platform, deviceLock, () => null,
             new SessionTaskManagerPolicies(() => [], _ => new ScreenLockTests.FakeRegistry())) { OnPowerChoice = onChoice };
         var host = new ModuleHost([supervisor], context);
         await host.InitAsync();
-        await host.TickAsync(default);
+        if (tick) await host.TickAsync(default);
         return (supervisor, platform, host, clock, deviceLock);
     }
 
@@ -256,14 +257,40 @@ public sealed class PowerNoticeTests
         await deviceLock.ShutdownAsync();
     }
 
+    // Una sesion de usuario cuyo Keeper.Session sigue conectado pero sin verificar no es «sin sesiones»: cuenta como en uso.
     [Fact]
-    public async Task ElSupervisorNoCuentaLaInactividadDeSesionesSinVerificar()
+    public async Task UnaSesionConectadaSinVerificarCuentaComoEnUso()
+    {
+        var (supervisor, platform, host, clock, deviceLock) = await StartSupervisorAsync(null, pending: 2);
+        await using var _ = host;
+        Assert.All(platform.Connections.Values, c => c.IdleSeconds = 30);
+        for (var i = 0; i < 3; i++) { clock.Advance(TimeSpan.FromSeconds(1)); await host.TickAsync(default); }
+        Assert.Equal(2, platform.Connections.Count); // el par de la sesion 2 sigue ahi, sin verificar
+        Assert.Empty(platform.Connections[2].Requests);
+        Assert.Equal(new long?[] { 30, null }, supervisor.IdleSeconds());
+        await deviceLock.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task UnaSesionSinParCuentaComoEnUso()
     {
         var (supervisor, platform, host, clock, deviceLock) = await StartSupervisorAsync(null, failVerify: 2);
         await using var _ = host;
         Assert.All(platform.Connections.Values, c => c.IdleSeconds = 30);
         for (var i = 0; i < 3; i++) { clock.Advance(TimeSpan.FromSeconds(1)); await host.TickAsync(default); }
-        Assert.Equal(new long?[] { 30 }, supervisor.IdleSeconds());
+        Assert.Equal(new long?[] { 30, null }, supervisor.IdleSeconds());
+        await deviceLock.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task AntesDeEnumerarLasSesionesLaInactividadEsDesconocidaYSinUsuariosEsVacia()
+    {
+        var (supervisor, platform, host, clock, deviceLock) = await StartSupervisorAsync(null, tick: false);
+        await using var _ = host;
+        Assert.Equal(new long?[] { null }, supervisor.IdleSeconds());
+        platform.Sessions = [];
+        await host.TickAsync(default);
+        Assert.Empty(supervisor.IdleSeconds());
         await deviceLock.ShutdownAsync();
     }
 
@@ -455,15 +482,20 @@ public sealed class PowerNoticeTests
     {
         public Dictionary<int, FakeConnection> Connections { get; } = [];
         public int FailVerify { get; init; }
-        public IReadOnlyList<InteractiveSession> Enumerate() => [new(1, "a"), new(2, "b")];
-        public ISupervisedSession Connect(InteractiveSession session, CancellationToken ct) => Connections[session.Id] = new FakeConnection { VerifyFails = session.Id == FailVerify };
+        public int Pending { get; init; }
+        public IReadOnlyList<InteractiveSession> Sessions { get; set; } = [new(1, "a"), new(2, "b")];
+        public IReadOnlyList<InteractiveSession> Enumerate() => Sessions;
+        public ISupervisedSession Connect(InteractiveSession session, CancellationToken ct) => Connections[session.Id] = new FakeConnection
+        {
+            VerifyFails = session.Id == FailVerify, Connecting = session.Id == Pending ? new TaskCompletionSource().Task : Task.CompletedTask
+        };
         public void CloseExistingTaskManagers(IReadOnlyList<InteractiveSession> sessions) { }
     }
 
     private sealed class FakeConnection : ISupervisedSession
     {
         public bool HasExited => false;
-        public Task Connecting => Task.CompletedTask;
+        public Task Connecting { get; init; } = Task.CompletedTask;
         public List<SessionRequest> Requests { get; } = [];
         public long? IdleSeconds { get; set; }
         public PowerChoice? NextChoice { get; set; }

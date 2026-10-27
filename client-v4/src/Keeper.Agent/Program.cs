@@ -98,11 +98,14 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
             OperatingSystem.IsWindows() && !registry.IsDryRun ? new WindowsHardeningLauncher(AppContext.BaseDirectory, dataDirectory, trust.BinaryHashes) : null,
             OperatingSystem.IsWindows() && !registry.IsDryRun ? new WindowsSessionLogoff(new WindowsSessionLauncher(trust.BinaryHashes), Log) : null)
             { ServerOffset = () => serverClock.Confirmed };
-        // Apagado/reinicio programado (4.0.30): pregunta la inactividad a las sesiones verificadas (sin SessionSupervisor no
-        // hay sesiones a las que avisar); una orden manual con aviso gana a la programada.
+        // Apagado/reinicio programado (4.0.30): pregunta la inactividad a cada sesion de usuario (sin Keeper.Session verificado
+        // = en uso; sin SessionSupervisor no hay sesiones a las que avisar); una orden manual con aviso gana a la programada.
+        // Encendido = el mas reciente entre TickCount64 y el ultimo arranque frio/hibrido del log System (Inicio rapido).
         SessionSupervisor? sessions = null;
         var powerScheduler = new PowerScheduler(Path.Combine(dataDirectory, "power-schedules.json"), deviceActions,
-            () => sessions?.IdleSeconds() ?? [], () => commands.PendingNotice, PowerScheduler.SystemBootTimeUtc)
+            () => sessions?.IdleSeconds() ?? [], () => commands.PendingNotice, OperatingSystem.IsWindows()
+                ? new WindowsBootClock(PowerScheduler.SystemBootTimeUtc, WindowsBootClock.ReadSystemLog, TimeProvider.System, Log).BootTimeUtc
+                : PowerScheduler.SystemBootTimeUtc)
             { ServerOffset = () => serverClock.Confirmed };
         using var updateHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         var updater = new UpdateManager(Path.Combine(dataDirectory, "staging"), trust.ReleaseKeys, trust.InstalledSequence, trust.Channel,
@@ -143,7 +146,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
             moduleList.Add(locationModule);
         }
         if (OperatingSystem.IsWindows()) moduleList.Add(sessions = new SessionSupervisor(new WindowsSessionLauncher(trust.BinaryHashes),
-            Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), deviceLock, () => policy, () => commands.PendingNotice ?? powerScheduler.PendingNotice)
+            Path.Combine(AppContext.BaseDirectory, "Keeper.Session.exe"), deviceLock, () => policy, () => PowerScheduler.SelectNotice(commands.PendingNotice, powerScheduler.PendingNotice))
             { Location = locationModule, OnPowerChoice = powerScheduler.Choose });
         await using var modules = new ModuleHost(moduleList, context);
         hostReference = modules;

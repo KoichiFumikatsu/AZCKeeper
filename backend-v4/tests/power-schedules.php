@@ -177,6 +177,7 @@ function powerScheduleSyncTests(Database $db): void
         && $got[0]['message'] === 'Hasta el lunes' && $got[0]['action'] === 'shutdown' && $got[0]['time_local'] === '19:00' && $got[0]['valid_from'] === '2026-01-01', 'resolved directive');
     check($got[0]['idle_minutes'] === 15 && $got[0]['notice_minutes'] === 10 && $got[0]['postpone_minutes'] === 60 && $got[0]['window_minutes'] === 180, 'defaults in directive');
     check(!array_key_exists('targets', $got[0]) && !array_key_exists('exclusions', $got[0]) && !array_key_exists('name', $got[0]) && !array_key_exists('run_on', $got[0]) && !array_key_exists('valid_until', $got[0]), 'no target lists or absent optional keys');
+    check(is_string($got[0]['updated_at'] ?? null) && $got[0]['updated_at'] === $s['updated_at'] && str_ends_with($got[0]['updated_at'], 'Z'), 'directive carries updated_at (UTC)');
 
     // Excepcion por equipo gana sobre la empresa.
     expect(adminRequest($admin, 'PATCH', "$path/" . $s['id'], ['exclusions' => [['kind' => 'device', 'id' => $device]]], ['if-match' => '"1"']), 200, 'exclude device');
