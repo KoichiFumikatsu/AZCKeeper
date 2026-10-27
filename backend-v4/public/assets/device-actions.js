@@ -200,6 +200,9 @@ export async function remoteActionsSection(d, log) {
   const normal = offered.filter(x => x.action.type !== 'wipe');
   if (normal.length) {
     const bar = node('div', undefined, 'actions'); bar.append(...normal.map(x => button(x)));
+    // Programar el apagado de este equipo: abre «Apagado programado» con el formulario prellenado (solo si Apagar está disponible).
+    const shutdown = normal.find(x => x.action.type === 'shutdown');
+    if (shutdown && !shutdown.state.reason) { const link = node('a', 'Programar apagado', 'button'); link.href = `/apagado-programado.php?equipo=${encodeURIComponent(d.id)}`; link.dataset.command = 'schedule-shutdown'; bar.append(link); }
     section.append(bar); const r = reasons(normal); if (r) section.append(r);
   }
   const wipe = offered.find(x => x.action.type === 'wipe');

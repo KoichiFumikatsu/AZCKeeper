@@ -11,7 +11,7 @@ $current = ['member' => 'users', 'device' => 'devices'][$page] ?? $page;
 // enlace se llama igual que el título de su página. Aquí no se fusiona ninguna pantalla: solo orden, nombres y grupos.
 $portal = [
     'principal' => ['Principal', [['home', 'Inicio', '/'], ['users', 'Personas', '/usuarios.php']]],
-    'equipos' => ['Equipos', [['devices', 'Equipos', '/equipos.php'], ['intake', 'Registrar equipos nuevos', '/alta.php'],
+    'equipos' => ['Equipos', [['devices', 'Equipos', '/equipos.php'], ['intake', 'Registrar equipos nuevos', '/alta.php'], ['power-schedules', 'Apagado programado', '/apagado-programado.php'],
         ['assignments', 'Asignación de equipos', '/asignaciones.php', false], ['coverage', 'Cobertura de instalación', '/cobertura.php'],
         ['client-logs', 'Logs de los equipos', '/logs.php', false]]],
     'productividad' => ['Productividad', [['reports', 'Productividad', '/reportes.php'], ['sites', 'Comparar sedes', '/sedes.php', false]]],
