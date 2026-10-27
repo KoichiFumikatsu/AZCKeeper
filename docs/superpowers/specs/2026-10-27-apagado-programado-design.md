@@ -60,7 +60,7 @@ Reglas:
   excepciones, `status=active`, vigentes) y las envía resueltas (`power_schedules[]`: id, version, action, recurrence,
   days, time_local, run_on, valid_from/until, timezone, message, idle/notice/postpone/window). El agente nunca ve
   listas de excepciones. Se incluye `server_time` UTC.
-- Solo se envía a agentes **≥ 4.0.29** (los anteriores rechazan campos desconocidos y dejarían de sincronizar). Para
+- Solo se envía a agentes **≥ 4.0.30** (los anteriores rechazan campos desconocidos y dejarían de sincronizar). Para
   equipos más viejos el panel muestra «no soportado: actualizar agente».
 - Endpoint del agente para reportar resultados (lote, idempotente por la clave única).
 
@@ -100,13 +100,13 @@ Reglas:
 
 ## 4. Pruebas
 - Servidor (suite MariaDB): validación de campos, resolución alcance/excepciones, permisos + alcance, filtro de versión
-  ≥ 4.0.29, auditoría, idempotencia de resultados, contrato exportado.
+  ≥ 4.0.30, auditoría, idempotencia de resultados, contrato exportado.
 - Agente (reloj simulado): ocurrencias por días/vigencia/zona horaria/cambio de día, ventana de suspensión, inactivo vs
   activo, posponer una sola vez, persistencia tras reinicio del agente, conflicto con orden manual, desfase de reloj.
   Sin apagar Windows de verdad (acción inyectada).
 - Prueba real en un equipo con una programación `once` a 5 minutos antes de desplegar.
 
 ## 5. Despliegue (cada paso con autorización de Koichi)
-1. Servidor + panel (sin efecto hasta que haya agentes 4.0.29).
-2. Agente 4.0.29 al anillo piloto, luego a todos.
+1. Servidor + panel (sin efecto hasta que haya agentes 4.0.30).
+2. Agente 4.0.30 al anillo piloto, luego a todos.
 3. Primera programación real («viernes 19:00, apagar») en una sola sede.
