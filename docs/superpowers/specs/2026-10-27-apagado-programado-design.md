@@ -43,9 +43,11 @@ Reglas:
 - Dos programaciones que coinciden en el **mismo minuto** para un equipo: se ejecuta una vez; gana `restart`.
   En minutos distintos, cada una sigue su curso.
 - El apagado puntual desde la ficha del equipo abre este mismo formulario prellenado (`once`, ese equipo).
-- Permisos: programaciones `shutdown` exigen `equipos.apagar`; `restart`, `equipos.reiniciar`; función contratada
-  `comandos` (igual que `COMMAND_FEATURES`). Cada alcance/excepción elegido debe estar dentro del alcance de quien la
-  crea (`scope_denied` si no). Crear, editar, pausar y borrar se auditan.
+- Permisos: crear/editar/pausar/borrar exigen `equipos.apagar` y la función contratada `comandos`
+  (`feature_not_contracted:comandos`); `restart`, además `equipos.reiniciar`; listar/ver/resultados, `equipos.ver`.
+  Cada alcance/excepción elegido debe estar dentro del alcance de quien la crea (`scope_denied` si no); pausar/reanudar
+  no revalida destinos (una sede desactivada después no lo impide). Crear, editar, pausar y borrar se auditan. Sin
+  `comandos` la empresa no envía programaciones (`power_schedules: []`).
 
 ## 2. Arquitectura
 
@@ -61,18 +63,24 @@ Reglas:
   days, time_local, run_on, valid_from/until, timezone, message, idle/notice/postpone/window). El agente nunca ve
   listas de excepciones. Se incluye `server_time` UTC.
 - Solo se envía a agentes **≥ 4.0.30** (los anteriores rechazan campos desconocidos y dejarían de sincronizar). Para
-  equipos más viejos el panel muestra «no soportado: actualizar agente».
+  equipos más viejos alcanzados y sin resultados, `GET …/runs` añade una fila `unsupported`/`agent_too_old`
+  (`occurrence_at` = `updated_at` de la programación) y el panel muestra «No soportado: actualizar agente».
 - Endpoint del agente para reportar resultados (lote, idempotente por la clave única).
 
 ### Agente (servicio) — módulo `PowerScheduler`
 - Tick cada 30 s. Calcula la próxima ocurrencia de cada programación en la zona horaria de la empresa. Usa
   `server_time` de la última sincronización si el reloj local difiere > 5 min.
 - Al llegar la hora (o al despertar dentro de `window_minutes`):
-  - consulta a cada sesión abierta los segundos desde la última entrada (`GetLastInputInfo`) por IPC;
+  - consulta a cada sesión abierta los segundos desde la última entrada (`GetLastInputInfo`) por IPC; bloqueo de TI =
+    sin uso; bloqueo de Windows (Win+L) = inactividad real; en llamada = en uso (0 s);
   - sin sesiones, o todas inactivas ≥ `idle_minutes` → ejecuta con `shutdown.exe` (camino existente);
   - alguna activa → aviso con mensaje, cuenta regresiva `notice_minutes`, «Posponer» (si aplica y no se usó) y
     «Apagar/Reiniciar ahora». Al posponer: nueva hora = ahora + `postpone_minutes`; a `notice_minutes` de esa hora
-    aparece la tarjeta compacta sin posponer; al llegar a 0 se ejecuta.
+    aparece la tarjeta compacta sin posponer; al llegar a 0 se ejecuta **solo si alguna sesión verificada recibió el
+    aviso** (si no, `not_needed`/`no_session_ui`).
+  - equipo encendido después de la hora con la cuenta regresiva en curso (reinicio de la persona u otra causa) → no se
+    repite: `executed_by_person`/`restarted_during_notice`.
+  - sin `power_schedules` del servidor en 24 h (servidor revertido, sin red) la lista guardada se descarta.
 - Estado en curso (ocurrencia, hora efectiva, pospuesto sí/no) persistido en ProgramData para sobrevivir a reinicios
   del agente o de la sesión sin perder ni duplicar.
 - Despertar fuera de la ventana → no hace nada, reporta `skipped_suspended`.
@@ -92,6 +100,10 @@ Reglas:
 |---|---|
 | Reloj del equipo desfasado (hay equipos con 4–7 h) | Se usa `server_time` si difiere > 5 min. |
 | Equipo bloqueado por TI (DeviceLock) | Se ejecuta; el bloqueo no cuenta como uso. |
+| Equipo bloqueado por la persona (Win+L) | Cuenta su inactividad real: bloqueado ≥ `idle_minutes` → sin uso; si no, aviso. |
+| Llamada en curso | Cuenta como uso (aviso). |
+| Nadie recibió el aviso (sesión sin Keeper.Session verificado) | No se apaga: `not_needed`/`no_session_ui`. |
+| Equipo reiniciado durante el aviso | No se repite: `executed_by_person`/`restarted_during_notice`. |
 | Orden manual de apagar/reiniciar durante un aviso programado | Gana la manual; la programada → `replaced`. |
 | TI pausa/edita/borra con aviso en pantalla | En la siguiente sync el aviso se cancela («TI canceló…») → `cancelled_by_it`. |
 | Varias sesiones (escritorio remoto) | Basta una activa para avisar; posponer desde cualquiera aplica a todas. |

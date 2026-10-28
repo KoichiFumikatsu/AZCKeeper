@@ -366,9 +366,11 @@ verificado da `null` y cuenta como en uso). (4) Orden manual vigente (`manualNot
 (`WindowsBootClock`: el más reciente entre `TickCount64` y el último evento 27 de Kernel-Boot en frío; ignora el
 arranque híbrido del Inicio rápido).
 
-**Estado.** `power-schedules.json` en ProgramData, escritura atómica: última lista (`Schedules` + `ReceivedAt`),
-ocurrencia en curso (`Active`: `RunId`, `Deadline`, `Postponed`, `Started`, `Outcome`), `Done` (14 días) y `Unsent`
-(resultados sin encolar). Un archivo ilegible se aparta como `.corrupt` y se empieza vacío; un fallo de escritura se
+**Estado.** `power-schedules.json` en ProgramData, escritura atómica: última lista (`Schedules` + `ReceivedAt`) y hora de
+Windows del último sync que la trajo (`ListReceivedAt`; pasadas 24 h sin otra lista se descarta y una cuenta regresiva en
+curso termina en `cancelled_by_it`; `OfferAsync(null)` no renueva; un estado anterior sin el campo cuenta desde el arranque
+del agente), ocurrencia en curso (`Active`: `RunId`, `Deadline`, `Postponed`, `Started`, `Outcome`, `Delivered`), `Done`
+(14 días) y `Unsent` (resultados sin encolar). Un archivo ilegible se aparta como `.corrupt` y se empieza vacío; un fallo de escritura se
 loguea una vez y no impide la ejecución.
 
 **Flujo (tick cada 30 s; cada segundo con aviso en curso).**
@@ -379,14 +381,20 @@ loguea una vez y no impide la ejecución.
 4. Orden manual vigente → `replaced` (`manual_command`). Sin sesiones o todas ≥ `idle_minutes` → ejecuta (`executed_idle`);
    en uso → `Active` con plazo = ahora + `notice_minutes`.
 5. Con `Active`: «Ahora» → `executed_by_person`; «Posponer» (solo si hay `postpone_minutes` y no se pospuso) → plazo = ahora +
-   `postpone_minutes`, resultado `postponed` (no cierra la ocurrencia); plazo vencido → `executed_after_notice`. Plazo
+   `postpone_minutes`, resultado `postponed` (no cierra la ocurrencia); plazo vencido → `executed_after_notice` solo si el
+   aviso se entregó (`Delivered`: `SessionSupervisor.NoticeDelivered(RunId)`, un intercambio completado con un par
+   verificado mientras el aviso tenía ese `RunId`, o una elección de la persona; queda guardado), si no `not_needed`
+   (`no_session_ui`). Arranque posterior a la ocurrencia con `Active` sin `Started` (la persona u otra cosa reinició o
+   apagó, o se ejecutó sin poder guardar) → `executed_by_person` (`restarted_during_notice`), sin ejecutar otra vez. Plazo
    vencido hace > 2 min (suspensión): dentro de la ventana (más lo pospuesto) se rearma la cuenta completa, si no
    `skipped_suspended`. Pausa/edición/borrado en el sync → `cancelled_by_it` y aviso «TI canceló…» durante 60 s.
 6. `Started=true` se guarda **antes** de llamar a `shutdown.exe` (`IDeviceActions`): un corte nunca repite. Al reiniciar el
    agente con `Started` se reporta el resultado guardado.
 
 **IPC con la sesión (`SessionProtocol`).** `SessionResponse.idle_seconds` (segundos desde la última entrada; con el equipo
-bloqueado por TI manda el tope de un año, así no cuenta como uso) y `power_choice {run_id, kind: postpone|now}`.
+bloqueado por TI —`LockScreen.LockRequested`— manda el tope de un año, así no cuenta como uso; con el bloqueo de Windows
+(Win+L) manda la inactividad real de `GetLastInputInfo`; en llamada —`CallDetector.IsInCall`— manda 0;
+`SessionClientRules.IdleSeconds`) y `power_choice {run_id, kind: postpone|now}`.
 `PowerNotice` gana `message` (≤ 280), `postpone_minutes` (muestra «Posponer N»), `compact` (tarjeta abajo a la derecha, sin
 Posponer, tras posponer) y `run_id`. Un aviso inválido se ignora y se loguea `SessionClient/power_notice_invalid`. Varias
 sesiones: basta una activa; la elección de cualquiera aplica al `RunId`. `SelectNotice`: manual vigente > programado >

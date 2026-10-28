@@ -15,7 +15,11 @@ final class PowerSchedules
         $this->tenant = $c['tenant_id'];
     }
 
-    /** El contrato exige equipos.apagar en todas las operaciones; reiniciar exige ademas equipos.reiniciar. */
+    /**
+     * Crear, editar y borrar exigen equipos.apagar (x-permission) y, por eso, la funcion contratada 'comandos'
+     * (AdminAccess via Features::forOperation); reiniciar exige ademas equipos.reiniciar. Listar, ver y ejecuciones
+     * solo exigen equipos.ver.
+     */
     public static function permissionFor(string $action): string
     {
         return $action === 'restart' ? 'equipos.reiniciar' : 'equipos.apagar';
@@ -113,6 +117,10 @@ final class PowerSchedules
         $v = array_merge($cur, get_object_vars($b));
         // PowerScheduleInput no tiene "required" (se comparte con PATCH): al crear, la presencia se exige aqui.
         foreach (['name', 'recurrence', 'time_local'] as $k) { if (!isset($v[$k])) { throw new ApiError(422, 'validation_failed'); } }
+        if (preg_match('/^\s*$/u', (string) $v['name'])) { throw new ApiError(422, 'validation_failed', [], 'invalid_name'); }
+        // Pausar/reanudar (PATCH solo con status): los destinos guardados no se revalidan como escritura (una sede o area
+        // desactivada despues no impide pausar) ni se reescriben; load() ya comprobo el alcance.
+        $statusOnly = $old !== null && array_keys(get_object_vars($b)) === ['status'];
         if ($v['recurrence'] === 'weekly') {
             if (!$v['days']) { throw new ApiError(422, 'validation_failed', [], 'invalid_days'); }
             $v['run_on'] = null;
@@ -139,7 +147,7 @@ final class PowerSchedules
             if (isset($seen[$key])) { throw new ApiError(422, 'validation_failed', [], 'duplicate_target'); }
             $seen[$key] = true;
         }
-        foreach (array_merge($targets, $excl) as $t) { $this->checkTarget($t->kind, Util::bin($t->id)); }
+        if (!$statusOnly) { foreach (array_merge($targets, $excl) as $t) { $this->checkTarget($t->kind, Util::bin($t->id)); } }
 
         $mask = 0;
         foreach ($v['days'] as $d) { $mask |= 1 << ($d - 1); }
@@ -155,11 +163,13 @@ final class PowerSchedules
             $this->db->run('INSERT INTO power_schedules (tenant_id,id,created_by,' . implode(',', array_keys($cols)) . ') VALUES (?,?,?' . str_repeat(',?', count($cols)) . ')',
                 [$this->tenant, $id, $this->c['principal_id'], ...array_values($cols)]);
         }
-        $this->db->run('DELETE FROM power_schedule_targets WHERE tenant_id=? AND schedule_id=?', [$this->tenant, $id]);
-        foreach ([[$targets, 0], [$excl, 1]] as [$list, $ex]) {
-            foreach ($list as $t) {
-                $this->db->run('INSERT INTO power_schedule_targets (tenant_id,id,schedule_id,kind,ref_id,excluded) VALUES (?,?,?,?,?,?)',
-                    [$this->tenant, Util::bin(Util::uuid()), $id, $t->kind, Util::bin($t->id), $ex]);
+        if (!$statusOnly) {
+            $this->db->run('DELETE FROM power_schedule_targets WHERE tenant_id=? AND schedule_id=?', [$this->tenant, $id]);
+            foreach ([[$targets, 0], [$excl, 1]] as [$list, $ex]) {
+                foreach ($list as $t) {
+                    $this->db->run('INSERT INTO power_schedule_targets (tenant_id,id,schedule_id,kind,ref_id,excluded) VALUES (?,?,?,?,?,?)',
+                        [$this->tenant, Util::bin(Util::uuid()), $id, $t->kind, Util::bin($t->id), $ex]);
+                }
             }
         }
         (new Audit($this->db))->record($this->c, $this->r, $this->r->operation['operationId'], 'power_schedule', $id, array_keys(get_object_vars($b)));
@@ -202,16 +212,45 @@ final class PowerSchedules
     private function runs(string $id): array
     {
         $this->load($id, false, true);
-        // Ultima fila por equipo (la mas reciente por occurrence_at y reported_at), solo de las personas del alcance.
         [$scope, $args] = $this->access->usersSql('u');
-        $rows = $this->db->run("SELECT r.device_id, r.occurrence_at, r.outcome, r.detail, r.reported_at, d.hostname
+        $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s.u');
+        [$major, $minor, $patch] = array_map('intval', explode('.', self::MIN_AGENT));
+        // Version del agente comparada por numero (4.0.9 < 4.0.30), no como texto.
+        $version = implode(', ', array_map(fn (int $n) => "CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(d.agent_version,'.',$n),'.',-1) AS UNSIGNED)", [1, 2, 3]));
+        // Mismo alcance que clientSchedules(): persona por device_assignments vigente (o devices.user_id), sede/area por
+        // user_assignments vigente (o users); con asignaciones pero ninguna vigente, el equipo no recibe nada.
+        $site = 'IF(ua.user_id IS NULL, eu.site_id, ua.site_id)';
+        $area = 'IF(ua.user_id IS NULL, eu.area_id, ua.area_id)';
+        $match = "(t.kind='tenant' AND t.ref_id=d.tenant_id) OR (t.kind='device' AND t.ref_id=d.id) OR (t.kind='user' AND t.ref_id=eu.id)
+            OR (t.kind='site' AND t.ref_id<=>$site) OR (t.kind='area' AND t.ref_id<=>$area)";
+        // Ultima fila por equipo (la mas reciente por occurrence_at y reported_at), solo de las personas del alcance; mas una
+        // fila sintetica unsupported/agent_too_old (occurrence_at = updated_at de la programacion) por cada equipo alcanzado
+        // con agente < MIN_AGENT que aun no tiene resultados: «No soportado: actualizar agente».
+        $rows = $this->db->run("SELECT x.* FROM (
+            SELECT r.device_id, r.occurrence_at, r.outcome, r.detail, r.reported_at, d.hostname
             FROM power_schedule_runs r
             JOIN devices d ON d.tenant_id=r.tenant_id AND d.id=r.device_id
             LEFT JOIN users u ON u.tenant_id=d.tenant_id AND u.id=d.user_id
             WHERE r.tenant_id=? AND r.schedule_id=? AND ($scope)
             AND NOT EXISTS (SELECT 1 FROM power_schedule_runs n WHERE n.tenant_id=r.tenant_id AND n.schedule_id=r.schedule_id AND n.device_id=r.device_id
                 AND (n.occurrence_at>r.occurrence_at OR (n.occurrence_at=r.occurrence_at AND (n.reported_at>r.reported_at OR (n.reported_at=r.reported_at AND n.id>r.id)))))
-            ORDER BY d.hostname, r.device_id LIMIT 1000", [$this->tenant, $id, ...$args])->fetchAll();
+            UNION ALL
+            SELECT DISTINCT d.id, s.updated_at, 'unsupported', 'agent_too_old', CAST(? AS DATETIME(6)), d.hostname
+            FROM power_schedules s
+            JOIN devices d ON d.tenant_id=s.tenant_id AND d.status='active'
+            LEFT JOIN users u ON u.tenant_id=d.tenant_id AND u.id=d.user_id
+            LEFT JOIN device_assignments da ON da.tenant_id=d.tenant_id AND da.device_id=d.id AND da.starts_at<=? AND (da.ends_at IS NULL OR da.ends_at>?)
+            JOIN users eu ON eu.tenant_id=d.tenant_id AND eu.id=COALESCE(da.user_id, d.user_id)
+            LEFT JOIN user_assignments ua ON ua.tenant_id=d.tenant_id AND ua.user_id=eu.id AND ua.starts_at<=? AND (ua.ends_at IS NULL OR ua.ends_at>?)
+            WHERE s.tenant_id=? AND s.id=? AND ($scope)
+            AND ($version) < (?, ?, ?)
+            AND NOT EXISTS (SELECT 1 FROM power_schedule_runs r WHERE r.tenant_id=s.tenant_id AND r.schedule_id=s.id AND r.device_id=d.id)
+            AND (da.device_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM device_assignments x WHERE x.tenant_id=d.tenant_id AND x.device_id=d.id))
+            AND (ua.user_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM user_assignments x WHERE x.tenant_id=d.tenant_id AND x.user_id=eu.id))
+            AND EXISTS (SELECT 1 FROM power_schedule_targets t WHERE t.tenant_id=s.tenant_id AND t.schedule_id=s.id AND t.excluded=FALSE AND ($match))
+            AND NOT EXISTS (SELECT 1 FROM power_schedule_targets t WHERE t.tenant_id=s.tenant_id AND t.schedule_id=s.id AND t.excluded=TRUE AND ($match))
+            ) x ORDER BY x.hostname, x.device_id LIMIT 1000",
+            [$this->tenant, $id, ...$args, $now, $now, $now, $now, $now, $this->tenant, $id, ...$args, $major, $minor, $patch])->fetchAll();
         return AdminApi::response(['data' => array_map(fn ($x) => ['device_id' => Util::id($x['device_id']), 'hostname' => $x['hostname'],
             'occurrence_at' => Util::time($x['occurrence_at']), 'outcome' => $x['outcome'], 'detail' => $x['detail'],
             'reported_at' => Util::time($x['reported_at'])], $rows)]);
@@ -221,10 +260,12 @@ final class PowerSchedules
      * Programaciones activas y vigentes que aplican a este equipo: incluidas por algun alcance y sin ninguna exclusion.
      * Equipo -> persona por device_assignments vigente (o devices.user_id); persona -> sede/area por user_assignments vigente (o users),
      * como PolicyCompiler::snapshot(). Si hay asignaciones pero ninguna cubre ahora (el compilador lanza), no se envia nada.
-     * La directiva no lleva alcance ni exclusiones.
+     * La directiva no lleva alcance ni exclusiones. Sin la funcion contratada 'comandos' no se envia nada: el agente
+     * recibe la lista vacia y cancela lo pendiente.
      */
     public function clientSchedules(string $device): array
     {
+        if (!Features::has($this->db, $this->tenant, 'comandos')) { return []; }
         $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s.u');
         $d = $this->db->one('SELECT user_id FROM devices WHERE tenant_id=? AND id=?', [$this->tenant, $device]);
         if (!$d) { return []; }

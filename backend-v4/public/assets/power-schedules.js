@@ -14,10 +14,20 @@ export const ACTION_LABEL = { shutdown: 'Apagar', restart: 'Reiniciar' };
 const DAYS = [[1, 'L', 'Lunes'], [2, 'M', 'Martes'], [3, 'X', 'Miércoles'], [4, 'J', 'Jueves'], [5, 'V', 'Viernes'], [6, 'S', 'Sábado'], [7, 'D', 'Domingo']];
 const KIND_LABEL = { tenant: 'Toda la empresa', site: 'Sede', area: 'Área', user: 'Persona', device: 'Equipo' };
 export const OUTCOME_LABEL = {
-  executed_idle: 'Apagado sin uso', executed_after_notice: 'Ejecutado tras aviso', postponed: 'Pospuesto', executed_by_person: 'La persona lo ejecutó',
+  executed_idle: 'Ejecutado sin uso', executed_after_notice: 'Ejecutado tras aviso', postponed: 'Pospuesto', executed_by_person: 'La persona lo ejecutó',
   cancelled_by_it: 'Cancelado por TI', replaced: 'Reemplazado por orden manual', skipped_suspended: 'No ejecutado: equipo suspendido',
-  not_needed: 'No necesario (equipo apagado)', unsupported: 'No soportado: actualizar agente',
+  not_needed: 'No necesario (equipo apagado)', unsupported: 'No soportado',
 };
+// Detalles del agente en español; agent_too_old (fila del servidor para agentes < 4.0.30 sin resultados) reemplaza la etiqueta.
+const RUN_DETAIL = {
+  no_session_ui: 'ninguna sesión recibió el aviso', restarted_during_notice: 'el equipo se reinició durante el aviso',
+  manual_command: 'orden manual', same_minute: 'otra programación a la misma hora', device_actions_dry_run: 'modo de prueba',
+};
+/** [etiqueta, detalle o null] de una fila de resultados. */
+export function runLabel(run) {
+  if (run.outcome === 'unsupported' && run.detail === 'agent_too_old') return ['No soportado: actualizar agente', null];
+  return [OUTCOME_LABEL[run.outcome] || run.outcome, run.detail ? RUN_DETAIL[run.detail] || run.detail : null];
+}
 const DETAIL_TEXT = {
   invalid_days: 'Elige al menos un día de la semana.',
   invalid_run_on: 'Elige la fecha en que se ejecuta.',
@@ -247,7 +257,7 @@ async function showRuns(schedule, zone, zoneKnown) {
     const head = el('tr'); ['Equipo', 'Ocurrencia', 'Resultado'].forEach(h => { const th = el('th', h); th.scope = 'col'; head.append(th); }); const thead = el('thead'); thead.append(head); t.append(thead);
     const tbody = el('tbody');
     for (const r of runs) {
-      const tr = el('tr'); const out = el('td', OUTCOME_LABEL[r.outcome] || r.outcome); if (r.detail) out.append(el('small', r.detail));
+      const tr = el('tr'); const [label, detail] = runLabel(r); const out = el('td', label); if (detail) out.append(el('small', detail));
       tr.append(el('td', r.hostname), el('td', fmt.format(new Date(r.occurrence_at))), out); tbody.append(tr);
     }
     t.append(tbody); const wrap = el('div', undefined, 'table-wrap'); wrap.append(t); body.append(wrap);

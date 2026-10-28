@@ -164,13 +164,16 @@ apagado» de la ficha del equipo (abre el formulario prellenado: `once`, ese equ
 | GET | `/admin/power-schedules/{id}` | Detalle con destinos y exclusiones |
 | PATCH | `/admin/power-schedules/{id}` | Edita/pausa/reanuda (`status`); exige `If-Match` (412 `version_conflict`) |
 | DELETE | `/admin/power-schedules/{id}` | Borra (el panel pide confirmación escrita) |
-| GET | `/admin/power-schedules/{id}/runs` | Última ejecución por equipo: `hostname`, `occurrence_at`, `outcome`, `detail`, `reported_at` |
+| GET | `/admin/power-schedules/{id}/runs` | Última ejecución por equipo: `hostname`, `occurrence_at`, `outcome`, `detail`, `reported_at`; más una fila `unsupported`/`agent_too_old` por cada equipo alcanzado con agente < 4.0.30 y sin resultados |
 
-Permisos: todas las operaciones exigen `equipos.apagar`; las programaciones `restart` exigen además
-`equipos.reiniciar` (al cambiar de acción, ambos). Cada alcance/excepción debe estar dentro del alcance de quien lo
-crea (`403 permission_denied`, detalle `scope_denied`); `tenant` como destino solo con alcance total. Crear, editar,
-pausar y borrar se auditan (tipo `power_schedule`). La función contratada `comandos` es la que habilita apagar/reiniciar
-por orden (`COMMAND_FEATURES`); el código de `PowerSchedules.php` no la comprueba (pendiente de decidir).
+Permisos: listar, ver y `/runs` exigen `equipos.ver`; crear, editar (también pausar/reanudar) y borrar exigen
+`equipos.apagar` y, por ese permiso, la **función contratada `comandos`** (`AdminAccess` vía `Features::forOperation`:
+sin ella, `403 permission_denied` con detalle `feature_not_contracted:comandos`, también para quien tenga el permiso).
+Las programaciones `restart` exigen además `equipos.reiniciar` (al cambiar de acción, ambos). Cada alcance/excepción debe
+estar dentro del alcance de quien lo crea (`403 permission_denied`, detalle `scope_denied`); `tenant` como destino solo
+con alcance total. Pausar/reanudar (`PATCH` solo con `status`) no revalida los destinos como escritura: una sede o área
+desactivada después no impide pausar. Crear, editar, pausar y borrar se auditan (tipo `power_schedule`). Una empresa sin
+`comandos` deja de enviar programaciones a sus equipos (`power_schedules: []`): los agentes cancelan lo pendiente.
 
 Versión mínima del agente: **4.0.30** (`PowerSchedules::MIN_AGENT`); los anteriores no reciben `power_schedules`
 (rechazarían el campo) y sus `power_schedule_runs`, si llegaran, se ignoran. Migración `0070_power_schedules.sql`
@@ -178,7 +181,7 @@ Versión mínima del agente: **4.0.30** (`PowerSchedules::MIN_AGENT`); los anter
 
 | Campo | Rango | Defecto |
 |---|---|---|
-| `name` | 1-80 | — |
+| `name` | 1-80, no solo espacios (`422`, detalle `invalid_name`) | — |
 | `action` | `shutdown` / `restart` | `shutdown` |
 | `recurrence` | `once` (`run_on`) / `weekly` (`days`) | — |
 | `time_local` | `HH:MM`, zona de la empresa (`tenants.timezone`) | — |
@@ -191,11 +194,19 @@ Versión mínima del agente: **4.0.30** (`PowerSchedules::MIN_AGENT`); los anter
 | `status` | `active` / `paused` | `active` |
 
 Reglas del agente:
-- **Sin uso → ejecuta**: sin sesiones de usuario, o todas con inactividad ≥ `idle_minutes` (el bloqueo por TI no cuenta como
-  uso), apaga/reinicia sin preguntar (`executed_idle`). En los 2 primeros minutos tras encender, «sin sesiones» cuenta como en uso.
+- **Sin uso → ejecuta**: sin sesiones de usuario, o todas con inactividad ≥ `idle_minutes`, apaga/reinicia sin preguntar
+  (`executed_idle`). Solo el **bloqueo por TI** (`DeviceLock`) cuenta como «sin uso» inmediato; con el bloqueo de Windows
+  (Win+L) la sesión envía la inactividad real (bloqueada más de `idle_minutes` ya cuenta sola como sin uso). Una **llamada**
+  en curso (detector de llamadas de la sesión) cuenta como uso. En los 2 primeros minutos tras encender, «sin sesiones»
+  cuenta como en uso.
 - **En uso → aviso**: ventana con el mensaje de TI, cuenta regresiva `notice_minutes`, «Posponer N min» (**una sola vez**)
   y «Apagar/Reiniciar ahora». Al posponer, el plazo pasa a ahora + `postpone_minutes`; a `notice_minutes` de ese plazo
-  aparece una **tarjeta compacta** abajo a la derecha, sin Posponer; al llegar a 0 se ejecuta.
+  aparece una **tarjeta compacta** abajo a la derecha, sin Posponer; al llegar a 0 se ejecuta **solo si alguna sesión
+  verificada recibió el aviso** (`SessionSupervisor.NoticeDelivered`); si nadie pudo verlo (sesión sin Keeper.Session
+  verificado, recién encendido) no se apaga: `not_needed` con detalle `no_session_ui`.
+- **Reinicio durante el aviso**: si el equipo arrancó después de la hora con una cuenta regresiva en curso (la persona lo
+  reinició/apagó, o se ejecutó y `power-schedules.json` no se pudo guardar), no se vuelve a avisar ni a ejecutar:
+  `executed_by_person` con detalle `restarted_during_notice`.
 - **Ventana de suspensión**: si el equipo despierta dentro de `window_minutes` de la hora, aplica la misma lógica; fuera, se
   salta (`skipped_suspended`). Equipo apagado antes de la hora: `not_needed`. La hora de arranque se toma del más
   reciente entre `TickCount64` y el último evento 27 de Kernel-Boot en frío, para que el **inicio rápido** de Windows
@@ -204,10 +215,12 @@ Reglas del agente:
 - **Mismo minuto**: dos programaciones coincidentes para un equipo ejecutan una vez; gana `restart` y la otra queda `replaced` (`same_minute`).
 - **Orden manual** de apagar/reiniciar **gana** a la programada: `replaced` (`manual_command`).
 - Reloj local con desfase > 5 min: las ocurrencias se calculan con la hora del servidor (`ServerClock`).
+- **Lista caduca en 24 h**: si el agente no recibe `power_schedules` en un sync durante 24 h (hora de Windows; un sync sin
+  el campo no cuenta), descarta la lista guardada y cancela una cuenta regresiva en curso (`cancelled_by_it`).
 
 | `outcome` | Texto en el panel |
 |---|---|
-| `executed_idle` | Apagado sin uso |
+| `executed_idle` | Ejecutado sin uso |
 | `executed_after_notice` | Ejecutado tras aviso |
 | `postponed` | Pospuesto |
 | `executed_by_person` | La persona lo ejecutó |
@@ -215,7 +228,7 @@ Reglas del agente:
 | `replaced` | Reemplazado por orden manual |
 | `skipped_suspended` | No ejecutado: equipo suspendido |
 | `not_needed` | No necesario (equipo apagado) |
-| `unsupported` | No soportado: actualizar agente (también el dry-run `device_actions_dry_run`) |
+| `unsupported` | No soportado (dry-run `device_actions_dry_run`, `action_failed:<Tipo>`); con detalle `agent_too_old` (fila del servidor para agentes < 4.0.30 sin resultados; `occurrence_at` = `updated_at` de la programación, `reported_at` = ahora): «No soportado: actualizar agente» |
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File backend-v4/tests/mysql-smoke.ps1 -DebugResponses
@@ -224,9 +237,11 @@ dotnet test client-v4/Keeper.sln -maxcpucount:1 -nodeReuse:false
 ```
 
 Notas operativas:
-- **No hay vuelta atrás del backend** una vez desplegados agentes 4.0.30: el contrato exige `updated_at` en cada
-  programación enviada (el agente lo necesita para la regla «editada después de la hora»). No se puede volver a una
-  versión del backend anterior al commit `77b9060`, que lo añadió.
+- **Para detener la función**, pausar todas las programaciones (o quitar la función `comandos`): el servidor envía
+  `power_schedules: []` y los agentes cancelan lo pendiente en su siguiente sync. **No** revertir el backend por debajo
+  de esta función: un servidor anterior no envía el campo y los agentes 4.0.30 siguen ejecutando la lista guardada hasta
+  **24 h** después de su último sync con lista. Nunca desplegar commits intermedios de la rama (el contrato exige
+  `updated_at` desde `77b9060`).
 - Despliegue gradual: backend + migración + panel (sin efecto hasta que haya agentes 4.0.30) → agente al anillo piloto →
   todos → primera programación real en una sola sede. La **prueba real** en un equipo (`once` a ~5 min) sigue pendiente:
   `Keeper.Agent.IntegrationHarness` solo cubre login/sync/política con un `fixture.json` fijo y no sirve programaciones.

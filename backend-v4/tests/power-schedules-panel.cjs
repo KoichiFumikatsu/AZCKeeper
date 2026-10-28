@@ -38,7 +38,8 @@ const server = http.createServer(async (req, res) => {
       rows = rows.map(r => r.id === scheduleId ? { ...r, ...input, version: r.version + 1 } : r); return json(res, 200, rows.find(r => r.id === scheduleId));
     }
     if (p === `/admin/power-schedules/${scheduleId}` && req.method === 'DELETE') { rows = rows.filter(r => r.id !== scheduleId); res.statusCode = 204; return res.end(); }
-    if (p === `/admin/power-schedules/${scheduleId}/runs`) return json(res, 200, { data: [{ device_id: deviceId, hostname: 'PC-01', occurrence_at: '2026-10-23T00:00:00Z', outcome: 'executed_idle', detail: null, reported_at: '2026-10-23T00:01:00Z' }] });
+    if (p === `/admin/power-schedules/${scheduleId}/runs`) return json(res, 200, { data: [{ device_id: deviceId, hostname: 'PC-01', occurrence_at: '2026-10-23T00:00:00Z', outcome: 'executed_idle', detail: null, reported_at: '2026-10-23T00:01:00Z' },
+      { device_id: '00000000-0000-4000-8000-0000000000d9', hostname: 'PC-VIEJO', occurrence_at: '2026-10-20T15:00:00Z', outcome: 'unsupported', detail: 'agent_too_old', reported_at: '2026-10-27T15:00:00Z' }] });
     return json(res, 404, { code: 'not_found' });
   }
   if (req.url.split('?')[0] === '/') {
@@ -105,7 +106,11 @@ const sent = method => calls.filter(c => c.method === method && c.path.startsWit
     // Resultados.
     await page.getByRole('button', { name: 'Ver resultados Cierre viernes', exact: true }).click();
     const runs = page.getByRole('dialog', { name: 'Resultados: Cierre viernes' });
-    await runs.getByText('PC-01', { exact: true }).waitFor(); await runs.getByText('Apagado sin uso', { exact: true }).waitFor();
+    await runs.getByText('PC-01', { exact: true }).waitFor(); await runs.getByText('Ejecutado sin uso', { exact: true }).waitFor();
+    // Agente < 4.0.30 sin resultados: fila sintetica del servidor; se muestra la etiqueta, no el codigo.
+    const old = runs.getByRole('row').filter({ hasText: 'PC-VIEJO' });
+    await old.getByText('No soportado: actualizar agente', { exact: true }).waitFor();
+    assert.equal(await old.getByText('agent_too_old').count(), 0);
     await runs.getByRole('button', { name: 'Cerrar', exact: true }).click();
 
     // Borrar pide escribir el nombre.

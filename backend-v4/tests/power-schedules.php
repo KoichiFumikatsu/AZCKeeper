@@ -134,6 +134,33 @@ function powerScheduleAdminTests(Database $db): void
     $o2 = expect(adminRequest($both, 'POST', $path, $with(['recurrence' => 'once', 'days' => [], 'run_on' => '2026-12-24', 'valid_from' => '2026-11-01', 'name' => 'Una'])), 201, 'once consistent');
     check($o2['valid_from'] === '2026-12-24', 'once stores valid_from = run_on');
 
+    // Nombre vacio tras recortar espacios: rechazado.
+    expect(adminRequest($both, 'POST', $path, $with(['name' => " \t  "])), 422, 'blank name rejected');
+
+    // Pausar/reanudar (solo status) no revalida destinos como escritura: una sede desactivada despues no bloquea.
+    $closing = Util::bin(Util::uuid());
+    $db->run("INSERT INTO org_units (tenant_id,id,kind,name) VALUES (?,?,'site','PS sede que cierra')", [$tenant, $closing]);
+    $cs = expect(adminRequest($both, 'POST', $path, $with(['name' => 'Sede que cierra', 'targets' => [$t('site', Util::id($closing))]])), 201, 'schedule on closing site');
+    $db->run('UPDATE org_units SET active=0 WHERE tenant_id=? AND id=?', [$tenant, $closing]);
+    $csPaused = expect(adminRequest($both, 'PATCH', "$path/" . $cs['id'], ['status' => 'paused'], ['if-match' => '"' . $cs['version'] . '"']), 200, 'pause with deactivated site');
+    check($csPaused['status'] === 'paused' && $csPaused['targets'] === $cs['targets'], 'pause keeps targets');
+    $csActive = expect(adminRequest($both, 'PATCH', "$path/" . $cs['id'], ['status' => 'active'], ['if-match' => '"' . $csPaused['version'] . '"']), 200, 'resume with deactivated site');
+    expect(adminRequest($both, 'PATCH', "$path/" . $cs['id'], ['name' => 'Otro nombre'], ['if-match' => '"' . $csActive['version'] . '"']), 422, 'other edits still need active site');
+    expect(adminRequest($siteAdmin, 'PATCH', "$path/" . $mixed['id'], ['status' => 'active'], ['if-match' => '"' . $patchRes[1]['version'] . '"']), 403, 'status-only patch keeps scope check');
+
+    // La funcion 'comandos' (x-permission equipos.apagar) se exige al crear, editar y borrar; ver, listar y ejecuciones no.
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='comandos'", [$tenant]);
+    $nc = adminRequest($both, 'POST', $path, $with(['name' => 'Sin comandos']));
+    check($nc[0] === 403 && $nc[1]['detail'] === 'feature_not_contracted:comandos', 'create needs the comandos function');
+    $nc = adminRequest($both, 'PATCH', "$path/" . $o2['id'], ['status' => 'paused'], ['if-match' => '"' . $o2['version'] . '"']);
+    check($nc[0] === 403 && $nc[1]['detail'] === 'feature_not_contracted:comandos', 'patch needs the comandos function');
+    $nc = adminRequest($both, 'DELETE', "$path/" . $o2['id'], null, ['if-match' => '"' . $o2['version'] . '"']);
+    check($nc[0] === 403 && $nc[1]['detail'] === 'feature_not_contracted:comandos', 'delete needs the comandos function');
+    expect(adminRequest($both, 'GET', $path), 200, 'list without comandos');
+    expect(adminRequest($both, 'GET', "$path/" . $o2['id']), 200, 'get without comandos');
+    expect(adminRequest($both, 'GET', "$path/" . $o2['id'] . '/runs'), 200, 'runs without comandos');
+    $db->run("INSERT INTO tenant_features (tenant_id,feature_code) VALUES (?,'comandos')", [$tenant]);
+
     // Otra empresa: el id no existe para ella.
     $foreign = adminFixture($db, adminMember($db, secondTenant($db)), ['equipos.ver', 'equipos.apagar', 'equipos.reiniciar']);
     expect(adminRequest($foreign, 'GET', "$path/" . $own['id']), 404, 'cross-tenant get');
@@ -190,6 +217,12 @@ function powerScheduleSyncTests(Database $db): void
     check($sync($key, $token)['power_schedules'] === [], 'paused schedule not sent');
     expect(adminRequest($admin, 'PATCH', "$path/" . $s['id'], ['status' => 'active'], ['if-match' => '"4"']), 200, 'resume');
 
+    // Sin la funcion 'comandos' el equipo recibe la lista vacia: el agente cancela lo pendiente y deja de ejecutar.
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='comandos'", [$tenant]);
+    check($sync($key, $token)['power_schedules'] === [], 'tenant without comandos sends empty list');
+    $db->run("INSERT INTO tenant_features (tenant_id,feature_code) VALUES (?,'comandos')", [$tenant]);
+    check($ids($sync($key, $token)) === [$s['id']], 'comandos back: list sent again');
+
     // Vencida: no se envia; una sola vez de hoy si, de hace 10 dias no.
     $expired = expect(adminRequest($admin, 'POST', $path, array_merge($base, ['name' => 'Vencida', 'valid_from' => '2025-01-01', 'valid_until' => '2025-02-01'])), 201, 'expired');
     $today = new \DateTimeImmutable('now', new \DateTimeZone('America/Bogota'));
@@ -238,6 +271,25 @@ function powerScheduleSyncTests(Database $db): void
     $ev3 = Util::uuid();
     $r4 = $sync($key, $token, ['power_schedule_runs' => [['event_id' => $ev3, 'outcome' => 'postponed', 'detail' => 'persona'] + $run]]);
     check($r4['power_schedule_acks'] === [$ev3] && (int) $db->one('SELECT COUNT(*) n FROM power_schedule_runs WHERE tenant_id=? AND schedule_id=?', [$tenant, Util::bin($s['id'])])['n'] === 2, 'other outcome stored');
+
+    // Equipos alcanzados con agente < 4.0.30 y sin resultados: fila sintetica unsupported/agent_too_old (occurrence_at =
+    // updated_at de la programacion). Comparacion numerica: 4.0.9 < 4.0.30.
+    $device2 = $token2['device_id'];
+    $setVersion2 = fn (string $v) => $db->run('UPDATE devices SET agent_version=? WHERE tenant_id=? AND id=?', [$v, $tenant, Util::bin($device2)]);
+    $runsBy = fn () => array_column(expect(adminRequest($admin, 'GET', "$path/" . $s['id'] . '/runs'), 200, 'runs by device')['data'], null, 'device_id');
+    $setVersion2('4.0.9'); $setVersion('4.0.9');
+    $cur = expect(adminRequest($admin, 'GET', "$path/" . $s['id']), 200, 'current schedule');
+    $by = $runsBy();
+    $syn = $by[$device2] ?? null;
+    check($syn !== null && $syn['outcome'] === 'unsupported' && $syn['detail'] === 'agent_too_old' && $syn['occurrence_at'] === $cur['updated_at']
+        && preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/', $syn['reported_at']) === 1 && is_string($syn['hostname']), 'old agent device without runs shows agent_too_old');
+    check(count($by) === 2 && $by[$device]['outcome'] !== 'unsupported', 'device with real runs keeps its real row');
+    expect(adminRequest($admin, 'PATCH', "$path/" . $s['id'], ['exclusions' => [['kind' => 'device', 'id' => $device2]]], ['if-match' => '"' . $cur['version'] . '"']), 200, 'exclude old device');
+    check(!isset($runsBy()[$device2]), 'excluded old device not listed');
+    expect(adminRequest($admin, 'PATCH', "$path/" . $s['id'], ['exclusions' => []], ['if-match' => '"' . ($cur['version'] + 1) . '"']), 200, 'include old device again');
+    $setVersion2('4.0.30');
+    check(!isset($runsBy()[$device2]), 'up-to-date device without runs not listed');
+    $setVersion('4.0.30');
 
     // Programacion ajena o inexistente: se confirma sin guardar.
     $b = secondTenant($db); $foreignAdmin = adminFixture($db, adminMember($db, $b), ['equipos.ver', 'equipos.apagar']);
