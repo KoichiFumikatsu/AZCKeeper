@@ -142,7 +142,8 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
         if (OperatingSystem.IsWindows())
         {
             locationModule = new Keeper.Agent.Modules.Location.LocationModule(registry.IsDryRun ? null :
-                new Keeper.Shared.Location.LocationSettingsStore(new Keeper.Shared.Location.WindowsLocationSettings(), Path.Combine(dataDirectory, "location-settings.json")), WindowsTimeSystem.DomainJoined);
+                new Keeper.Shared.Location.LocationSettingsStore(new Keeper.Shared.Location.WindowsLocationSettings(), Path.Combine(dataDirectory, "location-settings.json")), WindowsTimeSystem.DomainJoined)
+                { ServerOffset = () => serverClock.Confirmed };
             moduleList.Add(locationModule);
         }
         if (OperatingSystem.IsWindows()) moduleList.Add(sessions = new SessionSupervisor(new WindowsSessionLauncher(trust.BinaryHashes),
@@ -183,6 +184,7 @@ internal sealed class AgentWorker(ILogger<AgentWorker> logger) : BackgroundServi
                         if (response.UnlockPin is not null) await deviceLock.TryApplyVerifierAsync(response.UnlockPin, tenant, ct);
                         await commands.AcceptAsync(response.Commands, tenant, ct);
                         await powerScheduler.OfferAsync(response.PowerSchedules, ct);
+                        if (locationModule is not null) await locationModule.OfferAsync(response.Location, ct);
                         updater.Offer(response.Release);
                         await smartAppControl.TryApplyAsync(response.WindowsSecurity, ct);
                         await relocation!.OfferAsync(response.Relocation, tenant, ct);

@@ -9,6 +9,13 @@ public sealed class LocationModule(LocationSettingsStore? settings, Func<bool> d
 {
     public override string Name => "Location";
     public LocationCapture? Pending { get; private set; }
+    /// <summary>Desfase confirmado con el servidor; se usa si supera 5 min (reloj del equipo desfasado).</summary>
+    public Func<TimeSpan>? ServerOffset { get; init; }
+    /// <summary>Ventanas de más de 48 h sin renovar no autorizan nada (decisión 2026-10-29: fallo cerrado).</summary>
+    public static readonly TimeSpan MaxDirectiveAge = TimeSpan.FromHours(48);
+    private static readonly TimeSpan SkewThreshold = TimeSpan.FromMinutes(5);
+    private LocationDirective? _directive;
+    private long _directiveReceived;
     private bool _enabled;
     private bool _knownPolicy;
     private long? _lastSettings, _lastPoint, _pendingStarted;
@@ -44,8 +51,10 @@ public sealed class LocationModule(LocationSettingsStore? settings, Func<bool> d
                 _lastSettings = timestamp;
                 if (changed) await ReportAsync(_enabled ? "location_restored" : "location_released", ct);
             }
-            State = _enabled ? "ready" : "disabled";
+            State = !_enabled ? "disabled" : Allowed(now, timestamp) ? "ready" : "outside_window";
             if (!_enabled) return;
+            // Fuera de horario (y sin caso perdido/robado) no se toma ni se termina un punto: tampoco se lee la Wi-Fi.
+            if (!Allowed(now, timestamp)) { Pending = null; return; }
             var current = Network;
             if (Pending is { } old && current != old.NetworkId) Pending = null;
             if (Pending is { } pending && _pendingStarted is { } started && Context.Clock.GetElapsedTime(started, timestamp) >= TimeSpan.FromSeconds(20))
@@ -63,13 +72,33 @@ public sealed class LocationModule(LocationSettingsStore? settings, Func<bool> d
         }
         finally { _gate.Release(); }
     }
+    /// <summary>Ventanas del último sync; null = el servidor no autoriza tomar ubicación en este equipo.</summary>
+    public async Task OfferAsync(LocationDirective? directive, CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            _directive = directive;
+            _directiveReceived = Context.Clock.GetTimestamp();
+            if (!Allowed(Context.Clock.GetUtcNow(), _directiveReceived)) Pending = null;
+        }
+        finally { _gate.Release(); }
+    }
+    private bool Allowed(DateTimeOffset local, long timestamp)
+    {
+        if (_directive is not { } d || Context.Clock.GetElapsedTime(_directiveReceived, timestamp) > MaxDirectiveAge) return false;
+        if (d.Always) return true;
+        var offset = ServerOffset?.Invoke() ?? TimeSpan.Zero;
+        var now = offset.Duration() > SkewThreshold ? local + offset : local;
+        return d.Windows.Any(w => now >= w.StartsAt && now < w.EndsAt);
+    }
     public async Task AcceptAsync(LocationPoint point, CancellationToken ct)
     {
         SessionProtocol.Validate(point);
         await _gate.WaitAsync(ct);
         try
         {
-            if (!_enabled || Pending is not { } request || request.EventId != point.EventId ||
+            if (!_enabled || !Allowed(Context.Clock.GetUtcNow(), Context.Clock.GetTimestamp()) || Pending is not { } request || request.EventId != point.EventId ||
                 request.NetworkId != point.NetworkId || request.NetworkId != Network) return;
             await Context.Outbox.EnqueueAsync(point with { At = request.At }, ct);
             Pending = null;

@@ -52,6 +52,7 @@ public sealed class LocationTests
         var clock = new TestClock(); var system = new Settings(); var network = Guid.NewGuid();
         var module = new LocationModule(new(system, dir.File("state.json")), () => false, () => network, () => LocationPointNetworkType.Cable);
         await module.InitAsync(new(outbox, clock, _ => { }, default));
+        await module.OfferAsync(Open(clock), default);
         await module.ApplyPolicyAsync(Samples.Policy());
         await module.TickAsync(default);
         Assert.Null(module.Pending); Assert.Equal(0, system.Writes);
@@ -85,7 +86,9 @@ public sealed class LocationTests
         var system = new Settings();
         foreach (var module in new[] { new LocationModule(new(system, dir.File("state.json")), () => true), new LocationModule(null, () => false) })
         {
-            await module.InitAsync(new(outbox, new TestClock(), _ => { }, default));
+            var clock = new TestClock();
+            await module.InitAsync(new(outbox, clock, _ => { }, default));
+            await module.OfferAsync(Open(clock), default);
             await module.ApplyPolicyAsync(Samples.Policy() with { LocationTracking = true });
             await module.TickAsync(default);
             Assert.Null(module.Pending);
@@ -101,6 +104,7 @@ public sealed class LocationTests
         var network = Guid.NewGuid(); var clock = new TestClock();
         var module = new LocationModule(new(new Settings(), dir.File("state.json")), () => false, () => network);
         await module.InitAsync(new(outbox, clock, _ => { }, default));
+        await module.OfferAsync(Open(clock), default);
         await module.ApplyPolicyAsync(Samples.Policy() with { LocationTracking = true });
         await module.TickAsync(default);
         var request = module.Pending!;
@@ -145,6 +149,7 @@ public sealed class LocationTests
         var clock = new TestClock(); var system = new Settings();
         var module = new LocationModule(new(system, dir.File("state.json")), () => false);
         await module.InitAsync(new(outbox, clock, _ => { }, default));
+        await module.OfferAsync(Window(clock.GetUtcNow().AddDays(-2), clock.GetUtcNow().AddDays(2)), default);
         await module.ApplyPolicyAsync(Samples.Policy() with { LocationTracking = true });
         await module.TickAsync(default);
         clock.ShiftWallClock(TimeSpan.FromDays(-1));
@@ -186,5 +191,70 @@ public sealed class LocationTests
         Assert.Throws<InvalidDataException>(() => SessionProtocol.Validate(p with { Latitude = double.NaN, Longitude = 0, AccuracyM = 1 }));
         Assert.Throws<InvalidDataException>(() => SessionProtocol.Validate(p with { Latitude = 0, Longitude = 0, AccuracyM = -1 }));
         Assert.Throws<InvalidDataException>(() => SessionProtocol.Validate(p with { WifiSsid = "No es wifi" }));
+    }
+
+    private static LocationDirective Open(TestClock clock) => Window(clock.GetUtcNow().AddDays(-1), clock.GetUtcNow().AddDays(1));
+    private static LocationDirective Window(DateTimeOffset start, DateTimeOffset end, bool always = false) =>
+        new() { Always = always, Windows = [new LocationWindow { StartsAt = start, EndsAt = end }] };
+
+    private static async Task<(LocationModule Module, TestClock Clock, DurableOutbox Outbox)> Enabled(TestDirectory dir, Func<TimeSpan>? offset = null)
+    {
+        var outbox = new DurableOutbox(dir.File("outbox.json")); var clock = new TestClock();
+        var module = new LocationModule(new(new Settings(), dir.File("state.json")), () => false, () => Guid.Empty, () => LocationPointNetworkType.Cable) { ServerOffset = offset };
+        await module.InitAsync(new(outbox, clock, _ => { }, default));
+        await module.ApplyPolicyAsync(Samples.Policy() with { LocationTracking = true });
+        return (module, clock, outbox);
+    }
+
+    [Fact]
+    public async Task WithoutWindowsOrOutsideThemNothingIsCaptured()
+    {
+        using var dir = new TestDirectory();
+        var (module, clock, outbox) = await Enabled(dir);
+        using var _ = outbox;
+        await module.TickAsync(default); Assert.Null(module.Pending);
+        var now = clock.GetUtcNow();
+        await module.OfferAsync(Window(now.AddHours(1), now.AddHours(2)), default);
+        await module.TickAsync(default); Assert.Null(module.Pending); Assert.Equal("outside_window", module.Snapshot().State);
+        clock.Advance(TimeSpan.FromHours(1));
+        await module.TickAsync(default); Assert.NotNull(module.Pending);
+        clock.Advance(TimeSpan.FromHours(1));
+        await module.TickAsync(default); Assert.Null(module.Pending);
+        clock.Advance(TimeSpan.FromSeconds(30));
+        await module.TickAsync(default);
+        Assert.Null(module.Pending);
+        Assert.Null(JsonSerializer.Deserialize<SyncRequest>((await outbox.PrepareAsync(null, default)).Body, ProtocolJson.Options)!.Locations);
+        await module.OfferAsync(null, default);
+        clock.Advance(TimeSpan.FromHours(-1.5));
+        await module.TickAsync(default); Assert.Null(module.Pending);
+    }
+
+    [Fact]
+    public async Task LostDeviceCapturesAlwaysAndStaleWindowsFailClosed()
+    {
+        using var dir = new TestDirectory();
+        var (module, clock, outbox) = await Enabled(dir);
+        using var _ = outbox;
+        await module.OfferAsync(new LocationDirective { Always = true, Windows = [] }, default);
+        await module.TickAsync(default); Assert.NotNull(module.Pending);
+        var now = clock.GetUtcNow();
+        await module.OfferAsync(Window(now.AddDays(-1), now.AddDays(5)), default);
+        clock.Advance(LocationModule.MaxDirectiveAge + TimeSpan.FromMinutes(1));
+        await module.TickAsync(default); Assert.Null(module.Pending);
+    }
+
+    [Fact]
+    public async Task SkewedClockUsesServerTimeOnlyAboveThreshold()
+    {
+        using var dir = new TestDirectory();
+        var offset = TimeSpan.FromMinutes(10);
+        var (module, clock, outbox) = await Enabled(dir, () => offset);
+        using var _ = outbox;
+        var now = clock.GetUtcNow();
+        await module.OfferAsync(Window(now.AddMinutes(8), now.AddMinutes(20)), default);
+        await module.TickAsync(default); Assert.NotNull(module.Pending);
+        offset = TimeSpan.FromMinutes(3);
+        await module.OfferAsync(Window(now.AddMinutes(2), now.AddMinutes(20)), default);
+        await module.TickAsync(default); Assert.Null(module.Pending);
     }
 }
