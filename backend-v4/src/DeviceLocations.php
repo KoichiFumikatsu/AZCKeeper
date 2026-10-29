@@ -5,8 +5,11 @@ namespace Keeper;
 final class DeviceLocations
 {
     public const OPERATIONS = ['getUserLocations','getDeviceLocations','getSiteLocation','setSiteLocation','setDeviceLost'];
+    /** Margen alrededor del horario y horizonte de las ventanas enviadas al agente (decisión 2026-10-29). */
+    public const MARGIN = 1800;
+    public const HORIZON = 48 * 3600;
     private ?array $sites = null;
-    private ?string $calendarDay = null;
+    private array $windowCache = [];
 
     public function __construct(private Database $db) {}
 
@@ -59,20 +62,57 @@ final class DeviceLocations
         return [isset($p->latitude) || $ip !== null || !empty($p->wifi_ssid) || !empty($p->wifi_bssid) ? 'fuera' : 'sin_dato',null,null];
     }
 
+    /**
+     * Ventanas de toma (decisión 2026-10-29): horario de la persona ± MARGIN, sin festivos, días no laborables ni ausencias
+     * aprobadas (las de unas horas se recortan). El almuerzo queda dentro. Sin horario propio no hay ventanas.
+     * Devuelve [[inicio,fin],...] en segundos Unix, ordenadas y sin solapes, que tocan [$from,$to).
+     */
+    public function windows(string $tenant, string $user, int $from, int $to): array
+    {
+        $key=$user.'|'.gmdate('Y-m-d',$from).'|'.gmdate('Y-m-d',$to);
+        if (isset($this->windowCache[$key])) { return $this->windowCache[$key]; }
+        ActivityCalendar::create($this->db,$tenant,gmdate('Y-m-d',$from-2*86400),gmdate('Y-m-d',$to+2*86400));
+        try {
+            $days=$this->db->run('SELECT UNIX_TIMESTAMP(c.work_start) s,c.expected_seconds e FROM user_assignments a JOIN activity_calendar c ON c.schedule_id=a.schedule_id
+                WHERE a.tenant_id=? AND a.user_id=? AND a.starts_at<=c.work_start AND (a.ends_at IS NULL OR a.ends_at>c.work_start)
+                AND '.ActivityCalendar::expected().' > 0 ORDER BY c.work_start',[$tenant,$user])->fetchAll();
+        } finally { $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_calendar'); }
+        $out=[];
+        foreach ($days as $d) {
+            $s=(int)$d['s']-self::MARGIN; $e=(int)$d['s']+(int)$d['e']+self::MARGIN;
+            if ($out && $s<=$out[count($out)-1][1]) { $out[count($out)-1][1]=max($e,$out[count($out)-1][1]); } else { $out[]=[$s,$e]; }
+        }
+        $absences=$this->db->run("SELECT UNIX_TIMESTAMP(starts_at) s,UNIX_TIMESTAMP(ends_at) e FROM absences WHERE tenant_id=? AND user_id=? AND status='approved' AND starts_at<FROM_UNIXTIME(?) AND ends_at>FROM_UNIXTIME(?)",
+            [$tenant,$user,$to+2*86400,$from-2*86400])->fetchAll();
+        foreach ($absences as $ab) {
+            $cut=[];
+            foreach ($out as [$s,$e]) {
+                if ((int)$ab['e']<=$s || (int)$ab['s']>=$e) { $cut[]=[$s,$e]; continue; }
+                if ((int)$ab['s']>$s) { $cut[]=[$s,(int)$ab['s']]; }
+                if ((int)$ab['e']<$e) { $cut[]=[(int)$ab['e'],$e]; }
+            }
+            $out=$cut;
+        }
+        return $this->windowCache[$key]=array_values(array_filter($out,static fn($w)=>$w[1]>$from && $w[0]<$to));
+    }
+
     private function workHours(string $tenant, string $user, string $at): bool
     {
-        $day = substr($at,0,10);
-        if ($this->calendarDay !== $day) {
-            ActivityCalendar::create($this->db,$tenant,date('Y-m-d',strtotime("$day UTC -2 days")),date('Y-m-d',strtotime("$day UTC +2 days")));
-            $this->calendarDay = $day;
-        }
-        return (bool)$this->db->one('SELECT 1 inside FROM user_assignments a JOIN activity_calendar c ON c.schedule_id=a.schedule_id
-            WHERE a.tenant_id=? AND a.user_id=? AND a.starts_at<=? AND (a.ends_at IS NULL OR a.ends_at>?)
-            AND ?>=c.work_start AND ?<c.work_start+INTERVAL c.expected_seconds SECOND
-            AND (c.lunch_start IS NULL OR ?<c.lunch_start OR ?>=c.lunch_end)
-            AND '.ActivityCalendar::expected().' > 0
-            AND NOT EXISTS (SELECT 1 FROM absences ab WHERE ab.tenant_id=a.tenant_id AND ab.user_id=a.user_id AND ab.status=\'approved\' AND ab.starts_at<=? AND ab.ends_at>?) LIMIT 1',
-            [$tenant,$user,$at,$at,$at,$at,$at,$at,$at,$at]);
+        $t=strtotime($at.' UTC'); $day=strtotime(gmdate('Y-m-d',$t).' 00:00:00 UTC');
+        foreach ($this->windows($tenant,$user,$day,$day+86400) as [$s,$e]) { if ($t>=$s && $t<$e) { return true; } }
+        return false;
+    }
+
+    /** Directiva del sync (agentes >= LOCATION_MIN_AGENT): null si la regla no está activa para el equipo. */
+    public function directive(string $tenant, string $device): ?array
+    {
+        $policy=$this->db->one('SELECT document FROM effective_policies WHERE tenant_id=? AND device_id=? ORDER BY policy_version DESC LIMIT 1',[$tenant,$device]);
+        if (!(json_decode($policy['document']??'{}')->location_tracking??false)) { return null; }
+        $d=$this->db->one('SELECT lost_at FROM devices WHERE tenant_id=? AND id=?',[$tenant,$device]);
+        $assignment=$this->db->one('SELECT user_id FROM device_assignments WHERE tenant_id=? AND device_id=? AND starts_at<=UTC_TIMESTAMP(6) AND (ends_at IS NULL OR ends_at>UTC_TIMESTAMP(6))',[$tenant,$device]);
+        $now=time(); $iso=static fn(int $t)=>gmdate('Y-m-d\TH:i:s\Z',$t);
+        $windows=$assignment?$this->windows($tenant,$assignment['user_id'],$now,$now+self::HORIZON):[];
+        return ['always'=>($d['lost_at']??null)!==null,'windows'=>array_map(static fn($w)=>['starts_at'=>$iso(max($w[0],$now)),'ends_at'=>$iso(min($w[1],$now+self::HORIZON))],array_slice($windows,0,16))];
     }
 
     public function ingest(array $c, Request $r, object $p): array
@@ -90,12 +130,18 @@ final class DeviceLocations
         if (!in_array('ubicacion',PersonPlans::functions($this->db,$tenant,$user),true)) { return Ingest::ack($p->event_id); }
         $policy=$this->db->one('SELECT document FROM effective_policies WHERE tenant_id=? AND device_id=? ORDER BY policy_version DESC LIMIT 1',[$tenant,$device]);
         if (!(json_decode($policy['document']??'{}')->location_tracking??false)) { return Ingest::ack($p->event_id); }
+        // Fuera de horario solo se guarda con caso perdido/robado abierto en ese instante; si no, se descarta (agente desfasado).
+        $inHours=$this->workHours($tenant,$user,$at);
+        if (!$inHours && !($d['lost_at']!==null && $d['lost_at']<=$at)) {
+            error_log('keeper: location_off_hours_dropped tenant='.Util::id($tenant).' device='.Util::id($device));
+            return Ingest::ack($p->event_id);
+        }
         $ip=self::publicIp($r);
         // La cabecera describe la red al enviar, incluso en reintentos del mismo cuerpo durable.
         $current=$ip!==null && strtolower($r->header('x-keeper-network-id'))===strtolower($p->network_id) && abs(time()-strtotime($p->at))<=120;
         [$result,$site,$by]=self::classify($p,$current?$ip:null,$this->sites($tenant));
         $this->db->run('INSERT INTO device_locations (tenant_id,id,device_id,user_id,at,latitude,longitude,accuracy_m,network_type,wifi_ssid,wifi_bssid,public_ip,ip_at_capture,result,site_id,matched_by,in_work_hours,body_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-            [$tenant,$id,$device,$user,$at,$p->latitude??null,$p->longitude??null,$p->accuracy_m??null,$p->network_type,$p->wifi_ssid??null,isset($p->wifi_bssid)?strtolower($p->wifi_bssid):null,$ip,(int)$current,$result,$site,$by,(int)$this->workHours($tenant,$user,$at),Util::hash($p)]);
+            [$tenant,$id,$device,$user,$at,$p->latitude??null,$p->longitude??null,$p->accuracy_m??null,$p->network_type,$p->wifi_ssid??null,isset($p->wifi_bssid)?strtolower($p->wifi_bssid):null,$ip,(int)$current,$result,$site,$by,(int)$inHours,Util::hash($p)]);
         return Ingest::ack($p->event_id);
     }
 
@@ -139,7 +185,10 @@ final class DeviceLocations
         $rows=$this->db->run($select.$where.' ORDER BY l.at,l.device_id,l.id LIMIT 501',$args)->fetchAll();
         $next=null;
         if (count($rows)>500) { array_pop($rows); $last=end($rows); $next=$resources->encodeCursor(['at'=>$last['at'],'device'=>Util::id($last['device_id']),'id'=>Util::id($last['id']),'exp'=>time()+900]); }
-        return ['data'=>array_map([self::class,'dto'],$rows),'next_cursor'=>$next,'latest'=>$latest?self::dto($latest):null,'can_include_out_of_hours'=>$access?->full()??false,'lost_at'=>isset($d['lost_at'])?Util::time($d['lost_at']):null,'lost_reason'=>$d['lost_reason']??null];
+        $full=$access?->full()??false;
+        // Solo hay puntos fuera de horario de casos perdido/robado: el interruptor aparece únicamente si ese día los tiene.
+        $offHours=$full && $this->db->one('SELECT 1 x FROM device_locations WHERE tenant_id=? AND '.($device?'device_id':'user_id').'=? AND in_work_hours=FALSE AND at>=? AND at<? LIMIT 1',[$tenant,$id,$utc($day),$utc($day->modify('+1 day'))]);
+        return ['data'=>array_map([self::class,'dto'],$rows),'next_cursor'=>$next,'latest'=>$latest?self::dto($latest):null,'can_include_out_of_hours'=>(bool)$offHours,'can_mark_lost'=>$full,'lost_at'=>isset($d['lost_at'])?Util::time($d['lost_at']):null,'lost_reason'=>$d['lost_reason']??null];
     }
 
     public function admin(array $c, Request $r, AdminAccess $access): array
@@ -148,6 +197,8 @@ final class DeviceLocations
         if ($op==='getUserLocations' || $op==='getDeviceLocations') { return $this->history($c,$r,$access,$op==='getDeviceLocations'); }
         if (!Features::has($this->db,$tenant,'ubicacion') && !($c['platform']??false)) { throw new ApiError(403,'permission_denied'); }
         if ($op==='setDeviceLost') {
+            // Marcar enciende la toma 24/7 (decisión 2026-10-29): solo admin de toda la empresa o superadmin.
+            $access->requireFull();
             $d=$this->db->one('SELECT * FROM devices WHERE tenant_id=? AND id=? FOR UPDATE',[$tenant,$id]);
             if (!$d) { throw new ApiError(404,'resource_not_found'); } $access->user($d['user_id']);
             if ($b->confirmation!==($b->lost?'PERDIDO':'CERRAR') || ($b->lost && trim($b->reason)==='')) { throw new ApiError(422,'validation_failed'); }

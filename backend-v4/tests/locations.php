@@ -27,9 +27,26 @@ function locationTests(Database $db): void
     check(!isset(PolicyComposer::compose(array_replace($input,['assignments'=>[$assignment('tenant',true),$assignment('device',false)]]))->location_tracking),'equipo apaga regla de empresa');
 
     $u=secondTenant($db); $t=$u['tenant_id']; $key=keypair(); $token=enroll($db,$u,$key); $device=Util::bin($token['device_id']);
-    $db->run("UPDATE devices SET agent_version='4.0.29' WHERE tenant_id=? AND id=?",[$t,$device]);
+    $db->run("UPDATE devices SET agent_version='4.0.30' WHERE tenant_id=? AND id=?",[$t,$device]);
     $db->run('UPDATE device_assignments SET starts_at=UTC_TIMESTAMP(6)-INTERVAL 2 DAY WHERE tenant_id=? AND device_id=?',[$t,$device]);
     $db->run('UPDATE user_assignments SET starts_at=UTC_TIMESTAMP(6)-INTERVAL 2 DAY WHERE tenant_id=?',[$t]);
+    // Horario alrededor de la hora actual (la prueba no depende de cuándo corre); se restaura al final.
+    $original=$db->one('SELECT timezone,start_local,end_local FROM schedules WHERE tenant_id=? AND id=?',[$t,$u['schedule_id']]);
+    $hours=function (int $from,int $to) use ($db,$t,$u,$original): void {
+        $now=new DateTimeImmutable('now',new DateTimeZone($original['timezone']));
+        $db->run('UPDATE schedules SET start_local=?,end_local=? WHERE tenant_id=? AND id=?',[$now->modify("$from hours")->format('H:i:00'),$now->modify("$to hours")->format('H:i:00'),$t,$u['schedule_id']]);
+    };
+    $hours(-2,2);
+    $addedDays=[];
+    for ($w=1;$w<=7;$w++) { if ($db->run('INSERT IGNORE INTO schedule_days (tenant_id,schedule_id,weekday) VALUES (?,?,?)',[$t,$u['schedule_id'],$w])->rowCount()) { $addedDays[]=$w; } }
+    $locations=new DeviceLocations($db);
+    $windows=$locations->windows($t,$u['id'],time()-86400,time()+86400);
+    check(count(array_filter($windows,static fn($w)=>$w[0]<=time()-2*3600-1600 && $w[1]>=time()+2*3600+1600))===1,'ventana = horario ± 30 min');
+    $db->run("INSERT INTO absences (tenant_id,id,user_id,kind,starts_at,ends_at,all_day,status) VALUES (?,?,?,'permiso',UTC_TIMESTAMP(6)-INTERVAL 10 MINUTE,UTC_TIMESTAMP(6)+INTERVAL 10 MINUTE,FALSE,'approved')",[$t,$absence=Util::bin(Util::uuid()),$u['id']]);
+    $cut=(new DeviceLocations($db))->windows($t,$u['id'],time()-86400,time()+86400);
+    check(!array_filter($cut,static fn($w)=>$w[0]<=time() && $w[1]>time()) && count($cut)===count($windows)+1,'ausencia de unas horas recorta la ventana');
+    $db->run('DELETE FROM absences WHERE tenant_id=? AND id=?',[$t,$absence]);
+    check((new DeviceLocations($db))->directive($t,$device)===null,'sin regla no hay directiva');
     accessResetPreloginQuota();
     $admin=adminFixture($db,adminMember($db,$u),['reglas.ver','reglas.editar','usuarios.ver','equipos.ver','equipos.editar','presencia.ubicacion_ver','organizacion.editar','organizacion.ver']);
     $policy=expect(adminRequest($admin,'POST','/policies',['name'=>'Ubicación piloto','target_type'=>'device','target_id'=>$token['device_id'],'enabled'=>true,'rules'=>[],'location_tracking'=>true]),201,'regla ubicación');
@@ -37,6 +54,11 @@ function locationTests(Database $db): void
     $p=['event_id'=>Util::uuid(),'at'=>gmdate('Y-m-d\TH:i:s\Z',time()-60),'network_id'=>Util::uuid(),'network_type'=>'wifi','wifi_ssid'=>'Oficina','wifi_bssid'=>'aa:bb:cc:dd:ee:ff'];
     $send=fn($points)=>expect(request('POST','/client/sync',['protocol_version'=>1,'sequence'=>1,'policy_version'=>null,'release_id'=>null,'locations'=>$points],$key,$token['access_token'],Util::uuid()),200,'sync ubicación');
     $sync=$send([$p]); check($sync['location_acks'][0]['status']==='accepted','punto aceptado');
+    check($sync['location']['always']===false && count(array_filter($sync['location']['windows'],static fn($w)=>strtotime($w['starts_at'])<=time() && strtotime($w['ends_at'])>time()))===1,'sync envía ventana actual');
+    check(max(array_map(static fn($w)=>strtotime($w['ends_at']),$sync['location']['windows']))<=time()+DeviceLocations::HORIZON+5,'ventanas dentro de 48 h');
+    $off=$p; $off['event_id']=Util::uuid(); $off['at']=gmdate('Y-m-d\TH:i:s\Z',time()-6*3600);
+    check($send([$off])['location_acks'][0]['status']==='accepted','fuera de horario se confirma al agente');
+    check($db->one('SELECT 1 x FROM device_locations WHERE tenant_id=? AND device_id=? AND id=?',[$t,$device,Util::bin($off['event_id'])])===null,'fuera de horario sin caso se descarta');
     check($send([$p])['location_acks'][0]['status']==='duplicate','punto duplicado no se duplica');
     $bad=$p; $bad['wifi_ssid']='Cambio';
     check($send([$bad])['location_acks'][0]['status']==='rejected','evento cambiado rechazado');
@@ -87,7 +109,17 @@ function locationTests(Database $db): void
     $db->run('DELETE FROM device_locations WHERE tenant_id=? AND id<>?',[$t,Util::bin($p['event_id'])]);
     $lost='/devices/'.$token['device_id'].'/lost';
     expect(adminRequest($admin,'PUT',$lost,['lost'=>true,'confirmation'=>'','reason'=>'Prueba']),422,'confirmación requerida');
+    $scopedLost=adminFixture($db,adminMember($db,$u),['equipos.ver','equipos.editar','presencia.ubicacion_ver'],false,'area',[$u['area_id']]);
+    expect(adminRequest($scopedLost,'PUT',$lost,['lost'=>true,'confirmation'=>'PERDIDO','reason'=>'Prueba']),403,'supervisor no marca robado');
+    $hours(3,5);
+    $db->run('DELETE FROM device_locations WHERE tenant_id=?',[$t]);
     expect(adminRequest($admin,'PUT',$lost,['lost'=>true,'confirmation'=>'PERDIDO','reason'=>'Prueba']),200,'abrir caso');
+    $stolen=$p; $stolen['event_id']=Util::uuid(); $stolen['at']=gmdate('Y-m-d\TH:i:s\Z',time()+1);
+    check($send([$stolen])['location']['always']===true,'caso abierto: toma 24/7');
+    $row=$db->one('SELECT in_work_hours FROM device_locations WHERE tenant_id=? AND device_id=? AND id=?',[$t,$device,Util::bin($stolen['event_id'])]);
+    check($row!==null && !$row['in_work_hours'],'caso abierto guarda punto fuera de horario');
+    check(expect(adminRequest($admin,'GET',$path),200,'historial con caso')['can_include_out_of_hours']===true,'interruptor solo con puntos fuera de horario');
+    $hours(-2,2);
     $db->run('UPDATE device_locations SET at=UTC_TIMESTAMP(6)-INTERVAL 91 DAY WHERE tenant_id=?',[$t]);
     check((new DeviceLocations($db))->purge($t,10,microtime(true)+10)===0,'caso abierto conserva puntos');
     expect(adminRequest($admin,'PUT',$lost,['lost'=>false,'confirmation'=>'CERRAR','reason'=>'']),200,'cerrar caso');
@@ -97,7 +129,9 @@ function locationTests(Database $db): void
     $doc=json_decode($db->one('SELECT document FROM effective_policies WHERE tenant_id=? AND device_id=? ORDER BY policy_version DESC LIMIT 1',[$t,$device])['document']);
     check(!isset($doc->location_tracking),'compilador omite campo en 4.0.28');
     $old=expect(request('POST','/client/sync',['protocol_version'=>1,'sequence'=>1,'policy_version'=>null,'release_id'=>null],$key,$token['access_token'],Util::uuid()),200,'sync agente anterior');
-    check(!array_key_exists('location_acks',$old),'respuesta anterior no recibe ACK nuevo');
+    check(!array_key_exists('location_acks',$old) && !array_key_exists('location',$old),'respuesta anterior no recibe ACK ni ventanas');
+    $db->run('UPDATE schedules SET start_local=?,end_local=? WHERE tenant_id=? AND id=?',[$original['start_local'],$original['end_local'],$t,$u['schedule_id']]);
+    foreach ($addedDays as $w) { $db->run('DELETE FROM schedule_days WHERE tenant_id=? AND schedule_id=? AND weekday=?',[$t,$u['schedule_id'],$w]); }
     if (getenv('KEEPER_TEST_LOCATION_VOLUME')==='1') {
         require_once __DIR__.'/location-volume.php';
         locationVolumeTest($db,$t,$device,$u['id']);

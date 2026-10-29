@@ -1,5 +1,5 @@
 {
-  "source_sha256": "4935c0a267d59a4bb8beb8bc5cbbe116dd39f2788117a53c436d5bd21318a6dc",
+  "source_sha256": "359f2e12842ca665952c5666c15ff4b497d88bcdd0519531a27582cf2c9272e2",
   "paths": {
     "/me": {
       "get": {
@@ -31606,6 +31606,27 @@
         }
       }
     },
+    "LocationDirective": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Cuándo puede tomar ubicación este equipo (decisión 2026-10-29). Solo agentes >= 4.0.30 con location_tracking activo. windows = horario de la persona ± 30 min de las próximas 48 h, sin festivos, días no laborables ni ausencias aprobadas; always = equipo con caso perdido/robado abierto. Sin este campo el agente no toma nada.",
+      "required": [
+        "always",
+        "windows"
+      ],
+      "properties": {
+        "always": {
+          "type": "boolean"
+        },
+        "windows": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/components/schemas/LocationWindow"
+          }
+        }
+      }
+    },
     "LocationHistory": {
       "type": "object",
       "additionalProperties": false,
@@ -31614,6 +31635,7 @@
         "next_cursor",
         "latest",
         "can_include_out_of_hours",
+        "can_mark_lost",
         "lost_at",
         "lost_reason"
       ],
@@ -31647,7 +31669,12 @@
           ]
         },
         "can_include_out_of_hours": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Admin de toda la empresa o superadmin, y solo si ese día hay puntos fuera de horario (caso perdido/robado)."
+        },
+        "can_mark_lost": {
+          "type": "boolean",
+          "description": "Admin de toda la empresa o superadmin (marcar perdido/robado enciende la toma 24/7)."
         },
         "lost_at": {
           "anyOf": [
@@ -31724,6 +31751,24 @@
         "wifi_bssid": {
           "type": "string",
           "pattern": "^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$"
+        }
+      }
+    },
+    "LocationWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "starts_at",
+        "ends_at"
+      ],
+      "properties": {
+        "starts_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "ends_at": {
+          "type": "string",
+          "format": "date-time"
         }
       }
     },
@@ -38430,6 +38475,9 @@
             "type": "string",
             "format": "uuid"
           }
+        },
+        "location": {
+          "$ref": "#/components/schemas/LocationDirective"
         },
         "relocation": {
           "type": "string",

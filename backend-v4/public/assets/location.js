@@ -50,9 +50,10 @@ export async function mountLocation(root, { type, id }) {
         content.append(el('h3', 'Historial del día'));
         list = el('ol'); content.append(list);
         if (!data.data.length) content.append(el('p', 'Sin puntos en esta fecha.'));
-        if (type === 'device' && permitted(access, 'equipos.editar')) {
+        if (type === 'device' && data.can_mark_lost) {
           const form = el('form'); const open = !data.lost_at;
           form.append(el('h3', open ? 'Marcar como perdido/robado' : 'Cerrar caso'));
+          form.append(el('p', open ? 'La ubicación se tomará también fuera de horario hasta cerrar el caso.' : 'Al cerrar el caso la ubicación vuelve a tomarse solo en horario laboral.'));
           const reason = field(form, 'Motivo ', el('input')); reason.maxLength = 500; reason.required = open; reason.hidden = !open;
           const confirmation = field(form, `Escribe ${open ? 'PERDIDO' : 'CERRAR'} para confirmar `, el('input')); confirmation.required = true;
           const save = el('button', open ? 'Marcar como perdido/robado' : 'Cerrar caso'); save.type = 'submit'; form.append(save); content.append(form);
@@ -92,7 +93,7 @@ export async function mountLocationRule(root, { type, id }) {
     let own = policies.find(p => Object.hasOwn(p, 'location_tracking'));
     const input = el('input'); input.type = 'checkbox'; input.checked = own?.enabled && own?.location_tracking;
     field(box, `Activar para ${type === 'tenant' ? 'toda la empresa' : type === 'device' ? 'este equipo' : 'esta persona'} `, input);
-    box.append(el('p', 'Registra un punto cada 15 minutos y al cambiar de red, también fuera del horario laboral. Requiere agente compatible y ubicación disponible en Windows.'));
+    box.append(el('p', 'Registra un punto cada 15 minutos y al cambiar de red, solo en el horario laboral de la persona (± 30 min). Fuera de horario solo si el equipo está marcado como perdido/robado. Requiere agente compatible y ubicación disponible en Windows.'));
     const save = el('button', 'Guardar ubicación'); box.append(save);
     save.addEventListener('click', async () => {
       save.disabled = true;

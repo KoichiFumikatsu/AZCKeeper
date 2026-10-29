@@ -7,7 +7,8 @@ final class PolicyCompiler
     private const PLATFORM = '00000000-0000-4000-8000-000000000001';
     /** Desde esta version el agente entiende time_change_lock (bloqueo del cambio manual de la hora). */
     public const TIME_CHANGE_LOCK_MIN_AGENT = '4.0.28';
-    public const LOCATION_MIN_AGENT = '4.0.29';
+    /** 4.0.30: el agente solo toma ubicación dentro de las ventanas del sync (decisión 2026-10-29); 4.0.29 nunca se publicó. */
+    public const LOCATION_MIN_AGENT = '4.0.30';
     private Validator $validator;
     public function __construct(private Database $db) { $this->validator = new Validator(); }
 

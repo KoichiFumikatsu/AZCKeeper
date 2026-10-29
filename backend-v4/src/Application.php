@@ -209,6 +209,9 @@ final class Application
                     if (!empty($b->power_schedule_runs)) { $response['power_schedule_acks'] = $power->ingestRuns($c['device_id'], $b->power_schedule_runs); }
                     $response['power_schedules'] = $power->clientSchedules($c['device_id']);
                 }
+                // Ubicación: ventanas de toma (horario ± 30 min, 48 h) y caso perdido/robado; sin el campo el agente no toma nada.
+                if (version_compare($c['agent_version'], PolicyCompiler::LOCATION_MIN_AGENT, '>=')
+                    && ($location = (new DeviceLocations($db))->directive($c['tenant_id'], $c['device_id'])) !== null) { $response['location'] = $location; }
                 // Desde 4.0.24: mudanza de servidor firmada que aplica a este equipo (el agente la verifica y decide).
                 if (($relocation = (new Relocations($db))->deliver($c)) !== null) { $response['relocation'] = $relocation; }
                 // Una release no verificable (p. ej. release-keys.json desalineado) se RETIENE, no tumba el sync:

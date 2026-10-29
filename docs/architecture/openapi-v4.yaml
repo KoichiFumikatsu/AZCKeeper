@@ -15974,6 +15974,27 @@ components:
       required: [data]
       properties:
         data: {type: array, items: {$ref: '#/components/schemas/PowerScheduleRun'}}
+    LocationDirective:
+      type: object
+      additionalProperties: false
+      description: Cuándo puede tomar ubicación este equipo (decisión 2026-10-29). Solo agentes >= 4.0.30 con location_tracking
+        activo. windows = horario de la persona ± 30 min de las próximas 48 h, sin festivos, días no laborables ni ausencias
+        aprobadas; always = equipo con caso perdido/robado abierto. Sin este campo el agente no toma nada.
+      required: [always, windows]
+      properties:
+        always: {type: boolean}
+        windows:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/LocationWindow'
+    LocationWindow:
+      type: object
+      additionalProperties: false
+      required: [starts_at, ends_at]
+      properties:
+        starts_at: {type: string, format: date-time}
+        ends_at: {type: string, format: date-time}
     PowerScheduleDirective:
       type: object
       additionalProperties: false
@@ -23585,6 +23606,8 @@ components:
           items:
             type: string
             format: uuid
+        location:
+          $ref: '#/components/schemas/LocationDirective'
         relocation:
           type: string
           maxLength: 16384
@@ -25777,6 +25800,7 @@ components:
       - next_cursor
       - latest
       - can_include_out_of_hours
+      - can_mark_lost
       - lost_at
       - lost_reason
       properties:
@@ -25796,6 +25820,10 @@ components:
           - type: 'null'
         can_include_out_of_hours:
           type: boolean
+          description: Admin de toda la empresa o superadmin, y solo si ese día hay puntos fuera de horario (caso perdido/robado).
+        can_mark_lost:
+          type: boolean
+          description: Admin de toda la empresa o superadmin (marcar perdido/robado enciende la toma 24/7).
         lost_at:
           anyOf:
           - type: string

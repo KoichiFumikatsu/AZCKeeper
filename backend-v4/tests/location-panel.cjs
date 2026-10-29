@@ -21,7 +21,7 @@ const server = http.createServer(async (req, res) => {
       const include = url.searchParams.get('include_out_of_hours') === 'true';
       if (include && !full) { res.statusCode=403; return res.end('{"code":"permission_denied"}'); }
       const extra = {...point,id:'00000000-0000-4000-8000-000000000011',result:'fuera',latitude:4.6,longitude:-74.1,accuracy_m:35,network_type:'wifi',wifi_ssid:'<script>bad()</script>',in_work_hours:false};
-      return res.end(JSON.stringify({data:include?[point,extra]:[point],latest:include?extra:point,next_cursor:null,can_include_out_of_hours:full,lost_at:lost?point.at:null,lost_reason:lost?'Prueba':null}));
+      return res.end(JSON.stringify({data:include?[point,extra]:[point],latest:include?extra:point,next_cursor:null,can_include_out_of_hours:full,can_mark_lost:full,lost_at:lost?point.at:null,lost_reason:lost?'Prueba':null}));
     }
     if (route.endsWith('/lost')) {
       if (input.confirmation !== (input.lost?'PERDIDO':'CERRAR')) { res.statusCode=422; return res.end('{"code":"validation_failed"}'); }
@@ -64,6 +64,7 @@ const server = http.createServer(async (req, res) => {
     await device.getByRole('link',{name:'Ver en mapa'}).first().waitFor();
     assert.ok((await device.getByRole('link',{name:'Ver en mapa'}).first().getAttribute('href')).startsWith('https://www.google.com/maps?q='));
     assert.equal(await device.locator('script').count(),0);
+    await device.getByText('La ubicación se tomará también fuera de horario hasta cerrar el caso.').waitFor();
     await device.getByLabel('Motivo').fill('Prueba');
     await device.getByLabel('Escribe PERDIDO',{exact:false}).fill('PERDIDO');
     await device.getByRole('button',{name:'Marcar como perdido/robado',exact:true}).click();
@@ -86,6 +87,7 @@ const server = http.createServer(async (req, res) => {
     await page.waitForTimeout(100);assert.ok(reads.length>count);
     full=false;await page.reload();await page.waitForFunction(()=>window.ready);
     assert.equal(await page.getByLabel('Incluir fuera de horario',{exact:false}).first().isVisible(),false);
+    assert.equal(await page.getByRole('button',{name:'Marcar como perdido/robado',exact:true}).count(),0);
     assert.deepEqual(errors,[]);
     console.log('PASS location panel: historial, mapas, privacidad, perdido/cierre, regla y sede');
   } finally { await browser.close();server.close(); }
