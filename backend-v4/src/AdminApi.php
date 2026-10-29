@@ -209,6 +209,7 @@ final class AdminApi
             'getMyAccess'=>$this->myAccess(), 'getMe'=>$this->me(),
             'listNotifications','markNotificationsSeen'=>(new PanelNotifications($this->db,$this->c))->dispatch($op),
             'listPortalOrigins','createPortalOrigin','deletePortalOrigin'=>$this->portalOrigins($op,$id,$b),
+            'listIntegrations','createIntegration','rotateIntegration','revokeIntegration'=>(new Integrations($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'setUserPlan'=>$this->userPlan($id,$b),
             'setUserAccess'=>$this->userAccess($id,$b),
             'listFeatures','listFeaturePackages','createFeaturePackage','patchFeaturePackage','getTenantFeatures','putTenantFeatures','listPersonPlans','createPersonPlan','patchPersonPlan','getTenantPlanUsage','listAvailablePersonPlans'=>(new FeatureAdmin($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
@@ -1146,6 +1147,7 @@ final class AdminApi
             'tenant'=>['SELECT name n FROM tenants WHERE tenant_id=?',[$id]],
             'admin_account'=>['SELECT email n FROM admin_accounts WHERE id=?',[$id]],
             'release'=>['SELECT version n FROM client_releases WHERE id=?',[$id]],
+            'integration'=>['SELECT name n FROM integrations WHERE tenant_id=? AND id=?',[$this->tenant,$id]],
             default=>null,
         };
         if ($q===null) { return null; }

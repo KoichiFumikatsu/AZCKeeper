@@ -28,7 +28,7 @@ $portal = [
 $platform = [['platform-home', 'Inicio de plataforma', '/admin/'], ['tenants', 'Clientes', '/empresas.php', false],
     ['plans', 'Qué vendemos', '/planes.php', false], ['releases', 'Versiones del agente', '/admin/releases.php'],
     ['server-health', 'Salud del servidor', '/admin/salud.php', false], ['portal-origins', 'Portal: direcciones autorizadas', '/admin/portal.php', false],
-    ['sources', 'Fuentes de datos', '/fuentes.php', false]];
+    ['sources', 'Fuentes de datos', '/fuentes.php', false], ['integrations', 'Integraciones (API)', '/integraciones.php', false]];
 if ($surface === 'admin' && $current === 'home') { $current = 'platform-home'; }
 $h = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 require_once __DIR__ . '/brand.php';

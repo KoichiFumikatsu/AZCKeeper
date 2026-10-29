@@ -1,4 +1,4 @@
-param([int]$MySqlPort = 13384, [int]$HttpPort = 18084, [switch]$DebugResponses, [switch]$ActivityOnly, [string]$MariaDbDirectory = '', [switch]$UnlockPinOnly, [switch]$WindowsSecurityOnly, [switch]$PowerScheduleOnly, [switch]$LocationOnly)
+param([int]$MySqlPort = 13384, [int]$HttpPort = 18084, [switch]$DebugResponses, [switch]$ActivityOnly, [string]$MariaDbDirectory = '', [switch]$UnlockPinOnly, [switch]$WindowsSecurityOnly, [switch]$PowerScheduleOnly, [switch]$LocationOnly, [switch]$IntegrationsOnly)
 $ErrorActionPreference = 'Stop'
 $backend = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $tempRoot = Join-Path $backend ('.validation/mysql-' + [guid]::NewGuid().ToString('N'))
@@ -17,6 +17,8 @@ $envNames += 'KEEPER_TEST_WINDOWS_SECURITY_ONLY'
 $savedEnv['KEEPER_TEST_WINDOWS_SECURITY_ONLY'] = [Environment]::GetEnvironmentVariable('KEEPER_TEST_WINDOWS_SECURITY_ONLY')
 $envNames += 'KEEPER_TEST_POWER_SCHEDULE_ONLY'
 $savedEnv['KEEPER_TEST_POWER_SCHEDULE_ONLY'] = [Environment]::GetEnvironmentVariable('KEEPER_TEST_POWER_SCHEDULE_ONLY')
+$envNames += 'KEEPER_TEST_INTEGRATIONS_ONLY'
+$savedEnv['KEEPER_TEST_INTEGRATIONS_ONLY'] = [Environment]::GetEnvironmentVariable('KEEPER_TEST_INTEGRATIONS_ONLY')
 $savedEnv['KEEPER_TEST_ACTIVITY_ONLY'] = [Environment]::GetEnvironmentVariable('KEEPER_TEST_ACTIVITY_ONLY')
 $envNames += @('PHP_INI_SCAN_DIR','KEEPER_ESCROW_KEY_FILE')
 $savedEnv['PHP_INI_SCAN_DIR'] = [Environment]::GetEnvironmentVariable('PHP_INI_SCAN_DIR')
@@ -85,6 +87,7 @@ try {
     $env:KEEPER_TEST_LOCATION_ONLY = if ($LocationOnly) { '1' } else { '0' }
     $env:KEEPER_TEST_WINDOWS_SECURITY_ONLY = if ($WindowsSecurityOnly) { '1' } else { '0' }
     $env:KEEPER_TEST_POWER_SCHEDULE_ONLY = if ($PowerScheduleOnly) { '1' } else { '0' }
+    $env:KEEPER_TEST_INTEGRATIONS_ONLY = if ($IntegrationsOnly) { '1' } else { '0' }
     & $php (Join-Path $PSScriptRoot 'prepare.php')
     if ($LASTEXITCODE -ne 0) { throw 'Test database preparation failed' }
     & $php (Join-Path $backend 'migrations/run.php')

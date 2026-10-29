@@ -9,7 +9,7 @@ const NEEDS = {
   intake: ['equipos.enrolar', true], organization: ['organizacion.ver', true], schedules: ['horarios.ver', true], holidays: ['festivos.ver', true],
   absences: ['presencia.ver', false], doors: ['organizacion.ver', true], assignments: ['equipos.asignar', false], policies: ['reglas.ver', true], protection: ['equipos.ver', false], 'power-schedules': ['equipos.ver', false],
   classification: ['reportes.ver', true], 'suspicious-apps': ['cumplimiento.ver', false], 'dual-job': ['cumplimiento.ver', false],
-  coverage: ['cobertura.ver', false], accounts: ['usuarios.editar', true], roles: ['roles.ver', true], sources: ['integraciones.ver', true],
+  coverage: ['cobertura.ver', false], accounts: ['usuarios.editar', true], roles: ['roles.ver', true], sources: ['integraciones.ver', true], integrations: ['integraciones.gestionar', true],
   audit: ['auditoria.ver', true], 'client-logs': ['operacion.logs', false], 'panel-settings': ['operacion.ajustes_ver', true],
   // Puesta en marcha: la decide canSeeOnboarding (allowed); esta entrada solo cumple la guarda de menú del smoke.
   onboarding: ['organizacion.ver', true],
@@ -26,7 +26,7 @@ export function canSeeOnboarding(access) {
 }
 
 export function allowed(access, key) {
-  if (['platform-home', 'tenants', 'plans', 'releases', 'server-health', 'sources', 'portal-origins'].includes(key)) return !!access.platform;
+  if (['platform-home', 'tenants', 'plans', 'releases', 'server-health', 'sources', 'portal-origins', 'integrations'].includes(key)) return !!access.platform;
   if (key === 'onboarding') return canSeeOnboarding(access);
   const need = NEEDS[key];
   if (!need || access.platform) return true;
