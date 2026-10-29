@@ -5,6 +5,7 @@
       "keeper.shared": {
         "type": "Project"
       }
-    }
+    },
+    "net8.0-windows10.0.19041/win-x64": {}
   }
 }
