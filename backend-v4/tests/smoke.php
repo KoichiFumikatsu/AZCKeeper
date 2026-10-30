@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require dirname(__DIR__) . '/config/bootstrap.php';
 require __DIR__ . '/regressions.php';
+require __DIR__ . '/supervisor.php';
 require __DIR__ . '/policy-compiler.php';
 require __DIR__ . '/admin.php';
 require __DIR__ . '/k3-dashboard.php';
@@ -184,6 +185,7 @@ try {
     $contract = (new Validator())->contract;
     check(hash_file('sha256', dirname(__DIR__, 2) . '/docs/architecture/openapi-v4.yaml') === $contract['source_sha256'], 'OpenAPI extract current');
     $db = new Database();
+    if (getenv('KEEPER_TEST_SUPERVISOR_ONLY')==='1') { supervisorTests($db); echo "SUPERVISOR SMOKE PASS: $checks assertions\n"; exit(0); }
     if (getenv('KEEPER_TEST_LOCATION_ONLY')==='1') { locationTests($db); echo "LOCATION SMOKE PASS: $checks assertions\n"; exit(0); }
     if (getenv('KEEPER_TEST_ACTIVITY_ONLY')==='1') { activityMigrationTests($db); echo "A1 SMOKE PASS: $checks assertions\n"; exit(0); }
     if (getenv('KEEPER_TEST_UNLOCK_PIN_ONLY')==='1') { unlockPinTests($db); echo "UNLOCK PIN SMOKE PASS: $checks assertions\n"; exit(0); }
@@ -527,6 +529,7 @@ try {
     locationTests($db);
     // Al final y con el cupo de prelogin repuesto: sus 4 logins de fixture lo agotaban para panelAccountsTests.
     windowsSecurityTests($db);
+    supervisorTests($db);
     powerScheduleAdminTests($db);
     powerScheduleSyncTests($db);
     relocationTests($db);

@@ -1,4 +1,4 @@
-param([int]$MySqlPort = 13384, [int]$HttpPort = 18084, [switch]$DebugResponses, [switch]$ActivityOnly, [string]$MariaDbDirectory = '', [switch]$UnlockPinOnly, [switch]$WindowsSecurityOnly, [switch]$PowerScheduleOnly, [switch]$LocationOnly, [switch]$IntegrationsOnly)
+param([int]$MySqlPort = 13384, [int]$HttpPort = 18084, [switch]$DebugResponses, [switch]$ActivityOnly, [string]$MariaDbDirectory = '', [switch]$UnlockPinOnly, [switch]$WindowsSecurityOnly, [switch]$PowerScheduleOnly, [switch]$SupervisorOnly, [switch]$LocationOnly, [switch]$IntegrationsOnly)
 $ErrorActionPreference = 'Stop'
 $backend = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $tempRoot = Join-Path $backend ('.validation/mysql-' + [guid]::NewGuid().ToString('N'))
@@ -15,6 +15,8 @@ $envNames += 'KEEPER_TEST_UNLOCK_PIN_ONLY'
 $savedEnv['KEEPER_TEST_UNLOCK_PIN_ONLY'] = [Environment]::GetEnvironmentVariable('KEEPER_TEST_UNLOCK_PIN_ONLY')
 $envNames += 'KEEPER_TEST_WINDOWS_SECURITY_ONLY'
 $savedEnv['KEEPER_TEST_WINDOWS_SECURITY_ONLY'] = [Environment]::GetEnvironmentVariable('KEEPER_TEST_WINDOWS_SECURITY_ONLY')
+$envNames += 'KEEPER_TEST_SUPERVISOR_ONLY'
+$savedEnv['KEEPER_TEST_SUPERVISOR_ONLY'] = [Environment]::GetEnvironmentVariable('KEEPER_TEST_SUPERVISOR_ONLY')
 $envNames += 'KEEPER_TEST_POWER_SCHEDULE_ONLY'
 $savedEnv['KEEPER_TEST_POWER_SCHEDULE_ONLY'] = [Environment]::GetEnvironmentVariable('KEEPER_TEST_POWER_SCHEDULE_ONLY')
 $envNames += 'KEEPER_TEST_INTEGRATIONS_ONLY'
@@ -86,6 +88,7 @@ try {
     $env:KEEPER_TEST_UNLOCK_PIN_ONLY = if ($UnlockPinOnly) { '1' } else { '0' }
     $env:KEEPER_TEST_LOCATION_ONLY = if ($LocationOnly) { '1' } else { '0' }
     $env:KEEPER_TEST_WINDOWS_SECURITY_ONLY = if ($WindowsSecurityOnly) { '1' } else { '0' }
+    $env:KEEPER_TEST_SUPERVISOR_ONLY = if ($SupervisorOnly) { '1' } else { '0' }
     $env:KEEPER_TEST_POWER_SCHEDULE_ONLY = if ($PowerScheduleOnly) { '1' } else { '0' }
     $env:KEEPER_TEST_INTEGRATIONS_ONLY = if ($IntegrationsOnly) { '1' } else { '0' }
     & $php (Join-Path $PSScriptRoot 'prepare.php')

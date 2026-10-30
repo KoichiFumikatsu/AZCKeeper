@@ -132,7 +132,7 @@ final class Application
                 return $result;
             });
         });
-        try { AdminApi::compilePending($db, $context['tenant_id'], $admin?->recompileScope()); }
+        try { if (!in_array($r->operation['operationId'],['getSupervisorOverview','getSupervisorPersonSummary'],true)) { AdminApi::compilePending($db, $context['tenant_id'], $admin?->recompileScope()); } }
         catch (\Throwable $e) { if (isset($response['stream'])) { fclose($response['stream']['handle']); } if (isset($response['undelivered'])) { $this->undelivered($response['undelivered'], $id); } throw $e; }
         return $response;
     }

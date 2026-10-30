@@ -33,7 +33,7 @@ final class AdminAuth
         // Contraseña temporal: solo /auth/password, /auth/logout y /auth/csrf hasta que la persona la cambie.
         if ($s['must_change_password']) { throw new ApiError(403, 'password_change_required'); }
         $tenantRoute = str_starts_with($r->route, '/tenants/{id}') || str_starts_with($r->route, '/admin/tenants/{id}');
-        $tenant = $tenantRoute ? Util::bin($r->resourceId) : ($r->header('x-tenant-id') !== '' ? Util::bin($r->header('x-tenant-id')) : $s['tenant_id']);
+        $tenant = $r->operation['operationId']==='getSupervisorOverview' ? $s['tenant_id'] : ($tenantRoute ? Util::bin($r->resourceId) : ($r->header('x-tenant-id') !== '' ? Util::bin($r->header('x-tenant-id')) : $s['tenant_id']));
         // Una cuenta de grupo (§8.5) entra tambien a las otras empresas de su grupo donde tiene roles; nunca a otras.
         $foreign = !$s['is_platform_admin'] && $tenant !== $s['tenant_id'];
         if ($foreign && !in_array($tenant, $this->groupTenants($s), true)) { throw new ApiError(404, 'resource_not_found'); }
@@ -48,6 +48,16 @@ final class AdminAuth
         $c = ['tenant_id' => $tenant, 'admin_tenant_id' => $s['tenant_id'], 'admin_id' => $s['admin_id'], 'user_id' => $foreign ? null : $s['user_id'], 'group_id' => $s['group_id'], 'platform' => (bool) $s['is_platform_admin'], 'actor_type' => 'admin', 'timezone' => $t['timezone'], 'auth_revision' => (int) $t['auth_version'], 'session_id' => $s['id'], 'reauthenticated_at' => $s['reauthenticated_at']];
         $c['principal_id'] = $this->principal($c);
         return $c;
+    }
+    /** Contextos candidatos; cada destino debe pasar además usuarios.ver y su propio alcance. */
+    public function supervisorContexts(array $origin): array
+    {
+        $ids=$origin['platform']?null:array_values(array_unique([$origin['admin_tenant_id'],...$this->groupTenants(array_replace($origin,['tenant_id'=>$origin['admin_tenant_id']]))]));
+        $where=$ids===null?'1=1':'t.tenant_id IN ('.implode(',',array_fill(0,count($ids),'?')).')';
+        $rows=$this->db->run("SELECT t.tenant_id,t.timezone,t.auth_version,COALESCE(b.display_name,t.name) name FROM tenants t LEFT JOIN branding b ON b.tenant_id=t.tenant_id
+            WHERE t.status='active' AND t.deleted_at IS NULL AND t.archived_at IS NULL AND t.tenant_id<>? AND $where ORDER BY t.tenant_id",[Util::bin(self::PLATFORM),...($ids??[])])->fetchAll();
+        return array_map(static fn($t)=>array_replace($origin,['tenant_id'=>$t['tenant_id'],'timezone'=>$t['timezone'],'auth_revision'=>(int)$t['auth_version'],'tenant_name'=>$t['name'],
+            'user_id'=>$t['tenant_id']===$origin['admin_tenant_id']?$origin['user_id']:null]),$rows);
     }
     /** Empresas (ids binarios) a las que una cuenta de grupo puede entrar: su casa y las del grupo donde tiene roles. */
     public function groupTenants(array $a): array

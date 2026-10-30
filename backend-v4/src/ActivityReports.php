@@ -19,12 +19,12 @@ final class ActivityReports
         if ($from>=$to || (new \DateTimeImmutable($from))->diff(new \DateTimeImmutable($to))->days>31) { throw new ApiError(422,'invalid_range'); }
         return [$from,$to];
     }
-    private function filter(): array
+    private function filter(array $filters): array
     {
         [$sql,$args]=$this->access->usersSql('a','user_id');
         foreach (['area','site','user'] as $kind) {
-            if (isset($_GET[$kind],$_GET[$kind.'_id']) && strtolower($_GET[$kind])!==strtolower($_GET[$kind.'_id'])) { throw new ApiError(422,'validation_failed'); }
-            $value=$_GET[$kind]??$_GET[$kind.'_id']??null;
+            if (isset($filters[$kind],$filters[$kind.'_id']) && strtolower($filters[$kind])!==strtolower($filters[$kind.'_id'])) { throw new ApiError(422,'validation_failed'); }
+            $value=$filters[$kind]??$filters[$kind.'_id']??null;
             if ($value===null) { continue; }
             $id=Util::bin($value);
             if ($kind==='user') { $this->access->user($id); }
@@ -33,14 +33,20 @@ final class ActivityReports
             $sql.=" AND a.{$kind}_id=?"; $args[]=$id;
         }
         // Empresa del grupo y pais de la sede (sin filtro = todo el grupo).
-        if (isset($_GET['company_id'])) {
-            $id=Util::bin($_GET['company_id']);
+        if (isset($filters['company_id'])) {
+            $id=Util::bin($filters['company_id']);
             if (!$this->db->one("SELECT id FROM org_units WHERE tenant_id=? AND id=? AND kind='company'",[$this->c['tenant_id'],$id])) { throw new ApiError(404,'resource_not_found'); }
             $this->access->requireFilter('company',$id);
             $sql.=' AND a.company_id=?'; $args[]=$id;
         }
-        if (isset($_GET['country'])) { $sql.=' AND EXISTS (SELECT 1 FROM org_units cs WHERE cs.tenant_id=a.tenant_id AND cs.id=a.site_id AND cs.country_code=?)'; $args[]=$_GET['country']; }
-        if (isset($_GET['city'])) { $this->access->requireFilter('city',trim($_GET['city'])); $sql.=' AND EXISTS (SELECT 1 FROM org_units cy WHERE cy.tenant_id=a.tenant_id AND cy.id=a.site_id AND cy.city=?)'; $args[]=trim($_GET['city']); }
+        if (isset($filters['country'])) { $sql.=' AND EXISTS (SELECT 1 FROM org_units cs WHERE cs.tenant_id=a.tenant_id AND cs.id=a.site_id AND cs.country_code=?)'; $args[]=$filters['country']; }
+        if (isset($filters['city'])) { $this->access->requireFilter('city',trim($filters['city'])); $sql.=' AND EXISTS (SELECT 1 FROM org_units cy WHERE cy.tenant_id=a.tenant_id AND cy.id=a.site_id AND cy.city=?)'; $args[]=trim($filters['city']); }
+        if (isset($filters['user_ids'])) {
+            $ids=$filters['user_ids'];
+            $sql.=$ids?' AND a.user_id IN ('.implode(',',array_fill(0,count($ids),'?')).')':' AND 1=0';
+            array_push($args,...$ids);
+        }
+        if ($filters['current_scope']??false) { [$current,$values]=$this->access->usersSql('u'); $sql.=" AND u.status='active' AND $current"; array_push($args,...$values); }
         return [$sql,$args];
     }
     public function dispatch(string $op,?string $user): array
@@ -50,12 +56,38 @@ final class ActivityReports
         if ($op==='getUserPolicies') { return AdminApi::response((new PolicyCompiler($this->db))->forUser($this->c['tenant_id'],$user)); }
         [$from,$to]=$this->range(in_array($op,['getPresenceReport','getAdminDashboard'],true));
         if ($op==='getAppsReport') { return $this->apps($from,$to); }
+        $filters=$_GET;
+        if ($op==='getPresenceReport') { $filters['active_today']=true; }
+        if ($user!==null) { $filters['user_ids']=[$user]; }
+        $rows=$this->readRows($from,$to,$filters);
+        $data=array_map(fn($row)=>$this->day($row,$op==='getPresenceReport'),$rows);
+        if ($op==='getAdminDashboard') { return $this->dashboard($rows,$from,$to); }
+        if ($op==='getPresenceReport') { return AdminApi::response(['from'=>$from,'to'=>$to,'data'=>$data]); }
+        if ($op==='getPeopleReport') {
+            // Mismas filas (dia, persona) que /users/{id}/activity, sumadas por persona en una sola consulta.
+            $people=[];
+            foreach ($rows as $row) {
+                $key=$row['user_id'];
+                $people[$key]??=['user_id'=>Util::id($key),'display_name'=>$row['display_name'],'last'=>null,'sums'=>[]];
+                foreach (self::SUM_FIELDS as $field) { $people[$key]['sums'][$field]=($people[$key]['sums'][$field]??0)+(int)$row[$field]; }
+                $people[$key]['rows'][]=$row;
+                if ($row['last_activity']!==null && ($people[$key]['last']===null || $row['last_activity']>$people[$key]['last'])) { $people[$key]['last']=$row['last_activity']; }
+            }
+            usort($people,static fn($a,$b)=>strcmp($a['display_name'],$b['display_name']) ?: strcmp($a['user_id'],$b['user_id']));
+            return AdminApi::response(['from'=>$from,'to'=>$to,'data'=>array_map(fn($p)=>['user_id'=>$p['user_id'],'display_name'=>$p['display_name'],'last_activity'=>$p['last']===null?null:Util::time($p['last']),'totals'=>$this->metrics($p['sums'])+self::measured($p['rows'])],array_values($people))]);
+        }
+        $sums=[];
+        foreach (self::SUM_FIELDS as $field) { $sums[$field]=array_sum(array_column($rows,$field)); }
+        return AdminApi::response(['user_id'=>Util::id($user),'from'=>$from,'to'=>$to,'data'=>$data,'totals'=>$this->metrics($sums)+self::measured($rows)]);
+    }
+    /** Hechos internos por lote; los adaptadores antiguos conservan sus DTOs. */
+    public function readRows(string $from,string $to,array $filters): array
+    {
         ActivityCalendar::create($this->db,$this->c['tenant_id'],$from,$to);
         try {
-            [$scope,$args]=$this->filter();
+            [$scope,$args]=$this->filter($filters);
             $today=(new \DateTimeImmutable('today',new \DateTimeZone($this->c['timezone'])))->format('Y-m-d');
-            if ($op==='getPresenceReport' && $from===$today && $to===(new \DateTimeImmutable($today))->modify('+1 day')->format('Y-m-d')) { $scope.=" AND u.status='active'"; }
-            if ($user!==null) { $scope.=' AND a.user_id=?'; $args[]=$user; }
+            if (($filters['active_today']??false) && $from===$today && $to===(new \DateTimeImmutable($today))->modify('+1 day')->format('Y-m-d')) { $scope.=" AND u.status='active'"; }
             $expected=ActivityCalendar::expected();
             $first="COALESCE(TIMESTAMP(c.day,f.first_activity_time)-INTERVAL c.utc_offset SECOND,d.first_activity,ed.first_activity,(SELECT MIN(ci.occurred_at) FROM check_ins ci WHERE ci.tenant_id=a.tenant_id AND ci.user_id=a.user_id AND ci.direction='in' AND ci.occurred_at>=c.starts_at AND ci.occurred_at<c.ends_at))";
             $scheduledLocal=ActivityCalendar::scheduledStart();
@@ -74,6 +106,11 @@ final class ActivityReports
             $periodSelect=implode(',',array_map(static fn($field)=>"d.$field",self::PERIOD_FIELDS));
             $periodSums=implode(',',array_map(static fn($field)=>"IF(COUNT($field)=COUNT(*),SUM($field),NULL) $field",self::PERIOD_FIELDS));
             $this->db->run("CREATE TEMPORARY TABLE activity_report_data ENGINE=InnoDB AS SELECT c.day,a.user_id,u.display_name,$periodSelect,
+                (d.user_id IS NOT NULL OR ed.user_id IS NOT NULL OR f.user_id IS NOT NULL) measured,
+                COALESCE(d.data_through,f.data_through,ed.last_activity) data_through,COALESCE(d.calculated_at,f.calculated_at) calculated_at,
+                CASE WHEN f.first_activity_time IS NOT NULL THEN 'focus' WHEN d.first_activity IS NOT NULL THEN 'summary' WHEN ed.first_activity IS NOT NULL THEN 'episodes' ELSE 'door' END arrival_source,
+                c.work_start,c.work_start+INTERVAL ($expected) SECOND work_end,c.lunch_start,c.lunch_end,
+                a.starts_at assignment_start,a.ends_at assignment_end,
                 COALESCE(d.active_seconds,ed.active_seconds,0) active_seconds,COALESCE(d.idle_seconds,0) idle_seconds,
                 COALESCE(d.call_seconds,0) call_seconds,COALESCE(d.productive_seconds,0) productive_seconds,d.simulated_seconds,d.locked_seconds,
                 COALESCE(d.window_active_seconds,d.active_seconds,ed.active_seconds,0) window_active_seconds,COALESCE(d.unclassified_seconds,0) unclassified_seconds,
@@ -85,7 +122,7 @@ final class ActivityReports
                 $scheduled scheduled_at,$scheduledLocal scheduled_start,
                 f.first_activity_time,f.productivity_pct,f.constancy_pct,COALESCE(f.deep_work_sessions,0) deep_work_sessions,
                 COALESCE(f.longest_focus_streak_seconds,0) longest_focus_streak_seconds $base",$queryArgs);
-            $rows=$this->db->run('SELECT '.$periodSums.',day,user_id,display_name,SUM(active_seconds) active_seconds,SUM(idle_seconds) idle_seconds,
+            $rows=$this->db->run('SELECT MAX(measured) measured,MAX(data_through) data_through,MAX(calculated_at) calculated_at,SUBSTRING_INDEX(GROUP_CONCAT(arrival_source ORDER BY first_activity IS NULL,first_activity),CHAR(44),1) arrival_source,'.$periodSums.',day,user_id,display_name,SUM(active_seconds) active_seconds,SUM(idle_seconds) idle_seconds,
                 SUM(call_seconds) call_seconds,SUM(productive_seconds) productive_seconds,SUM(simulated_seconds) simulated_seconds,SUM(locked_seconds) locked_seconds,SUM(focus_seconds) focus_seconds,
                 SUM(window_active_seconds) window_active_seconds,SUM(unclassified_seconds) unclassified_seconds,
                 SUM(context_switches) context_switches,SUM(deep_work_seconds) deep_work_seconds,SUM(distraction_seconds) distraction_seconds,
@@ -98,25 +135,19 @@ final class ActivityReports
                 FROM activity_report_data GROUP BY day,user_id,display_name ORDER BY day,display_name,user_id')->fetchAll();
             // Jornada de cada (dia, persona): J, P y N de las formulas (ProductivityFormula); un periodo las suma.
             $rows=array_map(static fn($r)=>$r+ProductivityFormula::day((int)$r['workday_seconds'],(int)$r['productive_seconds'],(int)$r['window_active_seconds'],(int)$r['unproductive_seconds']),$rows);
-            $data=array_map(fn($row)=>$this->day($row,$op==='getPresenceReport'),$rows);
-            if ($op==='getAdminDashboard') { return $this->dashboard($rows,$from,$to); }
-            if ($op==='getPresenceReport') { return AdminApi::response(['from'=>$from,'to'=>$to,'data'=>$data]); }
-            if ($op==='getPeopleReport') {
-                // Mismas filas (dia, persona) que /users/{id}/activity, sumadas por persona en una sola consulta.
-                $people=[];
-                foreach ($rows as $row) {
-                    $key=$row['user_id'];
-                    $people[$key]??=['user_id'=>Util::id($key),'display_name'=>$row['display_name'],'last'=>null,'sums'=>[]];
-                    foreach (self::SUM_FIELDS as $field) { $people[$key]['sums'][$field]=($people[$key]['sums'][$field]??0)+(int)$row[$field]; }
-                    $people[$key]['rows'][]=$row;
-                    if ($row['last_activity']!==null && ($people[$key]['last']===null || $row['last_activity']>$people[$key]['last'])) { $people[$key]['last']=$row['last_activity']; }
-                }
-                usort($people,static fn($a,$b)=>strcmp($a['display_name'],$b['display_name']) ?: strcmp($a['user_id'],$b['user_id']));
-                return AdminApi::response(['from'=>$from,'to'=>$to,'data'=>array_map(fn($p)=>['user_id'=>$p['user_id'],'display_name'=>$p['display_name'],'last_activity'=>$p['last']===null?null:Util::time($p['last']),'totals'=>$this->metrics($p['sums'])+self::measured($p['rows'])],array_values($people))]);
+            $periods=[];
+            foreach ($this->db->run('SELECT day,user_id,work_start,work_end,lunch_start,lunch_end,assignment_start,assignment_end FROM activity_report_data ORDER BY work_start')->fetchAll() as $r) {
+                $key=bin2hex($r['user_id']).':'.$r['day'];
+                $start=max($r['work_start'],$r['assignment_start']); $end=$r['assignment_end']===null?$r['work_end']:min($r['work_end'],$r['assignment_end']);
+                if ($end>$start) { $periods[$key]['work'][Util::json([$start,$end])]=['start_at'=>Util::time($start),'end_at'=>Util::time($end)]; }
+                if ($r['lunch_start']!==null) { $periods[$key]['lunch']=['start_at'=>Util::time($r['lunch_start']),'end_at'=>Util::time($r['lunch_end'])]; }
             }
-            $sums=[];
-            foreach (self::SUM_FIELDS as $field) { $sums[$field]=array_sum(array_column($rows,$field)); }
-            return AdminApi::response(['user_id'=>Util::id($user),'from'=>$from,'to'=>$to,'data'=>$data,'totals'=>$this->metrics($sums)+self::measured($rows)]);
+            foreach ($rows as &$r) {
+                $key=bin2hex($r['user_id']).':'.$r['day']; $r['measured']=(bool)$r['measured'];
+                $r['work_periods']=array_values($periods[$key]['work']??[]); $r['lunch']=$periods[$key]['lunch']??null;
+                if ($r['first_activity']===null) { $r['arrival_source']=null; }
+            } unset($r);
+            return $rows;
         } finally { $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_report_data'); $this->db->run('DROP TEMPORARY TABLE IF EXISTS activity_calendar'); }
     }
     /**
@@ -140,7 +171,7 @@ final class ActivityReports
     }
     private function dashboard(array $rows,string $from,string $to): array
     {
-        [$scope,$args]=$this->filter();
+        [$scope,$args]=$this->filter($_GET);
         $members=$this->db->run("SELECT a.id,a.display_name,a.area_id,a.site_id,
             (SELECT MAX(d.last_seen_at) FROM devices d WHERE d.tenant_id=a.tenant_id AND d.user_id=a.id AND d.status='active') last_seen_at,
             (SELECT GROUP_CONCAT(d.hostname ORDER BY d.hostname SEPARATOR ', ') FROM devices d WHERE d.tenant_id=a.tenant_id AND d.user_id=a.id AND d.status='active') devices
@@ -218,7 +249,7 @@ final class ActivityReports
     }
     private function apps(string $from,string $to): array
     {
-        [$scope,$args]=$this->filter(); $zone=new \DateTimeZone($this->c['timezone']);
+        [$scope,$args]=$this->filter($_GET); $zone=new \DateTimeZone($this->c['timezone']);
         $start=Util::sqlTime((new \DateTimeImmutable($from,$zone))->format('c')); $end=Util::sqlTime((new \DateTimeImmutable($to,$zone))->format('c'));
         // Por aplicacion: activo (teclado/raton) e inactivo (ventana al frente sin uso) por separado; orden por uso activo.
         $part=fn(string $col)=>"SUM(FLOOR(e.$col*TIMESTAMPDIFF(MICROSECOND,e.started_at,LEAST(e.ended_at,?))/TIMESTAMPDIFF(MICROSECOND,e.started_at,e.ended_at))-FLOOR(e.$col*TIMESTAMPDIFF(MICROSECOND,e.started_at,GREATEST(e.started_at,?))/TIMESTAMPDIFF(MICROSECOND,e.started_at,e.ended_at)))";

@@ -15,7 +15,7 @@ final class AdminApi
         $permission=$r->operation['x-permission'];
         // Permisos de la propia cuenta (menu del panel): cualquier sesion valida de la empresa los puede leer.
         // Icono de notificaciones: cualquier sesion; cada seccion exige alli su permiso, funcion y alcance (PanelNotifications).
-        if (in_array($r->operation['operationId'],['getMyAccess','getMe',...PanelNotifications::OPERATIONS],true)) { return; }
+        if (in_array($r->operation['operationId'],['getMyAccess','getMe','getSupervisorOverview',...PanelNotifications::OPERATIONS],true)) { return; }
         if ($r->operation['operationId']==='patchDevice' && (property_exists($r->body,'release_ring') || property_exists($r->body,'release_pause_reason')) && !$c['platform']) { throw new ApiError(403,'permission_denied'); }
         $commandType=null;
         if ($r->operation['operationId']==='createDeviceCommand') { $commandType=$r->body->type; }
@@ -206,6 +206,8 @@ final class AdminApi
             'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getTenantProtection'=>(new ProtectionSummary($this->db,$this->c,$this->access,$this->r))->dispatch(),
             'getUserRules','getDeviceRules'=>(new EffectiveRules($this->db,$this->c,$this->access))->dispatch($op,$id),
+            'getSupervisorOverview'=>self::response((new SupervisorReadModel($this->db,$this->c,$_GET))->overview(),200,['Cache-Control'=>'no-store']),
+            'getSupervisorPersonSummary'=>self::response((new SupervisorReadModel($this->db,$this->c,$_GET))->person($id),200,['Cache-Control'=>'no-store']),
             'getMyAccess'=>$this->myAccess(), 'getMe'=>$this->me(),
             'listNotifications','markNotificationsSeen'=>(new PanelNotifications($this->db,$this->c))->dispatch($op),
             'listPortalOrigins','createPortalOrigin','deletePortalOrigin'=>$this->portalOrigins($op,$id,$b),

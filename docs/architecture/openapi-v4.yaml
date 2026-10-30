@@ -15659,8 +15659,1180 @@ paths:
       - location:read
       servers:
       - url: /
+  /reports/supervisor:
+    get:
+      tags:
+      - admin
+      operationId: getSupervisorOverview
+      summary: 'Supervisor: Overview'
+      description: Lectura autorizada por cliente y sección. Protección omitida salvo
+        plataforma o rol IT. Margen configurado del cliente (15 si no existe).
+      security:
+      - adminSession: []
+      x-permission: usuarios.ver
+      x-tenant-boundary: Contextos de la sesión y AccessScope por cliente; sin acceso
+        Portal.
+      x-resources:
+      - SupervisorOverview
+      parameters:
+      - name: tenant_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: company_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: site_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: area_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+          maxLength: 120
+      - name: state
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - connected
+          - away
+          - offline
+          - with_alerts
+      - name: order
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - attention
+          - name
+          - productivity
+          - active
+          default: attention
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          $ref: '#/components/schemas/SupervisorLimit'
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+          maxLength: 2048
+      responses:
+        '200':
+          description: Resumen autorizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupervisorOverview'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /users/{id}/supervisor-summary:
+    get:
+      tags:
+      - admin
+      operationId: getSupervisorPersonSummary
+      summary: 'Supervisor: PersonSummary'
+      description: Lectura autorizada por cliente y sección. Protección omitida salvo
+        plataforma o rol IT. Margen configurado del cliente (15 si no existe).
+      security:
+      - adminSession: []
+      x-permission: usuarios.ver
+      x-tenant-boundary: Contextos de la sesión y AccessScope por cliente; sin acceso
+        Portal.
+      x-resources:
+      - SupervisorPersonSummary
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/Tenant'
+      - name: day
+        in: query
+        required: true
+        schema:
+          $ref: '#/components/schemas/SupervisorDay'
+      - name: devices_limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          $ref: '#/components/schemas/SupervisorLimit'
+      - name: alerts_limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          $ref: '#/components/schemas/SupervisorLimit'
+      - name: devices_cursor
+        in: query
+        required: false
+        schema:
+          type: string
+          maxLength: 2048
+      - name: alerts_cursor
+        in: query
+        required: false
+        schema:
+          type: string
+          maxLength: 2048
+      responses:
+        '200':
+          description: Resumen autorizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupervisorPersonSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
 components:
   schemas:
+    SupervisorDay:
+      type: string
+      format: date
+    SupervisorLimit:
+      type: integer
+      minimum: 1
+      maximum: 100
+      default: 50
+    SupervisorAvailability:
+      type: object
+      additionalProperties: false
+      required:
+      - status
+      - reason
+      properties:
+        status:
+          type: string
+          enum:
+          - available
+          - unavailable
+          - not_authorized
+          - not_contracted
+          - not_retained
+          - no_measurement
+          - no_workday
+        reason:
+          oneOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+    SupervisorOrganization:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 200
+    SupervisorFacet:
+      type: object
+      additionalProperties: false
+      required:
+      - tenant_id
+      - id
+      - name
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 200
+    SupervisorTenant:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - timezone
+      - today
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 200
+        timezone:
+          type: string
+          maxLength: 200
+        today:
+          type: string
+          format: date
+    SupervisorConnection:
+      type: object
+      additionalProperties: false
+      required:
+      - state
+      - last_seen_at
+      - device_count
+      - availability
+      properties:
+        state:
+          oneOf:
+          - type: string
+            enum:
+            - connected
+            - away
+            - offline
+          - type: 'null'
+        last_seen_at:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        device_count:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        availability:
+          $ref: '#/components/schemas/SupervisorAvailability'
+    SupervisorArrival:
+      type: object
+      additionalProperties: false
+      required:
+      - first_at
+      - source
+      - scheduled_at
+      - deadline_at
+      - margin_minutes
+      - late
+      - availability
+      properties:
+        first_at:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        source:
+          oneOf:
+          - type: string
+            enum:
+            - focus
+            - summary
+            - episodes
+            - door
+          - type: 'null'
+        scheduled_at:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        deadline_at:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        margin_minutes:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        late:
+          oneOf:
+          - type: boolean
+          - type: 'null'
+        availability:
+          $ref: '#/components/schemas/SupervisorAvailability'
+    SupervisorMetric:
+      type: object
+      additionalProperties: false
+      required:
+      - percent
+      - workday_productive_seconds
+      - workday_expected_seconds
+      properties:
+        percent:
+          oneOf:
+          - type: number
+            minimum: 0
+            maximum: 100
+          - type: 'null'
+        workday_productive_seconds:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        workday_expected_seconds:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+    SupervisorActivity:
+      type: object
+      additionalProperties: false
+      required:
+      - active_seconds
+      - idle_seconds
+      - locked_seconds
+      - productivity_percent
+      - workday_productive_seconds
+      - workday_expected_seconds
+      - measured
+      - availability
+      - data_through
+      - calculated_at
+      properties:
+        active_seconds:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        idle_seconds:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        locked_seconds:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        productivity_percent:
+          oneOf:
+          - type: number
+            minimum: 0
+            maximum: 100
+          - type: 'null'
+        workday_productive_seconds:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        workday_expected_seconds:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        measured:
+          type: boolean
+        availability:
+          $ref: '#/components/schemas/SupervisorAvailability'
+        data_through:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        calculated_at:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+    SupervisorEvidence:
+      type: object
+      additionalProperties: false
+      required:
+      - type
+      - process_name
+      - app_name
+      - seconds
+      - first_at
+      - last_at
+      - explanation
+      properties:
+        type:
+          type: string
+          maxLength: 200
+        process_name:
+          oneOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+        app_name:
+          oneOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+        seconds:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        first_at:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        last_at:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        explanation:
+          type: string
+          maxLength: 200
+    SupervisorAlert:
+      type: object
+      additionalProperties: false
+      required:
+      - key
+      - kind
+      - severity
+      - day
+      - reviewed
+      - evidence
+      - device_ids
+      properties:
+        key:
+          type: string
+          maxLength: 128
+        kind:
+          type: string
+          enum:
+          - late_arrival
+          - offline_in_schedule
+          - possible_dual_job
+          - suspicious_app
+        severity:
+          type: string
+          enum:
+          - high
+          - medium
+          - low
+        day:
+          type: string
+          format: date
+        reviewed:
+          type: boolean
+        evidence:
+          $ref: '#/components/schemas/SupervisorEvidence'
+        device_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+    SupervisorAlertSummary:
+      type: object
+      additionalProperties: false
+      required:
+      - pending_count
+      - highest_severity
+      - primary
+      - complete
+      - calculated_at
+      - data_through
+      properties:
+        pending_count:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        highest_severity:
+          oneOf:
+          - type: string
+            enum:
+            - high
+            - medium
+            - low
+          - type: 'null'
+        primary:
+          oneOf:
+          - $ref: '#/components/schemas/SupervisorAlert'
+          - type: 'null'
+        complete:
+          type: boolean
+        calculated_at:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        data_through:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+    SupervisorReason:
+      type: object
+      additionalProperties: false
+      required:
+      - code
+      - device_id
+      - control
+      - report_at
+      - last_seen_at
+      properties:
+        code:
+          type: string
+          maxLength: 200
+        device_id:
+          oneOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+        control:
+          oneOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+        report_at:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        last_seen_at:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+    SupervisorProtection:
+      type: object
+      additionalProperties: false
+      required:
+      - state
+      - reasons
+      properties:
+        state:
+          type: string
+          enum:
+          - protected
+          - unconfirmed
+          - unprotected
+        reasons:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupervisorReason'
+    SupervisorDevice:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - hostname
+      - agent_version
+      - connection
+      properties:
+        id:
+          type: string
+          format: uuid
+        hostname:
+          type: string
+          maxLength: 200
+        agent_version:
+          oneOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+        connection:
+          $ref: '#/components/schemas/SupervisorConnection'
+        protection:
+          $ref: '#/components/schemas/SupervisorProtection'
+    SupervisorSections:
+      type: object
+      additionalProperties: false
+      required:
+      - activity
+      - presence
+      - devices
+      - compliance
+      - rules
+      properties:
+        activity:
+          $ref: '#/components/schemas/SupervisorAvailability'
+        presence:
+          $ref: '#/components/schemas/SupervisorAvailability'
+        devices:
+          $ref: '#/components/schemas/SupervisorAvailability'
+        compliance:
+          $ref: '#/components/schemas/SupervisorAvailability'
+        rules:
+          $ref: '#/components/schemas/SupervisorAvailability'
+        protection:
+          $ref: '#/components/schemas/SupervisorAvailability'
+    SupervisorPerson:
+      type: object
+      additionalProperties: false
+      required:
+      - tenant_id
+      - user_id
+      - display_name
+      - company
+      - site
+      - area
+      - position
+      - day
+      - timezone
+      - connection
+      - arrival
+      - activity
+      - alerts
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+          maxLength: 200
+        company:
+          oneOf:
+          - $ref: '#/components/schemas/SupervisorOrganization'
+          - type: 'null'
+        site:
+          oneOf:
+          - $ref: '#/components/schemas/SupervisorOrganization'
+          - type: 'null'
+        area:
+          oneOf:
+          - $ref: '#/components/schemas/SupervisorOrganization'
+          - type: 'null'
+        position:
+          oneOf:
+          - $ref: '#/components/schemas/SupervisorOrganization'
+          - type: 'null'
+        day:
+          type: string
+          format: date
+        timezone:
+          type: string
+          maxLength: 200
+        connection:
+          $ref: '#/components/schemas/SupervisorConnection'
+        arrival:
+          $ref: '#/components/schemas/SupervisorArrival'
+        activity:
+          $ref: '#/components/schemas/SupervisorActivity'
+        alerts:
+          $ref: '#/components/schemas/SupervisorAlertSummary'
+    SupervisorCohort:
+      type: object
+      additionalProperties: false
+      required:
+      - people
+      - measured_people
+      - no_measurement_people
+      - no_workday_people
+      - not_authorized_people
+      properties:
+        people:
+          type: integer
+          minimum: 0
+        measured_people:
+          type: integer
+          minimum: 0
+        no_measurement_people:
+          type: integer
+          minimum: 0
+        no_workday_people:
+          type: integer
+          minimum: 0
+        not_authorized_people:
+          type: integer
+          minimum: 0
+    SupervisorPeriod:
+      type: object
+      additionalProperties: false
+      required:
+      - tenant_id
+      - current_from
+      - current_to
+      - previous_from
+      - previous_to
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        current_from:
+          type: string
+          format: date
+        current_to:
+          type: string
+          format: date
+        previous_from:
+          type: string
+          format: date
+        previous_to:
+          type: string
+          format: date
+    SupervisorTrend:
+      type: object
+      additionalProperties: false
+      required:
+      - availability
+      - periods
+      - people
+      - current
+      - previous
+      - delta_pp
+      properties:
+        availability:
+          $ref: '#/components/schemas/SupervisorAvailability'
+        periods:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupervisorPeriod'
+        people:
+          type: integer
+          minimum: 0
+        current:
+          $ref: '#/components/schemas/SupervisorMetric'
+        previous:
+          $ref: '#/components/schemas/SupervisorMetric'
+        delta_pp:
+          oneOf:
+          - type: number
+            minimum: -100
+            maximum: 100
+          - type: 'null'
+    SupervisorMargin:
+      type: object
+      additionalProperties: false
+      required:
+      - tenant_id
+      - minutes
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        minutes:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+    SupervisorKpis:
+      type: object
+      additionalProperties: false
+      required:
+      - productivity
+      - arrivals
+      - alerts
+      - trend
+      properties:
+        productivity:
+          $ref: '#/components/schemas/SupervisorMetric'
+        arrivals:
+          type: object
+          additionalProperties: false
+          required:
+          - late
+          - recorded
+          - margin_minutes
+          - margins
+          - complete
+          properties:
+            late:
+              oneOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            recorded:
+              oneOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            margin_minutes:
+              oneOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            margins:
+              type: array
+              items:
+                $ref: '#/components/schemas/SupervisorMargin'
+            complete:
+              type: boolean
+        alerts:
+          type: object
+          additionalProperties: false
+          required:
+          - people
+          - high_people
+          - complete
+          properties:
+            people:
+              oneOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            high_people:
+              oneOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            complete:
+              type: boolean
+        trend:
+          $ref: '#/components/schemas/SupervisorTrend'
+    SupervisorTenantSections:
+      type: object
+      additionalProperties: false
+      required:
+      - tenant_id
+      - sections
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        sections:
+          $ref: '#/components/schemas/SupervisorSections'
+    SupervisorOverview:
+      type: object
+      additionalProperties: false
+      required:
+      - generated_at
+      - cohort
+      - capabilities
+      - facets
+      - kpis
+      - counts
+      - total
+      - data
+      - next_cursor
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        cohort:
+          $ref: '#/components/schemas/SupervisorCohort'
+        capabilities:
+          type: object
+          additionalProperties: false
+          required:
+          - admin_href
+          - sections
+          properties:
+            admin_href:
+              oneOf:
+              - type: string
+                maxLength: 200
+              - type: 'null'
+            sections:
+              type: array
+              items:
+                $ref: '#/components/schemas/SupervisorTenantSections'
+        facets:
+          type: object
+          additionalProperties: false
+          required:
+          - tenants
+          - companies
+          - areas
+          - sites
+          properties:
+            tenants:
+              type: array
+              items:
+                $ref: '#/components/schemas/SupervisorTenant'
+            companies:
+              type: array
+              items:
+                $ref: '#/components/schemas/SupervisorFacet'
+            areas:
+              type: array
+              items:
+                $ref: '#/components/schemas/SupervisorFacet'
+            sites:
+              type: array
+              items:
+                $ref: '#/components/schemas/SupervisorFacet'
+        kpis:
+          $ref: '#/components/schemas/SupervisorKpis'
+        counts:
+          type: object
+          additionalProperties: false
+          required:
+          - connected
+          - away
+          - offline
+          - availability
+          properties:
+            connected:
+              oneOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            away:
+              oneOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            offline:
+              oneOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            availability:
+              $ref: '#/components/schemas/SupervisorAvailability'
+        total:
+          type: integer
+          minimum: 0
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupervisorPerson'
+          maxItems: 100
+        next_cursor:
+          oneOf:
+          - type: string
+            maxLength: 2048
+          - type: 'null'
+    SupervisorInterval:
+      type: object
+      additionalProperties: false
+      required:
+      - start_at
+      - end_at
+      properties:
+        start_at:
+          type: string
+          format: date-time
+        end_at:
+          type: string
+          format: date-time
+    SupervisorSchedule:
+      type: object
+      additionalProperties: false
+      required:
+      - day
+      - availability
+      - start_at
+      - end_at
+      - margin_minutes
+      - work_periods
+      - lunch
+      - absences
+      properties:
+        day:
+          type: string
+          format: date
+        availability:
+          $ref: '#/components/schemas/SupervisorAvailability'
+        start_at:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        end_at:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        margin_minutes:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        work_periods:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupervisorInterval'
+        lunch:
+          oneOf:
+          - $ref: '#/components/schemas/SupervisorInterval'
+          - type: 'null'
+        absences:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupervisorInterval'
+    SupervisorDevicesPage:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - total
+      - next_cursor
+      - availability
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupervisorDevice'
+          maxItems: 100
+        total:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        next_cursor:
+          oneOf:
+          - type: string
+            maxLength: 2048
+          - type: 'null'
+        availability:
+          $ref: '#/components/schemas/SupervisorAvailability'
+    SupervisorAlertsPage:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - total
+      - pending_count
+      - complete
+      - unavailable_types
+      - next_cursor
+      - calculated_at
+      - data_through
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupervisorAlert'
+          maxItems: 100
+        total:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        pending_count:
+          oneOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        complete:
+          type: boolean
+        unavailable_types:
+          type: array
+          items:
+            type: string
+            enum:
+            - late_arrival
+            - offline_in_schedule
+            - possible_dual_job
+            - suspicious_app
+        next_cursor:
+          oneOf:
+          - type: string
+            maxLength: 2048
+          - type: 'null'
+        calculated_at:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        data_through:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+    SupervisorPersonSummary:
+      type: object
+      additionalProperties: false
+      required:
+      - tenant_id
+      - user_id
+      - display_name
+      - company
+      - site
+      - area
+      - position
+      - day
+      - timezone
+      - generated_at
+      - sections
+      - raw_detail_available
+      - arrival
+      - activity
+      - schedule
+      - alerts
+      - current
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+          maxLength: 200
+        company:
+          oneOf:
+          - $ref: '#/components/schemas/SupervisorOrganization'
+          - type: 'null'
+        site:
+          oneOf:
+          - $ref: '#/components/schemas/SupervisorOrganization'
+          - type: 'null'
+        area:
+          oneOf:
+          - $ref: '#/components/schemas/SupervisorOrganization'
+          - type: 'null'
+        position:
+          oneOf:
+          - $ref: '#/components/schemas/SupervisorOrganization'
+          - type: 'null'
+        day:
+          type: string
+          format: date
+        timezone:
+          type: string
+          maxLength: 200
+        generated_at:
+          type: string
+          format: date-time
+        sections:
+          $ref: '#/components/schemas/SupervisorSections'
+        raw_detail_available:
+          type: boolean
+        arrival:
+          $ref: '#/components/schemas/SupervisorArrival'
+        activity:
+          $ref: '#/components/schemas/SupervisorActivity'
+        schedule:
+          $ref: '#/components/schemas/SupervisorSchedule'
+        alerts:
+          $ref: '#/components/schemas/SupervisorAlertsPage'
+        current:
+          type: object
+          additionalProperties: false
+          required:
+          - connection
+          - devices
+          properties:
+            connection:
+              $ref: '#/components/schemas/SupervisorConnection'
+            protection:
+              $ref: '#/components/schemas/SupervisorProtection'
+            devices:
+              $ref: '#/components/schemas/SupervisorDevicesPage'
     ScheduleSettings:
       type: object
       additionalProperties: false
