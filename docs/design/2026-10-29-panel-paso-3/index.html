@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es-CO">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Personas hoy · AZC Keeper</title>
+  <link rel="icon" href="brand/favicon.ico">
+  <link rel="stylesheet" href="styles.css">
+  <script src="data.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body data-page="supervisor">
+  <a class="skip" href="#main">Saltar al contenido</a>
+  <header id="header"></header>
+  <main id="main" tabindex="-1">
+    <div class="page-heading"><div><p class="eyebrow">Modo Supervisor</p><h1>¿Cómo va tu gente hoy?</h1><p id="scope"></p></div><div class="date-stamp"><strong>Jueves, 29 de octubre de 2026</strong><span>Corte de demostración: 15:30 · Bogotá</span></div></div>
+    <form id="search-form" class="search-form" role="search">
+      <label for="search">Buscar una persona</label>
+      <div class="search-line"><input id="search" type="search" placeholder="Escribe un nombre, por ejemplo Valeria Montes" autocomplete="off"><button class="primary" type="submit">Buscar persona</button></div>
+    </form>
+    <section aria-label="Indicadores del alcance seleccionado" id="dashboard-kpis" class="dashboard-kpis"></section>
+    <section aria-label="Estado actual de las personas" id="counters" class="counters"></section>
+    <details class="surface assistant" id="assistant"><summary>Asistente de IA · Sugerencias generadas por IA, revísalas</summary><div id="assistant-content"></div></details>
+    <section class="surface roster" aria-labelledby="roster-title">
+      <div class="section-heading"><div><h2 id="roster-title">Personas hoy</h2><p id="result-count" role="status" aria-live="polite"></p></div><button id="clear" class="text-button" type="button">Limpiar filtros</button></div>
+      <div class="filters">
+        <label>Cliente<select id="client"><option value="">Todos los clientes</option><option>Grupo AZC</option></select></label>
+        <label>Empresa<select id="company"><option value="">Todas las empresas</option></select></label>
+        <label>Área<select id="area"><option value="">Todas las áreas</option></select></label>
+        <label>Sede<select id="site"><option value="">Todas las sedes</option></select></label>
+        <label>Estado<select id="state"><option value="">Todos los estados</option><option value="connected">Conectadas</option><option value="offline">Sin conexión</option><option value="away">Sin actividad reciente</option><option value="alerts">Con alertas</option></select></label>
+      </div>
+      <div class="order-bar"><p id="order-note">Atención: alertas altas, medias, llegadas tarde, sin actividad reciente o sin conexión en horario y el resto.</p><label>Ordenar por<select id="order"><option value="attention">Atención</option><option value="name">Nombre · A–Z</option><option value="productivity">Productividad · mayor primero</option><option value="active">Tiempo activo · mayor primero</option></select></label></div>
+      <p id="cohort-note" class="notice" hidden></p>
+      <div id="roster-content"></div>
+      <nav id="pagination" class="pagination" aria-label="Páginas de personas"></nav>
+    </section>
+    <details class="explanation"><summary>Cómo leer estos datos</summary><p>Conectada: algún equipo dio señal en los últimos 5 minutos. Sin actividad reciente: última señal hace más de 5 y hasta 15 minutos. Sin conexión: más de 15 minutos o ningún equipo asignado. Es conexión del equipo; no confirma presencia humana. Una ausencia laboral registrada se indica aparte.</p><p>La llegada es la primera actividad observada, no una marcación. El margen de esta demostración es de 15 minutos. Productividad = tiempo en apps y sitios productivos / jornada esperada transcurrida, descontando almuerzo y ausencias aprobadas. No es una evaluación de desempeño.</p><p>KPIs, contadores y sugerencias siguen búsqueda y organización; estado y selección del asistente restringen solo la lista. Productividad ponderada: suma de minutos productivos / suma de jornada esperada de personas con datos. Se informa la cobertura; no se reemplazan faltantes por cero. La tendencia compara 26–28 con 19–21 de octubre, jornadas cerradas de las mismas personas. Diferencia en puntos porcentuales (pp).</p></details>
+    <dialog id="report-dialog" aria-labelledby="report-title"><div class="section-heading"><h2 id="report-title">Informe de revisión</h2><button id="close-report" type="button">Cerrar</button></div><div id="report-content"></div><div class="actions"><button id="download-report" type="button">Descargar informe HTML</button></div></dialog>
+  </main>
+  <footer>Maqueta local · Datos ficticios · America/Bogota · Paso 3 de 5</footer>
+  <noscript>Activa JavaScript para explorar las personas y cambiar de modo. Esta maqueta usa únicamente archivos locales.</noscript>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "origen": "../2026-10-29-panel-paso-3",
+  "estado": "Cierre vuelta 2 verificado antes de iniciar paso 4",
+  "sha256": {
+    "administrar.html": "7def4564e27c9453637c8d2e73c0955f9532ab1384a93cc0ed79c12f3d4d65a9",
+    "app.js": "b9274f4fdda16f1161170dcedec3eb278d8ac5faeeab3fb0142d18cb51c0f8cb",
+    "asistente-ia.html": "3dee5fafc67a5b2ed730d90c71ad653e65fa0ccb776e91b9a92348eefa8d32bf",
+    "data.js": "ee5c8757313362d11c588cc784de722f73ef08ccf9bc055257900756119d952d",
+    "equipo.html": "7b19a8cd4e5a06449b18aab5d484c655e035dd1fe8e96e6b95c949d4fddef4e6",
+    "index.html": "d4d95d41d06c0cb9030e0a9b28890955324f88182c6652a85634e106eca20544",
+    "persona.html": "88184e79e5794aa968246eac97c6f3039ee93d0da6305424e44e8f44a145a7b4",
+    "problemas.html": "0d33499a61f3d5ebeda6660a220074d5f44b39d49f8e829b7e6e7380d0d855ca",
+    "programacion.html": "cfc0f4ddc91650af34bdeaedc07d75aecb240144f995f72c79def74d433c9c88",
+    "README.md": "3a99e4c2ac13ae9e8f6e42274e8e053b1501e4c4c47b680382bc10da3d2f62eb",
+    "reglas.html": "af01176048a2437ba65f052d5bd3face9728b7dd676648612e9489bfa95cc826",
+    "REPORTE.md": "4ae74a3262d2e53b801bf0b9c868234c01f8a7c4a382f47066d9d041e918da0e",
+    "styles.css": "f5e1187fd7ed888ab3040da5576b14763efcb7ab3bb2dd3c77a2004b881a6771",
+    "verificar.cjs": "e945c4a021eb21fb27a8c74cf33c70b6beb9031ebe2238cb758f9cc7c488b325",
+    "brand/favicon.ico": "ede26250ce541f534e6af1b7c7423de1af3c92abd27044f24adfb8e4b8991b3f",
+    "brand/logo-main.png": "2168bbf456e941ca691031664eb829102819318e9f62debfa366d0abcb51f577",
+    "brand/logo-mark.png": "d43fb449ba538cc163ddb61aacacfda51e88c4b8156200f9fd6bd10b55dd7a40",
+    "fonts/inter-latin-wght-normal.woff2": "f052ee44c3728dfd23aba8a4567150bc314d23903026fbb6ad089422c2df56af",
+    "fonts/Inter-OFL.txt": "c10e5b67bce4fb8f82e2e34d2b7a45e3c03becda1a1c501ceda2277028856e1a"
+  }
+}
