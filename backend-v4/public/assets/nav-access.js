@@ -1,9 +1,10 @@
-import { api } from './api.js';
+import { api, readSession, currentTenant, PLATFORM_TENANT } from './api.js';
 
 // Menu segun permisos (Koichi 2026-10-01): un modulo que la cuenta no puede abrir no se muestra. Cada pantalla pide
 // un permiso y, varias, alcance "toda la empresa" (la API exige requireFull). La API sigue validando todo: esto solo
 // evita mostrar lo que daria "sin permiso".
 const NEEDS = {
+  supervisor: ['usuarios.ver', false], 'supervisor-person': ['usuarios.ver', false],
   home: ['reportes.ver', false],
   sites: ['organizacion.ver', true], users: ['usuarios.ver', false], devices: ['equipos.ver', false], reports: ['reportes.ver', false],
   intake: ['equipos.enrolar', true], organization: ['organizacion.ver', true], schedules: ['horarios.ver', true], holidays: ['festivos.ver', true],
@@ -36,10 +37,20 @@ export function allowed(access, key) {
 }
 
 // Una sola consulta por página: el menú y los atajos de Ajustes leen el mismo acceso (null si no se pudo leer).
-let accessRequest = null;
-export function loadAccess() {
-  accessRequest ??= api('GET', '/me/access').catch(() => null);
-  return accessRequest;
+const accessRequests = new Map();
+export function loadAccess(tenant) {
+  if (tenant === undefined) {
+    const session = readSession();
+    tenant = currentTenant() || (session?.is_platform_admin ? sessionStorage.getItem('keeper.presentation.tenant') || PLATFORM_TENANT : session?.tenant_id);
+  }
+  if (!accessRequests.has(tenant)) accessRequests.set(tenant, api('GET', '/me/access', { tenant }).catch(() => { accessRequests.delete(tenant); return null; }));
+  return accessRequests.get(tenant);
+}
+
+export async function loginDestination(session) {
+  if (session.is_platform_admin) return '/supervisor.php';
+  const access = await loadAccess(session.tenant_id);
+  return access?.supervisor_home ? '/supervisor.php' : '/';
 }
 
 export async function applyNavAccess() {

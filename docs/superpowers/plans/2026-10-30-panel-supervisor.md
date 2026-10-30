@@ -591,3 +591,4 @@ Esperado `APPLIED <migración>` o `SKIP <migración>` en repetición, salida 0. 
    Controles que cuentan: web, USB, descargas, instalación y endurecimiento; SAC y cifrado informativos.
    Supervisores sí ven sus equipos con conexión/última señal. Incluir este caso en la matriz de AccessScope (Tarea 11).
 4. **Implementación autorizada** en esta rama; despliegue NO autorizado (fase aparte).
+5. Quién es «supervisor» (2026-10-30): NO se decide por nombre de rol. Supervisor = la persona tiene gente a cargo en la jerarquía de One (`users.reports_to_user_id`, misma condición que `RoleRules::matching` 'manages', alcance `team` de `AdminAccess`). Al iniciar sesión: superadmin y quien tenga al menos un reporte activo → Supervisor (limitado a su alcance); los demás (IT, Admin Empresa, RRHH, etc.) → panel actual. Todos los que tengan `usuarios.ver` ven el enlace para cambiar de pantalla. No crear rol nuevo ni reglas en datos: eso lo configura Koichi después.

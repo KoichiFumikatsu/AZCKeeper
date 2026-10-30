@@ -4,6 +4,7 @@ export const PLATFORM_TENANT = '00000000-0000-4000-8000-000000000001'; // AdminA
 export const isUuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 let csrf = '';
 let tenantId = null;
+export const currentTenant = () => tenantId;
 try { csrf = sessionStorage.getItem(CSRF_KEY) || ''; } catch { /* Storage may be unavailable. */ }
 
 export class ApiError extends Error {
@@ -58,7 +59,8 @@ export async function api(method, path, { body, tenant = tenantId, idempotencyKe
   method = method.toUpperCase();
   if (!path.startsWith('/') || path.startsWith('//') || path.includes('://')) throw new Error('Ruta de API inválida.');
   const headers = { Accept: raw ? 'application/zip, application/json, application/problem+json' : 'application/json, application/problem+json' };
-  if (!path.startsWith('/auth/')) {
+  const supervisorOverview = method === 'GET' && path.split('?')[0] === '/reports/supervisor' && tenant === null;
+  if (!path.startsWith('/auth/') && !supervisorOverview) {
     if (!isUuid(tenant)) throw new Error('Selecciona una empresa válida para consultar los datos.');
     headers['X-Tenant-ID'] = tenant;
   } else if (isUuid(tenant)) headers['X-Tenant-ID'] = tenant;

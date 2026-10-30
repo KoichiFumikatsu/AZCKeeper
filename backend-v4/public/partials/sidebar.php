@@ -10,7 +10,7 @@ $current = ['member' => 'users', 'device' => 'devices'][$page] ?? $page;
 // Orden por tareas (docs/design/2026-10-14-superadmin-por-tareas.md §2.1): cada grupo es la tarea que se busca y cada
 // enlace se llama igual que el título de su página. Aquí no se fusiona ninguna pantalla: solo orden, nombres y grupos.
 $portal = [
-    'principal' => ['Principal', [['home', 'Inicio', '/'], ['users', 'Personas', '/usuarios.php']]],
+    'principal' => ['Principal', [['home', 'Inicio', '/'], ['supervisor', 'Supervisor', '/supervisor.php', false], ['users', 'Personas', '/usuarios.php']]],
     'equipos' => ['Equipos', [['devices', 'Equipos', '/equipos.php'], ['intake', 'Registrar equipos nuevos', '/alta.php'], ['power-schedules', 'Apagado programado', '/apagado-programado.php'],
         ['assignments', 'Asignación de equipos', '/asignaciones.php', false], ['coverage', 'Cobertura de instalación', '/cobertura.php'],
         ['client-logs', 'Logs de los equipos', '/logs.php', false]]],

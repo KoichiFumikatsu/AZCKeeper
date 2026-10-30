@@ -1,5 +1,5 @@
 {
-  "source_sha256": "5b51ca61650b989f107b5ea20ef57b323ee0ac2832275552fd85ff862c47a732",
+  "source_sha256": "e9c8a61ceaa045b9491064c402ce2f0f6a8579bc720e034c4e953c087c762564",
   "paths": {
     "/me": {
       "get": {
@@ -32507,6 +32507,10 @@
         "features"
       ],
       "properties": {
+        "supervisor_home": {
+          "type": "boolean",
+          "description": "Entrada a Supervisor para plataforma o persona con al menos un reporte activo en users.reports_to_user_id del cliente actual. No depende del rol ni concede permisos o modifica el alcance; sin usuarios.ver la vista muestra acceso no disponible."
+        },
         "platform": {
           "type": "boolean"
         },

@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 use Keeper\{Database,Validator,ApiError,Util};
+require_once __DIR__.'/supervisor-capacity.php';
 
 function supervisorContractTests(?Database $db = null): void
 {
@@ -21,6 +22,7 @@ function supervisorContractTests(?Database $db = null): void
 function supervisorTests(Database $db): void
 {
     supervisorContractTests($db);
+    supervisorEntryTests($db);
     supervisorContextTests($db);
     supervisorActivityTests($db);
     supervisorApiTests($db);
@@ -28,6 +30,65 @@ function supervisorTests(Database $db): void
     supervisorMultiClientTests($db);
     supervisorCalendarTests($db);
     supervisorTrendTests($db);
+    supervisorCapacityTests($db);
+}
+
+function supervisorEntryTests(Database $db): void
+{
+    $u=secondTenant($db); $t=$u['tenant_id'];
+    $a=adminFixture($db,$u,['usuarios.ver','equipos.ver','reportes.ver','reglas.ver']);
+    $report=adminMember($db,$u);
+    foreach ([null,'coordinacion','direccion','gerencia','corporativo','it','rrhh','colaborador','admin_empresa'] as $seed) {
+        $db->run('UPDATE roles SET seed_key=?,name=? WHERE tenant_id=? AND id=?',[$seed,'Nombre cambiado',$t,$a['role']]);
+        foreach ([false,true] as $manages) {
+            $db->run('UPDATE users SET reports_to_user_id=? WHERE tenant_id=? AND id=?',[$manages?$u['id']:null,$t,$report['id']]);
+            $access=expect(adminRequest($a,'GET','/me/access'),200,'login hierarchy '.($seed??'custom'));
+            check(($access['supervisor_home']??null)===$manages,'login follows active reports, independent of role '.($seed??'custom'));
+        }
+    }
+    $db->run("UPDATE users SET status='inactive' WHERE tenant_id=? AND id=?",[$t,$report['id']]);
+    check(expect(adminRequest($a,'GET','/me/access'),200,'inactive report')['supervisor_home']===false,'inactive report does not make a supervisor');
+    $db->run("UPDATE users SET status='active' WHERE tenant_id=? AND id=?",[$t,$report['id']]);
+    $db->run("UPDATE roles SET seed_key='coordinacion',active=FALSE WHERE tenant_id=? AND id=?",[$t,$a['role']]);
+    $access=expect(adminRequest($a,'GET','/me/access'),200,'manager without permissions');
+    check($access['supervisor_home']===true && $access['permissions']===[],'hierarchy navigation never grants permissions');
+    expect(adminRequest($a,'GET','/reports/supervisor'),403,'manager without permission cannot read people');
+    $db->run('UPDATE roles SET active=TRUE WHERE tenant_id=? AND id=?',[$t,$a['role']]);
+    $db->run('UPDATE users SET reports_to_user_id=NULL WHERE tenant_id=? AND id=?',[$t,$report['id']]);
+    check(expect(adminRequest($a,'GET','/me/access'),200,'removed last report')['supervisor_home']===false,'removing last report changes entry immediately');
+    $p=sharedPlatform($db);
+    check(expect(adminRequest($p,'GET','/me/access'),200,'platform home')['supervisor_home']===true,'platform supervisor home');
+    expect(request('GET','/reports/supervisor'),401,'supervisor requires session');
+    $portal=curl_init(Keeper\Config::get('ORIGIN').'/portal/v1/reports/supervisor');
+    curl_setopt($portal,CURLOPT_RETURNTRANSFER,true); curl_exec($portal); $portalStatus=curl_getinfo($portal,CURLINFO_RESPONSE_CODE); curl_close($portal);
+    check($portalStatus===404,'supervisor route absent from Portal HTTP');
+    foreach (['/supervisor.php','/supervisor-persona.php','/','/index.php','/admin/','/usuarios.php','/miembro.php','/proteccion.php','/login.php'] as $path) {
+        $curl=curl_init(Keeper\Config::get('ORIGIN').$path); curl_setopt_array($curl,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_HEADER=>true]);
+        $body=curl_exec($curl); $status=curl_getinfo($curl,CURLINFO_RESPONSE_CODE); curl_close($curl);
+        check($status===200,'page shell '.$path);
+        check(str_contains($body,'Content-Security-Policy:') && str_contains($body,'Cache-Control: no-store'),'page headers '.$path);
+        if (str_starts_with($path,'/supervisor')) { check(!str_contains($body,'smoke member') && !str_contains($body,'type="module" src="/assets/app.js'),'supervisor shell no identity/admin bootstrap'); }
+    }
+    $db->run('INSERT INTO admin_policy_recompiles (tenant_id) VALUES (?)',[$t]);
+    $fingerprint=static function () use ($db,$t): array {
+        $out=[];
+        foreach (['policy_documents','policy_versions','policy_rules','policy_assignments','effective_policies','access_grants','access_grant_units','access_grant_cities','device_command','dual_job_alerts','suspicious_app_detections','user_assignments','device_assignments','users','tenants'] as $table) {
+            $rows=array_map(fn($row)=>hash('sha256',serialize($row)),$db->run("SELECT * FROM $table WHERE tenant_id=?",[$t])->fetchAll()); sort($rows); $out[$table]=$rows;
+        }
+        return $out;
+    };
+    $before=$fingerprint();
+    $day=(new DateTimeImmutable('today',new DateTimeZone('America/Bogota')))->format('Y-m-d');
+    $uid=Util::id($u['id']); $next=(new DateTimeImmutable($day))->modify('+1 day')->format('Y-m-d');
+    foreach (['/me/access','/me',"/users/$uid/windows?from=$day&to=$next","/users/$uid/timeline?day=$day","/users/$uid/rules"] as $route) {
+        expect(adminRequest($a,'GET',$route),200,'read-only supervisor dependency');
+        check((bool)$db->one('SELECT tenant_id FROM admin_policy_recompiles WHERE tenant_id=?',[$t]),'dependency does not compile '.$route);
+    }
+    expect(adminRequest($a,'GET','/reports/supervisor'),200,'read-only overview');
+    expect(adminRequest($a,'GET',"/users/$uid/supervisor-summary?day=$day"),200,'read-only summary');
+    check($fingerprint()===$before,'GETs preserve policies plans grants commands reviewed alerts and assignments');
+    $db->run('DELETE FROM admin_policy_recompiles WHERE tenant_id=?',[$t]);
+    echo "PASS supervisor entry, page shells and read-only dependencies\n";
 }
 
 function supervisorTrendTests(Database $db): void
@@ -163,6 +224,8 @@ function supervisorScopeAndSignalsTests(Database $db): void
     check($ids===$wanted && $list['cohort']['people']===2,'AND across all scope dimensions');
     check(count($list['facets']['sites'])===1 && $list['facets']['sites'][0]['id']===Util::id($o['med']),'facets within scope');
     expect(adminRequest($a,'GET','/users/'.Util::id($o['bl1']['id']).'/supervisor-summary?day='.$today),404,'same tenant outside scope');
+    $outside=Util::id($o['bl1']['id']); $next=(new DateTimeImmutable($today))->modify('+1 day')->format('Y-m-d');
+    foreach (["/users/$outside/windows?from=$today&to=$next","/users/$outside/timeline?day=$today","/users/$outside/rules"] as $route) { expect(adminRequest($a,'GET',$route),404,'reused detail outside scope'); }
     $u=$o['ag808']; $uid=Util::id($u['id']); $assignment=$db->one('SELECT id FROM user_assignments WHERE tenant_id=? AND user_id=? AND ends_at IS NULL',[$t,$u['id']])['id'];
     $db->run('UPDATE user_assignments SET area_id=? WHERE tenant_id=? AND id=?',[$o['juridica'],$t,$assignment]);
     $db->run("INSERT INTO day_summary (tenant_id,day,user_id,user_assignment_id,active_seconds,idle_seconds,productive_seconds,expected_seconds,coverage_percent,calculation_version,timezone,calculated_at,data_through) VALUES (?,?,?,?,999,0,999,3600,0,'test','America/Bogota',UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))",[$t,$today,$u['id'],$assignment]);
@@ -174,6 +237,7 @@ function supervisorScopeAndSignalsTests(Database $db): void
     $db->run("UPDATE day_summary SET first_activity=CONCAT(?,' 13:19:00') WHERE tenant_id=? AND day=? AND user_id=?",[$today,$t,$today,$u['id']]);
     $dto=expect(adminRequest($a,'GET',$summary),200,'configured margin');
     check($dto['arrival']['margin_minutes']===20 && $dto['arrival']['late']!==true,'configured margin instead of fixed 15');
+    check(!str_contains(Util::json($dto),'protection'),'filters supervisor omits protection and reasons');
     $db->run("INSERT INTO dual_job_alerts (tenant_id,id,user_id,day,alert_type,severity,evidence,source) VALUES (?,?,?,?,'foreign_app','low',?,'worker')",[$t,Util::bin(Util::uuid()),$u['id'],$today,Util::json(['apps'=>[['process_name'=>'foreign.exe','active_seconds'=>10]],'secret'=>'must not appear'])]);
     $device=$db->one('SELECT id FROM devices WHERE tenant_id=? AND user_id=?',[$t,$u['id']])['id'];
     $app=Util::bin(Util::uuid()); $db->run("INSERT INTO suspicious_apps (tenant_id,id,app_pattern,category) VALUES (?,?,'foreign.exe','foreign_workspace')",[$t,$app]);
@@ -197,6 +261,15 @@ function supervisorScopeAndSignalsTests(Database $db): void
     $db->run("DELETE FROM role_permissions WHERE tenant_id=? AND role_id=? AND permission_code='equipos.ver'",[$t,$a['role']]);
     $dto=expect(adminRequest($a,'GET',$summary),200,'missing devices permission');
     check($dto['current']['devices']['total']===null && !isset($dto['current']['protection']) && $dto['current']['connection']['state']===null,'missing devices not unprotected or offline');
+    foreach (['presencia.ver'=>'presence','reglas.ver'=>'rules','cumplimiento.ver'=>'compliance'] as $permission=>$section) {
+        $db->run('DELETE FROM role_permissions WHERE tenant_id=? AND role_id=? AND permission_code=?',[$t,$a['role'],$permission]);
+        $restricted=expect(adminRequest($a,'GET',$summary),200,'missing section '.$section);
+        check($restricted['sections'][$section]['status']==='not_authorized','section unavailable '.$section);
+        if ($section==='presence') check($restricted['arrival']['first_at']===null && $restricted['schedule']['start_at']===null,'no presence evidence');
+        if ($section==='rules') expect(adminRequest($a,'GET','/users/'.$uid.'/rules'),403,'rules denied by server');
+        if ($section==='compliance') check(!array_filter($restricted['alerts']['data'],fn($x)=>in_array($x['kind'],['possible_dual_job','suspicious_app'],true)),'no compliance evidence');
+        $db->run('INSERT INTO role_permissions VALUES (?,?,?)',[$t,$a['role'],$permission]);
+    }
     $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='productividad'",[$t]);
     $dto=expect(adminRequest($a,'GET',$summary),200,'missing activity feature');
     check($dto['activity']['availability']['status']==='not_contracted' && $dto['activity']['active_seconds']===null,'section feature required');
@@ -349,6 +422,10 @@ function supervisorContextTests(Database $db): void
     $db->run('UPDATE tenants SET archived_at=UTC_TIMESTAMP(6) WHERE tenant_id=?',[$c['tenant_id']]);
     $ids=array_column($model->authorizedContexts($p,null),'tenant_id');
     check(!in_array($c['tenant_id'],$ids,true) && !in_array(Util::bin(Keeper\AdminAuth::PLATFORM),$ids,true),'platform excludes archived and technical');
+    foreach (["archived_at=NULL,status='suspended'","status='active',deleted_at=UTC_TIMESTAMP(6)"] as $change) {
+        $db->run("UPDATE tenants SET $change WHERE tenant_id=?",[$c['tenant_id']]);
+        check(!in_array($c['tenant_id'],array_column($model->authorizedContexts($p,null),'tenant_id'),true),'platform excludes inactive or deleted');
+    }
     echo "PASS supervisor contexts\n";
 }
 

@@ -21153,6 +21153,9 @@ components:
       - permissions
       - features
       properties:
+        supervisor_home:
+          type: boolean
+          description: Entrada a Supervisor para plataforma o persona con al menos un reporte activo en users.reports_to_user_id del cliente actual. No depende del rol ni concede permisos o modifica el alcance; sin usuarios.ver la vista muestra acceso no disponible.
         platform:
           type: boolean
         features:

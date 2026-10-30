@@ -1,7 +1,7 @@
 import { remoteActionsSection, commandTypes, commandStates, versionBelow, commandError, commandExpiry, remoteAvailability, renameState, renameNote, renameRestartButton, cancelState, cancelBadge, openCancelCommand } from './device-actions.js';
 import { codeNode, plainCode } from './result-codes.js';
 import { api, ApiError, PLATFORM_TENANT, isUuid, setTenant, saveSession, readSession, refreshCsrf, goToLogin, errorMessage } from './api.js';
-import { applyNavAccess } from './nav-access.js';
+import { applyNavAccess, loginDestination } from './nav-access.js';
 import { coordinator } from './coordinator.js';
 import './tablekit.js';
 import { operations, operationPaths } from './operations.js';
@@ -61,14 +61,14 @@ function passwordChange(session, current) {
     submit.disabled = true;
     try {
       const fresh = await api('POST', '/auth/password', { body: { current_password: now.value, new_password: next.value } });
-      saveSession(fresh); location.replace('/');
+      saveSession(fresh); location.replace(await loginDestination(fresh));
     } catch (e) { showError(error, e.code === 'weak_password' ? new Error('La contraseña nueva debe ser distinta de la temporal y de tu correo.') : e.code === 'invalid_credentials' ? new Error('La contraseña temporal no es correcta.') : e); submit.disabled = false; }
   });
 }
 async function login() {
   const current = readSession();
   if (current && new URLSearchParams(location.search).has('cambiar')) { passwordChange(current); return; }
-  if (current) { location.replace('/'); return; }
+  if (current) { location.replace(await loginDestination(current)); return; }
   const form = $('login-form');
   form.addEventListener('submit', async event => {
     event.preventDefault();
@@ -92,7 +92,7 @@ async function login() {
       const typed = form.elements.password.value;
       form.elements.password.value = '';
       if (session.must_change_password) { $('login-status').textContent = ''; passwordChange(session, typed); return; }
-      location.replace('/');
+      location.replace(await loginDestination(session));
     } catch (error) {
       showError($('login-error'), error);
       $('login-status').textContent = '';

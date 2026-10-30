@@ -661,14 +661,15 @@ final class AdminApi
     {
         if ($this->c['platform']) {
             $rows=array_map(fn($x)=>['code'=>$x['code'],'scopes'=>['tenant']],$this->db->run('SELECT code FROM permissions ORDER BY code')->fetchAll());
-            return self::response(['platform'=>true,'features'=>Features::enabled($this->db,$this->tenant),'permissions'=>$rows]);
+            return self::response(['platform'=>true,'supervisor_home'=>true,'features'=>Features::enabled($this->db,$this->tenant),'permissions'=>$rows]);
         }
         $grant=AccessGrants::forContext($this->db,$this->c);
         $codes=$grant===null?[]:AccessGrants::permissions($this->db,$this->tenant,$grant['role_id']);
         $kind=$grant===null?null:($grant['scope']->kind==='all'?'tenant':$grant['scope']->kind);
         $features=Features::enabled($this->db,$this->tenant);
         $codes=array_values(array_filter($codes,function ($code) use ($features) { $f=Features::forOperation('',$code); return $f===null || in_array($f,$features,true); }));
-        return self::response(['platform'=>false,'features'=>$features,'permissions'=>array_map(fn($code)=>['code'=>$code,'scopes'=>[$kind]],$codes)]);
+        $supervisor=($this->c['user_id']??null)!==null && (bool)$this->db->one("SELECT r.id FROM users r JOIN users m ON m.tenant_id=r.tenant_id AND m.id=r.reports_to_user_id AND m.status='active' WHERE r.tenant_id=? AND r.status='active' AND m.id=? LIMIT 1",[$this->tenant,$this->c['user_id']]);
+        return self::response(['platform'=>false,'supervisor_home'=>$supervisor,'features'=>$features,'permissions'=>array_map(fn($code)=>['code'=>$code,'scopes'=>[$kind]],$codes)]);
     }
     /** Quien soy (panel y Portal): persona, rol, alcance, funciones de la empresa, permisos efectivos y empresa con su marca. */
     private function me(): array
