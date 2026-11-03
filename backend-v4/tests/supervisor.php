@@ -8,8 +8,8 @@ function supervisorContractTests(?Database $db = null): void
     $v = new Validator();
     foreach (['/reports/supervisor'=>'getSupervisorOverview','/users/{id}/supervisor-summary'=>'getSupervisorPersonSummary'] as $path=>$op) {
         check(($v->contract['paths'][$path]['get']['operationId']??null)===$op, "supervisor contract $op");
-        check($v->contract['paths'][$path]['get']['security']===[['adminSession'=>[]]], 'panel session only');
-        check(!Keeper\Portal::allowed('GET',$path),'new supervisor route absent from Portal');
+        check($v->contract['paths'][$path]['get']['security']===[['portalBearer'=>[]],['adminSession'=>[]]], 'panel session or portal token');
+        check(Keeper\Portal::allowed('GET',$path),'supervisor route available in Portal');
     }
     $v->named('SupervisorAvailability',(object)['status'=>'no_measurement','reason'=>'no_capture']);
     $v->named('SupervisorProtection',(object)['state'=>'unconfirmed','reasons'=>[(object)['code'=>'no_report','device_id'=>null,'control'=>null,'report_at'=>null,'last_seen_at'=>null]]]);
@@ -22,6 +22,7 @@ function supervisorContractTests(?Database $db = null): void
 function supervisorTests(Database $db): void
 {
     supervisorContractTests($db);
+    supervisorPortalTests($db);
     supervisorEntryTests($db);
     supervisorContextTests($db);
     supervisorActivityTests($db);
@@ -31,6 +32,168 @@ function supervisorTests(Database $db): void
     supervisorCalendarTests($db);
     supervisorTrendTests($db);
     supervisorCapacityTests($db);
+}
+
+function supervisorPortalTests(Database $db): void
+{
+    $o=accessOrg($db); $t=$o['tenant']; $tid=Util::id($t); $uid=Util::id($o['coord2']['id']);
+    $perms=['usuarios.ver','equipos.ver','presencia.ver','reportes.ver','cumplimiento.ver','reglas.ver','horarios.ver','organizacion.ver','festivos.ver'];
+    $a=accessAccount($db,$o,'coord2',$perms,new Keeper\AccessScope('team'));
+    $db->run('UPDATE users SET portal_login_enabled=TRUE WHERE tenant_id=? AND id=?',[$t,$o['coord2']['id']]);
+    $session=expect(portalLogin($a['email'],$a['password']),200,'supervisor portal login'); $token=$session['access_token'];
+    $day=(new DateTimeImmutable('today',new DateTimeZone('America/Bogota')))->format('Y-m-d');
+    $base='/reports/supervisor?tenant_id='.$tid;
+    $summary='/users/'.$uid.'/supervisor-summary?day='.$day;
+    $sorted=static function (array $ids): array { sort($ids); return $ids; };
+    $schedule=function (string $name) use ($db,$t): string {
+        $id=Util::bin(Util::uuid());
+        $db->run("INSERT INTO schedules (tenant_id,id,name,timezone,start_local,end_local) VALUES (?,?,?,'America/Bogota','08:00','17:00')",[$t,$id,$name]);
+        return $id;
+    };
+    $keys=['base','zafra','bl1','bl2','juan','ag808','agTorre','jur808','coord2']; $schedules=[];
+    foreach ($keys as $key) {
+        $schedules[$key]=$schedule($key);
+        $db->run('UPDATE users SET schedule_id=? WHERE tenant_id=? AND id=?',[$schedules[$key],$t,$o[$key]['id']]);
+        $db->run('UPDATE user_assignments SET schedule_id=? WHERE tenant_id=? AND user_id=?',[$schedules[$key],$t,$o[$key]['id']]);
+    }
+    $unused=$schedule('Unassigned'); $foreign=secondTenant($db);
+    $cases=[
+        ['self',Keeper\AccessScope::own(),['coord2']],
+        ['team',new Keeper\AccessScope('team'),['coord2','ag808','jur808']],
+        ['area',new Keeper\AccessScope('filters',areas:[$o['agentes']]),['bl1','juan','ag808','agTorre','coord2']],
+        ['site',new Keeper\AccessScope('filters',sites:[$o['med']]),['ag808','jur808','coord2']],
+        ['filters',new Keeper\AccessScope('filters',companies:[$o['azc']],sites:[$o['med']],areas:[$o['agentes']]),['ag808','coord2']],
+        ['empty',new Keeper\AccessScope('filters'),[]],
+    ];
+    foreach ($cases as [$label,$scope,$visible]) {
+        Keeper\AccessGrants::setForUser($db,$t,$o['coord2']['id'],$a['role'],$scope,'manual');
+        $panel=expect(adminRequest($a,'GET',$base),200,'panel scope '.$label);
+        $portal=expect(portalRequest('GET',$base,null,$token),200,'portal scope '.$label);
+        $expected=$sorted(array_map(fn($key)=>Util::id($o[$key]['id']),$visible));
+        check($sorted(array_column($portal['data'],'user_id'))===$expected && $sorted(array_column($panel['data'],'user_id'))===$expected,'same exact supervisor scope '.$label);
+        check(!str_contains(Util::json($portal),'protection'),'portal overview omits protection '.$label);
+        foreach (['coord2','ag808','zafra'] as $key) {
+            $path='/users/'.Util::id($o[$key]['id']).'/supervisor-summary?day='.$day;
+            $status=in_array($key,$visible,true)?200:404;
+            $dto=expect(portalRequest('GET',$path,null,$token),$status,'portal person '.$label.' '.$key);
+            expect(adminRequest($a,'GET',$path),$status,'panel person '.$label.' '.$key);
+            if ($status===200) { check(!str_contains(Util::json($dto),'protection'),'portal person omits protection'); }
+        }
+        $rows=expect(portalRequest('GET','/schedules?limit=100',null,$token),200,'scoped schedules '.$label);
+        check($sorted(array_column($rows['data'],'id'))===$sorted(array_map(fn($key)=>Util::id($schedules[$key]),$visible)),'only effective schedules in scope '.$label);
+        expect(adminRequest($a,'GET','/schedules'),403,'panel schedules still require all');
+        expect(portalRequest('GET','/organization',null,$token),200,'organization any scope');
+        foreach (['/schedules/holidays'=>403,'/schedules/holiday-calendars'=>200] as $path=>$status) {
+            expect(portalRequest('GET',$path,null,$token),$status,'portal catalog retains scope gate');
+            expect(adminRequest($a,'GET',$path),$status,'panel catalog scope gate');
+        }
+    }
+    $out=$base.'&area_id='.Util::id($o['juridica']);
+    Keeper\AccessGrants::setForUser($db,$t,$o['coord2']['id'],$a['role'],new Keeper\AccessScope('filters',areas:[$o['agentes']]),'manual');
+    expect(portalRequest('GET',$out,null,$token),403,'portal outside area filter');
+    expect(adminRequest($a,'GET',$out),403,'panel outside area filter');
+    expect(portalRequest('GET','/reports/supervisor?tenant_id='.Util::id($foreign['tenant_id']),null,$token),404,'portal foreign tenant query');
+    expect(adminRequest($a,'GET','/reports/supervisor?tenant_id='.Util::id($foreign['tenant_id'])),404,'panel foreign tenant query');
+    expect(portalRequest('GET',$summary,null,$token,['x-tenant-id'=>Util::id($foreign['tenant_id'])]),404,'portal foreign tenant header');
+
+    // El predeterminado solo aparece si una persona visible lo usa; sin predeterminado queda el provisional.
+    Keeper\AccessGrants::setForUser($db,$t,$o['coord2']['id'],$a['role'],new Keeper\AccessScope('team'),'manual');
+    $placeholder=Keeper\Placeholders::schedule($db,$t,'America/Bogota');
+    $db->run('UPDATE users SET schedule_id=? WHERE tenant_id=? AND id IN (?,?)',[$placeholder,$t,$o['ag808']['id'],$o['jur808']['id']]);
+    $db->run('UPDATE tenants SET default_schedule_id=? WHERE tenant_id=?',[$unused,$t]);
+    $rows=expect(portalRequest('GET','/schedules',null,$token),200,'team effective default');
+    check($sorted(array_column($rows['data'],'id'))===$sorted([Util::id($schedules['coord2']),Util::id($unused)]),'default deduplicated and outside schedules excluded');
+    $db->run('UPDATE tenants SET default_schedule_id=NULL WHERE tenant_id=?',[$t]);
+    $rows=expect(portalRequest('GET','/schedules',null,$token),200,'team without default');
+    check($sorted(array_column($rows['data'],'id'))===$sorted([Util::id($schedules['coord2']),Util::id($placeholder)]),'placeholder retained without default');
+    $seen=[]; $path='/schedules?limit=1';
+    do {
+        $page=expect(portalRequest('GET',$path,null,$token),200,'scoped schedules pagination');
+        array_push($seen,...array_column($page['data'],'id'));
+        $path='/schedules?limit=1&cursor='.urlencode($page['next_cursor']??'');
+    } while ($page['next_cursor']!==null);
+    check($sorted($seen)===$sorted(array_column($rows['data'],'id')),'schedule pages neither expand nor duplicate scope');
+
+    $first=expect(portalRequest('GET',$base.'&limit=1',null,$token),200,'portal supervisor cursor');
+    $next=$base.'&limit=1&cursor='.urlencode($first['next_cursor']);
+    expect(portalRequest('GET',$next,null,$token),200,'portal family cursor works without cookie');
+    expect(adminRequest($a,'GET',$next),422,'portal cursor rejected by panel session');
+    $other=expect(portalLogin($a['email'],$a['password']),200,'another portal family');
+    expect(portalRequest('GET',$next,null,$other['access_token']),422,'portal cursor rejected by another family');
+    $refreshed=expect(portalRequest('POST','/refresh',['refresh_token'=>$session['refresh_token']]),200,'portal cursor refresh');
+    $token=$refreshed['access_token'];
+    expect(portalRequest('GET',$next,null,$token),200,'portal cursor survives refresh in same family');
+
+    Keeper\AccessGrants::setForUser($db,$t,$o['coord2']['id'],$a['role'],Keeper\AccessScope::all(),'manual');
+    $newRoutes=[$base,$summary,'/organization','/schedules/holidays','/schedules/holiday-calendars'];
+    foreach ($newRoutes as $path) {
+        expect(portalRequest('GET',$path,null,$token),200,'new Portal route '.$path);
+        expect(adminRequest($a,'GET',$path),200,'new route panel parity');
+        expect(portalRequest('GET',$path),401,'new route needs token');
+    }
+    $rows=expect(portalRequest('GET','/schedules?limit=100',null,$token),200,'all schedules unchanged');
+    check(count($rows['data'])===(int)$db->one('SELECT COUNT(*) n FROM schedules WHERE tenant_id=?',[$t])['n'],'all scope sees entire tenant catalog');
+    foreach (['usuarios.ver'=>['/reports/supervisor',$summary],'organizacion.ver'=>['/organization'],'festivos.ver'=>['/schedules/holidays','/schedules/holiday-calendars'],'horarios.ver'=>['/schedules']] as $permission=>$paths) {
+        $db->run('DELETE FROM role_permissions WHERE tenant_id=? AND role_id=? AND permission_code=?',[$t,$a['role'],$permission]);
+        foreach ($paths as $path) {
+            expect(portalRequest('GET',$path,null,$token),403,'portal permission '.$permission);
+            expect(adminRequest($a,'GET',$path),403,'panel permission '.$permission);
+        }
+        $db->run('INSERT INTO role_permissions VALUES (?,?,?)',[$t,$a['role'],$permission]);
+    }
+    foreach (['reportes.ver'=>'activity','presencia.ver'=>'presence','equipos.ver'=>'devices','cumplimiento.ver'=>'compliance','reglas.ver'=>'rules'] as $permission=>$section) {
+        $db->run('DELETE FROM role_permissions WHERE tenant_id=? AND role_id=? AND permission_code=?',[$t,$a['role'],$permission]);
+        $dto=expect(portalRequest('GET',$summary,null,$token),200,'portal missing section '.$section);
+        $panel=expect(adminRequest($a,'GET',$summary),200,'panel missing section '.$section);
+        check($dto['sections']===$panel['sections'] && $dto['sections'][$section]['status']==='not_authorized','same omitted section '.$section);
+        $db->run('INSERT INTO role_permissions VALUES (?,?,?)',[$t,$a['role'],$permission]);
+    }
+
+    $db->run("UPDATE devices SET status='revoked' WHERE tenant_id=? AND user_id=?",[$t,$o['coord2']['id']]);
+    $device=supervisorDevice($db,$o['coord2'],'Portal protected');
+    $db->run("UPDATE roles SET seed_key='it' WHERE tenant_id=? AND id=?",[$t,$a['role']]);
+    $platform=sharedPlatform($db); $pa=$platform; $pa['tenant']=$t;
+    $ps=expect(portalLogin($platform['email'],$platform['password']),200,'platform portal supervisor');
+    $header=['x-tenant-id'=>$tid];
+    foreach ($newRoutes as $path) { expect(portalRequest('GET',$path,null,$ps['access_token'],$header),200,'platform new route with tenant header'); }
+    foreach (['protected','unprotected','unconfirmed'] as $state) {
+        $db->run('UPDATE security_reports SET controls=? WHERE tenant_id=? AND device_id=?',[Util::json(array_map(fn($def)=>['control_id'=>$def['agent'],'state'=>$state==='unprotected'?'failed':'applied'],array_values(Keeper\ProtectionSummary::CONTROLS))),$t,$device]);
+        $db->run('UPDATE devices SET policy_version=? WHERE tenant_id=? AND id=?',[$state==='unconfirmed'?null:1,$t,$device]);
+        foreach ([[$a,$token,[]],[$pa,$ps['access_token'],$header]] as [$account,$bearer,$headers]) {
+            $dto=expect(portalRequest('GET',$summary,null,$bearer,$headers),200,'portal protection '.$state);
+            $panel=expect(adminRequest($account,'GET',$summary),200,'panel protection '.$state);
+            check($dto['current']['protection']['state']===$state && $dto['current']['protection']===$panel['current']['protection'],'IT/platform same protection '.$state);
+            check(isset($dto['current']['devices']['data'][0]['protection']),'IT/platform device protection present');
+        }
+    }
+    $db->run("UPDATE roles SET seed_key=NULL WHERE tenant_id=? AND id=?",[$t,$a['role']]);
+    $dto=expect(portalRequest('GET',$summary,null,$token),200,'supervisor after IT removed');
+    check(!str_contains(Util::json($dto),'protection'),'removing IT immediately omits all protection');
+    $db->run('INSERT INTO admin_policy_recompiles (tenant_id) VALUES (?)',[$t]);
+    $before=$db->run('SELECT * FROM effective_policies WHERE tenant_id=? ORDER BY device_id,policy_version',[$t])->fetchAll();
+    foreach ([$base,$summary] as $path) {
+        expect(portalRequest('GET',$path,null,$ps['access_token'],$header),200,'portal read with pending policy');
+        check((bool)$db->one('SELECT tenant_id FROM admin_policy_recompiles WHERE tenant_id=?',[$t]),'portal supervisor GET never compiles');
+    }
+    check($before===$db->run('SELECT * FROM effective_policies WHERE tenant_id=? ORDER BY device_id,policy_version',[$t])->fetchAll(),'portal GET preserves compiled policies');
+    $db->run('DELETE FROM admin_policy_recompiles WHERE tenant_id=?',[$t]);
+
+    $origin='https://supervisor-'.substr(Util::uuid(),0,8).'.example.test';
+    $db->run('INSERT INTO portal_origins (tenant_id,id,origin) VALUES (?,?,?)',[Util::bin(Keeper\AdminAuth::PLATFORM),Util::bin(Util::uuid()),$origin]);
+    foreach ($newRoutes as $path) {
+        $preflight=portalRequest('OPTIONS',$path,null,null,['origin'=>$origin,'access-control-request-method'=>'GET']);
+        check($preflight[0]===204 && $preflight[2]['access-control-allow-origin']===$origin && $preflight[2]['access-control-allow-methods']==='GET, POST' && $preflight[2]['access-control-allow-headers']==='Authorization, Content-Type, X-Tenant-ID' && !isset($preflight[2]['access-control-allow-credentials']),'new route CORS unchanged');
+        $read=portalRequest('GET',$path,null,$token,['origin'=>$origin]);
+        check($read[0]===200 && $read[2]['access-control-allow-origin']===$origin,'new route allowed origin');
+        $denied=portalRequest('GET',$path,null,null,['origin'=>$origin]);
+        check($denied[0]===401 && $denied[2]['access-control-allow-origin']===$origin,'new route errors retain CORS');
+        check(!isset(portalRequest('GET',$path,null,$token,['origin'=>'https://untrusted.example.test'])[2]['access-control-allow-origin']),'untrusted origin gets no CORS');
+        check(!isset(adminRequest($a,'GET',$path,null,['origin'=>$origin])[2]['access-control-allow-origin']),'panel has no CORS');
+    }
+    foreach (['/reports/dual-job-alerts','/data-sources','/sync-runs','/app-classification','/person-plans','/person-plans/available','/policies','/users/'.$uid.'/rules'] as $path) {
+        expect(portalRequest('GET',$path,null,$ps['access_token'],$header),404,'unlisted route remains hidden');
+    }
+    echo "PASS supervisor Portal routes, scopes, schedules, protection, cursors and CORS\n";
 }
 
 function supervisorEntryTests(Database $db): void
@@ -61,7 +224,7 @@ function supervisorEntryTests(Database $db): void
     expect(request('GET','/reports/supervisor'),401,'supervisor requires session');
     $portal=curl_init(Keeper\Config::get('ORIGIN').'/portal/v1/reports/supervisor');
     curl_setopt($portal,CURLOPT_RETURNTRANSFER,true); curl_exec($portal); $portalStatus=curl_getinfo($portal,CURLINFO_RESPONSE_CODE); curl_close($portal);
-    check($portalStatus===404,'supervisor route absent from Portal HTTP');
+    check($portalStatus===401,'supervisor Portal route requires token');
     foreach (['/supervisor.php','/supervisor-persona.php','/','/index.php','/admin/','/usuarios.php','/miembro.php','/proteccion.php','/login.php'] as $path) {
         $curl=curl_init(Keeper\Config::get('ORIGIN').$path); curl_setopt_array($curl,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_HEADER=>true]);
         $body=curl_exec($curl); $status=curl_getinfo($curl,CURLINFO_RESPONSE_CODE); curl_close($curl);

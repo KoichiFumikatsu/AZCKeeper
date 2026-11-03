@@ -3441,6 +3441,7 @@ paths:
       summary: Leer firmas, sedes, áreas y cargos
       description: Leer firmas, sedes, áreas y cargos. Solo exige organizacion.ver, con cualquier alcance (quien delega elige el alcance con ellas).
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -3558,7 +3559,10 @@ paths:
       - admin
       operationId: listSchedules
       summary: Leer horarios
-      description: Leer horarios
+      description: >-
+        Panel exige alcance completo. Portal permite self (horario efectivo propio), team y filters
+        (horarios efectivos de las personas del alcance, sin duplicados; area y site son filtros).
+        Un horario provisional usa el predeterminado del cliente si existe. All conserva el catálogo completo.
       security:
       - portalBearer: []
       - adminSession: []
@@ -5646,6 +5650,7 @@ paths:
       description: Tenant y alcance RBAC obligatorios. Identificador ajeno devuelve 404. Catálogos y ajustes requieren
         alcance tenant.
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -10212,9 +10217,10 @@ paths:
       - admin
       operationId: listHolidayCalendars
       summary: listHolidayCalendars
-      description: Tenant y alcance RBAC obligatorios. Identificador ajeno devuelve 404. Catálogos y ajustes requieren
-        alcance tenant.
+      description: Lectura del catálogo del tenant con festivos.ver y cualquier alcance, también por Portal.
+        Conserva los contadores de personas y festivos del catálogo completo del cliente.
       security:
+      - portalBearer: []
       - adminSession: []
       x-tenant-boundary: Tenant validado contra sesión y alcance de rol.
       x-resources:
@@ -15668,10 +15674,12 @@ paths:
       description: Lectura autorizada por cliente y sección. Protección omitida salvo
         plataforma o rol IT. Margen configurado del cliente (15 si no existe).
       security:
+      - portalBearer: []
       - adminSession: []
       x-permission: usuarios.ver
-      x-tenant-boundary: Contextos de la sesión y AccessScope por cliente; sin acceso
-        Portal.
+      x-tenant-boundary: Contextos de sesión o token Portal y AccessScope por cliente. Acceso por /portal/v1
+        autorizado; sin cuentas de grupo multicliente en Portal salvo plataforma. El listado usa tenant_id
+        en query para seleccionar cliente; X-Tenant-ID no filtra el consolidado de plataforma.
       x-resources:
       - SupervisorOverview
       parameters:
@@ -15766,10 +15774,12 @@ paths:
       description: Lectura autorizada por cliente y sección. Protección omitida salvo
         plataforma o rol IT. Margen configurado del cliente (15 si no existe).
       security:
+      - portalBearer: []
       - adminSession: []
       x-permission: usuarios.ver
-      x-tenant-boundary: Contextos de la sesión y AccessScope por cliente; sin acceso
-        Portal.
+      x-tenant-boundary: Contextos de sesión o token Portal y AccessScope por cliente. Acceso por /portal/v1
+        autorizado; sin cuentas de grupo multicliente en Portal salvo plataforma. Plataforma selecciona
+        el cliente de la ficha con X-Tenant-ID.
       x-resources:
       - SupervisorPersonSummary
       parameters:

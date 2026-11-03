@@ -1167,11 +1167,14 @@ final class AdminApi
     }
     private function schedules(string $op,?string $id,?object $b): array
     {
-        // Portal sin alcance de todo el cliente: solo su propio horario efectivo (el suyo o, si es el provisional, el de la empresa).
+        // Portal: horarios efectivos de las personas del alcance, incluido el predeterminado si tienen uno provisional.
         if ($op==='listSchedules' && ($this->c['channel']??null)==='portal' && !$this->access->full()) {
-            $own=$this->db->one('SELECT schedule_id FROM users WHERE tenant_id=? AND id=?',[$this->tenant,$this->c['user_id']])['schedule_id']??null;
-            if ($own===null || Placeholders::is($this->db,$this->tenant,$own,'schedule_id')) { $own=$this->db->one('SELECT default_schedule_id FROM tenants WHERE tenant_id=?',[$this->tenant])['default_schedule_id']??$own; }
-            return $this->page('SELECT * FROM schedules WHERE tenant_id=? AND id=?',[$this->tenant,$own],fn($x)=>$this->scheduleDto($x));
+            [$where,$args]=$this->access->usersSql('u');
+            return $this->page("SELECT s.* FROM schedules s WHERE s.tenant_id=? AND s.id IN (
+                SELECT CASE WHEN assigned.id IS NULL OR assigned.placeholder=TRUE THEN COALESCE(t.default_schedule_id,u.schedule_id) ELSE u.schedule_id END
+                FROM users u JOIN tenants t ON t.tenant_id=u.tenant_id
+                LEFT JOIN schedules assigned ON assigned.tenant_id=u.tenant_id AND assigned.id=u.schedule_id
+                WHERE u.tenant_id=? AND $where)",[$this->tenant,$this->tenant,...$args],fn($x)=>$this->scheduleDto($x));
         }
         $this->access->requireFull();
         if ($op==='listSchedules') { return $this->page('SELECT * FROM schedules WHERE tenant_id=?',[$this->tenant],fn($x)=>$this->scheduleDto($x)); }

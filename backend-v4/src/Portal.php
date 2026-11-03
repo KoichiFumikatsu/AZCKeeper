@@ -34,6 +34,8 @@ final class Portal
         'GET /me', 'GET /me/access', 'GET /dashboard', 'GET /dashboard/problems',
         'GET /users', 'GET /users/{id}', 'GET /users/{id}/activity', 'GET /users/{id}/windows', 'GET /users/{id}/timeline',
         'GET /reports/people', 'GET /reports/presence', 'GET /reports/productivity', 'GET /reports/apps',
+        'GET /reports/supervisor', 'GET /users/{id}/supervisor-summary',
+        'GET /organization', 'GET /schedules/holidays', 'GET /schedules/holiday-calendars',
         'GET /absences', 'POST /absences', 'GET /tenants/{id}/devices', 'GET /devices/{id}', 'GET /schedules', 'GET /tenants',
     ];
     /** Sesion propia del Portal: en el contrato con su ruta completa. */

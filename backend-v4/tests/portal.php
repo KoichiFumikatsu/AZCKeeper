@@ -100,9 +100,9 @@ function portalTests(Database $db): void
     check(array_column($mine['data'], 'id') === [Util::id($o['agTorre']['id'])], 'self scope sees only self');
     check(portalRequest('GET', '/users/' . Util::id($o['ag808']['id']), null, $ownS['access_token'])[0] === 404, 'self scope: others 404');
 
-    // Horarios: sin alcance «todo», solo el propio horario (el panel sigue exigiendo alcance completo).
-    $sched = expect(portalRequest('GET', '/schedules', null, $tok), 200, 'portal own schedule');
-    check(array_column($sched['data'], 'id') === [Util::id($o['coord2']['schedule_id'])], 'portal schedules: only own schedule');
+    // Este equipo comparte horario: aparece una sola vez (el panel sigue exigiendo alcance completo).
+    $sched = expect(portalRequest('GET', '/schedules', null, $tok), 200, 'portal team schedule');
+    check(array_column($sched['data'], 'id') === [Util::id($o['coord2']['schedule_id'])], 'portal schedules: shared team schedule deduplicated');
     check(adminRequest($team, 'GET', '/schedules')[0] === 403, 'panel schedules unchanged (scope all)');
     $allS = expect(portalLogin($all['email'], $all['password']), 200, 'all login');
     check(count(expect(portalRequest('GET', '/schedules', null, $allS['access_token']), 200, 'all schedules')['data']) >= 1, 'scope all lists schedules');
@@ -131,7 +131,7 @@ function portalTests(Database $db): void
     check(portalRequest('POST', '/logout', null, $spR['access_token'])[0] === 204, 'superadmin logout');
 
     // Lista blanca: lo demas es 404, incluso con token valido; el panel no atiende rutas del Portal.
-    foreach ([['GET', '/policies'], ['GET', '/roles'], ['GET', '/audit'], ['POST', '/devices/' . $devices['data'][0]['id'] . '/commands'], ['GET', '/auth/csrf'], ['PATCH', '/users/' . Util::id($o['coord2']['id'])], ['GET', '/client/policy']] as [$m, $p]) {
+    foreach ([['GET', '/reports/dual-job-alerts'], ['GET', '/data-sources'], ['GET', '/sync-runs'], ['GET', '/app-classification'], ['GET', '/person-plans'], ['GET', '/person-plans/available'], ['GET', '/policies'], ['GET', '/roles'], ['GET', '/audit'], ['POST', '/devices/' . $devices['data'][0]['id'] . '/commands'], ['GET', '/auth/csrf'], ['PATCH', '/users/' . Util::id($o['coord2']['id'])], ['GET', '/client/policy']] as [$m, $p]) {
         check(portalRequest($m, $p, null, $tok)[0] === 404, "portal hides $m $p");
     }
     check(request('POST', '/portal/v1/login', ['email' => $team['email'], 'password' => $team['password']])[0] === 404, 'portal session not served under /v1');
