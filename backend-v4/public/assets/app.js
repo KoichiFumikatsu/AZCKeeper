@@ -222,6 +222,8 @@ async function navigation() {
       else permissions.set(key, new ApiError(403, { code: 'permission_denied' }));
       return;
     }
+    // Secciones de k3.js (p. ej. Apagado programado): su visibilidad la decide nav-access.js, aqui no hay que consultar nada.
+    if (!operationPaths[key] && !resources[key] && key !== 'intake' && key !== 'reports') return;
     try {
       await (operationPaths[key] ? get(operationPaths[key]) : key === 'intake' ? get(intakeProbe) : key === 'reports' ? get(reportPath()) : getPage(resources[key].path()));
       permissions.set(key, true);
