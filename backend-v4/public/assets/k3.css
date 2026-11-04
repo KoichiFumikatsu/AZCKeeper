@@ -235,3 +235,7 @@ details.nav-group>summary.nav-heading:hover{background:var(--hover);color:var(--
 .rules-kind{border-top:1px solid var(--line);padding-top:14px;margin-top:16px}.rules-kind h3{font-size:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 6px}.rules-effective li{padding:8px 0;border-bottom:1px solid var(--divider)}.rules-effective li:last-child{border-bottom:0}.rules-effective p{margin:0;font-size:13px;overflow-wrap:anywhere}.rules-effective small{display:block;color:var(--muted);font-size:11px;margin-top:3px}.rules-excluded li{font-size:12px;color:var(--muted);padding:4px 0}
 .rules-actions{border-top:1px solid var(--line);padding-top:14px;margin-top:18px}.rules-actions h3{font-size:14px;margin:0 0 6px}.rules-focus p{margin:0 0 6px}
 .secret.long{font-size:14px;letter-spacing:0;text-align:left}.secret-field{margin:0 0 16px}.secret-field strong{display:block;font-size:12px;margin-bottom:6px}.code-example{font:12px/1.5 ui-monospace,Consolas,monospace;background:var(--page);border:1px solid var(--line);border-radius:8px;padding:10px 12px;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 14px}
+button[aria-busy="true"]{cursor:progress}
+button[aria-busy="true"]::before{content:"";display:inline-block;width:.85em;height:.85em;margin-right:.45em;vertical-align:-.1em;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:keeper-spin .7s linear infinite}
+@keyframes keeper-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){button[aria-busy="true"]::before{animation:none}}

@@ -2860,10 +2860,16 @@ async function sourcesPage() {
     [sources, domains, runs, pending] = await Promise.all([api('GET', '/data-sources'), api('GET', '/data-domains'), api('GET', '/sync-runs'), optional(api('GET', '/sync-items/pending'))]);
     render(); done();
   };
-  const runNow = async (s, simulate) => {
+  // Mientras dura la operación: botón con indicador y su grupo bloqueado, para ver que avanza y no repetirla.
+  const busy = async (button, text, work) => {
+    const label = button.textContent; const group = [...(button.parentElement?.querySelectorAll('button') || [button])];
+    group.forEach(b => { b.disabled = true; }); button.textContent = text; button.setAttribute('aria-busy', 'true');
+    try { return await work(); } finally { group.forEach(b => { b.disabled = false; }); button.textContent = label; button.removeAttribute('aria-busy'); }
+  };
+  const runNow = (s, simulate, button) => busy(button, simulate ? 'Simulando…' : 'Sincronizando…', async () => {
     $('page-status').textContent = simulate ? 'Simulando… puede tardar un minuto.' : 'Sincronizando… puede tardar un minuto.';
     try { const r = await api('POST', `/data-sources/${s.id}/runs`, { body: { kind: 'full', simulate } }); await reload(); showRun(r); } catch (e) { fail(e); }
-  };
+  });
   const showRun = async r => {
     const { dialog, body, ok, cancel } = dialogShell(`Vuelta del ${when(r.started_at)}`);
     dialog.classList.add('wide-dialog'); cancel.hidden = true; ok.textContent = 'Cerrar'; ok.type = 'button'; ok.addEventListener('click', () => dialog.close());
@@ -2883,7 +2889,11 @@ async function sourcesPage() {
       const b = el('button', 'Aplicar igualmente (vuelve a leer la fuente)', 'danger'); b.type = 'button';
       b.addEventListener('click', async () => {
         if (!await confirmBox({ title: 'Aplicar sin frenos', message: 'Se aplicarán los retiros sin frenos. ¿Seguro?', details: ['La fuente se vuelve a leer y se aplican todos sus cambios, aunque superen los límites de seguridad.'], okText: 'Aplicar igualmente', danger: true })) return;
-        try { const nr = await api('POST', `/sync-runs/${r.id}/approve`); dialog.close(); await reload(); showRun(nr); } catch (e) { fail(e); }
+        ok.disabled = true;
+        await busy(b, 'Aplicando… puede tardar unos segundos', async () => {
+          try { const nr = await api('POST', `/sync-runs/${r.id}/approve`); dialog.close(); await reload(); showRun(nr); } catch (e) { fail(e); }
+        });
+        ok.disabled = false;
       });
       body.append(b);
     }
@@ -2921,10 +2931,12 @@ async function sourcesPage() {
     });
     dialog.showModal();
   };
-  const setMode = async (s, mode) => {
+  const setMode = async (s, mode, button) => {
     if (mode === 'live' && !await confirmBox({ title: 'Activar sincronización real', message: `Desde ahora ${s.name} cambiará datos reales en Keeper (crear, actualizar y retirar personas según la fuente). ¿Continuar?`, okText: 'Activar' })) return;
-    try { await api('PATCH', `/data-sources/${s.id}`, { body: { mode }, ifMatch: s.version }); await reload(); }
-    catch (e) { fail(e.problem?.detail === 'simulation_required' ? new Error('Primero corre y revisa una simulación completa.') : e); }
+    await busy(button, 'Cambiando…', async () => {
+      try { await api('PATCH', `/data-sources/${s.id}`, { body: { mode }, ifMatch: s.version }); await reload(); }
+      catch (e) { fail(e.problem?.detail === 'simulation_required' ? new Error('Primero corre y revisa una simulación completa.') : e); }
+    });
   };
   const render = () => {
     $('page-content').replaceChildren();
@@ -2938,14 +2950,15 @@ async function sourcesPage() {
         const bulk = el('button', `Vincular todas las de mismo nombre (${matches.length})`); bulk.type = 'button';
         bulk.addEventListener('click', async () => {
           if (!await confirmBox({ title: 'Vincular nombres iguales', message: `Se vincularán ${matches.length} unidades y horarios con el mismo nombre. ¿Confirmas que son los mismos?`, details: ['La fuente pasará a mantener sus datos. Las personas pendientes se procesarán en la próxima sincronización.'], okText: `Vincular ${matches.length}` })) return;
-          bulk.disabled = true;
+          const bulkLabel = bulk.textContent; bulk.disabled = true; bulk.textContent = 'Vinculando…'; bulk.setAttribute('aria-busy', 'true');
           let result;
           try {
             result = await api('POST', '/sync-items/resolve-matched', { body: { ids: matches.map(i => i.id) } });
           } catch (e) {
             const message = e.status >= 500 || !e.status ? 'No se pudo confirmar el resultado. Actualiza los pendientes antes de intentarlo de nuevo.' : 'No se vinculó ningún elemento del lote. Actualiza los pendientes y revisa las coincidencias.';
-            fail(new Error(message)); bulk.disabled = false; return;
+            fail(new Error(message)); bulk.disabled = false; bulk.textContent = bulkLabel; bulk.removeAttribute('aria-busy'); return;
           }
+          bulk.textContent = bulkLabel; bulk.removeAttribute('aria-busy');
           try { await reload(); $('page-status').textContent = `Se vincularon ${result.resolved} unidades y horarios.`; }
           catch (e) { fail(new Error(`Se vincularon ${result.resolved} unidades y horarios, pero no se pudo actualizar la lista. Recarga la página.`)); }
         });
@@ -2959,8 +2972,10 @@ async function sourcesPage() {
             const b = el('button', text, approve ? 'link-button' : 'link-button'); b.type = 'button';
             b.addEventListener('click', async () => {
               if (approve && i.reason === 'orphan' && !await confirmBox({ title: 'Retirar persona', message: `¿Retirar a ${i.label}? Sus equipos dejan de reportar.`, okText: 'Retirar', danger: true })) return;
-              try { await api('POST', `/sync-items/${i.id}/resolve`, { body: { approve } }); await reload(); }
-              catch (e) { fail(e.code === 'org_unit_in_use' ? new Error('Todavía tiene personas o áreas activas: muévelas primero.') : e.problem?.detail === 'sync_match_conflict' ? new Error('Los datos de esta coincidencia cambiaron. Actualiza los pendientes y revisa la vinculación.') : e); }
+              await busy(b, 'Procesando…', async () => {
+                try { await api('POST', `/sync-items/${i.id}/resolve`, { body: { approve } }); await reload(); }
+                catch (e) { fail(e.code === 'org_unit_in_use' ? new Error('Todavía tiene personas o áreas activas: muévelas primero.') : e.problem?.detail === 'sync_match_conflict' ? new Error('Los datos de esta coincidencia cambiaron. Actualiza los pendientes y revisa la vinculación.') : e); }
+              });
             });
             box.append(b);
           }
@@ -2977,10 +2992,10 @@ async function sourcesPage() {
       ['Última vuelta exitosa', x => when(x.last_success_at)],
       ...(!manage ? [] : [['Acciones', x => {
         const box = el('div', undefined, 'actions no-margin');
-        const add = (t, fn) => { const b = el('button', t, 'link-button'); b.type = 'button'; b.addEventListener('click', fn); box.append(b); };
-        add('Simular ahora', () => runNow(x, true));
-        if (x.mode === 'live') add('Sincronizar ahora', () => runNow(x, false));
-        add(x.mode === 'live' ? 'Volver a simulación' : 'Pasar a real', () => setMode(x, x.mode === 'live' ? 'simulate' : 'live'));
+        const add = (t, fn) => { const b = el('button', t, 'link-button'); b.type = 'button'; b.addEventListener('click', () => fn(b)); box.append(b); };
+        add('Simular ahora', b => runNow(x, true, b));
+        if (x.mode === 'live') add('Sincronizar ahora', b => runNow(x, false, b));
+        add(x.mode === 'live' ? 'Volver a simulación' : 'Pasar a real', b => setMode(x, x.mode === 'live' ? 'simulate' : 'live', b));
         add('Editar', () => editor(x));
         return box;
       }]])], sources.data);
