@@ -133,7 +133,7 @@ final class Application
             });
         });
         // Las lecturas de Supervisor, incluidas sus dependencias compartidas, no aplican cambios pendientes.
-        try { if (!in_array($r->operation['operationId'],['getSupervisorOverview','getSupervisorPersonSummary','getMe','getMyAccess','getUserWindows','getUserTimeline','getUserRules'],true)) { AdminApi::compilePending($db, $context['tenant_id'], $admin?->recompileScope()); } }
+        try { if (!in_array($r->operation['operationId'],['getSupervisorOverview','getSupervisorPersonSummary','getMe','getMyAccess','getUserWindows','getUserTimeline','getUserRules','getUserEffectivePlan'],true)) { AdminApi::compilePending($db, $context['tenant_id'], $admin?->recompileScope()); } }
         catch (\Throwable $e) { if (isset($response['stream'])) { fclose($response['stream']['handle']); } if (isset($response['undelivered'])) { $this->undelivered($response['undelivered'], $id); } throw $e; }
         return $response;
     }

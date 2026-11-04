@@ -1,5 +1,5 @@
 {
-  "source_sha256": "d0e6eadb96c9e38a4c8cba1e9c627b5ab0410ccea66f2122f854f89683fe7bd0",
+  "source_sha256": "963a622107519f34f090c981044723696ddb1ac3b475777fa099b92e704b6ded",
   "paths": {
     "/me": {
       "get": {
@@ -12104,6 +12104,134 @@
         },
         "x-permission": "roles.gestionar",
         "x-max-body-bytes": 65536
+      }
+    },
+    "/users/{id}/effective-plan": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "getUserEffectivePlan",
+        "summary": "Plan efectivo de una persona",
+        "description": "Plan propio activo o, en su defecto, el plan activo del cliente. Funciones incluidas en el plan y contratadas por el cliente. Mismo permiso y alcance que la actividad de la persona; fuera del alcance, 404.",
+        "security": [
+          {
+            "portalBearer": []
+          },
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión y alcance de rol.",
+        "x-permission": "reportes.ver",
+        "responses": {
+          "200": {
+            "description": "Plan efectivo y funciones de la persona; sin plan, identificador y nombre nulos y funciones vacías.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "plan_id",
+                    "name",
+                    "functions"
+                  ],
+                  "properties": {
+                    "plan_id": {
+                      "oneOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "name": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "functions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "name": "tenant",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
       }
     },
     "/users/{id}/activity": {

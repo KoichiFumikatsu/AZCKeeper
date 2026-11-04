@@ -36,8 +36,95 @@ function portalLogin(string $email, string $password): array
     return portalRequest('POST', '/login', ['email' => $email, 'password' => $password]);
 }
 
+function portalEffectivePlanTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $o = accessOrg($db); $tenant = $o['tenant']; $tid = Util::id($tenant);
+    $foreign = secondTenant($db); $foreignTid = Util::id($foreign['tenant_id']);
+    $platform = sharedPlatform($db); $platformId = Util::bin(Keeper\AdminAuth::PLATFORM);
+    accessResetPreloginQuota();
+    $team = accessAccount($db, $o, 'coord2', ['reportes.ver'], new AccessScope('team'));
+    $own = accessAccount($db, $o, 'agTorre', ['reportes.ver'], AccessScope::own());
+    $denied = accessAccount($db, $o, 'juan', ['usuarios.ver'], AccessScope::all());
+    $other = adminFixture($db, $foreign, ['reportes.ver']);
+    foreach ([$o['coord2'], $o['agTorre'], $o['juan'], $foreign] as $u) {
+        $db->run('UPDATE users SET portal_login_enabled=TRUE WHERE tenant_id=? AND id=?', [$u['tenant_id'], $u['id']]);
+    }
+    $tokens = [];
+    foreach (['team' => $team, 'own' => $own, 'denied' => $denied, 'other' => $other, 'platform' => $platform] as $key => $account) {
+        $tokens[$key] = expect(portalLogin($account['email'], $account['password']), 200, 'effective plan login ' . $key)['access_token'];
+    }
+    $plans = [];
+    foreach (['default' => ['presencia', 'productividad'], 'own' => ['productividad', 'usb'], 'foreign' => ['usb']] as $key => $functions) {
+        $id = Util::bin(Util::uuid()); $name = 'Portal effective ' . $key;
+        $db->run('INSERT INTO person_plans (tenant_id,id,name) VALUES (?,?,?)', [$platformId, $id, $name]);
+        foreach ($functions as $function) { $db->run('INSERT INTO person_plan_items (tenant_id,plan_id,feature_code) VALUES (?,?,?)', [$platformId, $id, $function]); }
+        $plans[$key] = ['plan_id' => Util::id($id), 'name' => $name, 'functions' => $functions];
+    }
+    $db->run('UPDATE tenants SET default_plan_tenant_id=?,default_plan_id=? WHERE tenant_id=?', [$platformId, Util::bin($plans['default']['plan_id']), $tenant]);
+    $db->run('UPDATE tenants SET default_plan_tenant_id=?,default_plan_id=? WHERE tenant_id=?', [$platformId, Util::bin($plans['foreign']['plan_id']), $foreign['tenant_id']]);
+    $db->run('UPDATE users SET plan_tenant_id=?,plan_id=? WHERE tenant_id=? AND id=?', [$platformId, Util::bin($plans['own']['plan_id']), $tenant, $o['agTorre']['id']]);
+    $db->run("DELETE FROM tenant_features WHERE tenant_id=? AND feature_code='usb'", [$tenant]);
+    $ownPlan = $plans['own']; $ownPlan['functions'] = ['productividad'];
+    $path = fn (string $id) => '/users/' . Util::id($id) . '/effective-plan';
+    $v = new Validator(); $op = $v->contract['paths']['/users/{id}/effective-plan']['get'];
+    check($op['operationId'] === 'getUserEffectivePlan' && $op['x-permission'] === $v->contract['paths']['/users/{id}/activity']['get']['x-permission'], 'effective plan uses the activity permission');
+    check($op['security'] === $v->contract['paths']['/users/{id}/activity']['get']['security'], 'effective plan uses both activity authentication channels');
+    $cases = 0;
+    $read = function (array $account, string $token, string $route, int $status, ?array $expected, string $label, array $headers = []) use ($v, $op, &$cases): void {
+        $portal = portalRequest('GET', $route, null, $token, $headers);
+        $panel = adminRequest($account, 'GET', $route, null, $headers);
+        $a = expect($portal, $status, 'effective plan portal ' . $label);
+        $b = expect($panel, $status, 'effective plan panel ' . $label);
+        if ($status === 200) {
+            $v->check($op['responses']['200']['content']['application/json']['schema'], json_decode($portal[3]));
+            check($a === $expected && $b === $expected, 'effective plan exact DTO and channel parity: ' . $label);
+        } else {
+            $code = $status === 404 ? 'resource_not_found' : 'permission_denied';
+            check($a['code'] === $code && $b['code'] === $code && !array_key_exists('plan_id', $a) && !array_key_exists('plan_id', $b), 'effective plan denial without plan data: ' . $label);
+        }
+        $cases++;
+    };
+    foreach ([['own', $own, $o['agTorre']['id'], 200, $ownPlan], ['own', $own, $o['ag808']['id'], 404, null],
+        ['team', $team, $o['coord2']['id'], 200, $plans['default']], ['team', $team, $o['ag808']['id'], 200, $plans['default']],
+        ['team', $team, $o['jur808']['id'], 200, $plans['default']], ['team', $team, $o['zafra']['id'], 404, null],
+        ['denied', $denied, $o['juan']['id'], 403, null]] as [$key, $account, $user, $status, $expected]) {
+        $read($account, $tokens[$key], $path($user), $status, $expected, $key . ' ' . Util::id($user));
+        $activity = '/users/' . Util::id($user) . '/activity?from=2026-09-10&to=2026-09-11';
+        check(portalRequest('GET', $activity, null, $tokens[$key])[0] === $status && adminRequest($account, 'GET', $activity)[0] === $status, 'effective plan scope and permission match activity');
+    }
+    $read($platform, $tokens['platform'], $path($o['agTorre']['id']), 200, $ownPlan, 'platform tenant A', ['x-tenant-id' => $tid]);
+    $read($platform, $tokens['platform'], $path($foreign['id']), 200, $plans['foreign'], 'platform tenant B', ['x-tenant-id' => $foreignTid]);
+    $read($other, $tokens['other'], $path($foreign['id']), 200, $plans['foreign'], 'tenant B own person');
+    $read($team, $tokens['team'], $path($foreign['id']), 404, null, 'tenant A cannot read B');
+    $read($other, $tokens['other'], $path($o['agTorre']['id']), 404, null, 'tenant B cannot read A');
+    $read($team, $tokens['team'], $path($foreign['id']), 404, null, 'foreign tenant header', ['x-tenant-id' => $foreignTid]);
+    $read($team, $tokens['team'], $path($o['coord2']['id']) . '?tenant=' . $foreignTid, 404, null, 'foreign tenant query');
+    $read($platform, $tokens['platform'], $path($foreign['id']), 404, null, 'platform wrong tenant A', ['x-tenant-id' => $tid]);
+    $read($platform, $tokens['platform'], $path($o['agTorre']['id']), 404, null, 'platform wrong tenant B', ['x-tenant-id' => $foreignTid]);
+    $read($team, $tokens['team'], $path(Util::bin(Util::uuid())), 404, null, 'unknown person');
+    $db->run('UPDATE person_plans SET active=FALSE WHERE tenant_id=? AND id=?', [$platformId, Util::bin($plans['own']['plan_id'])]);
+    $read($own, $tokens['own'], $path($o['agTorre']['id']), 200, $plans['default'], 'inactive own plan falls back');
+    $db->run('UPDATE tenants SET default_plan_tenant_id=NULL,default_plan_id=NULL WHERE tenant_id=?', [$tenant]);
+    $empty = ['plan_id' => null, 'name' => null, 'functions' => []];
+    $read($own, $tokens['own'], $path($o['agTorre']['id']), 200, $empty, 'no effective plan for self');
+    $read($team, $tokens['team'], $path($o['ag808']['id']), 200, $empty, 'no assigned or default plan');
+    $read($other, $tokens['other'], $path($foreign['id']), 200, $plans['foreign'], 'tenant B unaffected');
+    Keeper\PersonPlans::markRecompile($db, $tenant);
+    $pending = $db->one('SELECT * FROM admin_policy_recompiles WHERE tenant_id=?', [$tenant]);
+    $policies = $db->run('SELECT * FROM effective_policies WHERE tenant_id=? ORDER BY device_id,policy_version', [$tenant])->fetchAll();
+    $read($platform, $tokens['platform'], $path($o['ag808']['id']), 200, $empty, 'read only with pending policies', ['x-tenant-id' => $tid]);
+    check($pending === $db->one('SELECT * FROM admin_policy_recompiles WHERE tenant_id=?', [$tenant]), 'effective plan leaves pending compilation untouched');
+    check($policies === $db->run('SELECT * FROM effective_policies WHERE tenant_id=? ORDER BY device_id,policy_version', [$tenant])->fetchAll(), 'effective plan leaves compiled policies untouched');
+    $db->run('DELETE FROM admin_policy_recompiles WHERE tenant_id=?', [$tenant]);
+    expect(portalRequest('GET', $path($o['agTorre']['id'])), 401, 'effective plan requires portal authentication');
+    expect(portalRequest('GET', $path($o['agTorre']['id']), null, null, ['x-tenant-id' => $tid], '/v1'), 401, 'effective plan requires panel authentication');
+    echo 'PASS portal effective plan (' . ($GLOBALS['checks'] - $before) . ' assertions; ' . $cases . " paired cases)\n";
+}
+
 function portalTests(Database $db): void
 {
+    portalEffectivePlanTests($db);
     $before = $GLOBALS['checks'];
     $o = accessOrg($db); $tid = Util::id($o['tenant']);
     $perms = ['usuarios.ver', 'usuarios.editar', 'equipos.ver', 'presencia.ver', 'reportes.ver', 'horarios.ver', 'reglas.ver'];

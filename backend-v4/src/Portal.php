@@ -33,6 +33,7 @@ final class Portal
     public const ROUTES = [
         'GET /me', 'GET /me/access', 'GET /dashboard', 'GET /dashboard/problems',
         'GET /users', 'GET /users/{id}', 'GET /users/{id}/activity', 'GET /users/{id}/windows', 'GET /users/{id}/timeline',
+        'GET /users/{id}/effective-plan',
         'GET /reports/people', 'GET /reports/presence', 'GET /reports/productivity', 'GET /reports/apps',
         'GET /reports/supervisor', 'GET /users/{id}/supervisor-summary',
         'GET /organization', 'GET /schedules/holidays', 'GET /schedules/holiday-calendars',

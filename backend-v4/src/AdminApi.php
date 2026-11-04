@@ -184,6 +184,7 @@ final class AdminApi
             'listSuspiciousApps','createSuspiciousApp','getSuspiciousApp','putSuspiciousApp','deleteSuspiciousApp','reviewDualJobAlert','reviewSuspiciousDetection','listDualJobAlerts','listSuspiciousDetections','listComplianceSignals',
             'listInstallCoverage','putInstallCoverage','listClientLogs','getServerHealth','getPanelSettings','putPanelSettings'=>(new OperationsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getAdminDashboard','getAppsReport','getPresenceReport','getUserActivity','getUserPolicies','getPeopleReport'=>(new ActivityReports($this->db,$this->c,$this->access))->dispatch($op,$id),
+            'getUserEffectivePlan'=>$this->userEffectivePlan($id),
             'issueMigrationAuthorization','validateMigrationAuthorization','getEscrowKey','persistDeviceEscrow','verifyDeviceEscrow','recoverDeviceEscrow','getDeviceMigration','setDeviceMigration'=>(new MigrationApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listTenants','createTenant','getTenant','patchTenant','setRbacGate'=>$this->tenants($op,$b), 'uploadTenantLogo'=>$this->tenantLogo($b),
             'provisionTenant'=>$this->provisionTenant($b), 'listRoleTemplates'=>$this->roleTemplates(),
@@ -433,6 +434,14 @@ final class AdminApi
         if (isset($old) && $b->kind==='site' && $old['country_code']!==$country) { (new HolidayCalendars($this->db,$this->c,$this->access,$this->r))->recompute(array_column($this->db->run('SELECT id FROM holiday_calendars WHERE tenant_id=?',[$this->tenant])->fetchAll(),'id')); }
         $this->audit('org_unit',$id,array_keys($values)); $this->dirty();
         return $this->result($this->orgDto($this->row('org_units',$id)),$op==='createOrgUnit'?201:200);
+    }
+    private function userEffectivePlan(string $id): array
+    {
+        if (isset($_GET['tenant']) && Util::bin($_GET['tenant'])!==$this->tenant) { throw new ApiError(404,'resource_not_found'); }
+        $this->access->user($id);
+        $plan=PersonPlans::effectivePlan($this->db,$this->tenant,$id);
+        $row=$plan===null?null:$this->db->one('SELECT id,name FROM person_plans WHERE tenant_id=? AND id=?',[Util::bin(AdminAuth::PLATFORM),$plan]);
+        return self::response(['plan_id'=>$row?Util::id($row['id']):null,'name'=>$row['name']??null,'functions'=>PersonPlans::functions($this->db,$this->tenant,$id)]);
     }
     /** Plan propio de una persona (null = el por defecto de su cliente). */
     private function userPlan(string $id, object $b): array
