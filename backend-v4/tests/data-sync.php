@@ -40,6 +40,7 @@ function dataSyncTests(Database $db): void
         'schedules' => [['external_id' => 'j1', 'name' => 'L-V 8-5 y sábado', 'timezone' => 'America/Bogota', 'active' => true, 'days' => array_merge(
             array_map(fn ($w) => ['weekday' => $w, 'start_local' => '08:00', 'end_local' => '17:00', 'lunch' => ['start_local' => '12:00', 'end_local' => '13:00']], [1, 2, 3, 4, 5]),
             [['weekday' => 6, 'start_local' => '08:00', 'end_local' => '12:00', 'lunch' => null]])]],
+        'holiday-calendars' => [],
         'holidays' => [['external_id' => 'h1', 'day' => '2026-12-08', 'name' => 'Inmaculada Concepción', 'active' => true]],
         'people' => $people,
     ];
@@ -188,6 +189,7 @@ function dataSyncTests(Database $db): void
     expect(adminRequest($platform, 'POST', '/data-sources/' . $src['id'] . '/runs', ['kind' => 'full', 'simulate' => true]), 201, 'superadmin still runs a sync');
     echo 'PASS data sync (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
     oneBridgeSyncTests($db);
+    holidayCalendarSyncTests($db);
 }
 
 // Puente One (v4-puente-one-legacy.md §6.1): empresas del grupo (K1), personas sin area ni firma (K2), pais y ciudad de
@@ -297,6 +299,138 @@ function oneBridgeSyncTests(Database $db): void
     check($p1c['display_name'] === 'Empleado Uno' && $p1c['company_id'] === $p1b['company_id'], 'company kept when Keeper owns empresas');
     echo 'PASS one bridge sync (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
     syncBrakesTests($db);
+}
+
+function holidayCalendarSyncTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $world = [
+        'org-units' => [['external_id' => 'sede-1', 'kind' => 'site', 'name' => 'Sede One', 'active' => true, 'country_code' => 'CO']],
+        'schedules' => [['external_id' => 'horario-1', 'name' => 'Jornada One', 'timezone' => 'America/Bogota', 'active' => true,
+            'days' => array_map(fn ($w) => ['weekday' => $w, 'start_local' => '08:00', 'end_local' => '17:00', 'lunch' => ['start_local' => '12:00', 'end_local' => '13:00']], [1, 2, 3, 4, 5])]],
+        'holiday-calendars' => [['external_id' => 'festcal-0', 'name' => 'Sin festivos', 'active' => true],
+            ['external_id' => 'festcal-1', 'name' => 'Calendario A', 'active' => true], ['external_id' => 'festcal-2', 'name' => 'Calendario B', 'active' => true]],
+        'holidays' => [['external_id' => 'fest-1', 'day' => '2026-09-07', 'name' => 'Solo A', 'calendar_external_id' => 'festcal-1'],
+            ['external_id' => 'fest-2', 'day' => '2026-09-08', 'name' => 'Solo B', 'calendar_external_id' => 'festcal-2'],
+            ['external_id' => 'fest-3', 'day' => '2026-09-09', 'name' => 'Compartido A', 'calendar_external_id' => 'festcal-1'],
+            ['external_id' => 'fest-4-comp', 'day' => '2026-09-09', 'name' => 'Compartido B compensatorio', 'calendar_external_id' => 'festcal-2']],
+        'people' => [],
+    ];
+    foreach (['festcal-1', 'festcal-2', 'festcal-0', null, null] as $i => $cal) {
+        $world['people'][] = ['external_id' => 'emp-' . ($i + 1), 'document' => '901000' . $i, 'display_name' => 'Persona calendario ' . $i,
+            'site_external_id' => 'sede-1', 'schedule_external_id' => 'horario-1', 'status' => 'active', 'holiday_calendar_external_id' => $cal];
+    }
+    unset($world['people'][4]['holiday_calendar_external_id']);
+    $brokenPage = false; $calls = [];
+    $sync = new DataSync($db, function (array $source, string $endpoint, ?string $since, ?string $cursor) use (&$world, &$brokenPage, &$calls): array {
+        $calls[] = [$endpoint, $cursor];
+        check(DataSync::open($source['config_ciphertext'])['company'] === 'grupo', 'calendar source uses the group scope');
+        $offset = $cursor === null ? 0 : (int) $cursor;
+        $items = $world[$endpoint] ?? [];
+        return ['schema' => DataSync::SCHEMA, 'company' => 'grupo', 'generated_at' => '2026-11-03T12:00:00Z',
+            'complete' => $since === null && !($brokenPage && $endpoint === 'holiday-calendars' && $offset > 0),
+            'next_cursor' => $offset + 2 < count($items) ? (string) ($offset + 2) : null, 'items' => array_slice($items, $offset, 2)];
+    });
+    $run = fn (array $f, string $kind = 'full', bool $simulate = false) => $db->one('SELECT * FROM sync_runs WHERE tenant_id=? AND id=?',
+        [$f['tenant'], $db->transaction(fn () => $sync->run($f['tenant'], $f['source'], $kind, 'manual', true, $simulate))]);
+    $linked = fn (array $f, string $type, string $ext) => $db->one('SELECT entity_id FROM entity_links WHERE tenant_id=? AND source_id=? AND entity_type=? AND external_id=?', [$f['tenant'], $f['source'], $type, $ext])['entity_id'] ?? null;
+    $user = fn (array $f, int $n) => $db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$f['tenant'], $linked($f, 'user', 'emp-' . $n)]);
+    $snapshot = fn (array $f) => array_map(fn ($table) => $db->run("SELECT * FROM $table WHERE tenant_id=? ORDER BY id", [$f['tenant']])->fetchAll(), ['users', 'holiday_calendars', 'holidays']);
+    $fixtures = [];
+    for ($n = 0; $n < 2; $n++) {
+        $u = secondTenant($db); $tenant = $u['tenant_id'];
+        $platform = sharedPlatform($db); $platform['tenant'] = $tenant;
+        $src = expect(adminRequest($platform, 'POST', '/data-sources', ['name' => 'One grupo', 'base_url' => 'https://127.0.0.1:9/api/keeper/v1', 'company' => 'grupo', 'token' => 'test']), 201, 'group calendar source');
+        $f = ['tenant' => $tenant, 'source' => Util::bin($src['id']), 'platform' => $platform];
+        $domains = ['sedes', 'horarios', 'personas'];
+        expect(adminRequest($platform, 'PUT', '/data-domains', ['domains' => array_map(fn ($d) => ['domain' => $d, 'source_id' => $src['id']], $domains)]), 200, 'people and organization first');
+        $calls = [];
+        check($run($f)['status'] === 'applied', 'people load before calendar ownership');
+        check(!in_array('holiday-calendars', array_column($calls, 0), true) && $user($f, 1)['holiday_calendar_id'] === null, 'calendar assignment untouched while Keeper owns holidays');
+        $manual = Util::bin(Util::uuid()); $manualHoliday = Util::bin(Util::uuid());
+        $db->run("INSERT INTO holiday_calendars (tenant_id,id,name,country_code,is_default) VALUES (?,?,'Pais manual','CO',TRUE)", [$tenant, $manual]);
+        $db->run("INSERT INTO holidays (tenant_id,id,calendar_id,day,name) VALUES (?,?,?,'2026-09-07','Manual misma fecha')", [$tenant, $manualHoliday, $manual]);
+        $f += ['manual' => $manual, 'manualHoliday' => $manualHoliday];
+        $db->run("UPDATE user_assignments SET starts_at='2026-09-01' WHERE tenant_id=?", [$tenant]);
+        foreach ([1, 2, 3] as $p) {
+            $person = $user($f, $p);
+            $assignment = $db->one('SELECT id FROM user_assignments WHERE tenant_id=? AND user_id=? AND ends_at IS NULL', [$tenant, $person['id']])['id'];
+            foreach (['2026-09-07', '2026-09-08', '2026-09-09', '2026-09-11'] as $day) {
+                $db->run("INSERT INTO day_summary (tenant_id,day,user_id,user_assignment_id,active_seconds,idle_seconds,productive_seconds,expected_seconds,coverage_percent,productivity_percent,calculation_version,timezone,calculated_at,data_through,window_active_seconds)
+                    VALUES (?,?,?,?,14400,0,14400,32400,0,NULL,'calendar-sync','America/Bogota',UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),14400)", [$tenant, $day, $person['id'], $assignment]);
+            }
+        }
+        expect(adminRequest($platform, 'PUT', '/data-domains', ['domains' => [['domain' => 'festivos', 'source_id' => $src['id']]]]), 200, 'holidays enabled after people');
+        $previous = $snapshot($f);
+        check($run($f, 'full', true)['status'] === 'simulated' && $snapshot($f) === $previous, 'calendar simulation rolls back calendars holidays and assignments');
+        check($run($f)['status'] === 'applied', 'calendar full sync applied');
+        foreach ([1 => 'festcal-1', 2 => 'festcal-2', 3 => 'festcal-0'] as $p => $ext) {
+            check($user($f, $p)['holiday_calendar_id'] === $linked($f, 'holiday_calendar', $ext), 'person assigned to ' . $ext);
+        }
+        check($user($f, 4)['holiday_calendar_id'] === null && $user($f, 5)['holiday_calendar_id'] === null, 'null and omitted person calendar retain country fallback');
+        check((int) $db->one("SELECT COUNT(DISTINCT calendar_id) n FROM holidays WHERE tenant_id=? AND day='2026-09-09'", [$tenant])['n'] === 2, 'shared day exists in two distinct calendars');
+        check($linked($f, 'holiday', 'fest-1') !== $manualHoliday && $db->one('SELECT name FROM holidays WHERE tenant_id=? AND id=?', [$tenant, $manualHoliday])['name'] === 'Manual misma fecha', 'manual same-day holiday is never adopted');
+        $stable = $snapshot($f);
+        check($run($f)['status'] === 'applied' && $snapshot($f) === $stable, 'full calendar resync is idempotent including versions');
+        check($run($f, 'incremental')['status'] === 'applied' && $snapshot($f) === $stable, 'incremental calendar resync is idempotent');
+        $fixtures[] = $f;
+    }
+    [$f, $other] = $fixtures; $tenant = $f['tenant'];
+    check($linked($f, 'holiday_calendar', 'festcal-1') !== $linked($other, 'holiday_calendar', 'festcal-1'), 'same external ids resolve separately in two tenants');
+    $otherBefore = $snapshot($other);
+    Keeper\ActivityCalendar::create($db, $tenant, '2026-09-07', '2026-09-10');
+    try {
+        foreach ([1 => [0, 32400, 0], 2 => [32400, 0, 0], 3 => [32400, 32400, 32400], 4 => [0, 32400, 32400], 5 => [0, 32400, 32400]] as $p => $expected) {
+            $rows = $db->run('SELECT c.day,' . Keeper\ActivityCalendar::expected() . ' expected,' . Keeper\ActivityCalendar::workday() . ' workday FROM user_assignments a JOIN activity_calendar c ON c.schedule_id=a.schedule_id WHERE a.tenant_id=? AND a.user_id=? ORDER BY c.day', [$tenant, $user($f, $p)['id']])->fetchAll();
+            check(array_map('intval', array_column($rows, 'expected')) === $expected, 'expected schedule follows calendar for person ' . $p);
+            check(array_map('intval', array_column($rows, 'workday')) === array_map(fn ($s) => $s ? 28800 : 0, $expected), 'productivity workday follows calendar for person ' . $p);
+        }
+    } finally { $db->run('DROP TEMPORARY TABLE IF EXISTS activity_calendar'); }
+    $expected = fn (int $p, string $day) => (int) $db->one('SELECT expected_seconds FROM day_summary WHERE tenant_id=? AND user_id=? AND day=?', [$tenant, $user($f, $p)['id'], $day])['expected_seconds'];
+    check($expected(1, '2026-09-07') === 0 && $expected(2, '2026-09-07') === 32400 && $expected(3, '2026-09-09') === 32400, 'stored day summaries refreshed after assignment');
+    foreach ([1 => null, 2 => 50] as $p => $percent) {
+        $report = expect(adminRequest($f['platform'], 'GET', '/users/' . Util::id($user($f, $p)['id']) . '/activity?from=2026-09-07&to=2026-09-08'), 200, 'synced calendar productivity API');
+        check($report['totals']['productivity_percent'] === $percent || ($percent !== null && $report['totals']['productivity_percent'] == $percent), 'API productivity uses personal calendar ' . $p);
+    }
+    $world['holidays'][0]['day'] = '2026-09-11';
+    $world['holiday-calendars'][1]['name'] = 'Calendario A actualizado';
+    check($run($f, 'incremental')['status'] === 'applied' && $expected(1, '2026-09-07') === 32400 && $expected(1, '2026-09-11') === 0, 'moving a holiday refreshes both old and new dates');
+    check($db->one('SELECT name FROM holiday_calendars WHERE tenant_id=? AND id=?', [$tenant, $linked($f, 'holiday_calendar', 'festcal-1')])['name'] === 'Calendario A actualizado', 'calendar renamed through stable link');
+    $world['people'][0]['holiday_calendar_external_id'] = 'festcal-2';
+    check($run($f, 'incremental')['status'] === 'applied' && $expected(1, '2026-09-08') === 0 && $expected(1, '2026-09-11') === 32400, 'changing personal calendar refreshes old and new holiday dates');
+    $world['people'][0]['holiday_calendar_external_id'] = null;
+    check($run($f, 'incremental')['status'] === 'applied' && $expected(1, '2026-09-07') === 0 && $expected(1, '2026-09-08') === 32400, 'explicit null returns to country fallback');
+    $world['people'][0]['holiday_calendar_external_id'] = 'festcal-1';
+    $saved = $snapshot($f); $brokenPage = true;
+    check($run($f)['error_code'] === 'incomplete_list' && $snapshot($f) === $saved, 'incomplete calendar pagination cannot delete or assign');
+    $brokenPage = false;
+    $world['holidays'][0]['calendar_external_id'] = 'festcal-404';
+    check($run($f)['error_code'] === 'unknown_holiday_calendar' && $snapshot($f) === $saved, 'unknown holiday calendar rolls back the full sync');
+    $world['holidays'][0]['calendar_external_id'] = 'festcal-1';
+    $world['people'][0]['holiday_calendar_external_id'] = 'festcal-404';
+    check($run($f)['error_code'] === 'unknown_holiday_calendar' && $snapshot($f) === $saved, 'unknown person calendar rolls back the full sync');
+    $world['people'][0]['holiday_calendar_external_id'] = 'festcal-1';
+    $world['holiday-calendars'][1]['name'] = 'Pais manual';
+    check($run($f)['error_code'] === 'holiday_calendar_name_conflict' && $snapshot($f) === $saved, 'same-name manual calendar is never adopted or overwritten');
+    $world['holiday-calendars'][1]['name'] = 'Calendario A actualizado';
+    $manualInside = Util::bin(Util::uuid()); $removedCal = $linked($f, 'holiday_calendar', 'festcal-2');
+    $db->run("INSERT INTO holidays (tenant_id,id,calendar_id,day,name) VALUES (?,?,?,'2026-09-10','Manual dentro de One')", [$tenant, $manualInside, $removedCal]);
+    $world['holiday-calendars'] = array_slice($world['holiday-calendars'], 0, 2);
+    $world['holidays'] = [$world['holidays'][0]];
+    $world['people'][1]['holiday_calendar_external_id'] = 'festcal-0';
+    check($run($f)['status'] === 'applied', 'full reconciliation removes missing source holidays');
+    check($linked($f, 'holiday', 'fest-2') === null && $linked($f, 'holiday', 'fest-3') === null && $linked($f, 'holiday', 'fest-4-comp') === null, 'all missing source holiday links removed');
+    check(!(bool) $db->one('SELECT active FROM holiday_calendars WHERE tenant_id=? AND id=?', [$tenant, $removedCal])['active'], 'missing source calendar deactivated');
+    check((bool) $db->one('SELECT id FROM holidays WHERE tenant_id=? AND id=?', [$tenant, $manualInside]) && (bool) $db->one('SELECT id FROM holidays WHERE tenant_id=? AND id=?', [$tenant, $f['manualHoliday']]), 'full sync preserves manual holidays inside and outside source calendars');
+    check((bool) $db->one('SELECT active FROM holiday_calendars WHERE tenant_id=? AND id=?', [$tenant, $f['manual']])['active'], 'manual calendar stays active');
+    check($expected(1, '2026-09-09') === 32400 && $expected(2, '2026-09-08') === 32400, 'removal restores stored expected time');
+    check($snapshot($other) === $otherBefore, 'group reconciliation in one tenant leaves the other tenant unchanged');
+    // El dominio festivos puede actualizar personas ya vinculadas sin ser dueno de personas.
+    expect(adminRequest($f['platform'], 'PUT', '/data-domains', ['domains' => [['domain' => 'personas', 'source_id' => null]]]), 200, 'release people ownership');
+    $world['people'][0]['display_name'] = 'No importar nombre';
+    $world['people'][0]['holiday_calendar_external_id'] = 'festcal-0';
+    check($run($f)['status'] === 'applied' && $user($f, 1)['holiday_calendar_id'] === $linked($f, 'holiday_calendar', 'festcal-0') && $user($f, 1)['display_name'] !== 'No importar nombre', 'holiday owner changes calendar only on linked people');
+    echo 'PASS holiday calendar sync (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
 
 // Frenos antes de los datos reales (revision one-keeper-changes-review.md): altas masivas y dominios recien asignados

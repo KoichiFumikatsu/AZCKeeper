@@ -179,9 +179,10 @@ function hardeningTests(Database $db): void
     require_once dirname(__DIR__) . '/migrations/run.php';
     // La redefinicion del ENUM de device_command en 0020 quedo superada por 0022 (rename_computer): repetirla ahora
     // reduciria el ENUM con filas rename_computer ya existentes. El ejecutor real nunca repite una migracion aplicada.
+    $collation = migrationCollation($db->pdo);
     foreach (statements(file_get_contents(dirname(__DIR__) . '/migrations/0020_hardening.sql')) as $sql) {
         if (stripos($sql, 'ALTER TABLE device_command MODIFY') !== false) { continue; }
-        $db->run($sql);
+        $db->run(str_replace('utf8mb4_0900_ai_ci', $collation, $sql));
     }
     check(expect(adminRequest($admin, 'POST', $path . '/reveal'), 200, 'reveal after migration replay')['shared_password'] === $rotated, 'migration replay preserves settings');
     try {

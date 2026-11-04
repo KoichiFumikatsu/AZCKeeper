@@ -11,7 +11,7 @@ final class DataSync
 {
     public const SCHEMA = 'keeper.roster.v1';
     private const ORG_DOMAINS = ['company' => 'empresas', 'firm' => 'firmas', 'site' => 'sedes', 'area' => 'areas', 'position' => 'cargos'];
-    private const ENDPOINTS = ['org-units' => ['empresas', 'firmas', 'sedes', 'areas', 'cargos'], 'schedules' => ['horarios'], 'holidays' => ['festivos'], 'people' => ['personas', 'jerarquia'], 'absences' => ['ausencias']];
+    private const ENDPOINTS = ['org-units' => ['empresas', 'firmas', 'sedes', 'areas', 'cargos'], 'schedules' => ['horarios'], 'holiday-calendars' => ['festivos'], 'holidays' => ['festivos'], 'people' => ['personas', 'jerarquia', 'festivos'], 'absences' => ['ausencias']];
     // Referencias de una persona: campo canonico y dominio del que sale (§4.5).
     private const PERSON_REFS = ['company' => ['company_external_id', 'empresas'], 'firm' => ['firm_external_id', 'firmas'], 'site' => ['site_external_id', 'sedes'],
         'area' => ['area_external_id', 'areas'], 'position' => ['position_external_id', 'cargos'], 'schedule' => ['schedule_external_id', 'horarios']];
@@ -19,6 +19,7 @@ final class DataSync
 
     private string $tenant; private string $source; private array $owned = []; private bool $calendars = false;
     private ?string $onlyUser = null;
+    private array $holidayDays = [];
     private array $items = []; private array $counts = []; private int $baseline = 0; private int $incomingActive = 0;
     /** @var callable(array $source, string $endpoint, ?string $since, ?string $cursor): array */
     private $fetch;
@@ -64,7 +65,7 @@ final class DataSync
     public function run(string $tenant, string $sourceId, string $kind, string $trigger, bool $override = false, ?bool $simulate = null, ?string $onlyUser = null): string
     {
         $this->onlyUser = $onlyUser;
-        $this->tenant = $tenant; $this->source = $sourceId; $this->items = []; $this->counts = []; $this->calendars = false;
+        $this->tenant = $tenant; $this->source = $sourceId; $this->items = []; $this->counts = []; $this->calendars = false; $this->holidayDays = [];
         $source = $this->db->one('SELECT * FROM data_sources WHERE tenant_id=? AND id=?', [$tenant, $sourceId]);
         if (!$source) { throw new ApiError(404, 'resource_not_found'); }
         $this->owned = array_column($this->db->run('SELECT domain FROM data_domain_owners WHERE tenant_id=? AND source_id=?', [$tenant, $sourceId])->fetchAll(), 'domain');
@@ -140,14 +141,17 @@ final class DataSync
     {
         if (isset($data['org-units'])) { $this->orgUnits($data['org-units'], $full); }
         if (isset($data['schedules']) && in_array('horarios', $this->owned, true)) { $this->schedules($data['schedules']); }
+        if (isset($data['holiday-calendars']) && in_array('festivos', $this->owned, true)) { $this->holidayCalendars($data['holiday-calendars'], $full); }
         if (isset($data['holidays']) && in_array('festivos', $this->owned, true)) { $this->holidays($data['holidays'], $full); }
         if (isset($data['people']) && ($this->onlyUser!==null || in_array('personas', $this->owned, true))) { $this->people($data['people'], $full); }
+        if (isset($data['people']) && in_array('festivos', $this->owned, true)) { $this->personCalendars($data['people']); }
         if (isset($data['people']) && in_array('jerarquia', $this->owned, true)) { $this->hierarchy($data['people']); }
         // Cargos y jefes pudieron cambiar: los roles puestos por reglas se recalculan (dentro del mismo SAVEPOINT).
         if (isset($data['people'])) { [$added, $removed] = RoleRules::apply($this->db, $this->tenant, null, $this->onlyUser===null?null:fn(string $id):bool=>$id===$this->onlyUser); if ($added + $removed) { $this->counts['roles']['update'] = $added + $removed; } }
         if (isset($data['absences']) && in_array('ausencias', $this->owned, true)) { $this->absences($data['absences']); }
         // Una sede cambio de pais o una persona de sede: cambia que festivos le tocan (como al editar desde el panel).
         if ($this->calendars) { HolidayCalendars::refresh($this->db, $this->tenant); }
+        if ($this->holidayDays) { ActivityCalendar::refresh($this->db, $this->tenant, array_values(array_unique($this->holidayDays))); }
     }
 
     // ---- Ausencias de RR. HH. (eventos con id; una cancelada se reenvia con status cancelled) ----------------------------
@@ -409,30 +413,89 @@ final class DataSync
     }
 
     // ---- Festivos -------------------------------------------------------------------------------------------------------
+    private function holidayCalendars(array $items, bool $full): void
+    {
+        $seen = [];
+        foreach ($items as $it) {
+            $external = self::ext($it['external_id'] ?? null); $name = is_string($it['name'] ?? null) ? trim($it['name']) : '';
+            if ($external === null || $name === '' || mb_strlen($name) > 120 || isset($seen[$external])) { throw new SyncFailure('invalid_holiday_calendar'); }
+            $seen[$external] = true; $active = ($it['active'] ?? true) !== false;
+            $id = $this->linked('holiday_calendar', $external);
+            $same = $this->db->one('SELECT id FROM holiday_calendars WHERE tenant_id=? AND name=?', [$this->tenant, $name]);
+            if ($same && $same['id'] !== $id) { throw new SyncFailure('holiday_calendar_name_conflict'); }
+            if ($id === null) {
+                $id = Util::bin(Util::uuid());
+                $this->db->run('INSERT INTO holiday_calendars (tenant_id,id,name,active) VALUES (?,?,?,?)', [$this->tenant, $id, $name, (int) $active]);
+                $this->link('holiday_calendar', $id, $external, 'created');
+                $this->log('festivos', 'create', $external, $id, 'holiday_calendar', $name);
+            } else {
+                $old = $this->db->one('SELECT * FROM holiday_calendars WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
+                if ($old['name'] === $name && (bool) $old['active'] === $active) { continue; }
+                $this->db->run('UPDATE holiday_calendars SET name=?,active=?,version=version+1 WHERE tenant_id=? AND id=?', [$name, (int) $active, $this->tenant, $id]);
+                $this->log('festivos', 'update', $external, $id, 'holiday_calendar', $name);
+            }
+            $this->calendars = true;
+        }
+        if ($full) {
+            foreach ($this->linkedIds('holiday_calendar') as $external => $id) {
+                if (isset($seen[$external])) { continue; }
+                $old = $this->db->one('SELECT name,active FROM holiday_calendars WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
+                // Baja logica: DELETE CASCADE borraria tambien dias creados a mano dentro del calendario.
+                if ($old && $old['active']) {
+                    $this->db->run('UPDATE holiday_calendars SET active=FALSE,version=version+1 WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
+                    $this->log('festivos', 'deactivate', (string) $external, $id, 'holiday_calendar', $old['name']);
+                    $this->calendars = true;
+                }
+            }
+        }
+    }
+
+    private function personCalendars(array $items): void
+    {
+        foreach ($items as $it) {
+            $external = self::ext($it['external_id'] ?? null);
+            $id = $external === null ? null : $this->linked('user', $external);
+            if ($id === null) { continue; }
+            $value = $it['holiday_calendar_external_id'] ?? null;
+            $calendar = $value === null ? null : (self::ext($value) === null ? null : $this->linked('holiday_calendar', $value));
+            if ($value !== null && $calendar === null) { throw new SyncFailure('unknown_holiday_calendar'); }
+            $u = $this->db->one('SELECT holiday_calendar_id,display_name FROM users WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
+            if ($u['holiday_calendar_id'] === $calendar) { continue; }
+            // festcal-0 es un calendario vacio explicito; NULL mantiene el fallback pais/defecto existente.
+            $this->db->run('UPDATE users SET holiday_calendar_id=?,version=version+1 WHERE tenant_id=? AND id=?', [$calendar, $this->tenant, $id]);
+            $this->log('festivos', 'update', $external, $id, 'person_calendar', $u['display_name'],
+                ['holiday_calendar_id' => [$u['holiday_calendar_id'] === null ? null : Util::id($u['holiday_calendar_id']), $calendar === null ? null : Util::id($calendar)]]);
+            $this->calendars = true;
+        }
+    }
+
     private function holidays(array $items, bool $full): void
     {
-        $seen = []; $before = count($this->items);
+        $seen = [];
         foreach ($items as $it) {
             $external = self::ext($it['external_id'] ?? null); $name = is_string($it['name'] ?? null) ? trim($it['name']) : '';
             $day = is_string($it['day'] ?? null) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $it['day']) ? $it['day'] : null;
-            if ($external === null || $day === null || $name === '' || mb_strlen($name) > 160) { $this->log('festivos', 'error', $external, null, 'invalid_item', $name ?: null); continue; }
+            if ($external === null || $day === null || $name === '' || mb_strlen($name) > 160 || isset($seen[$external])) { throw new SyncFailure('invalid_holiday'); }
             $seen[$external] = true; $active = ($it['active'] ?? true) !== false;
+            $value = $it['calendar_external_id'] ?? null;
+            $calendar = $value === null ? null : (self::ext($value) === null ? null : $this->linked('holiday_calendar', $value));
+            if ($value !== null && $calendar === null) { throw new SyncFailure('unknown_holiday_calendar'); }
             $id = $this->linked('holiday', $external);
             if ($id === null) {
                 if (!$active) { continue; }
-                $same = $this->db->one('SELECT h.id FROM holidays h WHERE h.tenant_id=? AND h.day=? AND NOT EXISTS (SELECT 1 FROM entity_links l WHERE l.tenant_id=h.tenant_id AND l.entity_type=\'holiday\' AND l.entity_id=h.id AND l.source_id=?) LIMIT 1', [$this->tenant, $day, $this->source]);
-                if ($same) { $this->link('holiday', $same['id'], $external, 'matched_name'); $this->log('festivos', 'link', $external, $same['id'], null, "$day $name"); continue; }
                 $id = Util::bin(Util::uuid());
-                $this->db->run('INSERT INTO holidays (tenant_id,id,day,name) VALUES (?,?,?,?)', [$this->tenant, $id, $day, $name]);
+                $this->db->run('INSERT INTO holidays (tenant_id,id,day,name,calendar_id) VALUES (?,?,?,?,?)', [$this->tenant, $id, $day, $name, $calendar]);
                 $this->link('holiday', $id, $external, 'created'); $this->log('festivos', 'create', $external, $id, null, "$day $name");
+                $this->holidayDays[] = $day;
                 continue;
             }
             $h = $this->db->one('SELECT * FROM holidays WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
             if (!$h) { continue; }
             if (!$active) { $this->removeHoliday($id, $external, $h); continue; }
-            if ($h['day'] !== $day || $h['name'] !== $name) {
-                $this->db->run('UPDATE holidays SET day=?,name=? WHERE tenant_id=? AND id=?', [$day, $name, $this->tenant, $id]);
+            if ($h['day'] !== $day || $h['name'] !== $name || $h['calendar_id'] !== $calendar) {
+                $this->db->run('UPDATE holidays SET day=?,name=?,calendar_id=? WHERE tenant_id=? AND id=?', [$day, $name, $calendar, $this->tenant, $id]);
                 $this->log('festivos', 'update', $external, $id, null, "$day $name");
+                array_push($this->holidayDays, $h['day'], $day);
             }
         }
         if ($full) {
@@ -440,15 +503,14 @@ final class DataSync
                 if (!isset($seen[$external]) && ($h = $this->db->one('SELECT * FROM holidays WHERE tenant_id=? AND id=?', [$this->tenant, $id]))) { $this->removeHoliday($id, (string) $external, $h); }
             }
         }
-        // Un festivo nuevo, movido o quitado cambia el tiempo esperado de ese dia en los resumenes ya calculados.
-        $days = [];
-        foreach (array_slice($this->items, $before) as $i) { if (in_array($i['action'], ['create', 'update', 'deactivate'], true) && preg_match('/^\d{4}-\d{2}-\d{2}/', (string) $i['label'], $m)) { $days[] = $m[0]; } }
-        if ($days) { ActivityCalendar::refresh($this->db, $this->tenant, $days); }
     }
     private function removeHoliday(string $id, string $external, array $h): void
     {
-        $this->db->run('DELETE FROM entity_links WHERE tenant_id=? AND entity_type=\'holiday\' AND entity_id=?', [$this->tenant, $id]);
-        $this->db->run('DELETE FROM holidays WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
+        $this->db->run('DELETE FROM entity_links WHERE tenant_id=? AND source_id=? AND entity_type=\'holiday\' AND entity_id=?', [$this->tenant, $this->source, $id]);
+        if (!$this->db->one("SELECT 1 FROM entity_links WHERE tenant_id=? AND entity_type='holiday' AND entity_id=?", [$this->tenant, $id])) {
+            $this->db->run('DELETE FROM holidays WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
+        }
+        $this->holidayDays[] = $h['day'];
         $this->log('festivos', 'deactivate', $external, null, null, $h['day'] . ' ' . $h['name']);
     }
 
