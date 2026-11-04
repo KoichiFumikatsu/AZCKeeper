@@ -2850,7 +2850,7 @@ const runCounts = r => {
   return parts.join(' · ') || 'Sin cambios';
 };
 async function sourcesPage() {
-  // Crear, editar, sincronizar, aprobar y elegir dueños es solo de la plataforma (la API responde 403 a los clientes):
+  // Crear, editar, eliminar, sincronizar, aprobar y elegir dueños es solo de la plataforma (la API responde 403 a los clientes):
   // a una cuenta de cliente se le muestra la lista en solo lectura y se le dice quién lo hace.
   const manage = !!readSession()?.is_platform_admin;
   const READ_ONLY_NOTE = 'Solo AZC Keeper configura y sincroniza fuentes de datos.';
@@ -2931,6 +2931,15 @@ async function sourcesPage() {
     });
     dialog.showModal();
   };
+  const deleteSource = async (s, button) => {
+    if (!await confirmBox({ title: 'Eliminar fuente', message: `Se eliminará la fuente «${s.name}», sus vínculos y su historial de vueltas. No se borrarán personas, unidades, horarios, festivos ni otros datos de Keeper. ¿Continuar?`, okText: 'Eliminar', danger: true })) return;
+    await busy(button, 'Eliminando…', async () => {
+      try { await api('DELETE', `/data-sources/${s.id}`); }
+      catch (e) { fail(e.problem?.detail === 'source_in_use' ? new Error('No se puede eliminar la fuente: tiene dominios asignados, está en modo real o registra una vuelta exitosa. Actualiza la lista para revisar su estado.') : e); return; }
+      try { await reload(); $('page-status').textContent = `Se eliminó la fuente «${s.name}».`; }
+      catch (e) { fail(new Error('La fuente se eliminó, pero no se pudo actualizar la lista. Recarga la página.')); }
+    });
+  };
   const setMode = async (s, mode, button) => {
     if (mode === 'live' && !await confirmBox({ title: 'Activar sincronización real', message: `Desde ahora ${s.name} cambiará datos reales en Keeper (crear, actualizar y retirar personas según la fuente). ¿Continuar?`, okText: 'Activar' })) return;
     await busy(button, 'Cambiando…', async () => {
@@ -2997,6 +3006,7 @@ async function sourcesPage() {
         if (x.mode === 'live') add('Sincronizar ahora', b => runNow(x, false, b));
         add(x.mode === 'live' ? 'Volver a simulación' : 'Pasar a real', b => setMode(x, x.mode === 'live' ? 'simulate' : 'live', b));
         add('Editar', () => editor(x));
+        if (!x.domains.length && x.mode === 'simulate' && x.last_success_at === null) add('Eliminar', b => deleteSource(x, b));
         return box;
       }]])], sources.data);
     const d = surface('¿Quién manda en cada dato?');
@@ -3762,7 +3772,7 @@ const AUDIT_ACTIONS = {
   putAppClassification: 'Clasificó una aplicación', createAppClassificationOverride: 'Creó una excepción de clasificación', deleteAppClassificationOverride: 'Quitó una excepción de clasificación', createAppSite: 'Agregó un sitio reconocible',
   createTenant: 'Dio de alta un cliente', provisionTenant: 'Dio de alta un cliente con su primer administrador (asistente)', createFeaturePackage: 'Creó un paquete de funciones', patchFeaturePackage: 'Editó un paquete de funciones', createPersonPlan: 'Creó un plan por persona', patchPersonPlan: 'Editó un plan por persona', setUserPlan: 'Cambió el plan de una persona', putTenantFeatures: 'Cambió las funciones contratadas de un cliente',patchTenant: 'Editó un cliente', purgeTenant: 'Eliminó un cliente definitivamente', uploadTenantLogo: 'Cambió el logo del cliente', putPanelSettings: 'Cambió los ajustes del panel',
   createCompanyGroup: 'Creó un grupo empresarial', patchCompanyGroup: 'Editó un grupo empresarial', deleteCompanyGroup: 'Eliminó un grupo empresarial',
-  createDataSource: 'Conectó una fuente de datos', patchDataSource: 'Editó una fuente de datos', putDataDomains: 'Cambió quién manda en cada dato', runDataSource: 'Sincronizó una fuente',
+  createDataSource: 'Conectó una fuente de datos', patchDataSource: 'Editó una fuente de datos', deleteDataSource: 'Eliminó una fuente de datos', putDataDomains: 'Cambió quién manda en cada dato', runDataSource: 'Sincronizó una fuente',
   approveSyncRun: 'Aprobó una sincronización bloqueada', resolveSyncItem: 'Resolvió un pendiente de sincronización', resolveMatchedSyncItems: 'Vinculó un pendiente de nombres iguales en lote',
   createIntegration: 'Creó una integración', revokeIntegration: 'Revocó una integración', rotateIntegration: 'Cambió la clave de una integración', issueExternalToken: 'Una integración pidió acceso',
   createWebhook: 'Creó un aviso automático (webhook)', deleteWebhook: 'Quitó un aviso automático (webhook)',

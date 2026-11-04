@@ -217,7 +217,7 @@ final class AdminApi
             'listFeatures','listFeaturePackages','createFeaturePackage','patchFeaturePackage','getTenantFeatures','putTenantFeatures','listPersonPlans','createPersonPlan','patchPersonPlan','getTenantPlanUsage','listAvailablePersonPlans'=>(new FeatureAdmin($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
             'purgeTenant'=>$this->purgeTenant($b),
             'listCompanyGroups','createCompanyGroup','patchCompanyGroup','deleteCompanyGroup'=>(new CompanyGroups($this->db,$this->c,$this->r))->dispatch($op,$id,$b),
-            'listDataSources','createDataSource','patchDataSource','getDataDomains','putDataDomains','runDataSource','listSyncRuns','listSyncItems','approveSyncRun','listPendingSyncItems','resolveSyncItem','resolveMatchedSyncItems'=>(new DataSources($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
+            'listDataSources','createDataSource','patchDataSource','deleteDataSource','getDataDomains','putDataDomains','runDataSource','listSyncRuns','listSyncItems','approveSyncRun','listPendingSyncItems','resolveSyncItem','resolveMatchedSyncItems'=>(new DataSources($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getOnboarding','patchOnboarding','closeOnboarding','reopenOnboarding','getOnboardingSummary'=>(new Onboarding($this->db,$this->c,$this->access,$this->r))->dispatch($op,$b),
             'getProductivity'=>$this->report(), 'listAudit'=>$this->auditPage(),
             default=>throw new ApiError(404,'resource_not_found')

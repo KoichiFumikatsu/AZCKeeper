@@ -181,6 +181,7 @@ function dataSyncTests(Database $db): void
     $refused = fn (array $r) => $r[0] === 403 && ($r[1]['code'] ?? null) === 'permission_denied';
     check($refused(adminRequest($client, 'POST', '/data-sources', ['name' => 'Fuente propia', 'base_url' => 'https://atacante.example/api'])), 'client admin cannot create a data source');
     check($refused(adminRequest($client, 'PATCH', '/data-sources/' . $src['id'], ['base_url' => 'https://atacante.example/api'], ['if-match' => '"' . $srcNow()['version'] . '"'])), 'client admin cannot edit a data source');
+    check($refused(adminRequest($client, 'DELETE', '/data-sources/' . $src['id'])), 'client admin cannot delete a data source');
     check($refused(adminRequest($client, 'POST', '/data-sources/' . $src['id'] . '/runs', ['kind' => 'full', 'simulate' => true])), 'client admin cannot run a sync');
     check($refused(adminRequest($client, 'PUT', '/data-domains', ['domains' => [['domain' => 'cargos', 'source_id' => $src['id']]]])), 'client admin cannot assign domain owners');
     check($refused(adminRequest($client, 'POST', '/sync-runs/' . Util::id($blocked['id']) . '/approve')), 'client admin cannot approve a sync run');
@@ -191,6 +192,73 @@ function dataSyncTests(Database $db): void
     oneBridgeSyncTests($db);
     holidayCalendarSyncTests($db);
     syncPanelTests($db);
+    deleteDataSourceTests($db);
+}
+
+function deleteDataSourceTests(Database $db): void
+{
+    $before = $GLOBALS['checks'];
+    $make = function () use ($db): array {
+        $user = secondTenant($db); $tenant = $user['tenant_id'];
+        $platform = sharedPlatform($db); $platform['tenant'] = $tenant;
+        $source = expect(adminRequest($platform, 'POST', '/data-sources', ['name' => 'AZC One v1 (puente)', 'base_url' => 'https://example.test/keeper']), 201, 'discarded source fixture');
+        $sid = Util::bin($source['id']);
+        foreach (range(1, 6) as $n) {
+            $unit = Util::bin(Util::uuid());
+            $db->run("INSERT INTO org_units (tenant_id,id,kind,name) VALUES (?,?,'site',?)", [$tenant, $unit, 'Sede vinculada ' . $n]);
+            $db->run("INSERT INTO entity_links (tenant_id,source_id,entity_type,entity_id,external_id,link_method) VALUES (?,?,'org_unit',?,?,'manual')", [$tenant, $sid, $unit, 'site-' . $n]);
+        }
+        $holiday = Util::bin(Util::uuid());
+        $db->run("INSERT INTO holidays (tenant_id,id,day,name) VALUES (?,?,'2026-12-25','Festivo local')", [$tenant, $holiday]);
+        foreach (['user' => $user['id'], 'schedule' => $user['schedule_id'], 'holiday' => $holiday] as $type => $entity) {
+            $db->run("INSERT INTO entity_links (tenant_id,source_id,entity_type,entity_id,external_id,link_method) VALUES (?,?,?,?,?,'manual')", [$tenant, $sid, $type, $entity, $type]);
+        }
+        foreach (['failed', 'simulated'] as $status) {
+            $run = Util::bin(Util::uuid());
+            $db->run("INSERT INTO sync_runs (tenant_id,id,source_id,kind,trigger_kind,simulate,status,started_at) VALUES (?,?,?,'full','manual',TRUE,?,UTC_TIMESTAMP(6))", [$tenant, $run, $sid, $status]);
+            $db->run("INSERT INTO sync_items (tenant_id,id,run_id,domain,entity_id,action) VALUES (?,?,?,'sedes',?,'link')", [$tenant, Util::bin(Util::uuid()), $run, $unit]);
+        }
+        return compact('user', 'tenant', 'platform', 'source', 'sid');
+    };
+    $f = $make(); $other = $make();
+    $snapshot = function (array $f, array $tables) use ($db): array {
+        $rows = [];
+        foreach ($tables as $table) { $rows[$table] = $db->run("SELECT * FROM $table WHERE tenant_id=? ORDER BY 1,2", [$f['tenant']])->fetchAll(); }
+        return $rows;
+    };
+    $syncTables = ['data_sources', 'data_domain_owners', 'sync_runs', 'sync_items', 'entity_links'];
+    $localTables = ['users', 'org_units', 'schedules', 'holidays'];
+    $delete = fn (array $actor, array $source) => adminRequest($actor, 'DELETE', '/data-sources/' . $source['source']['id']);
+    check($f['sid'] !== $other['sid'], 'tenant isolation uses distinct source IDs');
+    $otherBefore = $snapshot($other, [...$syncTables, ...$localTables]);
+    expect($delete($f['platform'], $other), 404, 'cannot delete another tenant source');
+    expect($delete($other['platform'], $f), 404, 'cross-tenant deletion denied in both directions');
+    $client = adminFixture($db, adminMember($db, $f['user']), ['integraciones.ver']);
+    $denied = expect($delete($client, $f), 403, 'reader cannot delete source');
+    check($denied['code'] === 'permission_denied', 'delete checks permissions');
+    expect(adminRequest($f['platform'], 'DELETE', '/data-sources/' . $f['source']['id'], null, ['x-csrf-token' => 'invalid']), 403, 'delete requires CSRF');
+    $localBefore = $snapshot($f, $localTables);
+    foreach (['domains', 'live', 'success'] as $reason) {
+        if ($reason === 'domains') { $db->run("INSERT INTO data_domain_owners (tenant_id,domain,source_id) VALUES (?,'sedes',?)", [$f['tenant'], $f['sid']]); }
+        if ($reason === 'live') { $db->run("UPDATE data_sources SET mode='live' WHERE tenant_id=? AND id=?", [$f['tenant'], $f['sid']]); }
+        if ($reason === 'success') { $db->run('UPDATE data_sources SET last_success_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?', [$f['tenant'], $f['sid']]); }
+        $syncBefore = $snapshot($f, $syncTables);
+        $problem = expect($delete($f['platform'], $f), 409, 'reject deletion: ' . $reason);
+        check($problem['code'] === 'invalid_transition' && $problem['detail'] === 'source_in_use', 'source_in_use for ' . $reason);
+        check($snapshot($f, $syncTables) === $syncBefore, 'rejected deletion preserves source, links and runs: ' . $reason);
+        $db->run('DELETE FROM data_domain_owners WHERE tenant_id=? AND source_id=?', [$f['tenant'], $f['sid']]);
+        $db->run("UPDATE data_sources SET mode='simulate',last_success_at=NULL WHERE tenant_id=? AND id=?", [$f['tenant'], $f['sid']]);
+    }
+    check(!$db->one("SELECT 1 FROM audit_log WHERE tenant_id=? AND action='deleteDataSource' AND outcome='allowed'", [$f['tenant']]), 'rejected requests have no successful deletion audit');
+    $response = $delete($f['platform'], $f);
+    expect($response, 204, 'delete discarded source with links and runs');
+    check($response[3] === '', 'delete response has no body');
+    foreach ($syncTables as $table) { check($snapshot($f, [$table])[$table] === [], 'delete clears ' . $table); }
+    check($snapshot($f, $localTables) === $localBefore, 'linked units, people, schedules and holidays stay unchanged');
+    check($snapshot($other, [...$syncTables, ...$localTables]) === $otherBefore, 'other tenant source, history, links and local data stay unchanged');
+    check((int) $db->one("SELECT COUNT(*) n FROM audit_log WHERE tenant_id=? AND action='deleteDataSource' AND resource_type='data_source' AND resource_id=? AND outcome='allowed'", [$f['tenant'], $f['sid']])['n'] === 1, 'source deletion audited once');
+    expect($delete($f['platform'], $f), 404, 'deleted source cannot be deleted twice');
+    echo 'PASS delete data source (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }
 
 // Puente One (v4-puente-one-legacy.md §6.1): empresas del grupo (K1), personas sin area ni firma (K2), pais y ciudad de

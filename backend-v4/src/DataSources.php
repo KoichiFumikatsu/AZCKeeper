@@ -16,6 +16,7 @@ final class DataSources
             'listDataSources' => AdminApi::response(['data' => array_map(fn ($s) => $this->dto($s), $this->db->run('SELECT * FROM data_sources WHERE tenant_id=? ORDER BY created_at', [$this->tenant])->fetchAll())]),
             'createDataSource' => $this->create($b),
             'patchDataSource' => $this->patch($this->find($id), $b),
+            'deleteDataSource' => $this->delete($this->find($id)),
             'getDataDomains' => $this->domains(),
             'putDataDomains' => $this->putDomains($b),
             'runDataSource' => $this->runNow($this->find($id), $b),
@@ -100,6 +101,18 @@ final class DataSources
         $this->db->run("UPDATE data_sources SET $cols,version=version+1 WHERE tenant_id=? AND id=?", [...array_values($set), $this->tenant, $s['id']]);
         $this->audit('patchDataSource', 'data_source', $s['id'], array_keys(get_object_vars($b)));
         return AdminApi::response($this->dto($this->find($s['id'])));
+    }
+    private function delete(array $s): array
+    {
+        if ($s['mode'] !== 'simulate' || $s['last_success_at'] !== null || $this->db->one('SELECT 1 FROM data_domain_owners WHERE tenant_id=? AND source_id=?', [$this->tenant, $s['id']])) {
+            throw new ApiError(409, 'invalid_transition', [], 'source_in_use');
+        }
+        $this->db->run('DELETE i FROM sync_items i JOIN sync_runs r ON r.tenant_id=i.tenant_id AND r.id=i.run_id WHERE i.tenant_id=? AND r.source_id=?', [$this->tenant, $s['id']]);
+        $this->db->run('DELETE FROM sync_runs WHERE tenant_id=? AND source_id=?', [$this->tenant, $s['id']]);
+        $this->db->run('DELETE FROM entity_links WHERE tenant_id=? AND source_id=?', [$this->tenant, $s['id']]);
+        $this->db->run('DELETE FROM data_sources WHERE tenant_id=? AND id=?', [$this->tenant, $s['id']]);
+        $this->audit('deleteDataSource', 'data_source', $s['id'], []);
+        return ['status' => 204, 'json' => '', 'headers' => []];
     }
     private function domains(): array
     {

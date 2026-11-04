@@ -1,5 +1,5 @@
 {
-  "source_sha256": "689f12dda9ec1839388aaa163dcc4e1009d413df34508206fd0ce6fc0b0f5405",
+  "source_sha256": "d0e6eadb96c9e38a4c8cba1e9c627b5ab0410ccea66f2122f854f89683fe7bd0",
   "paths": {
     "/me": {
       "get": {
@@ -19221,6 +19221,63 @@
       }
     },
     "/data-sources/{id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "deleteDataSource",
+        "summary": "Eliminar fuente descartada",
+        "description": "Solo sin dominios, en simulación y sin última vuelta exitosa. Borra vínculos e historial de vueltas, sin borrar personas ni datos locales. Si está en uso devuelve 409 invalid_transition con detail source_in_use.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "DataSource"
+        ],
+        "responses": {
+          "204": {
+            "description": "Fuente eliminada"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "x-permission": "integraciones.gestionar",
+        "x-platform-only": true
+      },
       "patch": {
         "tags": [
           "admin"
