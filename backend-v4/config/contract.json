@@ -1,5 +1,5 @@
 {
-  "source_sha256": "99d00af28b41d011a6d0f7ad445a8ef7496ec4b366131c5850be5d912e6e24d3",
+  "source_sha256": "689f12dda9ec1839388aaa163dcc4e1009d413df34508206fd0ce6fc0b0f5405",
   "paths": {
     "/me": {
       "get": {
@@ -20137,6 +20137,112 @@
         "x-max-body-bytes": 16384
       }
     },
+    "/sync-items/resolve-matched": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "resolveMatchedSyncItems",
+        "summary": "Vincular pendientes de nombres iguales",
+        "description": "Vincula únicamente org_unit y schedule con matched_name de vueltas aplicadas. Todos los IDs pertenecen al tenant de la sesión. Si uno falla, se revierte el lote completo y su auditoría.",
+        "security": [
+          {
+            "adminSession": [],
+            "csrfToken": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "DataSource"
+        ],
+        "responses": {
+          "200": {
+            "description": "Vincular pendientes de nombres iguales",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncMatchedResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncMatchedResolve"
+              }
+            }
+          }
+        },
+        "x-permission": "integraciones.aprobar",
+        "x-platform-only": true,
+        "x-max-body-bytes": 32768
+      }
+    },
     "/company-groups": {
       "get": {
         "tags": [
@@ -40112,7 +40218,9 @@
         "label",
         "fields",
         "resolution",
-        "resolved_at"
+        "resolved_at",
+        "entity_type",
+        "local_name"
       ],
       "properties": {
         "id": {
@@ -40181,6 +40289,28 @@
             }
           ]
         },
+        "entity_type": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 32
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "local_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 120
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "fields": {
           "anyOf": [
             {
@@ -40241,6 +40371,39 @@
       "properties": {
         "approve": {
           "type": "boolean"
+        }
+      }
+    },
+    "SyncMatchedResolve": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ids"
+      ],
+      "properties": {
+        "ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 500,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    "SyncMatchedResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resolved"
+      ],
+      "properties": {
+        "resolved": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
         }
       }
     },

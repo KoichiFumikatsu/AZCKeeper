@@ -190,6 +190,7 @@ function dataSyncTests(Database $db): void
     echo 'PASS data sync (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
     oneBridgeSyncTests($db);
     holidayCalendarSyncTests($db);
+    syncPanelTests($db);
 }
 
 // Puente One (v4-puente-one-legacy.md §6.1): empresas del grupo (K1), personas sin area ni firma (K2), pais y ciudad de
@@ -588,4 +589,123 @@ function syncBrakesTests(Database $db): void
     $r30 = $byExt('brk-30');
     check($back['status'] === 'applied' && $r30['status'] === 'active' && $name($r30['site_id']) === 'Sede F' && $r30['plan_id'] === null && \Keeper\PersonPlans::effectivePlan($db, $tenant, $r30['id']) === $defaultPlan, 'source reactivation restores site and the client default plan');
     echo 'PASS sync brakes (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
+}
+
+// Decisiones del panel: lote atómico, coincidencias y huérfanas entre empresas.
+function syncPanelTests(Database $db): void
+{
+    $before = $GLOBALS['checks']; $fixtures = [];
+    $schedule = static fn ($external, $name) => ['external_id' => $external, 'name' => $name, 'timezone' => 'America/Bogota', 'days' => [['weekday' => 1, 'start_local' => '08:00', 'end_local' => '17:00']]];
+    $world = ['org-units' => [
+        ['external_id' => 'site', 'kind' => 'site', 'name' => 'SEDE PRINCIPAL', 'active' => true],
+        ['external_id' => 'firm', 'kind' => 'firm', 'name' => 'Firma Principal', 'active' => true],
+        ['external_id' => 'firm-duplicate', 'kind' => 'firm', 'name' => 'Firma Principal', 'active' => true],
+        ['external_id' => 'near-site', 'kind' => 'site', 'name' => 'Centro Empresarix', 'active' => true],
+        ['external_id' => 'near-firm', 'kind' => 'firm', 'name' => 'Juridica Regiona', 'active' => true],
+        ['external_id' => 'short', 'kind' => 'site', 'name' => 'Calo', 'active' => true],
+        ['external_id' => 'different-kind', 'kind' => 'position', 'name' => 'Oficina Especia', 'active' => true]],
+        'schedules' => [$schedule('hours', 'HORARIO CENTRAL'), $schedule('near-hours', 'Jornada Nocturn'), $schedule('reject-hours', 'Horario Flexibl')],
+        'people' => []];
+    $sync = new DataSync($db, static function ($source, $endpoint, $since, $cursor) use (&$world): array {
+        return ['schema' => DataSync::SCHEMA, 'generated_at' => '2026-11-04T12:00:00Z', 'complete' => true, 'next_cursor' => null, 'items' => $world[$endpoint] ?? []];
+    });
+    $run = fn ($f, $simulate = false) => $db->one('SELECT * FROM sync_runs WHERE tenant_id=? AND id=?', [$f['tenant'], $db->transaction(fn () => $sync->run($f['tenant'], $f['source'], 'full', 'manual', true, $simulate))]);
+    $pending = fn ($f) => expect(adminRequest($f['platform'], 'GET', '/sync-items/pending'), 200, 'panel pending')['data'];
+    $linked = fn ($f, $type, $ext) => $db->one('SELECT entity_id FROM entity_links WHERE tenant_id=? AND source_id=? AND entity_type=? AND external_id=?', [$f['tenant'], $f['source'], $type, $ext])['entity_id'] ?? null;
+    $batch = fn ($f, $ids) => adminRequest($f['platform'], 'POST', '/sync-items/resolve-matched', ['ids' => $ids]);
+    for ($n = 0; $n < 2; $n++) {
+        $u = secondTenant($db); $tenant = $u['tenant_id']; $platform = sharedPlatform($db); $platform['tenant'] = $tenant;
+        $source = expect(adminRequest($platform, 'POST', '/data-sources', ['name' => 'One panel', 'base_url' => 'https://127.0.0.1:9']), 201, 'panel source');
+        expect(adminRequest($platform, 'PUT', '/data-domains', ['domains' => array_map(fn ($d) => ['domain' => $d, 'source_id' => $source['id']], ['sedes', 'firmas', 'cargos', 'horarios', 'personas'])]), 200, 'panel owners');
+        $f = ['tenant' => $tenant, 'source' => Util::bin($source['id']), 'platform' => $platform, 'user' => $u['id'], 'locals' => []];
+        foreach ([['site', 'Sede Principal'], ['site', 'Sede Principalx'], ['firm', 'Firma Principal'], ['site', 'Centro Empresarial'], ['firm', 'Jurídica Regional'], ['site', 'Cali'], ['area', 'Oficina Especial']] as [$kind, $name]) {
+            $id = Util::bin(Util::uuid()); $f['locals'][$name] = $id;
+            $db->run('INSERT INTO org_units (tenant_id,id,kind,name) VALUES (?,?,?,?)', [$tenant, $id, $kind, $name]);
+        }
+        foreach (['Horario Central', 'Jornada Nocturna', 'Horario Flexible'] as $name) {
+            $id = Util::bin(Util::uuid()); $f['locals'][$name] = $id;
+            $db->run("INSERT INTO schedules (tenant_id,id,name,timezone,start_local,end_local) VALUES (?,?,?,'America/Bogota','08:00','17:00')", [$tenant, $id, $name]);
+        }
+        $db->run("INSERT INTO user_external_refs (tenant_id,user_id,source,external_ref) VALUES (?,?,?,'8912345')", [$tenant, $u['id'], $n === 0 ? 'k3:cc' : 'document']);
+        $simulation = $run($f, true);
+        $simulatedItem = $db->one("SELECT id FROM sync_items WHERE tenant_id=? AND run_id=? AND reason='matched_name' LIMIT 1", [$tenant, $simulation['id']]);
+        expect($batch($f, [Util::id($simulatedItem['id'])]), 404, 'simulation candidates cannot be resolved in batch');
+        $first = $run($f);
+        check($first['status'] === 'applied', 'panel initial run applied');
+        $f['pending'] = $pending($f);
+        $f['byExt'] = array_column($f['pending'], null, 'external_id');
+        $f['orphan'] = array_values(array_filter($f['pending'], fn ($i) => $i['reason'] === 'orphan'))[0];
+        check(count(array_filter($f['pending'], fn ($i) => $i['reason'] === 'matched_name')) === 4, 'exact candidates include org units and schedules');
+        check(count(array_filter($f['pending'], fn ($i) => $i['reason'] === 'similar_name')) === 4, 'similar candidates include org units and schedules');
+        check($f['byExt']['site']['entity_id'] === Util::id($f['locals']['Sede Principal']), 'exact match takes priority over similar name');
+        check($f['byExt']['near-site']['local_name'] === 'Centro Empresarial' && $f['byExt']['near-site']['label'] === 'Centro Empresarix', 'distance two accepted and both names exposed for comparison');
+        check($linked($f, 'org_unit', 'short') !== $f['locals']['Cali'] && $linked($f, 'org_unit', 'different-kind') !== $f['locals']['Oficina Especial'], 'short names and other kinds are not proposed');
+        $fixtures[] = $f;
+    }
+    [$f, $other] = $fixtures;
+    $world['people'] = [['external_id' => 'person', 'document' => '8.912-345', 'display_name' => 'Persona del panel', 'status' => 'active', 'site_external_id' => 'site', 'firm_external_id' => 'firm']];
+    foreach ($fixtures as $fixture) {
+        // Quitar el pendiente anterior permite probar que no se vuelve a generar por unknown_reference.
+        $db->run('DELETE FROM sync_items WHERE tenant_id=? AND id=?', [$fixture['tenant'], Util::bin($fixture['orphan']['id'])]);
+        $round = $run($fixture);
+        check((int) $db->one("SELECT COUNT(*) n FROM sync_items WHERE tenant_id=? AND run_id=? AND reason='unknown_reference'", [$fixture['tenant'], $round['id']])['n'] === 1, 'person blocked on unconfirmed references');
+        check(!$db->one("SELECT 1 FROM sync_items WHERE tenant_id=? AND run_id=? AND reason='orphan'", [$fixture['tenant'], $round['id']]), 'known document never becomes an orphan for either document namespace');
+        check(count($pending($fixture)) === 8, 'repeat round does not repeat exact or similar questions');
+        // Reconstruir un pendiente antiguo como los existentes antes de esta corrección.
+        $db->run("INSERT INTO sync_items (tenant_id,id,run_id,domain,entity_id,action,reason,label,payload) VALUES (?,?,?,'personas',?,'pending','orphan','Persona anterior',?)", [$fixture['tenant'], Util::bin($fixture['orphan']['id']), $round['id'], $fixture['user'], Util::json(['type' => 'orphan'])]);
+    }
+    $ids = array_column(array_filter($f['pending'], fn ($i) => $i['reason'] === 'matched_name'), 'id');
+    expect($batch($f, []), 422, 'empty batch rejected');
+    expect($batch($f, [$ids[0], $ids[0]]), 422, 'duplicate IDs rejected');
+    expect($batch($f, [$other['byExt']['site']['id']]), 404, 'other tenant ID hidden');
+    expect($batch($f, [$ids[0], $other['byExt']['site']['id']]), 404, 'mixed tenant batch rejected');
+    foreach ([$f['orphan']['id'], $f['byExt']['near-site']['id'], $f['byExt']['near-hours']['id']] as $excluded) {
+        expect($batch($f, [$ids[0], $excluded]), 409, 'orphan and similar names excluded from batch');
+    }
+    $client = adminFixture($db, $db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$f['tenant'], $f['user']]), ['integraciones.ver']); $client['tenant'] = $f['tenant'];
+    expect($batch(['platform' => $client], $ids), 403, 'same platform-only permission as individual resolution');
+    expect($batch($f, $ids), 409, 'conflicting matches roll back the whole batch');
+    check($linked($f, 'org_unit', 'firm') === null && $linked($f, 'org_unit', 'firm-duplicate') === null && $linked($f, 'org_unit', 'site') === null && $linked($f, 'schedule', 'hours') === null, 'no partial links after conflict');
+    check(count($pending($f)) === 9, 'no partial resolutions after conflict');
+    check(!$db->one("SELECT 1 FROM audit_log WHERE tenant_id=? AND action='resolveMatchedSyncItems'", [$f['tenant']]), 'no success audits survive rollback');
+    expect(adminRequest($f['platform'], 'POST', '/sync-items/' . $f['byExt']['firm-duplicate']['id'] . '/resolve', ['approve' => false]), 200, 'reject duplicate firm');
+    $ids = array_values(array_diff($ids, [$f['byExt']['firm-duplicate']['id']]));
+    $result = expect($batch($f, $ids), 200, 'batch links exact org units and schedule');
+    check($result['resolved'] === 3 && $linked($f, 'org_unit', 'site') === $f['locals']['Sede Principal'] && $linked($f, 'schedule', 'hours') === $f['locals']['Horario Central'], 'batch reports real count and correct targets');
+    check((int) $db->one("SELECT COUNT(*) n FROM audit_log WHERE tenant_id=? AND action='resolveMatchedSyncItems'", [$f['tenant']])['n'] === 3, 'batch audited per item');
+    expect($batch($f, $ids), 409, 'resolved items cannot be replayed');
+    check($linked($other, 'org_unit', 'site') === null && count($pending($other)) === 9, 'other tenant untouched by batch');
+    foreach (['near-site' => true, 'near-firm' => false, 'near-hours' => true, 'reject-hours' => false] as $ext => $approve) {
+        expect(adminRequest($f['platform'], 'POST', '/sync-items/' . $f['byExt'][$ext]['id'] . '/resolve', ['approve' => $approve]), 200, 'resolve similar ' . $ext);
+    }
+    check($linked($f, 'org_unit', 'near-site') === $f['locals']['Centro Empresarial'] && $linked($f, 'schedule', 'near-hours') === $f['locals']['Jornada Nocturna'], 'similar approvals link the chosen records');
+    $run($f, true);
+    check($linked($f, 'user', 'person') === null && $db->one('SELECT resolution FROM sync_items WHERE tenant_id=? AND id=?', [$f['tenant'], Util::bin($f['orphan']['id'])])['resolution'] === null, 'simulation rolls back orphan closure and person link');
+    $run($f);
+    check($linked($f, 'user', 'person') === $f['user'], 'person links after approving dependencies');
+    $closed = $db->one('SELECT resolution,resolved_at FROM sync_items WHERE tenant_id=? AND id=?', [$f['tenant'], Util::bin($f['orphan']['id'])]);
+    check($closed['resolution'] === 'rejected' && $closed['resolved_at'] !== null, 'old orphan closed automatically without retirement');
+    check($db->one('SELECT status FROM users WHERE tenant_id=? AND id=?', [$f['tenant'], $f['user']])['status'] === 'active', 'linked person remains active');
+    expect(adminRequest($f['platform'], 'POST', '/sync-items/' . $f['orphan']['id'] . '/resolve', ['approve' => true]), 409, 'obsolete retirement button cannot retire linked person');
+    check($db->one('SELECT resolution FROM sync_items WHERE tenant_id=? AND id=?', [$other['tenant'], Util::bin($other['orphan']['id'])])['resolution'] === null, 'orphan closure respects tenant boundary');
+    $createdFirm = $linked($f, 'org_unit', 'near-firm'); $createdHours = $linked($f, 'schedule', 'reject-hours');
+    check($createdFirm !== null && $createdFirm !== $f['locals']['Jurídica Regional'] && $createdHours !== null && $createdHours !== $f['locals']['Horario Flexible'], 'similar rejections create separate units and schedules next round');
+    $run($f);
+    check($linked($f, 'org_unit', 'near-firm') === $createdFirm && $linked($f, 'schedule', 'reject-hours') === $createdHours && $pending($f) === [], 'later round respects all answers without duplicate records');
+    $world['people'][0]['document'] = '8912346';
+    $run($f);
+    $doc = array_values(array_filter($pending($f), fn ($i) => $i['reason'] === 'document_change'))[0];
+    expect($batch($f, [$doc['id']]), 409, 'document changes excluded from batch');
+    expect(adminRequest($other['platform'], 'POST', '/sync-items/' . $f['byExt']['near-site']['id'] . '/resolve', ['approve' => true]), 404, 'individual similar resolution also respects tenant boundary');
+    foreach (range(1, 91) as $n) {
+        $name = 'Unidad lote ' . Util::uuid();
+        $db->run("INSERT INTO org_units (tenant_id,id,kind,name) VALUES (?,?,'firm',?)", [$f['tenant'], Util::bin(Util::uuid()), $name]);
+        $world['org-units'][] = ['external_id' => 'bulk-' . $n, 'kind' => 'firm', 'name' => $name, 'active' => true];
+    }
+    $run($f);
+    $bulk = array_values(array_filter($pending($f), fn ($i) => $i['reason'] === 'matched_name'));
+    check(count($bulk) === 91, 'first-connection fixture has 91 exact matches');
+    check(expect($batch($f, array_column($bulk, 'id')), 200, 'link 91 pending units')['resolved'] === 91, 'all 91 units linked atomically');
+    check(count($pending($f)) === 1, 'document decision remains pending after 91-item batch');
+    echo 'PASS sync panel (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

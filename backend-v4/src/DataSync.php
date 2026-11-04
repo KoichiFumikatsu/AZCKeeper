@@ -240,6 +240,11 @@ final class DataSync
     private function link(string $type, string $entity, string $external, string $method): void
     {
         $this->db->run('INSERT INTO entity_links (tenant_id,entity_type,entity_id,source_id,external_id,link_method) VALUES (?,?,?,?,?,?)', [$this->tenant, $type, $entity, $this->source, $external, $method]);
+        if ($type === 'user') { $this->closeOrphans($entity); }
+    }
+    private function closeOrphans(string $user): void
+    {
+        $this->db->run("UPDATE sync_items SET resolution='rejected',resolved_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND entity_id=? AND action='pending' AND reason='orphan' AND resolution IS NULL", [$this->tenant, $user]);
     }
     private function linkedIds(string $type): array
     {
@@ -251,6 +256,18 @@ final class DataSync
     {
         $v = mb_strtolower(trim(preg_replace('/\s+/u', ' ', $v)), 'UTF-8');
         return strtr($v, ['á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'ü' => 'u', 'ñ' => 'n', 'à' => 'a', 'è' => 'e', 'ì' => 'i', 'ò' => 'o', 'ù' => 'u']);
+    }
+    private function nameCandidate(array $locals, string $name, string $external): ?array
+    {
+        $folded = self::fold($name); $candidate = null; $best = 3;
+        foreach ($locals as $local) {
+            $other = self::fold($local['name']);
+            $distance = $other === $folded ? 0 : (mb_strlen($folded) >= 6 && mb_strlen($other) >= 6 ? levenshtein($folded, $other) : 3);
+            if ($distance < $best) { $candidate = $local; $best = $distance; }
+        }
+        if ($candidate === null) { return null; }
+        $candidate['reason'] = $best === 0 ? 'matched_name' : 'similar_name';
+        return $this->asked($candidate['reason'], $candidate['id'], $external) === 'rejected' ? null : $candidate;
     }
     private static function ext(mixed $v): ?string { return is_string($v) && $v !== '' && strlen($v) <= 160 ? $v : null; }
     private static function hm(mixed $v): ?string { return is_string($v) && preg_match('/^([01][0-9]|2[0-3]):[0-5][0-9]$/', $v) ? $v . ':00' : null; }
@@ -297,13 +314,10 @@ final class DataSync
         $id = $this->linked('org_unit', $external);
         if ($id === null) {
             if (!$it['active']) { return 'done'; }
-            $candidate = null;
-            foreach ($this->db->run('SELECT o.id,o.name FROM org_units o WHERE o.tenant_id=? AND o.kind=? AND o.deleted_at IS NULL AND o.placeholder=FALSE AND NOT EXISTS (SELECT 1 FROM entity_links l WHERE l.tenant_id=o.tenant_id AND l.entity_type=\'org_unit\' AND l.entity_id=o.id AND l.source_id=?)', [$this->tenant, $kind, $this->source])->fetchAll() as $o) {
-                if (self::fold($o['name']) === self::fold($name) && $this->asked('matched_name', $o['id'], $external) !== 'rejected') { $candidate = $o['id']; break; }
-            }
+            $candidate = $this->nameCandidate($this->db->run('SELECT o.id,o.name FROM org_units o WHERE o.tenant_id=? AND o.kind=? AND o.deleted_at IS NULL AND o.placeholder=FALSE AND NOT EXISTS (SELECT 1 FROM entity_links l WHERE l.tenant_id=o.tenant_id AND l.entity_type=\'org_unit\' AND l.entity_id=o.id AND l.source_id=?) ORDER BY o.id', [$this->tenant, $kind, $this->source])->fetchAll(), $name, $external);
             if ($candidate !== null) {
                 // Mismo nombre que una unidad local: no se adivina, se pide confirmacion (§5.2). Un "no es la misma" crea una aparte.
-                if ($this->asked('matched_name', $candidate, $external) === null) { $this->log($domain, 'pending', $external, $candidate, 'matched_name', $name, null, ['type' => 'org_unit', 'item' => $it, 'kind' => $kind]); }
+                if ($this->asked($candidate['reason'], $candidate['id'], $external) === null) { $this->log($domain, 'pending', $external, $candidate['id'], $candidate['reason'], $name, null, ['type' => 'org_unit', 'item' => $it, 'kind' => $kind]); }
                 return 'done';
             }
             $id = Util::bin(Util::uuid());
@@ -377,12 +391,10 @@ final class DataSync
             arsort($freq); $default = explode('|', (string) array_key_first($freq)); $default = array_map(static fn ($x) => $x === '' ? null : $x, $default);
             $id = $this->linked('schedule', $external);
             if ($id === null) {
-                foreach ($this->db->run('SELECT s.id,s.name FROM schedules s WHERE s.tenant_id=? AND s.placeholder=FALSE AND NOT EXISTS (SELECT 1 FROM entity_links l WHERE l.tenant_id=s.tenant_id AND l.entity_type=\'schedule\' AND l.entity_id=s.id AND l.source_id=?)', [$this->tenant, $this->source])->fetchAll() as $s) {
-                    if (self::fold($s['name']) !== self::fold($name)) { continue; }
-                    $state = $this->asked('matched_name', $s['id'], $external);
-                    if ($state === 'rejected') { continue; }
-                    if ($state === null) { $this->log('horarios', 'pending', $external, $s['id'], 'matched_name', $name, null, ['type' => 'schedule', 'item' => $it]); }
-                    continue 2;
+                $candidate = $this->nameCandidate($this->db->run('SELECT s.id,s.name FROM schedules s WHERE s.tenant_id=? AND s.placeholder=FALSE AND NOT EXISTS (SELECT 1 FROM entity_links l WHERE l.tenant_id=s.tenant_id AND l.entity_type=\'schedule\' AND l.entity_id=s.id AND l.source_id=?) ORDER BY s.id', [$this->tenant, $this->source])->fetchAll(), $name, $external);
+                if ($candidate !== null) {
+                    if ($this->asked($candidate['reason'], $candidate['id'], $external) === null) { $this->log('horarios', 'pending', $external, $candidate['id'], $candidate['reason'], $name, null, ['type' => 'schedule', 'item' => $it]); }
+                    continue;
                 }
                 $id = Util::bin(Util::uuid());
                 $this->db->run('INSERT INTO schedules (tenant_id,id,name,timezone,start_local,end_local,lunch_start_local,lunch_end_local) VALUES (?,?,?,?,?,?,?,?)', [$this->tenant, $id, $name, $it['timezone'], ...$default]);
@@ -517,8 +529,11 @@ final class DataSync
     // ---- Personas -----------------------------------------------------------------------------------------------------
     private function people(array $items, bool $full): void
     {
-        $seen = [];
+        $seen = []; $documents = [];
         foreach ($items as $it) {
+            $document = is_string($it['document'] ?? null) ? DeviceIntake::document($it['document']) : null;
+            if ($document !== null && (strlen($document) < 3 || strlen($document) > 40)) { $document = null; }
+            if ($document !== null) { $documents[$document] = true; }
             $external = self::ext($it['external_id'] ?? null);
             $name = is_string($it['display_name'] ?? null) ? trim($it['display_name']) : '';
             $status = $it['status'] ?? null;
@@ -529,8 +544,6 @@ final class DataSync
             }
             $seen[$external] = true;
             if ($status === 'active') { $this->incomingActive++; }
-            $document = is_string($it['document'] ?? null) ? DeviceIntake::document($it['document']) : null;
-            if ($document !== null && (strlen($document) < 3 || strlen($document) > 40)) { $document = null; }
             // Cada persona en su propio SAVEPOINT: un choque inesperado con un UNIQUE la deja como error y la vuelta sigue.
             $mark = count($this->items);
             $this->db->run('SAVEPOINT keeper_person');
@@ -550,6 +563,9 @@ final class DataSync
                 if ($u && $u['status'] === 'active') { $this->deactivatePerson($u, (string) $external, 'absent_from_source'); }
             }
             foreach ($this->db->run("SELECT u.id,u.display_name FROM users u WHERE u.tenant_id=? AND u.status='active' AND NOT EXISTS (SELECT 1 FROM entity_links l WHERE l.tenant_id=u.tenant_id AND l.entity_type='user' AND l.entity_id=u.id AND l.source_id=?)", [$this->tenant, $this->source])->fetchAll() as $u) {
+                foreach ($this->db->run("SELECT external_ref FROM user_external_refs WHERE tenant_id=? AND user_id=? AND source IN ('document','k3:cc')", [$this->tenant, $u['id']])->fetchAll() as $ref) {
+                    if (isset($documents[$ref['external_ref']])) { continue 2; }
+                }
                 if ($this->asked('orphan', $u['id'], null) === null) { $this->log('personas', 'pending', null, $u['id'], 'orphan', $u['display_name'], null, ['type' => 'orphan']); }
             }
         }
@@ -558,6 +574,7 @@ final class DataSync
     {
         $id = $this->linked('user', $external);
         if ($id !== null) {
+            $this->closeOrphans($id);
             $u = $this->db->one('SELECT * FROM users WHERE tenant_id=? AND id=?', [$this->tenant, $id]);
             $refs = $status === 'active' ? $this->personRefs($it, $u) : [];
             if (is_string($refs)) { $this->log('personas', 'error', $external, $id, $refs, $name); return; }
@@ -757,10 +774,20 @@ final class DataSync
             $type = $p['type'] ?? '';
             if ($type === 'org_unit' || $type === 'schedule') {
                 $entityType = $type === 'org_unit' ? 'org_unit' : 'schedule';
-                if ($this->linked($entityType, $item['external_id']) === null) { $this->link($entityType, $item['entity_id'], $item['external_id'], 'matched_name'); }
+                $table = $type === 'org_unit' ? 'org_units' : 'schedules';
+                $local = $this->db->one("SELECT * FROM $table WHERE tenant_id=? AND id=? FOR UPDATE", [$tenant, $item['entity_id']]);
+                $owner = DataSources::owner($this->db, $tenant, $item['domain']);
+                $linked = $this->linked($entityType, $item['external_id']);
+                if (!$local || ($local['deleted_at'] ?? null) !== null || !$owner || $owner['id'] !== $this->source
+                    || ($linked !== null && $linked !== $item['entity_id'])
+                    || $this->db->one('SELECT 1 FROM entity_links WHERE tenant_id=? AND source_id=? AND entity_type=? AND entity_id=? AND external_id<>?', [$tenant, $this->source, $entityType, $item['entity_id'], $item['external_id']])) {
+                    throw new ApiError(409, 'invalid_transition', [], 'sync_match_conflict');
+                }
+                if ($linked === null) { $this->link($entityType, $item['entity_id'], $item['external_id'], $item['reason'] === 'similar_name' ? 'manual' : 'matched_name'); }
                 $this->owned = array_column($this->db->run('SELECT domain FROM data_domain_owners WHERE tenant_id=? AND source_id=?', [$tenant, $this->source])->fetchAll(), 'domain');
                 $this->calendars = false;
                 if ($type === 'org_unit') { $this->orgUnit($p['kind'], $p['item'], true); } else { $this->schedules([$p['item']]); }
+                if (array_filter($this->items, static fn ($i) => $i['action'] === 'error')) { throw new ApiError(409, 'invalid_transition', [], 'sync_match_conflict'); }
                 if ($this->calendars) { HolidayCalendars::refresh($this->db, $tenant); }
             } elseif ($type === 'org_deactivate') {
                 $id = $item['entity_id'];

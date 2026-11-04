@@ -2826,9 +2826,20 @@ const RUN_ERRORS = { source_unreachable: 'No se pudo conectar con la fuente.', i
   inconsistent_pages: 'Las páginas de la lista no eran de la misma fecha.', insecure_url: 'La URL no es https.', source_invalid_json: 'La fuente no devolvió JSON válido.', too_many_pages: 'La lista tenía demasiadas páginas.' };
 const PENDING = {
   matched_name: ['Ya existe algo con el mismo nombre en Keeper. ¿Es lo mismo?', 'Sí, es lo mismo (vincular)', 'No, crear aparte'],
+  similar_name: ['La fuente trae un nombre parecido a uno de Keeper. ¿Es lo mismo?', 'Sí, es lo mismo (vincular)', 'No, crear aparte'],
   orphan: ['Esta persona está en Keeper pero la fuente no la trae.', 'Retirarla', 'Dejarla como persona local'],
   document_change: ['La fuente cambió la cédula de esta persona.', 'Aceptar la nueva cédula', 'Mantener la actual'],
   deactivate_in_use: ['La fuente la desactivó, pero todavía tiene personas asignadas. Muévelas primero.', 'Desactivar (sin personas)', 'Entendido, dejar activa'],
+};
+const SYNC_REASONS = {
+  unknown_reference: 'Falta confirmar una unidad, un horario o una persona relacionada. Revisa los pendientes y vuelve a sincronizar.',
+  invalid_reference: 'La fuente envió una referencia que no corresponde al tipo esperado.', missing_site: 'La persona no tiene sede en la fuente.',
+  invalid_item: 'La fuente envió datos incompletos o inválidos.', duplicate_value: 'Hay un dato repetido que impide guardar este registro.',
+  document_ambiguous: 'La cédula coincide con más de una persona en Keeper.', document_in_use: 'La cédula ya pertenece a otra persona vinculada.',
+  email_in_use: 'El correo ya pertenece a otra persona activa.', hierarchy_cycle: 'La relación de jefes forma un círculo.',
+  matched_document: 'Persona vinculada por su cédula.', absent_from_source: 'La fuente ya no incluye a esta persona.',
+  orphan_retired: 'Persona retirada tras confirmación.', inactive_in_source: 'La persona está retirada en la fuente.',
+  email_released: 'Se liberó el correo de una persona retirada.',
 };
 const runCounts = r => {
   const parts = [];
@@ -2866,7 +2877,7 @@ async function sourcesPage() {
       const t = el('div'); body.append(t);
       const action = { create: 'Nueva', update: 'Cambio', link: 'Vinculada', deactivate: 'Retiro / baja', error: 'Error', pending: 'Pendiente' };
       table(t, 'Detalle', [['Qué', i => action[i.action] || i.action], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain], ['Nombre', i => i.label || i.external_id || '—'],
-        ['Detalle', i => i.reason || (i.fields ? Object.keys(i.fields).join(', ') : '')]], items, { filters: [['Qué', i => action[i.action] || i.action], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain]], stateKey: null });
+        ['Detalle', i => PENDING[i.reason]?.[0] || SYNC_REASONS[i.reason] || (i.reason ? 'Cambio recibido de la fuente.' : i.fields ? 'Se actualizaron los datos.' : '')]], items, { filters: [['Qué', i => action[i.action] || i.action], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain]], stateKey: null });
     } catch (e) { const p = el('p', errorMessage(e), 'error-text'); p.setAttribute('role', 'alert'); body.append(p); }
     if (r.status === 'blocked' && manage) {
       const b = el('button', 'Aplicar igualmente (vuelve a leer la fuente)', 'danger'); b.type = 'button';
@@ -2921,7 +2932,27 @@ async function sourcesPage() {
     if (pending?.data?.length) {
       const p = surface(`Pendientes de aprobación (${pending.data.length})`);
       p.append(el('p', manage ? 'La sincronización no adivina: estas decisiones las toma una persona.' : `La sincronización no adivina: estas decisiones las toma una persona. ${READ_ONLY_NOTE}`, 'help'));
-      table(p, 'Pendientes', [['Qué pasa', i => (PENDING[i.reason] || [i.reason])[0]], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain], ['Nombre', i => i.label || '—'],
+      if (pending.data.length === 500) p.append(el('p', 'Se muestran hasta 500 pendientes. Al resolverlos, aparecerán los siguientes.', 'help'));
+      const matches = pending.data.filter(i => i.reason === 'matched_name' && ['org_unit', 'schedule'].includes(i.entity_type));
+      if (manage && matches.length) {
+        const bulk = el('button', `Vincular todas las de mismo nombre (${matches.length})`); bulk.type = 'button';
+        bulk.addEventListener('click', async () => {
+          if (!await confirmBox({ title: 'Vincular nombres iguales', message: `Se vincularán ${matches.length} unidades y horarios con el mismo nombre. ¿Confirmas que son los mismos?`, details: ['La fuente pasará a mantener sus datos. Las personas pendientes se procesarán en la próxima sincronización.'], okText: `Vincular ${matches.length}` })) return;
+          bulk.disabled = true;
+          let result;
+          try {
+            result = await api('POST', '/sync-items/resolve-matched', { body: { ids: matches.map(i => i.id) } });
+          } catch (e) {
+            const message = e.status >= 500 || !e.status ? 'No se pudo confirmar el resultado. Actualiza los pendientes antes de intentarlo de nuevo.' : 'No se vinculó ningún elemento del lote. Actualiza los pendientes y revisa las coincidencias.';
+            fail(new Error(message)); bulk.disabled = false; return;
+          }
+          try { await reload(); $('page-status').textContent = `Se vincularon ${result.resolved} unidades y horarios.`; }
+          catch (e) { fail(new Error(`Se vincularon ${result.resolved} unidades y horarios, pero no se pudo actualizar la lista. Recarga la página.`)); }
+        });
+        p.append(bulk);
+      }
+      p.append(el('p', 'Después de vincular o elegir «No, crear aparte», sincroniza la fuente para procesar las personas pendientes.', 'help'));
+      table(p, 'Pendientes', [['Qué pasa', i => (PENDING[i.reason] || ['Requiere una decisión.'])[0]], ['Dominio', i => DOMAIN_LABELS[i.domain] || i.domain], ['Nombre en la fuente', i => i.reason === 'orphan' ? '—' : i.label || '—'], ['Nombre en Keeper', i => i.local_name || (i.reason === 'orphan' ? i.label : null) || '—'],
         ...(!manage ? [] : [['Decisión', i => {
           const box = el('div', undefined, 'actions no-margin'); const [, yes, no] = PENDING[i.reason] || ['', 'Aprobar', 'Rechazar'];
           for (const [text, approve] of [[yes, true], [no, false]]) {
@@ -2929,7 +2960,7 @@ async function sourcesPage() {
             b.addEventListener('click', async () => {
               if (approve && i.reason === 'orphan' && !await confirmBox({ title: 'Retirar persona', message: `¿Retirar a ${i.label}? Sus equipos dejan de reportar.`, okText: 'Retirar', danger: true })) return;
               try { await api('POST', `/sync-items/${i.id}/resolve`, { body: { approve } }); await reload(); }
-              catch (e) { fail(e.code === 'org_unit_in_use' ? new Error('Todavía tiene personas o áreas activas: muévelas primero.') : e); }
+              catch (e) { fail(e.code === 'org_unit_in_use' ? new Error('Todavía tiene personas o áreas activas: muévelas primero.') : e.problem?.detail === 'sync_match_conflict' ? new Error('Los datos de esta coincidencia cambiaron. Actualiza los pendientes y revisa la vinculación.') : e); }
             });
             box.append(b);
           }
@@ -3717,7 +3748,7 @@ const AUDIT_ACTIONS = {
   createTenant: 'Dio de alta un cliente', provisionTenant: 'Dio de alta un cliente con su primer administrador (asistente)', createFeaturePackage: 'Creó un paquete de funciones', patchFeaturePackage: 'Editó un paquete de funciones', createPersonPlan: 'Creó un plan por persona', patchPersonPlan: 'Editó un plan por persona', setUserPlan: 'Cambió el plan de una persona', putTenantFeatures: 'Cambió las funciones contratadas de un cliente',patchTenant: 'Editó un cliente', purgeTenant: 'Eliminó un cliente definitivamente', uploadTenantLogo: 'Cambió el logo del cliente', putPanelSettings: 'Cambió los ajustes del panel',
   createCompanyGroup: 'Creó un grupo empresarial', patchCompanyGroup: 'Editó un grupo empresarial', deleteCompanyGroup: 'Eliminó un grupo empresarial',
   createDataSource: 'Conectó una fuente de datos', patchDataSource: 'Editó una fuente de datos', putDataDomains: 'Cambió quién manda en cada dato', runDataSource: 'Sincronizó una fuente',
-  approveSyncRun: 'Aprobó una sincronización bloqueada', resolveSyncItem: 'Resolvió un pendiente de sincronización',
+  approveSyncRun: 'Aprobó una sincronización bloqueada', resolveSyncItem: 'Resolvió un pendiente de sincronización', resolveMatchedSyncItems: 'Vinculó un pendiente de nombres iguales en lote',
   createIntegration: 'Creó una integración', revokeIntegration: 'Revocó una integración', rotateIntegration: 'Cambió la clave de una integración', issueExternalToken: 'Una integración pidió acceso',
   createWebhook: 'Creó un aviso automático (webhook)', deleteWebhook: 'Quitó un aviso automático (webhook)',
   registerRelease: 'Registró una versión del agente', deployRelease: 'Desplegó una versión del agente',

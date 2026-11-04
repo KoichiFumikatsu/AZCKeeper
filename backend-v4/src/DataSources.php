@@ -24,6 +24,7 @@ final class DataSources
             'approveSyncRun' => $this->approve($id),
             'listPendingSyncItems' => $this->pending(),
             'resolveSyncItem' => $this->resolve($id, $b),
+            'resolveMatchedSyncItems' => $this->resolveMatched($b),
             default => throw new ApiError(404, 'resource_not_found'),
         };
     }
@@ -152,7 +153,11 @@ final class DataSources
     }
     private function itemDto(array $i): array
     {
+        $type = json_decode((string) ($i['payload'] ?? ''), true)['type'] ?? null;
+        $table = ['org_unit' => 'org_units', 'schedule' => 'schedules'][$type ?? ''] ?? null;
+        $localName = $table === null ? null : ($this->db->one("SELECT name FROM $table WHERE tenant_id=? AND id=?", [$this->tenant, $i['entity_id']])['name'] ?? null);
         return ['id' => Util::id($i['id']), 'run_id' => Util::id($i['run_id']), 'domain' => $i['domain'], 'external_id' => $i['external_id'], 'entity_id' => $i['entity_id'] === null ? null : Util::id($i['entity_id']),
+            'entity_type' => $type, 'local_name' => $localName,
             'action' => $i['action'], 'reason' => $i['reason'], 'label' => $i['label'], 'fields' => $i['fields'] === null ? null : json_decode($i['fields'], false),
             'resolution' => $i['resolution'], 'resolved_at' => $i['resolved_at'] === null ? null : Util::time($i['resolved_at'])];
     }
@@ -184,5 +189,26 @@ final class DataSources
         (new DataSync($this->db))->resolve($this->tenant, $i, $b->approve);
         $this->audit('resolveSyncItem', 'sync_item', $i['id'], ['approve']);
         return AdminApi::response($this->itemDto($this->db->one('SELECT * FROM sync_items WHERE tenant_id=? AND id=?', [$this->tenant, $i['id']])));
+    }
+    private function resolveMatched(object $b): array
+    {
+        $ids = array_map(static fn ($id) => Util::bin($id), $b->ids);
+        if (count(array_unique($ids)) !== count($ids)) { throw new ApiError(422, 'validation_failed'); }
+        $marks = implode(',', array_fill(0, count($ids), '?'));
+        $rows = $this->db->run("SELECT i.* FROM sync_items i JOIN sync_runs r ON r.tenant_id=i.tenant_id AND r.id=i.run_id WHERE i.tenant_id=? AND i.id IN ($marks) AND i.action='pending' AND r.status='applied' ORDER BY i.id FOR UPDATE", [$this->tenant, ...$ids])->fetchAll();
+        if (count($rows) !== count($ids)) { throw new ApiError(404, 'resource_not_found'); }
+        foreach ($rows as $i) {
+            $type = json_decode((string) $i['payload'], true)['type'] ?? null;
+            if ($i['resolution'] !== null || $i['reason'] !== 'matched_name' || !in_array($type, ['org_unit', 'schedule'], true)) {
+                throw new ApiError(409, 'invalid_transition', [], 'sync_batch_not_eligible');
+            }
+        }
+        // Application envuelve toda la petición y su auditoría en una única transacción.
+        $sync = new DataSync($this->db);
+        foreach ($rows as $i) {
+            $sync->resolve($this->tenant, $i, true);
+            $this->audit('resolveMatchedSyncItems', 'sync_item', $i['id'], ['approve']);
+        }
+        return AdminApi::response(['resolved' => count($rows)]);
     }
 }
