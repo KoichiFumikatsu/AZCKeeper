@@ -153,5 +153,29 @@ function dataSyncDoorTests(Database $db): void
     $db->transaction(fn () => $sync->run($tenant, $sid2, 'full', 'manual', false, false));
     check((int) $db->one('SELECT COUNT(*) n FROM check_ins WHERE tenant_id=? AND source_identity=?', [$tenant, DoorEvents::sourceIdentity($sid2)])['n'] === 1, 'same event id belongs independently to each source');
     check(DoorEvents::sourceIdentity($sid) !== DoorEvents::identity($sid), 'source namespace separate from integration namespace');
+    // Pasos hibridos en asistencia, solo en dias sin actividad del PC.
+    $day = (new DateTimeImmutable('today', new DateTimeZone($zone)))->modify('-14 days');
+    while ($day->format('N') !== '3') { $day = $day->modify('-1 day'); }
+    $from = $day->format('Y-m-d'); $to = $day->modify('+1 day')->format('Y-m-d');
+    $started = $db->one('SELECT id,starts_at FROM user_assignments WHERE tenant_id=? AND user_id=? ORDER BY starts_at DESC LIMIT 1', [$tenant, $u['id']]);
+    $db->run('UPDATE user_assignments SET starts_at=? WHERE tenant_id=? AND id=?', ['2020-01-01 00:00:00', $tenant, $started['id']]);
+    $pass = function (string $time, ?string $direction) use ($db, $tenant, $u, $from, $door): void {
+        $id = Util::bin(Util::uuid());
+        $db->run("INSERT INTO check_ins (tenant_id,id,event_id,source_identity,user_id,door_id,site_id,source,direction,occurred_at,body_hash) VALUES (?,?,?,'test:hybrid',?,?,?,'door',?,?,?)", [$tenant, $id, $id, $u['id'], Util::bin($door['id']), $u['site_id'], $direction, "$from $time", random_bytes(32)]);
+    };
+    $presence = function () use ($platform, $u, $from, $to): array {
+        $rows = expect(adminRequest($platform, 'GET', "/reports/presence?from=$from&to=$to&user_id=" . Util::id($u['id'])), 200, 'presence with door passes')['data'];
+        return array_values(array_filter($rows, static fn ($r) => $r['day'] === $from))[0];
+    };
+    $pass('14:00:00', null);
+    $one = $presence();
+    check(strtotime($one['first_activity']) === strtotime("$from 14:00:00 UTC") && $one['last_activity'] === null, 'single hybrid pass is arrival, not departure');
+    $pass('20:00:00', null);
+    $two = $presence();
+    check(strtotime($two['first_activity']) === strtotime("$from 14:00:00 UTC") && strtotime($two['last_activity']) === strtotime("$from 20:00:00 UTC"), 'first and last hybrid passes are arrival and departure');
+    $pass('21:00:00', 'in');
+    check(strtotime($presence()['last_activity']) === strtotime("$from 20:00:00 UTC"), 'explicit in pass is never departure');
+    $db->run("DELETE FROM check_ins WHERE tenant_id=? AND source_identity='test:hybrid'", [$tenant]);
+    $db->run('UPDATE user_assignments SET starts_at=? WHERE tenant_id=? AND id=?', [$started['starts_at'], $tenant, $started['id']]);
     echo 'PASS data sync doors (' . ($GLOBALS['checks'] - $before) . " assertions)\n";
 }

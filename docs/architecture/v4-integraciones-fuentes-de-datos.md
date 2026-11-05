@@ -280,7 +280,7 @@ Respuesta de `GET door-events?after_id=0&from_date=2026-11-05` (además del filt
 - `from_date` es la fecha mínima en la zona de la empresa; Keeper la envía siempre y también filtra localmente. Sin configuración explícita anterior no se importan días previos al alta del dominio.
 - `person_external_id` se resuelve exclusivamente mediante `entity_links` de tipo `user` de la misma fuente; nunca por cédula.
 - `door_ref` se compara con `doors.source_ref`. `null`, vacío o inválido deja error de item `invalid_door_ref`, sin frenar la página.
-- `direction` admite `in`, `out` o `null`. Se conserva `null`: no se inventa una entrada.
+- `direction` admite `in`, `out` o `null`. Se conserva `null`: no se inventa un sentido. En asistencia, solo los días sin actividad del PC, el primer paso `in` o `null` es la llegada y el último `out` o `null` es la salida; un único paso `null` no cuenta como salida.
 - Los items inválidos con `log_id` válido se registran como error y se consideran procesados para el cursor; un `log_id` inválido o desordenado invalida toda la página y no avanza.
 
 ---

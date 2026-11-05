@@ -89,10 +89,11 @@ final class ActivityReports
             $today=(new \DateTimeImmutable('today',new \DateTimeZone($this->c['timezone'])))->format('Y-m-d');
             if (($filters['active_today']??false) && $from===$today && $to===(new \DateTimeImmutable($today))->modify('+1 day')->format('Y-m-d')) { $scope.=" AND u.status='active'"; }
             $expected=ActivityCalendar::expected();
-            $first="COALESCE(TIMESTAMP(c.day,f.first_activity_time)-INTERVAL c.utc_offset SECOND,d.first_activity,ed.first_activity,(SELECT MIN(ci.occurred_at) FROM check_ins ci WHERE ci.tenant_id=a.tenant_id AND ci.user_id=a.user_id AND ci.direction='in' AND ci.occurred_at>=c.starts_at AND ci.occurred_at<c.ends_at))";
+            $first="COALESCE(TIMESTAMP(c.day,f.first_activity_time)-INTERVAL c.utc_offset SECOND,d.first_activity,ed.first_activity,(SELECT MIN(ci.occurred_at) FROM check_ins ci WHERE ci.tenant_id=a.tenant_id AND ci.user_id=a.user_id AND (ci.direction='in' OR ci.direction IS NULL) AND ci.occurred_at>=c.starts_at AND ci.occurred_at<c.ends_at))";
             $scheduledLocal=ActivityCalendar::scheduledStart();
             $scheduled="TIMESTAMP(c.day,$scheduledLocal)-INTERVAL c.utc_offset SECOND";
-            $last="COALESCE(d.last_activity,ed.last_activity,(SELECT MAX(ci.occurred_at) FROM check_ins ci WHERE ci.tenant_id=a.tenant_id AND ci.user_id=a.user_id AND ci.direction='out' AND ci.occurred_at>=c.starts_at AND ci.occurred_at<c.ends_at))";
+            // Paso hibrido (sin sentido): cuenta como llegada y como salida, pero un paso unico no es salida.
+            $last="COALESCE(d.last_activity,ed.last_activity,(SELECT CASE WHEN COUNT(*)>1 OR SUM(ci.direction='out')>0 THEN MAX(IF(ci.direction='in',NULL,ci.occurred_at)) END FROM check_ins ci WHERE ci.tenant_id=a.tenant_id AND ci.user_id=a.user_id AND ci.occurred_at>=c.starts_at AND ci.occurred_at<c.ends_at))";
             $base="FROM user_assignments a JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.user_id
                 JOIN activity_calendar c ON c.schedule_id=COALESCE(a.schedule_id,(SELECT default_schedule_id FROM tenants WHERE tenant_id=a.tenant_id)) AND a.starts_at<c.ends_at AND (a.ends_at IS NULL OR a.ends_at>c.starts_at)
                 JOIN retention_settings retention ON retention.tenant_id=a.tenant_id
