@@ -5,7 +5,7 @@ namespace Keeper;
 // Fuentes de datos de una empresa: configuracion, dueño por dominio, vueltas de sincronizacion y pendientes (§3, §10).
 final class DataSources
 {
-    public const DOMAINS = ['empresas', 'firmas','sedes', 'areas', 'cargos', 'horarios', 'festivos', 'personas', 'jerarquia', 'ausencias'];
+    public const DOMAINS = ['empresas', 'firmas','sedes', 'areas', 'cargos', 'horarios', 'festivos', 'personas', 'jerarquia', 'ausencias', 'entradas'];
     private string $tenant;
     public function __construct(private Database $db, private array $c, private AdminAccess $access, private Request $r) { $this->tenant = $c['tenant_id']; }
 
@@ -63,6 +63,7 @@ final class DataSources
         $domains = array_column($this->db->run('SELECT domain FROM data_domain_owners WHERE tenant_id=? AND source_id=? ORDER BY domain', [$this->tenant, $s['id']])->fetchAll(), 'domain');
         $t = static fn (?string $v): ?string => $v === null ? null : Util::time($v);
         return ['id' => Util::id($s['id']), 'name' => $s['name'], 'kind' => $s['kind'], 'base_url' => $config['base_url'] ?? null, 'company' => $config['company'] ?? null,
+            'door_events_from_date' => $s['door_events_from_date'],
             'has_token' => ($config['token'] ?? '') !== '', 'interval_minutes' => $s['interval_minutes'] === null ? null : (int) $s['interval_minutes'],
             'full_reconcile_local' => substr($s['full_reconcile_local'], 0, 5), 'mode' => $s['mode'], 'approval_required' => (bool) $s['approval_required'], 'active' => (bool) $s['active'],
             'max_deactivations' => (int) $s['max_deactivations'], 'max_deactivation_percent' => (int) $s['max_deactivation_percent'], 'min_list_percent' => (int) $s['min_list_percent'],
@@ -79,7 +80,8 @@ final class DataSources
         $config = ['base_url' => self::url($b->base_url), 'company' => $b->company ?? null, 'token' => $b->token ?? ''];
         $this->db->run("INSERT INTO data_sources (tenant_id,id,name,kind,config_ciphertext,interval_minutes,full_reconcile_local,mode) VALUES (?,?,?,'rest',?,?,?,'simulate')",
             [$this->tenant, $id, $b->name, DataSync::seal($config), $b->interval_minutes ?? 10, ($b->full_reconcile_local ?? '02:00') . ':00']);
-        $this->audit('createDataSource', 'data_source', $id, ['name', 'base_url', 'company', 'token']);
+        if (isset($b->door_events_from_date)) { $this->db->run('UPDATE data_sources SET door_events_from_date=? WHERE tenant_id=? AND id=?', [$b->door_events_from_date, $this->tenant, $id]); }
+        $this->audit('createDataSource', 'data_source', $id, ['name', 'base_url', 'company', 'token', ...(isset($b->door_events_from_date) ? ['door_events_from_date'] : [])]);
         return AdminApi::response($this->dto($this->find($id)), 201);
     }
     private function patch(array $s, object $b): array
@@ -90,7 +92,11 @@ final class DataSources
         if (property_exists($b, 'company')) { $config['company'] = $b->company; }
         if (isset($b->token)) { $config['token'] = $b->token; }
         $set = ['config_ciphertext' => DataSync::seal($config)];
-        foreach (['name', 'interval_minutes', 'mode', 'max_deactivations', 'max_deactivation_percent', 'min_list_percent'] as $f) { if (property_exists($b, $f)) { $set[$f] = $b->$f; } }
+        foreach (['name', 'interval_minutes', 'mode', 'max_deactivations', 'max_deactivation_percent', 'min_list_percent', 'door_events_from_date'] as $f) { if (property_exists($b, $f)) { $set[$f] = $b->$f; } }
+        // Una fecha anterior explicitamente configurada permite releer el historial, deduplicado por fuente/evento.
+        if (isset($b->door_events_from_date) && $s['door_events_from_date'] !== null && $b->door_events_from_date < $s['door_events_from_date']) {
+            $this->db->run('UPDATE data_source_door_cursors SET last_log_id=0 WHERE tenant_id=? AND source_id=?', [$this->tenant, $s['id']]);
+        }
         if (isset($b->active)) { $set['active'] = (int) $b->active; }
         if (isset($b->full_reconcile_local)) { $set['full_reconcile_local'] = $b->full_reconcile_local . ':00'; }
         // Pasar a "real" exige haber revisado al menos una simulacion completa (§5.5).
@@ -131,7 +137,11 @@ final class DataSources
         foreach ($b->domains as $d) {
             if ($d->source_id === null) { $this->db->run('DELETE FROM data_domain_owners WHERE tenant_id=? AND domain=?', [$this->tenant, $d->domain]); continue; }
             $source = Util::bin($d->source_id);
-            if (!$this->db->one('SELECT 1 FROM data_domain_owners WHERE tenant_id=? AND domain=? AND source_id=?', [$this->tenant, $d->domain, $source])) { $gained[$source] = true; }
+            if ($d->domain === 'entradas') {
+                $today = (new \DateTimeImmutable('today', new \DateTimeZone($this->c['timezone'])))->format('Y-m-d');
+                $this->db->run('UPDATE data_sources SET door_events_from_date=COALESCE(door_events_from_date,?),version=version+1 WHERE tenant_id=? AND id=?', [$today, $this->tenant, $source]);
+                $this->db->run('INSERT IGNORE INTO data_source_door_cursors (tenant_id,source_id) VALUES (?,?)', [$this->tenant, $source]);
+            } elseif (!$this->db->one('SELECT 1 FROM data_domain_owners WHERE tenant_id=? AND domain=? AND source_id=?', [$this->tenant, $d->domain, $source])) { $gained[$source] = true; }
             $this->db->run('INSERT INTO data_domain_owners (tenant_id,domain,source_id) VALUES (?,?,?) ON DUPLICATE KEY UPDATE source_id=VALUES(source_id)', [$this->tenant, $d->domain, $source]);
         }
         // Una fuente que gana un dominio (I4): su siguiente vuelta es completa (sin updated_since de antes, que dejaria la

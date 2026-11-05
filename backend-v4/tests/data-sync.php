@@ -278,7 +278,7 @@ function oneBridgeSyncTests(Database $db): void
     $sid = Util::bin($src['id']);
     $owned = ['empresas', 'firmas', 'sedes', 'areas', 'cargos', 'horarios', 'personas', 'jerarquia'];
     $owners = expect(adminRequest($platform, 'PUT', '/data-domains', ['domains' => array_map(fn ($d) => ['domain' => $d, 'source_id' => $src['id']], $owned)]), 200, 'bridge owns catalogs and people');
-    check(count($owners['data']) === 10 && count(array_filter($owners['data'], fn ($d) => $d['source_id'] === $src['id'])) === 8, 'empresas is a data domain');
+    check(count($owners['data']) === 11 && count(array_filter($owners['data'], fn ($d) => $d['source_id'] === $src['id'])) === 8, 'empresas is a data domain');
 
     $person = fn (int $n, array $extra = []) => $extra + ['external_id' => "one-emp-$n", 'document' => (string) (5550000 + $n), 'display_name' => "Empleado $n", 'email' => "e$n@azc.test",
         'company_external_id' => 'one-company-azc-legal', 'firm_external_id' => 'one-firm-1', 'site_external_id' => 'one-sede-1', 'area_external_id' => 'one-area-1',

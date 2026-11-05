@@ -47,7 +47,7 @@ final class DataSync
     public static function restFetch(array $source, string $endpoint, ?string $since, ?string $cursor): array
     {
         $config = self::open($source['config_ciphertext']);
-        $query = array_filter(['empresa' => $config['company'] ?? null, 'updated_since' => $since, 'cursor' => $cursor], static fn ($v) => $v !== null && $v !== '');
+        $query = self::restQuery($source, $endpoint, $since, $cursor, $config);
         $url = rtrim($config['base_url'], '/') . '/' . $endpoint . ($query ? '?' . http_build_query($query) : '');
         if (parse_url($url, PHP_URL_SCHEME) !== 'https') { throw new SyncFailure('insecure_url'); }
         $ch = curl_init($url);
@@ -58,6 +58,14 @@ final class DataSync
         if ($body === false) { throw new SyncFailure('source_unreachable'); }
         if ($status !== 200) { throw new SyncFailure('source_http_' . $status); }
         try { return json_decode($body, true, 32, JSON_THROW_ON_ERROR); } catch (\JsonException) { throw new SyncFailure('source_invalid_json'); }
+    }
+
+    public static function restQuery(array $source, string $endpoint, ?string $since, ?string $cursor, array $config): array
+    {
+        $progress = $endpoint === 'door-events'
+            ? ['after_id' => $source['door_events_after_id'], 'from_date' => $source['door_events_from_date']]
+            : ['updated_since' => $since];
+        return array_filter(['empresa' => $config['company'] ?? null, ...$progress, 'cursor' => $cursor], static fn ($v) => $v !== null && $v !== '');
     }
 
     // ---- Vuelta ----------------------------------------------------------------------------------------------------
@@ -74,6 +82,13 @@ final class DataSync
         if ($onlyUser !== null) { $kind = 'incremental'; }
         $runId = Util::bin(Util::uuid()); $started = $this->now();
         $status = 'applied'; $blocked = null; $error = null; $generated = null;
+        // Paginas confirmadas aparte: nunca comparten la transaccion ni los frenos del catalogo.
+        $doorError = null; $doorItems = []; $doorCounts = [];
+        if ($onlyUser === null && in_array('entradas', $this->owned, true)) {
+            $doorError = $this->doorPages($source, $simulate);
+            $doorItems = $this->items; $doorCounts = $this->counts;
+            $this->items = []; $this->counts = [];
+        }
         try {
             $data = [];
             foreach (self::ENDPOINTS as $endpoint => $domains) {
@@ -98,11 +113,16 @@ final class DataSync
             try {
                 $this->apply($data, $kind === 'full');
                 if ($onlyUser !== null && array_filter($this->items,static fn($i)=>in_array($i['action'],['error','pending'],true))) { throw new SyncFailure('person_requires_review'); }
-                $blocked = $override ? null : $this->guards($source, $kind === 'full', $simulate);
+                $blocked = $override || ($onlyUser === null && $this->owned === ['entradas']) ? null : $this->guards($source, $kind === 'full', $simulate);
             } catch (\Throwable $e) { $this->db->run('ROLLBACK TO SAVEPOINT keeper_sync'); throw $e; }
             if ($blocked !== null || $simulate) { $this->db->run('ROLLBACK TO SAVEPOINT keeper_sync'); $status = $blocked !== null ? 'blocked' : 'simulated'; }
             else { $this->db->run('RELEASE SAVEPOINT keeper_sync'); if ($this->changed()) { $this->markDirty(); } }
         } catch (SyncFailure $e) { $status = 'failed'; $error = $e->getMessage(); $this->items = []; }
+        $this->items = array_merge($this->items, $doorItems); $this->counts += $doorCounts;
+        if ($doorError !== null) {
+            $error ??= $doorError;
+            if (!array_diff($this->owned, ['entradas'])) { $status = 'failed'; }
+        }
         $genSql = $generated === null ? null : $generated->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s.u');
         $this->db->run('INSERT INTO sync_runs (tenant_id,id,source_id,kind,trigger_kind,simulate,status,started_at,finished_at,counts,blocked_reason,error_code,generated_at) VALUES (?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6),?,?,?,?)',
             [$tenant, $runId, $sourceId, $kind, $trigger, (int) $simulate, $status, $started, Util::json((object) $this->counts), $blocked, $error, $genSql]);
@@ -117,6 +137,67 @@ final class DataSync
     }
 
     private function now(): string { return $this->db->one('SELECT UTC_TIMESTAMP(6) t')['t']; }
+
+    /** Eventos ordenados por log_id; ni complete/generated_at ni updated_since son cursores de eventos. */
+    private function doorPages(array $source, bool $simulate): ?string
+    {
+        if (!Features::has($this->db, $this->tenant, 'puertas')) {
+            $this->counts['entradas']['skipped'] = 1;
+            $this->log('entradas', 'error', null, null, 'feature_puertas_disabled');
+            return null;
+        }
+        try {
+            if ($source['door_events_from_date'] === null) { throw new SyncFailure('door_events_from_date_missing'); }
+            $eventsDb = new Database();
+            $state = $eventsDb->one('SELECT last_log_id FROM data_source_door_cursors WHERE tenant_id=? AND source_id=?', [$this->tenant, $this->source]);
+            if (!$state) { throw new SyncFailure('door_events_cursor_missing'); }
+            $after = (int) $state['last_log_id']; $cursor = null; $seen = [];
+            $zone = $eventsDb->one('SELECT timezone FROM tenants WHERE tenant_id=?', [$this->tenant])['timezone'];
+            $events = new DoorEvents($eventsDb);
+            for ($pageNo = 0; $pageNo < self::MAX_PAGES; $pageNo++) {
+                $source['door_events_after_id'] = $after;
+                $page = ($this->fetch)($source, 'door-events', null, $cursor);
+                if (!is_array($page['items'] ?? null) || !array_is_list($page['items']) || !array_key_exists('next_cursor', $page)) { throw new SyncFailure('door_events_invalid_envelope'); }
+                $next = $page['next_cursor'];
+                if ($next !== null && (!is_string($next) || $next === '' || strlen($next) > 1024 || isset($seen[$next]))) { throw new SyncFailure('door_events_invalid_cursor'); }
+                $last = 0;
+                foreach ($page['items'] as $it) {
+                    if (!is_array($it) || !is_int($it['log_id'] ?? null) || $it['log_id'] <= $last) { throw new SyncFailure('door_events_invalid_log_id'); }
+                    $last = $it['log_id'];
+                }
+                $chunks = array_chunk($page['items'], 500) ?: [[]];
+                foreach ($chunks as $chunkNo => $chunk) {
+                    $finalChunk = $chunkNo === array_key_last($chunks);
+                    $save = function () use ($eventsDb, $events, $source, $zone, $simulate, $chunk, $finalChunk, $after, $last): array {
+                        $locked = $eventsDb->one('SELECT last_log_id FROM data_source_door_cursors WHERE tenant_id=? AND source_id=? FOR UPDATE', [$this->tenant, $this->source]);
+                        if (!$simulate && (int) $locked['last_log_id'] !== $after) { throw new SyncFailure('door_events_cursor_changed'); }
+                        $results = [];
+                        foreach ($chunk as $it) { $results[] = $events->ingestSource($this->tenant, $this->source, $it, $source['door_events_from_date'], $zone, $simulate); }
+                        if (!$simulate && $finalChunk) { $eventsDb->run('UPDATE data_source_door_cursors SET last_log_id=? WHERE tenant_id=? AND source_id=?', [max($after, $last), $this->tenant, $this->source]); }
+                        return $results;
+                    };
+                    $results = $eventsDb->transaction($save);
+                    foreach ($results as $r) {
+                        $this->counts['entradas'][$r['status']] = ($this->counts['entradas'][$r['status']] ?? 0) + 1;
+                        if ($r['status'] === 'accepted') { $this->log('entradas', 'create', $r['event_id'], null); }
+                        elseif ($r['status'] === 'rejected' || $r['status'] === 'quarantined') { $this->log('entradas', 'error', $r['event_id'], null, $r['reason']); }
+                    }
+                }
+                $after = max($after, $last);
+                if ($next === null) {
+                    // Personas o puertas que aparecieron desde la vuelta anterior; lo creado en esta vuelta entra en la siguiente.
+                    if (!$simulate) { $eventsDb->transaction(fn () => $events->rematch($this->tenant)); }
+                    return null;
+                }
+                $seen[$next] = true; $cursor = $next;
+            }
+            throw new SyncFailure('door_events_too_many_pages');
+        } catch (\Throwable $e) {
+            $reason = $e instanceof SyncFailure ? $e->getMessage() : 'door_events_failed';
+            $this->log('entradas', 'error', null, null, $reason);
+            return $reason;
+        }
+    }
 
     /** Recorre todas las paginas; una lista completa exige complete=true y el mismo generated_at en todas. */
     private function pages(array $source, string $endpoint, ?string $since, bool $full): array

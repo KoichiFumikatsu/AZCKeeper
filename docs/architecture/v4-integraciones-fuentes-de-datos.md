@@ -13,7 +13,7 @@ Este documento define cómo Keeper recibe y entrega datos de otros sistemas (AZC
 3. **Dirección por dominio, nunca bidireccional.** Un dominio entra a Keeper (`in`) o sale de Keeper (`out`). El mismo dominio no se escribe en ambos lados.
 4. **Keeper publica un formato canónico.** Las fuentes se adaptan a él (One lo expone tal cual; un cliente con BD arma una vista con esas columnas). Keeper no contiene código específico de One ni de ningún cliente.
 5. **Catálogos y eventos se tratan distinto.** Los catálogos (sedes, personas…) tienen dueño y se reconcilian. Los eventos (entradas por puerta, ausencias) tienen origen, solo se agregan y se deduplican por id.
-6. **Las entradas a sede vienen del sistema de puertas**, no de One.
+6. **Keeper lee las entradas por puerta desde One mediante DataSync**, dominio `entradas` y endpoint `GET door-events` (decisión del dueño, 2026-11-05). El push `check-ins:batch` se conserva como opción para clientes con sistema propio (§7).
 7. **"Permisos" son dos cosas y ambas entran:**
    - permisos de RR. HH. (vacaciones, licencias, incapacidades) → dominio `ausencias`, dueño One;
    - permisos del panel → **no se sincronizan directamente**. One envía cargo y jerarquía; Keeper los convierte en roles con **reglas propias** (§8).
@@ -35,7 +35,7 @@ Este documento define cómo Keeper recibe y entrega datos de otros sistemas (AZC
 | Riesgo | Regla |
 |---|---|
 | Un cambio de esquema en One rompe Keeper | Keeper solo conoce el formato canónico (§4). One lo sirve desde su propia capa de API. |
-| One cae o responde mal | La vuelta de sincronización falla, se registra y **no aplica nada**. Ninguna falla de fuente se interpreta como "todos se fueron". |
+| One cae o responde mal | Los catálogos conservan su atomicidad. Entradas confirma cada página por separado: un error conserva las anteriores y no revierte ni impide los demás dominios. Ninguna falla se interpreta como "todos se fueron". |
 | Keeper cae | One no llama a Keeper en su flujo propio. El módulo Keeper dentro de One muestra "Keeper no disponible" (§9). |
 | Una fuente envía datos absurdos | Frenos de seguridad (§5.4): bajas masivas, cédulas que cambian, listas vacías → bloqueo y aprobación manual. |
 | Credenciales de terceros en Keeper | Cifradas (AES-256-GCM con la llave de Keeper, como los secretos de hardening y webhooks). Nunca se devuelven por la API. |
@@ -78,10 +78,10 @@ Este documento define cómo Keeper recibe y entrega datos de otros sistemas (AZC
 
 | Empresa Keeper | Fuente | Dominios de One (`in`) | Keeper es dueño de |
 |---|---|---|---|
-| Grupo AZC (un solo tenant desde 0035, con empresas internas) | One (`?empresa=grupo-azc`) | empresas, firmas, sedes, areas, cargos, horarios, personas, jerarquia | festivos y ausencias (decisión 2026-10-06, ver `v4-puente-one-legacy.md` P2/P3), roles_panel, equipos, reglas… |
+| Grupo AZC (un solo tenant desde 0035, con empresas internas) | One (`?empresa=grupo-azc`) | empresas, firmas, sedes, areas, cargos, horarios, personas, jerarquia, entradas | festivos y ausencias (decisión 2026-10-06, ver `v4-puente-one-legacy.md` P2/P3), roles_panel, equipos, reglas… |
 | Cliente nuevo sin One | CSV o manual | — | todo |
 
-Las **entradas** de las tres empresas de AZC vienen del sistema de puertas (§7).
+Las **entradas** de las tres empresas de AZC se consultan en One (§7), solo con la función `puertas` habilitada en la empresa.
 
 ---
 
@@ -104,6 +104,11 @@ Una fila por fuente configurada en una empresa.
 | `mode` | enum `simulate`, `live` | Toda fuente nueva arranca en `simulate` (§5.5) |
 | `active` | bool | |
 | `last_run_id`, `last_success_at` | | Para el panel de estado |
+| `door_events_from_date` | date NULL | Se fija al asignar `entradas`: hoy en la zona de la empresa. Configurable explícitamente por API; siempre se envía como `from_date` |
+
+`data_source_door_cursors` persiste `(tenant_id, source_id, last_log_id)` con FK a la fuente. La migración 0072 agrega el dominio `entradas`, este cursor y la fecha inicial. Una fecha anterior configurada explícitamente reinicia el cursor a cero para recuperar ese período; la deduplicación conserva los eventos ya guardados. Quitar y reasignar el dominio conserva fecha y cursor.
+
+La misma migración permite `direction=NULL` en `check_ins` y `unmatched_check_ins`, `document=NULL` en cuarentena y agrega `data_source_id`/`person_external_id` para reintentar por vínculo externo. Las referencias de puerta pasan a UTF-8 con comparación binaria.
 
 ### 3.2 `data_domain_owners`
 
@@ -261,15 +266,22 @@ Una ausencia cancelada se reenvía con `status: "cancelled"`; no desaparece en s
 
 ### 4.7 Entrada por puerta (evento)
 
+Respuesta de `GET door-events?after_id=0&from_date=2026-11-05` (además del filtro `empresa` y del `cursor` opaco si hay siguiente página):
+
 ```json
-{ "event_id": "palmetto-0.2.1-48213", "door_ref": "0.3.1", "document": "1144123456",
-  "direction": "in", "occurred_at": "2026-09-30T12:21:07Z", "granted": true }
+{ "items": [
+  { "external_id": "puerta-48213", "log_id": 48213, "person_external_id": "emp-1234",
+    "door_ref": "Casa 1 · Rejas", "direction": null, "occurred_at": "2026-11-05T12:21:07Z" }
+], "next_cursor": null }
 ```
 
-- `event_id`: único y estable en el sistema de puertas (controlador + índice de evento).
-- `door_ref`: OID de la puerta en el sistema de puertas; Keeper la resuelve contra `doors.source_ref`.
-- `document`: la cédula asociada a la tarjeta (`model_cards.cc`). El sistema de puertas **no** envía números de tarjeta a Keeper.
-- Solo se envían eventos `granted: true` de puertas marcadas como acceso.
+- `external_id` es el `event_id` estable para deduplicar. `log_id` es un entero positivo creciente; las páginas vienen ordenadas. `next_cursor` es texto opaco o `null`.
+- `after_id` es el último `log_id` procesado y confirmado por fuente, tanto en completas como incrementales. No se envía `updated_since`; no se exige `complete` ni `generated_at`. Una fila tardía con fecha vieja y `log_id` nuevo se importa si cumple `from_date`.
+- `from_date` es la fecha mínima en la zona de la empresa; Keeper la envía siempre y también filtra localmente. Sin configuración explícita anterior no se importan días previos al alta del dominio.
+- `person_external_id` se resuelve exclusivamente mediante `entity_links` de tipo `user` de la misma fuente; nunca por cédula.
+- `door_ref` se compara con `doors.source_ref`. `null`, vacío o inválido deja error de item `invalid_door_ref`, sin frenar la página.
+- `direction` admite `in`, `out` o `null`. Se conserva `null`: no se inventa una entrada.
+- Los items inválidos con `log_id` válido se registran como error y se consideran procesados para el cursor; un `log_id` inválido o desordenado invalida toda la página y no avanza.
 
 ---
 
@@ -326,7 +338,7 @@ Desbloquear requiere permiso `integraciones.aprobar` y queda auditado. Los umbra
 
 Una vuelta frenada guarda sus items (altas, cambios con nombre anterior y nuevo, errores) para revisarla. **Aprobarla** (`POST /sync-runs/{id}/approve`) vuelve a leer la fuente y aplica sin frenos esa misma clase de vuelta; queda auditado quién lo hizo. Una simulación también muestra el freno que se activaría (estado `blocked` con `simulate=true`), salvo `domains_changed`, que solo frena vueltas reales; aprobar una simulación frenada la aplica en real.
 
-**Dominio recién asignado (`approval_required`).** Cuando `PUT /data-domains` le da a una fuente un dominio que no tenía, Keeper marca la fuente (`data_sources.approval_required`, campo `approval_required` del DTO) y borra su `updated_since`: la siguiente vuelta es **completa** (no una incremental con la marca de tiempo de antes, que cargaría solo una parte) y, en modo real, queda `blocked` con `domains_changed` hasta que alguien la apruebe. La marca se limpia con la primera vuelta aplicada. Así el cron nunca aplica solo la primera carga de un dominio, aunque la fuente ya esté en `live`. Quitar un dominio no pide aprobación.
+**Dominio recién asignado (`approval_required`).** Cuando `PUT /data-domains` le da a una fuente un dominio que no tenía, excepto `entradas` (§7), Keeper marca la fuente (`data_sources.approval_required`, campo `approval_required` del DTO) y borra su `updated_since`: la siguiente vuelta es **completa** (no una incremental con la marca de tiempo de antes, que cargaría solo una parte) y, en modo real, queda `blocked` con `domains_changed` hasta que alguien la apruebe. La marca se limpia con la primera vuelta aplicada. Así el cron nunca aplica solo la primera carga de un dominio de catálogo, aunque la fuente ya esté en `live`. Quitar un dominio no pide aprobación.
 
 ### 5.5 Simulación
 
@@ -355,14 +367,29 @@ Keeper nunca escribe en la BD ni en la API de otro sistema para "empujar" un dom
 
 ## 7. Entradas por puerta
 
-**Sentido: el sistema de puertas empuja a Keeper.** El servidor de puertas está en la LAN detrás de NAT; Keeper no puede llegar a él, pero él sí sale a HTTPS.
+### 7.1 Lectura desde One
 
-### 7.1 Endpoint en Keeper
+DataSync consulta `door-events` (§4.7) únicamente si la fuente tiene asignado `entradas` y la empresa tiene la función `puertas` (`Features::has`). Sin ella no consulta ni avanza; la vuelta registra `feature_puertas_disabled`.
 
-`POST /ext/v1/check-ins:batch` con llave de integración con alcance `entradas.escribir`.
+Es un flujo de eventos: sin huérfanos, bajas, reconciliación por ausencia, coincidencias por nombre ni frenos de catálogo. Asignar solo `entradas` no activa `approval_required` ni borra `updated_since`. Los seis endpoints existentes conservan su flujo.
+
+Los eventos usan una conexión local separada y transacciones de hasta 500 eventos con bloqueo del cursor. La marca de agua se guarda solo al completar la página, junto con su último bloque. Si una página supera 500 eventos y falla un bloque posterior, los bloques anteriores quedan confirmados y el cursor conserva su valor previo; el reintento los deduplica. Se procesan antes de los catálogos para no esperar sus bloqueos: una persona vinculada en esa misma vuelta puede pasar primero por cuarentena y resolverse en el rematch del cron. Un fallo conserva lo confirmado y se registra en los items de `entradas` y `error_code`; si hay otros dominios, su estado aplicado/bloqueado se conserva. Una vuelta solo de entradas con fallo queda `failed`. El rematch procesa hasta 500 entradas por llamada.
+
+Simular resuelve y cuenta, sin insertar entradas/cuarentenas ni cambiar el cursor; solo se guarda el historial habitual de la simulación. La identidad es `data_source:<uuid>`, separada de `integration:<uuid>` del push.
+
+Persona desconocida: cuarentena `unknown_person` con fuente e id externo. Puerta desconocida: `unknown_door`, visible en «Entradas esperando»; se registra manualmente con su sede. Ambas reutilizan `DoorEvents::store/rematch`, se reintentan al registrar puertas y en el cron y vencen a los 30 días. Puertas inactivas o sin `counts_for_presence` se ignoran. El rematch de eventos de fuentes también respeta la función `puertas`.
+
+**Limitación comprobada:** `ActivityReports.php:92-95` usa `MIN` solo de `direction='in'` y `MAX` solo de `direction='out'`. No se cambia ese cálculo en esta implementación. Una dirección desconocida queda almacenada fielmente, pero no alimenta esas marcas de llegada/salida.
+
+### 7.2 Push opcional para clientes con sistema propio
+
+Se conserva `POST /ext/v1/check-ins:batch`, con llave de integración y scope `check-ins:write`, sin cambiar su contrato:
 
 ```json
-{ "schema": "keeper.checkins.v1", "events": [ { ...§4.7... } ] }
+{ "schema": "keeper.checkins.v1", "events": [
+  { "event_id": "palmetto-0.2.1-48213", "door_ref": "0.3.1", "document": "1144123456",
+    "direction": "in", "occurred_at": "2026-11-05T12:21:07Z", "granted": true }
+] }
 ```
 
 - Hasta 500 eventos por llamada. Respuesta por evento: `accepted`, `duplicate` o `rejected` (con motivo).
@@ -371,7 +398,7 @@ Keeper nunca escribe en la BD ni en la API de otro sistema para "empujar" un dom
 - Puerta por `door_ref`. Una puerta desconocida no se crea sola (una puerta exige sede): sus eventos quedan en cuarentena y la pantalla Puertas la muestra en "Entradas esperando" para registrarla; al registrarla se emparejan.
 - Solo las puertas con `counts_for_presence` alimentan la presencia.
 
-### 7.2 Lado del sistema de puertas
+### 7.3 Lado del sistema propio (opcional)
 
 - Un trabajo (extensión del `keeper-sync` actual) lee los eventos nuevos de `doors.db` cada minuto, filtra los `granted` de puertas de acceso y los envía en lotes.
 - **Bandeja de salida** propia: si Keeper no responde, guarda la posición y reintenta. No pierde eventos ni bloquea al sistema de puertas.
@@ -467,7 +494,7 @@ En **Roles y permisos**: sección "Asignación automática" con las reglas cargo
 
 ## 11. Lo que construye One
 
-1. `GET /api/keeper/v1/{dominio}?empresa={slug}[&updated_since=...][&cursor=...]` para `org-units`, `schedules`, `holidays`, `people`, `absences`, con el sobre de §4.1 y los elementos de §4.2-§4.6.
+1. `GET /api/keeper/v1/{dominio}?empresa={slug}[&updated_since=...][&cursor=...]` para `org-units`, `schedules`, `holiday-calendars`, `holidays`, `people`, `absences`, con el sobre de §4.1 y los elementos de §4.2-§4.6. Para `door-events`, `after_id` y `from_date` en lugar de `updated_since` (§4.7).
 2. Autenticación por token Bearer por empresa (rotable). Solo lectura.
 3. Ids externos estables, `updated_at` confiable (para el incremental) y `status: inactive` explícito en retiros y cancelaciones.
 4. Para el módulo Keeper (§9): par de llaves para firmar aserciones; registrar la pública en Keeper.
@@ -481,7 +508,7 @@ En **Roles y permisos**: sección "Asignación automática" con las reglas cargo
 |---|---|---|
 | F1 | Modelo (`data_sources`, `data_domain_owners`, `entity_links`, `sync_runs`) + motor + frenos + simulación + conector CSV canónico + pantalla Fuentes de datos + bloqueo de campos | — |
 | F2 | Conector REST + configuración AZC (3 empresas) | F1 + API de One (§11.1-3) |
-| F3 | Entradas por puerta: endpoint batch, cuarentena, `counts_for_presence`, trabajo en el servidor de puertas | F1 (para cédulas vinculadas); puede ir en paralelo a F2 |
+| F3 | Entradas por puerta: DataSync desde One, cursor, cuarentena, `counts_for_presence`; batch opcional para sistemas propios | F1/F2 para lectura desde One |
 | F4 | Ausencias y su efecto en presencia/productividad | F2 |
 | F5 | Jerarquía, alcance `team`, reglas cargo → rol | F2 |
 | F5b | Grupos empresariales, cuentas de grupo, tablero consolidado (§8.5) | F1; no depende de One |
@@ -506,7 +533,7 @@ Todas resueltas el 2026-09-30 (decisiones 10 a 17). Se reabren con la primera si
 | F1 motor + fuentes | Hecho 2026-09-30: migración 0027 (`data_sources`, `data_domain_owners`, `entity_links`, `sync_runs`, `sync_items`), motor `DataSync` (REST canónico, simulación por SAVEPOINT, frenos, pendientes que recuerdan la respuesta), API `/data-sources`, `/data-domains`, `/sync-runs`, `/sync-items`, bloqueo `managed_by_source`, cron `config/sync-cron.php`, pantalla Fuentes de datos |
 | F5b grupos empresariales | Hecho 2026-09-30: migración 0028 (`company_groups`, `company_group_members`, `admin_account_roles`, `admin_accounts.group_id`; se quita el CHECK de `principals` que impedía actuar en otra empresa, la validación pasa a `AdminAuth::context`), API `/company-groups`, cuentas de grupo en `/panel-accounts` (`group_id`, `group_roles`), sesión con `group.tenants`, selector de empresa y Tablero del grupo |
 | F5 jerarquía, reglas y directivos | Hecho 2026-09-30: migración 0029 (`users.reports_to_user_id`, `users.monitoring_override`, alcance `team`, `roles.assignable_by_rule`, `panel_role_rules`, `user_roles.rule_id`, `monitoring_excluded_positions`, permiso `roles.reglas`), `RoleRules` (recalcula al cambiar personas, roles, reglas o tras sincronizar), jerarquía desde One, alta con alerta `person_excluded`, pantallas Roles (Asignación automática) y Personas (jefe, monitoreo, cargos excluidos) |
-| F3 puertas (lado Keeper) | Hecho 2026-09-30: migración 0030 (`doors.counts_for_presence`, `unmatched_check_ins`, scope `check-ins:write`), `POST /ext/v1/check-ins:batch`, `DoorEvents` (idempotente, cuarentena 30 días, re-emparejamiento en el cron y al registrar puertas), API `/doors`, pantalla Puertas. **Falta el envío desde el servidor de puertas** (otro sistema; se despliega con autorización) |
+| F3 puertas (lado Keeper) | Batch desde 2026-09-30 (0030). Lectura desde One añadida el 2026-11-05 (0072): dominio `entradas`, cursor por fuente y fecha mínima local; comparte cuarentena/rematch con el push. Pendiente conectar el endpoint de One, construido aparte. ActivityReports conserva su filtro por dirección (§7.1) |
 | F4 ausencias | Hecho 2026-09-30: migración 0031 (`absences`), API `/absences`, sincronización del dominio `ausencias` (endpoint `absences` de One), una ausencia aprobada que cubre la jornada deja el día sin tiempo esperado (`ActivityCalendar::expected`), pantalla Ausencias. Las ausencias parciales (un par de horas) se registran pero aún no ajustan la tardanza |
 | Frenos antes de datos reales | Hecho 2026-10-06: migración 0046 (`data_sources.approval_required`, `org_units.placeholder`, `schedules.placeholder`), frenos `too_many_creations`, `too_many_org_changes` y `domains_changed` (§5.4), cambios de referencia con nombres en el registro, monitoreo conservado al pasar a "Sin cargo", bloqueo por campo (§5.3), retiradas cargadas como retiradas y correo de retiradas liberado (§4.5) |
 | F2 en adelante | Pendiente (F2 = conectar One cuando exista su API; el conector ya existe) |

@@ -50,8 +50,8 @@ final class DoorsApi
     {
         $doors = array_map(static fn ($r) => ['door_ref' => $r['door_ref'], 'events' => (int) $r['n'], 'last_at' => Util::time($r['last_at'])],
             $this->db->run("SELECT door_ref,COUNT(*) n,MAX(occurred_at) last_at FROM unmatched_check_ins WHERE tenant_id=? AND reason='unknown_door' GROUP BY door_ref ORDER BY n DESC LIMIT 200", [$this->tenant])->fetchAll());
-        $people = array_map(static fn ($r) => ['document_hint' => '…' . substr($r['document'], -4), 'events' => (int) $r['n'], 'last_at' => Util::time($r['last_at'])],
-            $this->db->run("SELECT document,COUNT(*) n,MAX(occurred_at) last_at FROM unmatched_check_ins WHERE tenant_id=? AND reason='unknown_person' GROUP BY document ORDER BY n DESC LIMIT 200", [$this->tenant])->fetchAll());
+        $people = array_map(static fn ($r) => ['document_hint' => $r['document'] === null ? $r['person_external_id'] : '…' . substr($r['document'], -4), 'events' => (int) $r['n'], 'last_at' => Util::time($r['last_at'])],
+            $this->db->run("SELECT document,person_external_id,COUNT(*) n,MAX(occurred_at) last_at FROM unmatched_check_ins WHERE tenant_id=? AND reason='unknown_person' GROUP BY document,data_source_id,person_external_id ORDER BY n DESC LIMIT 200", [$this->tenant])->fetchAll());
         return AdminApi::response(['unknown_doors' => $doors, 'unknown_people' => $people]);
     }
 }

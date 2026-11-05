@@ -1,5 +1,5 @@
 {
-  "source_sha256": "963a622107519f34f090c981044723696ddb1ac3b475777fa099b92e704b6ded",
+  "source_sha256": "efe4a93e4d3fa0295db00c13899c12d888304ff9b6c8383e99a21015a01588a0",
   "paths": {
     "/me": {
       "get": {
@@ -26713,11 +26713,12 @@
           ]
         },
         "direction": {
-          "type": "string",
           "enum": [
             "in",
-            "out"
-          ]
+            "out",
+            null
+          ],
+          "description": "null cuando la fuente de entradas no informa dirección; no implica entrada ni salida."
         },
         "site_id": {
           "anyOf": [
@@ -27787,7 +27788,7 @@
         "domains": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 10,
+          "maxItems": 11,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -27807,7 +27808,8 @@
                   "festivos",
                   "personas",
                   "jerarquia",
-                  "ausencias"
+                  "ausencias",
+                  "entradas"
                 ]
               },
               "source_id": {
@@ -27835,7 +27837,7 @@
       "properties": {
         "data": {
           "type": "array",
-          "maxItems": 10,
+          "maxItems": 11,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -27855,7 +27857,8 @@
                   "festivos",
                   "personas",
                   "jerarquia",
-                  "ausencias"
+                  "ausencias",
+                  "entradas"
                 ]
               },
               "source_id": {
@@ -27899,6 +27902,18 @@
         "version"
       ],
       "properties": {
+        "door_events_from_date": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Fecha mínima local de entradas. Al asignar entradas se fija hoy en la zona de la empresa; configurar una fecha anterior reinicia el cursor para recuperar ese período."
+        },
         "id": {
           "type": "string",
           "format": "uuid"
@@ -27985,7 +28000,7 @@
         },
         "domains": {
           "type": "array",
-          "maxItems": 10,
+          "maxItems": 11,
           "items": {
             "enum": [
               "empresas",
@@ -27997,7 +28012,8 @@
               "festivos",
               "personas",
               "jerarquia",
-              "ausencias"
+              "ausencias",
+              "entradas"
             ]
           }
         },
@@ -28048,6 +28064,11 @@
         "base_url"
       ],
       "properties": {
+        "door_events_from_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Fecha mínima local de entradas. Al asignar entradas se fija hoy en la zona de la empresa; configurar una fecha anterior reinicia el cursor para recuperar ese período."
+        },
         "name": {
           "type": "string",
           "minLength": 1,
@@ -28105,6 +28126,11 @@
       "additionalProperties": false,
       "required": [],
       "properties": {
+        "door_events_from_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Fecha mínima local de entradas. Al asignar entradas se fija hoy en la zona de la empresa; configurar una fecha anterior reinicia el cursor para recuperar ese período."
+        },
         "name": {
           "type": "string",
           "minLength": 1,
@@ -28982,7 +29008,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 160,
-          "pattern": "^[\\x21-\\x7E]+$"
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$"
         },
         "site_id": {
           "type": "string",
@@ -29077,7 +29103,8 @@
             "properties": {
               "document_hint": {
                 "type": "string",
-                "maxLength": 8
+                "maxLength": 160,
+                "description": "Cédula enmascarada para push o person_external_id para entradas de una fuente."
               },
               "events": {
                 "type": "integer",

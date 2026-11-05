@@ -23,6 +23,7 @@ require __DIR__ . '/intake.php';
 require __DIR__ . '/panel-accounts.php';
 require __DIR__ . '/schedules.php';
 require __DIR__ . '/data-sync.php';
+require __DIR__ . '/data-sync-doors.php';
 require __DIR__ . '/one-import.php';
 require __DIR__ . '/company-groups.php';
 require __DIR__ . '/role-rules.php';
@@ -475,6 +476,7 @@ try {
     roleRulesTests($db);
     roleCutoffTests($db);
     doorEventTests($db);
+    dataSyncDoorTests($db);
     absenceTests($db);
     daySplitTests($db);
     simulatedInputTests($db);

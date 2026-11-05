@@ -17804,7 +17804,7 @@ components:
           type: string
           minLength: 1
           maxLength: 160
-          pattern: ^[\x21-\x7E]+$
+          pattern: ^[^\x00-\x1F\x7F]+$
         site_id:
           type: string
           format: uuid
@@ -17864,7 +17864,8 @@ components:
             properties:
               document_hint:
                 type: string
-                maxLength: 8
+                maxLength: 160
+                description: Cédula enmascarada para push o person_external_id para entradas de una fuente.
               events:
                 type: integer
                 minimum: 0
@@ -18592,6 +18593,12 @@ components:
       - last_full_at
       - version
       properties:
+        door_events_from_date:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: Fecha mínima local de entradas. Al asignar entradas se fija hoy en la zona de la empresa; configurar una fecha anterior reinicia el cursor para recuperar ese período.
         id:
           type: string
           format: uuid
@@ -18649,7 +18656,7 @@ components:
           maximum: 100
         domains:
           type: array
-          maxItems: 10
+          maxItems: 11
           items:
             enum:
             - empresas
@@ -18662,6 +18669,7 @@ components:
             - personas
             - jerarquia
             - ausencias
+            - entradas
         last_run_at:
           anyOf:
           - type: string
@@ -18697,6 +18705,10 @@ components:
       - name
       - base_url
       properties:
+        door_events_from_date:
+          type: string
+          format: date
+          description: Fecha mínima local de entradas. Al asignar entradas se fija hoy en la zona de la empresa; configurar una fecha anterior reinicia el cursor para recuperar ese período.
         name:
           type: string
           minLength: 1
@@ -18726,6 +18738,10 @@ components:
       additionalProperties: false
       required: []
       properties:
+        door_events_from_date:
+          type: string
+          format: date
+          description: Fecha mínima local de entradas. Al asignar entradas se fija hoy en la zona de la empresa; configurar una fecha anterior reinicia el cursor para recuperar ese período.
         name:
           type: string
           minLength: 1
@@ -18984,7 +19000,7 @@ components:
       properties:
         data:
           type: array
-          maxItems: 10
+          maxItems: 11
           items:
             type: object
             additionalProperties: false
@@ -19004,6 +19020,7 @@ components:
                 - personas
                 - jerarquia
                 - ausencias
+                - entradas
               source_id:
                 anyOf:
                 - type: string
@@ -19018,7 +19035,7 @@ components:
         domains:
           type: array
           minItems: 1
-          maxItems: 10
+          maxItems: 11
           items:
             type: object
             additionalProperties: false
@@ -19038,6 +19055,7 @@ components:
                 - personas
                 - jerarquia
                 - ausencias
+                - entradas
               source_id:
                 anyOf:
                 - type: string
@@ -23749,10 +23767,11 @@ components:
           - agent
           - manual
         direction:
-          type: string
           enum:
           - in
           - out
+          - null
+          description: null cuando la fuente de entradas no informa dirección; no implica entrada ni salida.
         site_id:
           anyOf:
           - type: string
