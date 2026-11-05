@@ -172,15 +172,15 @@ final class DataSync
                         $locked = $eventsDb->one('SELECT last_log_id FROM data_source_door_cursors WHERE tenant_id=? AND source_id=? FOR UPDATE', [$this->tenant, $this->source]);
                         if (!$simulate && (int) $locked['last_log_id'] !== $after) { throw new SyncFailure('door_events_cursor_changed'); }
                         $results = [];
-                        foreach ($chunk as $it) { $results[] = $events->ingestSource($this->tenant, $this->source, $it, $source['door_events_from_date'], $zone, $simulate); }
+                        foreach ($chunk as $it) { $results[] = $events->ingestSource($this->tenant, $this->source, $it, $source['door_events_from_date'], $zone, $simulate) + ['door_ref' => is_string($it['door_ref'] ?? null) ? mb_substr($it['door_ref'], 0, 200) : null]; }
                         if (!$simulate && $finalChunk) { $eventsDb->run('UPDATE data_source_door_cursors SET last_log_id=? WHERE tenant_id=? AND source_id=?', [max($after, $last), $this->tenant, $this->source]); }
                         return $results;
                     };
                     $results = $eventsDb->transaction($save);
                     foreach ($results as $r) {
                         $this->counts['entradas'][$r['status']] = ($this->counts['entradas'][$r['status']] ?? 0) + 1;
-                        if ($r['status'] === 'accepted') { $this->log('entradas', 'create', $r['event_id'], null); }
-                        elseif ($r['status'] === 'rejected' || $r['status'] === 'quarantined') { $this->log('entradas', 'error', $r['event_id'], null, $r['reason']); }
+                        if ($r['status'] === 'accepted') { $this->log('entradas', 'create', $r['event_id'], null, null, $r['door_ref']); }
+                        elseif ($r['status'] === 'rejected' || $r['status'] === 'quarantined') { $this->log('entradas', 'error', $r['event_id'], null, $r['reason'], $r['door_ref']); }
                     }
                 }
                 $after = max($after, $last);

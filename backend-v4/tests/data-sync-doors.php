@@ -42,6 +42,7 @@ function dataSyncDoorTests(Database $db): void
     $world = ['first' => ['items' => [$item(1), $item(2, ['direction' => null])], 'next_cursor' => 'page2'], 'page2' => ['items' => [$item(3)], 'next_cursor' => null], 'simulating' => true];
     $sim = $run('full', true);
     check($sim['status'] === 'simulated' && $watermark() === 0 && $count() === 0 && $waiting() === 0, 'simulation traverses pages without writing events or cursor');
+    check((int) $db->one("SELECT COUNT(*) n FROM sync_items WHERE tenant_id=? AND run_id=? AND domain='entradas' AND label='Casa 1 · Rejas'", [$tenant, $sim['id']])['n'] === 3, 'simulation items name the door');
     check(json_decode($sim['counts'], true)['entradas']['accepted'] === 3, 'simulation counts all pages');
     unset($world['simulating']);
     $failAt = 'page2';

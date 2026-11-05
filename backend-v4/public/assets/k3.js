@@ -2819,7 +2819,7 @@ async function schedulesPage() {
 
 // ---- Fuentes de datos -------------------------------------------------------------------------------------------
 const DOMAIN_LABELS = { empresas: 'Empresas internas', firmas: 'Firmas', sedes: 'Sedes', areas: 'Áreas', cargos: 'Cargos', horarios: 'Horarios', festivos: 'Festivos', personas: 'Personas',
-  jerarquia: 'Jerarquía (a quién reporta)', ausencias: 'Ausencias de RR. HH.' };
+  jerarquia: 'Jerarquía (a quién reporta)', ausencias: 'Ausencias de RR. HH.', entradas: 'Entradas por puerta' };
 const RUN_STATUS = { applied: ['Aplicada', 'good'], simulated: ['Simulación', 'info'], blocked: ['Bloqueada: requiere aprobación', 'warn'], failed: ['Falló', 'bad'], running: ['En curso', ''] };
 const BLOCK_REASONS = { too_many_deactivations: 'Iba a retirar a más personas de las permitidas de una sola vez.', list_too_small: 'La fuente devolvió muy pocas personas (o ninguna): parece una lista incompleta.', too_many_creations: 'Iba a crear a más personas de las permitidas de una sola vez (p. ej. la primera carga): revisa las altas y apruébala.', too_many_org_changes: 'Iba a cambiar la empresa, firma, sede, área, cargo u horario de demasiadas personas (o a dejarlas «Sin …»).', domains_changed: 'La fuente acaba de recibir dominios nuevos: su primera vuelta real espera aprobación.' };
 const RUN_ERRORS = { source_unreachable: 'No se pudo conectar con la fuente.', invalid_envelope: 'La fuente respondió con un formato que no es keeper.roster.v1.', incomplete_list: 'La fuente no marcó la lista como completa.',
@@ -2832,6 +2832,8 @@ const PENDING = {
   deactivate_in_use: ['La fuente la desactivó, pero todavía tiene personas asignadas. Muévelas primero.', 'Desactivar (sin personas)', 'Entendido, dejar activa'],
 };
 const SYNC_REASONS = {
+  unknown_door: 'Puerta sin registrar en Keeper: regístrala con ese nombre exacto.', unknown_person: 'La persona de esta entrada no está vinculada a la fuente.',
+  invalid_door_ref: 'El paso no trae el nombre de la puerta.', invalid_time: 'La hora del paso no es válida.', time_out_of_range: 'La hora del paso está en el futuro.',
   unknown_reference: 'Falta confirmar una unidad, un horario o una persona relacionada. Revisa los pendientes y vuelve a sincronizar.',
   invalid_reference: 'La fuente envió una referencia que no corresponde al tipo esperado.', missing_site: 'La persona no tiene sede en la fuente.',
   invalid_item: 'La fuente envió datos incompletos o inválidos.', duplicate_value: 'Hay un dato repetido que impide guardar este registro.',
