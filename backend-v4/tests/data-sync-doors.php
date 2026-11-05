@@ -32,7 +32,7 @@ function dataSyncDoorTests(Database $db): void
         return $world[$cursor ?? 'first'] ?? ['items' => [], 'next_cursor' => null];
     });
     $run = function (string $kind = 'full', bool $simulate = false, bool $override = false) use ($db, $sync, $tenant, $sid): array {
-        $id = $db->transaction(fn () => $sync->run($tenant, $sid, $kind, 'manual', $override, $simulate));
+        $id = $db->transaction(fn () => $sync->run($tenant, $sid, $kind, $simulate ? 'manual' : 'schedule', $override, $simulate));
         return $db->one('SELECT * FROM sync_runs WHERE tenant_id=? AND id=?', [$tenant, $id]);
     };
     $count = fn () => (int) $db->one('SELECT COUNT(*) n FROM check_ins WHERE tenant_id=? AND source_identity=?', [$tenant, DoorEvents::sourceIdentity($sid)])['n'];
@@ -43,6 +43,11 @@ function dataSyncDoorTests(Database $db): void
     $sim = $run('full', true);
     check($sim['status'] === 'simulated' && $watermark() === 0 && $count() === 0 && $waiting() === 0, 'simulation traverses pages without writing events or cursor');
     check((int) $db->one("SELECT COUNT(*) n FROM sync_items WHERE tenant_id=? AND run_id=? AND domain='entradas' AND label='Casa 1 · Rejas'", [$tenant, $sim['id']])['n'] === 3, 'simulation items name the door');
+    foreach (['manual', 'approval'] as $trigger) {
+        $calls = [];
+        $db->transaction(fn () => $sync->run($tenant, $sid, 'full', $trigger, true, false));
+        check($calls === [] && $watermark() === 0 && $count() === 0, "$trigger run leaves door events to the cron");
+    }
     check(json_decode($sim['counts'], true)['entradas']['accepted'] === 3, 'simulation counts all pages');
     unset($world['simulating']);
     $failAt = 'page2';
@@ -151,7 +156,7 @@ function dataSyncDoorTests(Database $db): void
     $assign([['domain' => 'entradas', 'source_id' => $src2['id']]]);
     $db->run("INSERT INTO entity_links (tenant_id,entity_type,entity_id,source_id,external_id,link_method) VALUES (?,'user',?,?,'emp-1','manual')", [$tenant, $u['id'], $sid2]);
     $world = ['first' => ['items' => [$item(1)], 'next_cursor' => null]];
-    $db->transaction(fn () => $sync->run($tenant, $sid2, 'full', 'manual', false, false));
+    $db->transaction(fn () => $sync->run($tenant, $sid2, 'full', 'schedule', false, false));
     check((int) $db->one('SELECT COUNT(*) n FROM check_ins WHERE tenant_id=? AND source_identity=?', [$tenant, DoorEvents::sourceIdentity($sid2)])['n'] === 1, 'same event id belongs independently to each source');
     check(DoorEvents::sourceIdentity($sid) !== DoorEvents::identity($sid), 'source namespace separate from integration namespace');
     // Pasos hibridos en asistencia, solo en dias sin actividad del PC.

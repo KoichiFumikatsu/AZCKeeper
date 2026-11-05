@@ -2822,7 +2822,7 @@ const DOMAIN_LABELS = { empresas: 'Empresas internas', firmas: 'Firmas', sedes: 
   jerarquia: 'Jerarquía (a quién reporta)', ausencias: 'Ausencias de RR. HH.', entradas: 'Entradas por puerta' };
 const RUN_STATUS = { applied: ['Aplicada', 'good'], simulated: ['Simulación', 'info'], blocked: ['Bloqueada: requiere aprobación', 'warn'], failed: ['Falló', 'bad'], running: ['En curso', ''] };
 const BLOCK_REASONS = { too_many_deactivations: 'Iba a retirar a más personas de las permitidas de una sola vez.', list_too_small: 'La fuente devolvió muy pocas personas (o ninguna): parece una lista incompleta.', too_many_creations: 'Iba a crear a más personas de las permitidas de una sola vez (p. ej. la primera carga): revisa las altas y apruébala.', too_many_org_changes: 'Iba a cambiar la empresa, firma, sede, área, cargo u horario de demasiadas personas (o a dejarlas «Sin …»).', domains_changed: 'La fuente acaba de recibir dominios nuevos: su primera vuelta real espera aprobación.' };
-const RUN_ERRORS = { source_unreachable: 'No se pudo conectar con la fuente.', invalid_envelope: 'La fuente respondió con un formato que no es keeper.roster.v1.', incomplete_list: 'La fuente no marcó la lista como completa.',
+const RUN_ERRORS = { door_events_failed: 'No se pudieron guardar las entradas por puerta; el resto de la vuelta no se afectó.', door_events_invalid_envelope: 'La fuente respondió las entradas por puerta en un formato inválido.', door_events_cursor_changed: 'Otra vuelta estaba leyendo las entradas por puerta; se reintenta en la siguiente.', source_unreachable: 'No se pudo conectar con la fuente.', invalid_envelope: 'La fuente respondió con un formato que no es keeper.roster.v1.', incomplete_list: 'La fuente no marcó la lista como completa.',
   inconsistent_pages: 'Las páginas de la lista no eran de la misma fecha.', insecure_url: 'La URL no es https.', source_invalid_json: 'La fuente no devolvió JSON válido.', too_many_pages: 'La lista tenía demasiadas páginas.' };
 const PENDING = {
   matched_name: ['Ya existe algo con el mismo nombre en Keeper. ¿Es lo mismo?', 'Sí, es lo mismo (vincular)', 'No, crear aparte'],
@@ -2833,7 +2833,7 @@ const PENDING = {
 };
 const SYNC_REASONS = {
   unknown_door: 'Puerta sin registrar en Keeper: regístrala con ese nombre exacto.', unknown_person: 'La persona de esta entrada no está vinculada a la fuente.',
-  invalid_door_ref: 'El paso no trae el nombre de la puerta.', invalid_time: 'La hora del paso no es válida.', time_out_of_range: 'La hora del paso está en el futuro.',
+  feature_puertas_disabled: 'La empresa no tiene activa la función Entradas por puerta.', invalid_door_ref: 'El paso no trae el nombre de la puerta.', invalid_time: 'La hora del paso no es válida.', time_out_of_range: 'La hora del paso está en el futuro.',
   unknown_reference: 'Falta confirmar una unidad, un horario o una persona relacionada. Revisa los pendientes y vuelve a sincronizar.',
   invalid_reference: 'La fuente envió una referencia que no corresponde al tipo esperado.', missing_site: 'La persona no tiene sede en la fuente.',
   invalid_item: 'La fuente envió datos incompletos o inválidos.', duplicate_value: 'Hay un dato repetido que impide guardar este registro.',
@@ -2878,7 +2878,7 @@ async function sourcesPage() {
     const [label, tone] = RUN_STATUS[r.status] || [r.status, ''];
     body.append(badge(label, tone), el('p', runCounts(r)));
     if (r.status === 'blocked') body.append(el('p', BLOCK_REASONS[r.blocked_reason] || r.blocked_reason, 'error-text'));
-    if (r.status === 'failed') body.append(el('p', RUN_ERRORS[r.error_code] || r.error_code, 'error-text'));
+    if (r.status === 'failed' || r.error_code) body.append(el('p', RUN_ERRORS[r.error_code] || r.error_code, 'error-text'));
     if (r.simulate) body.append(el('p', 'Es una simulación: muestra lo que haría, sin cambiar nada.', 'help'));
     try {
       const items = (await api('GET', `/sync-runs/${r.id}/items`)).data;

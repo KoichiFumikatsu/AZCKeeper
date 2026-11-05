@@ -83,8 +83,9 @@ final class DataSync
         $runId = Util::bin(Util::uuid()); $started = $this->now();
         $status = 'applied'; $blocked = null; $error = null; $generated = null;
         // Paginas confirmadas aparte: nunca comparten la transaccion ni los frenos del catalogo.
+        // Solo el cron las escribe: una peticion del panel tiene la empresa bloqueada y la otra conexion se esperaria a si misma.
         $doorError = null; $doorItems = []; $doorCounts = [];
-        if ($onlyUser === null && in_array('entradas', $this->owned, true)) {
+        if ($onlyUser === null && in_array('entradas', $this->owned, true) && ($simulate || $trigger === 'schedule')) {
             $doorError = $this->doorPages($source, $simulate);
             $doorItems = $this->items; $doorCounts = $this->counts;
             $this->items = []; $this->counts = [];
@@ -194,6 +195,7 @@ final class DataSync
             throw new SyncFailure('door_events_too_many_pages');
         } catch (\Throwable $e) {
             $reason = $e instanceof SyncFailure ? $e->getMessage() : 'door_events_failed';
+            if (!$e instanceof SyncFailure) { error_log('keeper door_events_failed failure=' . get_class($e) . ' code=' . $e->getCode()); }
             $this->log('entradas', 'error', null, null, $reason);
             return $reason;
         }
