@@ -26,6 +26,16 @@ function doorEventTests(Database $db): void
     check((int) $db->one("SELECT COUNT(*) n FROM check_ins WHERE tenant_id=? AND source='door' AND user_id=?", [$tenant, $u['id']])['n'] === 1, 'quarantined entry matched after door registration');
     $q2 = expect(adminRequest($platform, 'GET', '/doors/quarantine'), 200, 'quarantine after door');
     check($q2['unknown_doors'] === [] && count($q2['unknown_people']) === 1 && $q2['unknown_people'][0]['document_hint'] === '…9999', 'unknown person still waiting, masked');
+    // Los pasos asignados se listan por dia local de la empresa, sin cedula.
+    $passAt = $db->one("SELECT occurred_at FROM check_ins WHERE tenant_id=? AND source='door' ORDER BY occurred_at DESC LIMIT 1", [$tenant])['occurred_at'];
+    $passDay = (new DateTimeImmutable($passAt . ' UTC'))->setTimezone(new DateTimeZone($db->one('SELECT timezone FROM tenants WHERE tenant_id=?', [$tenant])['timezone']))->format('Y-m-d');
+    $passes = expect(adminRequest($platform, 'GET', '/doors/passes?date=' . $passDay), 200, 'door passes view');
+    check($passes['date'] === $passDay && !$passes['truncated'] && count($passes['data']) === 1 && $passes['data'][0]['door_name'] === 'Portería Palmetto' && $passes['data'][0]['user_id'] === Util::id($u['id']), 'passes list the matched entry');
+    check(!array_key_exists('document', $passes['data'][0]), 'passes hide the document');
+    check(expect(adminRequest($platform, 'GET', '/doors/passes?date=' . $passDay . '&door_id=' . $door['id']), 200, 'passes by door')['data'] !== [], 'door filter keeps its entries');
+    check(expect(adminRequest($platform, 'GET', '/doors/passes?date=' . $passDay . '&door_id=' . Util::uuid()), 200, 'passes by other door')['data'] === [], 'door filter drops the rest');
+    check(expect(adminRequest($platform, 'GET', '/doors/passes?date=2001-01-01'), 200, 'passes of another day')['data'] === [], 'date filter drops other days');
+    check(adminRequest($platform, 'GET', '/doors/passes?date=2026-02-31')[0] === 422, 'impossible date rejected');
     // Idempotencia y nuevas entradas.
     $r2 = $send($writer, [$event('e1', '0.3.1', '8080001'), $event('e4', '0.3.1', '8080001', 'out')]);
     check($r2[1]['duplicate'] === 1 && $r2[1]['accepted'] === 1, 'resend is duplicate; new event accepted');

@@ -3104,6 +3104,7 @@ async function doorsPage() {
     }
     const s = surface('Puertas registradas');
     s.append(el('p', 'El sistema de acceso envía cada paso de tarjeta con la cédula de la persona. Solo las entradas al edificio cuentan para la presencia.', 'help'));
+    const passes = el('a', 'Ver quién ha pasado por las puertas'); passes.href = '/puertas-pasos.php'; s.append(passes);
     if (!doors.length) { empty(s, 'Aún no hay puertas', 'Registra las puertas de acceso, o espera a que lleguen entradas y regístralas desde "Entradas esperando".'); return; }
     table(s, 'Puertas', [['Puerta', d => d.name], ['Referencia', d => d.source_ref], ['Sede', d => n.get(d.site_id) || '—'],
       ['Presencia', d => badge(d.counts_for_presence ? 'Entrada al edificio' : 'Interna', d.counts_for_presence ? 'good' : '')],
@@ -3112,6 +3113,39 @@ async function doorsPage() {
   };
   const action = $('page-action'); action.textContent = 'Registrar puerta'; action.hidden = false; action.addEventListener('click', () => editor(null));
   render();
+}
+
+// Pasos por puerta de un día: lo que ya quedó asignado a una persona.
+const PASS_KINDS = { in: 'Entrada', out: 'Salida' };
+async function doorPassesPage() {
+  const doors = (await api('GET', '/doors')).data;
+  const today = zoneToday();
+  const day = el('input'); day.type = 'date'; day.value = today; day.max = today;
+  const door = el('select'); door.append(new Option('Todas', '')); doors.forEach(d => door.append(new Option(d.name, d.id)));
+  const dayLabel = el('label', 'Día'); dayLabel.append(day);
+  const doorLabel = el('label', 'Puerta'); doorLabel.append(door);
+  const bar = el('div', undefined, 'toolbar'); bar.append(dayLabel, doorLabel);
+  const back = el('a', 'Volver a Puertas'); back.href = '/puertas.php';
+  const out = el('div');
+  $('page-content').replaceChildren(back, bar, out);
+  const time = v => new Intl.DateTimeFormat('es-CO', { timeZone: tenantZone, timeStyle: 'medium' }).format(new Date(v));
+  const load = async () => {
+    if (!day.value) return;
+    try {
+      const r = await api('GET', `/doors/passes?date=${encodeURIComponent(day.value)}${door.value ? `&door_id=${encodeURIComponent(door.value)}` : ''}`);
+      out.replaceChildren();
+      const s = surface(`Pasos del ${r.date}`, out);
+      if (!r.data.length) { empty(s, 'Sin pasos', 'No hay pasos asignados ese día. Llegan de One con la sincronización y solo aparecen los de tarjetas vinculadas.'); return; }
+      s.append(el('p', `${r.data.length} pasos de ${new Set(r.data.map(p => p.user_id)).size} personas.${r.truncated ? ' Se muestran solo los más recientes.' : ''} Llegan de One con la sincronización, no al instante.`, 'help'));
+      table(s, 'Pasos', [['Hora', p => time(p.occurred_at)],
+        ['Persona', p => { const a = el('a', p.display_name); a.href = `/miembro.php?id=${encodeURIComponent(p.user_id)}&tab=resumen`; return a; }],
+        ['Puerta', p => p.door_name], ['Sede', p => p.site_name], ['Tipo', p => PASS_KINDS[p.direction] || 'Paso']], r.data,
+        { search: p => [p.display_name, p.door_name, p.site_name] });
+    } catch { out.replaceChildren(el('p', 'No se pudieron leer los pasos. Intenta de nuevo.', 'error-text')); }
+  };
+  day.addEventListener('change', load); door.addEventListener('change', load);
+  const action = $('page-action'); action.textContent = 'Actualizar'; action.hidden = false; action.addEventListener('click', load);
+  await load();
 }
 
 // ---- Ausencias de RR. HH. -------------------------------------------------------------------------------------------
@@ -4642,6 +4676,7 @@ async function start() {
     else if (page === 'sources') await sourcesPage();
     else if (page === 'group') await groupPage();
     else if (page === 'doors') await doorsPage();
+    else if (page === 'door-passes') await doorPassesPage();
     else if (page === 'absences') await absencesPage();
     else if (page === 'classification') await classificationPage();
     else if (page === 'policies') await policiesPage();

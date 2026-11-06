@@ -6,6 +6,7 @@ namespace Keeper;
 // se asocia a una sede. Solo las puertas de acceso al edificio cuentan para la presencia.
 final class DoorsApi
 {
+    private const PASSES_LIMIT = 2000;
     private string $tenant;
     public function __construct(private Database $db, private array $c, private AdminAccess $access, private Request $r) { $this->tenant = $c['tenant_id']; }
 
@@ -17,6 +18,7 @@ final class DoorsApi
             'createDoor' => $this->save(null, $b),
             'patchDoor' => $this->save($id, $b),
             'getDoorQuarantine' => $this->quarantine(),
+            'listDoorPasses' => $this->passes(),
             default => throw new ApiError(404, 'resource_not_found'),
         };
     }
@@ -45,6 +47,26 @@ final class DoorsApi
         // Las entradas que esperaban esta puerta se emparejan ahora.
         (new DoorEvents($this->db))->rematch($this->tenant);
         return AdminApi::response($this->dto($this->db->one('SELECT * FROM doors WHERE tenant_id=? AND id=?', [$this->tenant, $id])), $this->r->method === 'POST' ? 201 : 200);
+    }
+    /** Pasos de un dia local de la empresa; no expone la cedula. */
+    private function passes(): array
+    {
+        $zone = new \DateTimeZone($this->db->one('SELECT timezone FROM tenants WHERE tenant_id=?', [$this->tenant])['timezone'] ?? 'UTC');
+        $day = (string) ($_GET['date'] ?? (new \DateTimeImmutable('now', $zone))->format('Y-m-d'));
+        $start = \DateTimeImmutable::createFromFormat('!Y-m-d', $day, $zone);
+        if (!$start || $start->format('Y-m-d') !== $day) { throw new ApiError(422, 'validation_failed', [], 'invalid_date'); }
+        $utc = new \DateTimeZone('UTC');
+        $sql = "SELECT c.id,c.occurred_at,c.direction,c.user_id,u.display_name,c.door_id,d.name door_name,c.site_id,s.name site_name FROM check_ins c
+            JOIN users u ON u.tenant_id=c.tenant_id AND u.id=c.user_id
+            JOIN doors d ON d.tenant_id=c.tenant_id AND d.id=c.door_id
+            JOIN org_units s ON s.tenant_id=c.tenant_id AND s.id=c.site_id
+            WHERE c.tenant_id=? AND c.source='door' AND c.occurred_at>=? AND c.occurred_at<?";
+        $params = [$this->tenant, $start->setTimezone($utc)->format('Y-m-d H:i:s'), $start->modify('+1 day')->setTimezone($utc)->format('Y-m-d H:i:s')];
+        if (isset($_GET['door_id'])) { $sql .= ' AND c.door_id=?'; $params[] = Util::bin($_GET['door_id']); }
+        $rows = $this->db->run($sql . ' ORDER BY c.occurred_at DESC,c.id LIMIT ' . (self::PASSES_LIMIT + 1), $params)->fetchAll();
+        $data = array_map(static fn ($p) => ['id' => Util::id($p['id']), 'occurred_at' => Util::time($p['occurred_at']), 'direction' => $p['direction'], 'user_id' => Util::id($p['user_id']), 'display_name' => $p['display_name'],
+            'door_id' => Util::id($p['door_id']), 'door_name' => $p['door_name'], 'site_id' => Util::id($p['site_id']), 'site_name' => $p['site_name']], array_slice($rows, 0, self::PASSES_LIMIT));
+        return AdminApi::response(['date' => $day, 'truncated' => count($rows) > self::PASSES_LIMIT, 'data' => $data]);
     }
     private function quarantine(): array
     {

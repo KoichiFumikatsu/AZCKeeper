@@ -1,5 +1,5 @@
 {
-  "source_sha256": "efe4a93e4d3fa0295db00c13899c12d888304ff9b6c8383e99a21015a01588a0",
+  "source_sha256": "08ec6951fce2e06154f1d812d692284665bc71ff4c5e4d1bd24eca063828b569",
   "paths": {
     "/me": {
       "get": {
@@ -22203,6 +22203,118 @@
         "x-permission": "organizacion.ver"
       }
     },
+    "/doors/passes": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "listDoorPasses",
+        "summary": "Pasos por puerta de un día",
+        "description": "Pasos ya asignados a una persona en el día local de la empresa, del más reciente al más antiguo; como máximo 2000.",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "x-tenant-boundary": "Tenant validado contra sesión; alcance de empresa completa.",
+        "x-resources": [
+          "Door"
+        ],
+        "responses": {
+          "200": {
+            "description": "Pasos por puerta de un día",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimit-Limit"
+              },
+              "RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimit-Remaining"
+              },
+              "RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimit-Reset"
+              },
+              "X-RateLimit-Scope": {
+                "$ref": "#/components/headers/X-RateLimit-Scope"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoorPassList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Tenant"
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "description": "Día local de la empresa; por defecto, hoy.",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "door_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "x-permission": "organizacion.ver"
+      }
+    },
     "/ext/v1/check-ins:batch": {
       "servers": [
         {
@@ -29030,6 +29142,89 @@
           "type": "array",
           "items": {
             "$ref": "#/components/schemas/Door"
+          }
+        }
+      }
+    },
+    "DoorPassList": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "date",
+        "truncated",
+        "data"
+      ],
+      "properties": {
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "data": {
+          "type": "array",
+          "maxItems": 2000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "occurred_at",
+              "direction",
+              "user_id",
+              "display_name",
+              "door_id",
+              "door_name",
+              "site_id",
+              "site_name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "occurred_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "direction": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "in",
+                      "out"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "user_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 160
+              },
+              "door_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "door_name": {
+                "type": "string"
+              },
+              "site_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "site_name": {
+                "type": "string"
+              }
+            }
           }
         }
       }

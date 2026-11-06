@@ -203,7 +203,7 @@ final class AdminApi
             'listPanelAccounts','createPanelAccount','patchPanelAccount','resetPanelAccountPassword'=>(new PanelAccounts($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getAppClassification','putAppClassification','createAppClassificationOverride','deleteAppClassificationOverride','createAppSite'=>(new AppClassification($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listAbsences','createAbsence','patchAbsence'=>(new Absences($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
-            'listDoors','createDoor','patchDoor','getDoorQuarantine'=>(new DoorsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
+            'listDoors','createDoor','patchDoor','getDoorQuarantine','listDoorPasses'=>(new DoorsApi($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'listRoleRules','createRoleRule','patchRoleRule','getMonitoringExclusions','putMonitoringExclusions'=>(new RoleRules($this->db,$this->c,$this->access,$this->r))->dispatch($op,$id,$b),
             'getTenantProtection'=>(new ProtectionSummary($this->db,$this->c,$this->access,$this->r))->dispatch(),
             'getUserRules','getDeviceRules'=>(new EffectiveRules($this->db,$this->c,$this->access))->dispatch($op,$id),
